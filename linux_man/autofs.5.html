@@ -1,0 +1,247 @@
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=gb2312">
+<META name="man2html Chinese version">
+<TITLE>AUTOFS</TITLE>
+</HEAD>
+<BODY>
+<H1>AUTOFS</H1>
+Section: File Formats (5)<BR>Updated: 6 Apr 1998<BR>Index</A>
+
+<H2>名称（NAME)</H2>
+
+autofs - automounter maps的格式
+
+<H2>描述（DESCRIPTION)</H2>
+
+automounter maps 是一系列非主映射文件或者是NIS映射(NIS maps)，它们被 automounter 
+的主映射文件(master map)具体调用（参看
+<B>auto.master</A></B>(5)）。
+
+automounter maps 具体描述了在主映射文件（auto.master）中的列出挂载点是如何被挂载的。
+这份文档只涉及类似于
+<B>sun 系统</B>
+
+下的非主映射文件格式； 如果指定了其它的格式 （例如：<B>hesiod</B>），那么这份文档就不适用了。
+这些非主映射文件都能被修改而且 automounter 会在下一次处理这些映射文件时马上认出它们。
+但是主映射文件
+<B>auto.master</B>
+
+做不到这一点。
+
+<H2>格式（FORMAT）</H2>
+
+这仅仅是该文本文件的一种格式，也许还存在其它的格式。所有的空行和以“#”字符开始的行都会被忽略掉。
+在一个映射文件中每一行的基本格式看起来如下：
+
+<B>key [-options] location</B>
+
+<P>
+
+<H3>key</H3>
+
+是目录名的一部分，位于挂载点和被挂载的文件系统路径之间。通常你可以把“key”看作为一个位于挂载点下的子目录。
+
+<H3>options</H3>
+
+options是可选的。它也能够在
+<B>auto.master</B>
+
+中明确的给出。如果那样的话，两个选项能叠加起来（这一点与SunOS有所不同）。options是一组与
+<B>mount</A></B>(8)
+
+命令中的选项一样的列表，以逗号分隔。不过，有个特殊选项
+<I>-fstype=</I>
+
+，它被用于指定一个文件系统的类型（如果要挂载的文件系统不是NFS的话）。这个特殊选项只能由
+automounter来处理，mount是不能用的。（注：automounter通常用于NFS卷的自动挂载，但也可以用来在开机时挂载用户自己的硬盘。个人感觉比在fstab中直接写要方便。大家见仁见智，自选吧）
+
+<H3>location</H3>
+
+location指明将要挂载的文件系统是从哪来的。绝大多数情况下这将是个NFS卷，通常用
+<I>host:pathname</I>
+
+来指出将被挂载的远程文件系统和路径。如果要被挂载的文件系统是以“/”开头的（例如本地文地文件系统
+<I>/dev</I>
+
+或者是一个smb文件共享)，那就需要在前面加一个“：”（例如 
+<I>:/dev/sda1</I>）。
+
+
+<H2>范例</H2>
+
+<P>
+<DL COMPACT><DT><DD>
+
+
+<PRE>
+kernel    -ro,soft,intr       ftp.kernel.org</A>:/pub/linux
+boot      -fstype=ext2        :/dev/hda1
+windoze   -fstype=smbfs       ://windoze/c
+removable -fstype=ext2        :/dev/hdd
+cd        -fstype=iso9660,ro  :/dev/hdc
+floppy    -fstype=auto        :/dev/fd0
+</PRE>
+
+</DL>
+
+<P>
+第一行，我们把一个来自
+<I>ftp.kernel.org</A></I>
+
+的内核目录挂载为远程NFS卷。这是只读安装。第二行挂载了一个本地ide磁盘上的ext2分区。第三行
+挂载了一个Windows系统上的samba共享目录。剩下的应该是不言而喻的了。
+
+<H2>特性（FEATURES）</H2>
+
+
+<H3>映射替换（Map Key Substitution）</H3>
+
+在
+<B>location</B>
+
+里的“&amp;”字符可被用来代替
+<B>key</B>
+
+值，“&amp;”会被自动展开为跟
+<B>key</B>
+
+一样的值 （这个字符可能只有必要和下面的通配符一起用）
+
+<H3>通配符（Wildcard Key）</H3>
+
+在
+<B>key</B>
+
+里的“*“字符可匹配所有的key。下面是个很有用的范例：
+<P>
+<DL COMPACT><DT><DD>
+
+
+<PRE>
+*         &amp;:/home/&amp;
+</PRE>
+
+</DL>
+
+<P>
+这使你能够以
+/<I>mountpoint</I>/<I>hostname</I>/<I>local-path</I>
+
+这种方式进入所有本地主机的主目录。
+
+<H3>变量替换（Variable Substitution）</H3>
+
+下列这些特殊变量若出现在key或location中并且前面有个”$“，就能被相应的内容替换，就像是在
+shell脚本里一样。可以用一对”{ }“ (curly braces)来分隔”字段名“（fieldname)
+<P>
+<DL COMPACT><DT><DD>
+
+
+<PRE>
+ARCH           Architecture (uname -m)
+CPU            Processor Type
+HOST           Hostname (uname -n)
+OSNAME         Operating System (uname -s)
+OSREL          Release of OS (uname -r)
+OSVERS         Version of OS (uname -v)
+</PRE>
+
+</DL>
+
+<P>
+用
+<B>automount</A></B>(8)
+
+-D variable=Value 还能定义更多的替换项。
+
+<H3>可执行的映射（Executable Maps）</H3>
+
+一个映射能被标记为可执行。传递主映射文件（auto.master）的初始化脚本会把这个可执行映射作为一个
+<B>程序映射</B>
+
+送给automounter。
+<B>程序映射</B>
+
+将会像一个shell脚本那样被执用，”key“作为参数。如果找不到key，脚本会只输出脚本文件的一行或者干脆什么都没有。
+
+要想像上面这么做的话，
+<B>automount</A></B>(8)
+
+daemon 必须以程序形式起动，而不是以文件形式。在automount的初始化脚本里包含有这条设定。
+
+一个可执行的映射能返回一个错误代码来指出错误，或者什么都不显示。所有送到标准错误输出的内容都被系统日志记录在案。
+
+<H2>不支持的功能（UNSUPPORTED）</H2>
+
+automounter不支持直接挂载（注：实用时发现automount必须要有一个key才行，如果省略的话
+就不能安装成功）或是挂载树（用一个指定的自动挂载点来挂装超过一个文件系统），以及不支持处理
+SunOS类型的可复用文件系统（replicated filesystem)。这只有
+<B>mount</A></B>(8)
+
+才支持。
+
+<H2>参看（SEE ALSO）</H2>
+
+<B>automount</A></B>(8),
+
+<B>auto.master</A></B>(5),
+
+<B>autofs</A></B>(8),
+
+<B>mount</A></B>(8).
+
+
+<H2>作者（AUTHOR）</H2>
+
+这份手册由 Christoph Lameter &lt;chris@waterf.org</A>&gt; 为Debian GNU/Linux 所写。
+由H. Peter Anvin &lt;hpa@transmeta.com</A>&gt;校订。
+<P>
+<P>
+
+<H2>[中文版维护人]</H2>
+
+Nickel Cobalt &lt;angelerosster@gmail.com</A>&gt;
+
+<H2>[中文版最新更新]</H2>
+
+2006.2.3
+<P>
+
+<H2>《中文 MAN PAGE 计划》:www.cmpp.net</A>/</H2>
+
+<P>
+
+<HR>
+<H2>Index</H2>
+<DL>
+<DT>名称（NAME)</A><DD>
+<DT>描述（DESCRIPTION)</A><DD>
+<DT>格式（FORMAT）</A><DD>
+<DL>
+<DT>key</A><DD>
+<DT>options</A><DD>
+<DT>location</A><DD>
+</DL>
+<DT>范例</A><DD>
+<DT>特性（FEATURES）</A><DD>
+<DL>
+<DT>映射替换（Map Key Substitution）</A><DD>
+<DT>通配符（Wildcard Key）</A><DD>
+<DT>变量替换（Variable Substitution）</A><DD>
+<DT>可执行的映射（Executable Maps）</A><DD>
+</DL>
+<DT>不支持的功能（UNSUPPORTED）</A><DD>
+<DT>参看（SEE ALSO）</A><DD>
+<DT>作者（AUTHOR）</A><DD>
+<DT>[中文版维护人]</A><DD>
+<DT>[中文版最新更新]</A><DD>
+<DT>《中文 MAN PAGE 计划》:www.cmpp.net/</A><DD>
+</DL>
+<HR>
+This document was created by
+man2html</A>,
+using the manual pages.<BR>
+Time:  GMT, February 14, 2006
+</BODY>
+</HTML>

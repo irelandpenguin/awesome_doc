@@ -1,0 +1,326 @@
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=gb2312">
+<META name="man2html Chinese version">
+<TITLE>FOPEN</TITLE>
+</HEAD>
+<BODY>
+<H1>FOPEN</H1>
+Section: Linux Programmer's Manual (3)<BR>Updated: 2002-01-03<BR>Index</A>
+
+<H2>NAME</H2>
+
+fopen, fdopen, freopen - 打开流
+<P>
+
+<H2>SYNOPSIS (总览)</H2>
+
+<B>#include &lt;stdio.h</A>&gt;</B>
+
+<P>
+<B>FILE *fopen(const char *</B><I>path</I><B>, const char *</B><I>mode</I><B>);</B>
+
+<BR>
+
+<B>FILE *fdopen(int </B><I>fildes</I><B>, const char *</B><I>mode</I><B>);</B>
+
+<BR>
+
+<B>FILE *freopen(const char *</B><I>path</I><B>, const char *</B><I>mode</I><B>, FILE *</B><I>stream</I><B>);</B>
+
+<P>
+
+<H2>DESCRIPTION 描述</H2>
+
+函数
+<B>fopen</B>
+
+打开 一个 文件, 并且 分配 一个 流, 文件名 由 字符串
+<I>path</I>
+
+指定.
+<P>
+
+参数
+<I>mode</I>
+
+指向 一个 字符串, 该 字符串 用 下面 的 字符串 开头
+(之后 可以有 附加的 字符):
+<DL COMPACT>
+<DT><B>r</B>
+
+<DD>
+为 读操作 打开 文本文件. 流 被定位于 文件 的 开始.
+<DT><B>r+</B>
+
+<DD>
+为 读写操作 打开 文本文件. 流 被定位于 文件 的 开始.
+<DT><B>w</B>
+
+<DD>
+为 写操作 创建 文本文件, 或者 将 已经 存在的 文件长度 截断为 零. 流 
+被定位于 文件 的 开始.
+<DT><B>w+</B>
+
+<DD>
+为 读写操作 打开 文件. 如果 文件 不存在, 就 创建 它, 否则 将它 截断. 
+流 被定位于 文件 的 开始.
+<DT><B>a</B>
+
+<DD>
+为 追加操作 (在文件尾写) 打开 文件. 如果 文件 不存在, 就 创建 它.
+流 被定位于 文件 的 末尾.
+<DT><B>a+</B>
+
+<DD>
+为 追加操作 (在文件尾写) 打开 文件. 如果 文件 不存在, 就 创建 它. 读文件的
+初始位置 是 文件 的 开始, 但是 写文件 总是 被追加到 文件 的 末尾.
+<P>
+</DL>
+<P>
+
+可以 把 字母 ``b'' 添加到 字符串
+<I>mode</I>
+
+的 末尾, 或者 插到 上面 任何 两个字符的 字符串 的 中间. 这样 只是 为了 和 
+ANSI X3.159-1989 (``ANSI C'') 标准 严格 保持 兼容, 没有 实际的 效果; 在 所有
+遵循 POSIX 的 系统 中, ``b'' 都 被忽略, 包括 Linux. (其他系统 可能会 分别
+对待 文本文件 和 二进制文件, 如果 在 进行 二进制文件 的 I/O, 那么 添加 ``b''
+是个 好主意, 因为 你的程序 可能会 被移植到 非 Unix 环境中.)
+<P>
+
+任何 新建文件 的 访问模式 是
+<B>S_IRUSR</B>|<B>S_IWUSR</B>|<B>S_IRGRP</B>|<B>S_IWGRP</B>|<B>S_IROTH</B>|<B>S_IWOTH</B>
+
+(0666), 并且 用 进程的 掩码值 umask 加以修改 (参见
+<B>umask</A></B>(2))<B>.</B>
+
+<P>
+
+在 读/写流 上 可以 任意 顺序 混合 进行 读写操作.
+注意 ANSI C 要求 在 输出和输入操作 之间 插入 一个 文件定位函数, 除非 输入操作
+遇到了 文件结束符. (如果 不是 这种情况, 那么 读操作 总是 返回 写操作 的 结果
+而不是 最后的 内容.) 因此, 最好 (在 Linux 中 有时 是必须的) 对 这样的流 的 
+写/读操作 之间 加入 一个
+<B>fseek</B>
+
+或是
+<B>fgetpos</B>
+
+操作. 这个操作 可以 是一个 空操作 (如 <I>fseek(..., 0L, SEEK_CUR)</I>), 只利用
+其 文件同步 这个 副效应.
+<P>
+
+用 追加方式 打开 文件 (<B>a</B> 作为
+<I>mode</I>
+
+的 第一个 字符) 将使得 所有后续的 写操作 发生在 文件末尾, 如同 之前 调用了
+<DL COMPACT><DT><DD>
+fseek(stream,0,SEEK_END);
+</DL>
+
+一样.
+<P>
+
+<B>fdopen</B>
+
+函数 将 一个流 和 已存在的 文件描述符
+<I>fildes</I>
+
+联系 起来. 流的 操作模式
+<I>mode</I>
+
+(取值为 &quot;r&quot;, &quot;r+&quot;, &quot;w&quot;, &quot;w+&quot;, &quot;a&quot;, &quot;a+&quot; 之一) 必须 与 该文件描述符 的 操作模式
+一致. 流的 定位标识 设置为
+<I>fildes</I>
+
+原有的值, 清除 错误标记 和 文件结束标记. 模式 &quot;w&quot; 或者 &quot;w+&quot; 不会 截断 文件.
+<B>fdopen</B>
+
+不复制 文件描述符, 在关闭
+<B>fdopen</B>
+
+创建的 流 时, 也不关闭 该文件描述符. 对 共享内存对象 实施
+<B>fdopen</B>
+
+的 结果 没有定义.
+<P>
+
+<B>freopen</B>
+
+函数 打开 用
+<I>path</I>
+
+说明 的 文件, 并且 和
+<I>stream</I>
+
+指定的流 联系 起来. 原来的流 (如果 存在的话) 被关闭. 参数
+<I>mode</I>
+
+和
+<B>fopen</B>
+
+中的 用法 一样.
+<B>freopen</B>
+
+函数 主要的用处 是 改变 标准文本流
+<I></I>(<I>stderr</I>, <I>stdin</I>, 或 <I>stdout</I>)
+
+联系 的 文件.
+<P>
+
+<H2>RETURN VALUE (返回值)</H2>
+
+如果 操作 成功,
+<B>fopen</B>,
+
+<B>fdopen</B>
+
+和
+<B>freopen</B>
+
+返回 一个 指向 文件对象
+<B>FILE</B>
+
+的 指针, 否则 返回
+<B>NULL</B>
+
+并 设置 全局变量
+<I>errno</I>
+
+来 指出 错误的发生.
+<P>
+
+<H2>ERRORS</H2>
+
+<DL COMPACT>
+<DT><B>EINVAL</B>
+
+<DD>
+<B>fopen</B>,
+
+<B>fdopen</B>,
+
+或
+<B>freopen</B>
+
+提供的 参数
+<I>mode</I>
+
+无效.
+</DL>
+<P>
+
+<B>fopen</B>,
+
+<B>fdopen</B>
+
+和
+<B>freopen</B>
+
+也有可能 失败 并置
+<I>errno</I>
+
+为
+<B>malloc</A></B>(3)
+
+指定的值.
+<P>
+
+<B>fopen</B>
+
+也有可能 失败 并置
+<I>errno</I>
+
+为
+<B>open</A></B>(2)
+
+指定的值.
+<P>
+
+<B>fdopen</B>
+
+也有可能 失败 并置
+<I>errno</I>
+
+为
+<B>fcntl</A></B>(2)
+
+指定的值.
+<P>
+
+<B>freopen</B>
+
+也有可能 失败 并置
+<I>errno</I>
+
+为
+<B>open</A></B>(2),
+
+<B>fclose</A></B>(3)
+
+和
+<B>fflush</A></B>(3)
+
+指定的值.
+<P>
+
+<H2>CONFORMING TO (标准参考)</H2>
+
+<B>fopen</B>
+
+和
+<B>freopen</B>
+
+函数 遵循 ANSI X3.159-1989 (``ANSI C'') 标准.
+<B>fdopen</B>
+
+遵循 IEEE Std1003.1-1988 (``POSIX.1'') 标准.
+<P>
+
+<H2>SEE ALSO (另见)</H2>
+
+<B>open</A></B>(2),
+
+<B>fclose</A></B>(3),
+
+<B>fileno</A></B>(3)
+
+<P>
+
+<H2>[中文版校对]</H2>
+
+徐明 &lt;xuming@users.sourceforge.net</A>&gt;
+
+<H2>[中文版最新更新]</H2>
+
+2004/02/8
+
+<H2>《中国Linux论坛man手册页翻译计划》</H2>
+
+http://cmpp.linuxforum.net</A>
+<P>
+<P>
+<P>
+
+<HR>
+<H2>Index</H2>
+<DL>
+<DT>NAME</A><DD>
+<DT>SYNOPSIS (总览)</A><DD>
+<DT>DESCRIPTION 描述</A><DD>
+<DT>RETURN VALUE (返回值)</A><DD>
+<DT>ERRORS</A><DD>
+<DT>CONFORMING TO (标准参考)</A><DD>
+<DT>SEE ALSO (另见)</A><DD>
+<DT>[中文版校对]</A><DD>
+<DT>[中文版最新更新]</A><DD>
+<DT>《中国Linux论坛man手册页翻译计划》</A><DD>
+</DL>
+<HR>
+This document was created by
+man2html</A>,
+using the manual pages.<BR>
+Time: 11:08:06 GMT, March 16, 2005
+</BODY>
+</HTML>

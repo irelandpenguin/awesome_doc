@@ -1,0 +1,696 @@
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=gb2312">
+<META name="man2html Chinese version">
+<TITLE>TERMIOS</TITLE>
+</HEAD>
+<BODY>
+<H1>TERMIOS</H1>
+Section: Linux Programmer's Manual (3)<BR>Updated: 2001-12-17<BR>Index</A>
+
+<H2>NAME</H2>
+
+termios, tcgetattr, tcsetattr, tcsendbreak, tcdrain, tcflush, tcflow,
+cfmakeraw, cfgetospeed, cfgetispeed, cfsetispeed, cfsetospeed - 获取和设置终端属性，行控制，获取和设置波特率
+
+<H2>SYNOPSIS 总览</H2>
+
+
+<B>
+#include &lt;termios.h</A>&gt;
+<BR>
+
+#include &lt;unistd.h</A>&gt;
+<P>
+int tcgetattr(int </B><I>fd</I><B>, struct termios *</B><I>termios_p</I><B>);</B>
+
+<P>
+<B>int tcsetattr(int </B><I>fd</I><B>, int </B><I>optional_actions</I><B>, struct termios *</B><I>termios_p</I><B>);</B>
+
+<P>
+<B>int tcsendbreak(int </B><I>fd</I><B>, int </B><I>duration</I><B>);</B>
+
+<P>
+<B>int tcdrain(int </B><I>fd</I><B>);</B>
+
+<P>
+<B>int tcflush(int </B><I>fd</I><B>, int </B><I>queue_selector</I><B>);</B>
+
+<P>
+<B>int tcflow(int </B><I>fd</I><B>, int </B><I>action</I><B>);</B>
+
+<P>
+<B>int cfmakeraw(struct termios *</B><I>termios_p</I><B>);</B>
+
+<P>
+<B>speed_t cfgetispeed(struct termios *</B><I>termios_p</I><B>);</B>
+
+<P>
+<B>speed_t cfgetospeed(struct termios *</B><I>termios_p</I><B>);</B>
+
+<P>
+<B>int cfsetispeed(struct termios *</B><I>termios_p</I><B>, speed_t </B><I>speed</I><B>);</B>
+
+<P>
+<B>int cfsetospeed(struct termios *</B><I>termios_p</I><B>, speed_t </B><I>speed</I><B>);</B>
+
+
+
+
+<H2>DESCRIPTION 描述</H2>
+
+termios 函数族提供了一个常规的终端接口，用于控制非同步通信端口。
+<P>
+
+这里描述的大部分属性有一个 <I>termios_p</I> 类型的参数，它是指向一个 <B>termios</B> 结构的指针。这个结构包含了至少下列成员：
+
+<P>
+<DL COMPACT><DT><DD>
+<PRE>
+tcflag_t <I>c_iflag</I>;      /* 输入模式 */
+tcflag_t <I>c_oflag</I>;      /* 输出模式 */
+tcflag_t <I>c_cflag</I>;      /* 控制模式 */
+tcflag_t <I>c_lflag</I>;      /* 本地模式 */
+cc_t <I>c_cc</I>[<B>NCCS</B>];       /* 控制字符 */
+</PRE>
+
+</DL>
+
+<P>
+
+<I>c_iflag</I> 标志常量：
+<DL COMPACT>
+<DT><B>IGNBRK</B>
+
+<DD>
+忽略输入中的 BREAK 状态。
+<DT><B>BRKINT</B>
+
+<DD>
+如果设置了 <B>IGNBRK</B>，将忽略 BREAK。如果没有设置，但是设置了 <B>BRKINT</B>，那么 BREAK 将使得输入和输出队列被刷新，如果终端是一个前台进程组的控制终端，这个进程组中所有进程将收到 <B>SIGINT</B> 信号。如果既未设置 <B>IGNBRK</B> 也未设置 <B>BRKINT</B>，BREAK 将视为与 NUL 字符同义，除非设置了 <B>PARMRK</B>，这种情况下它被视为序列 \377 \0 \0。
+<DT><B>IGNPAR</B>
+
+<DD>
+忽略桢错误和奇偶校验错。
+<DT><B>PARMRK</B>
+
+<DD>
+如果没有设置 <B>IGNPAR</B>，在有奇偶校验错或桢错误的字符前插入 \377 \0。如果既没有设置 <B>IGNPAR</B> 也没有设置 <B>PARMRK</B>，将有奇偶校验错或桢错误的字符视为 \0。
+<DT><B>INPCK</B>
+
+<DD>
+启用输入奇偶检测。
+<DT><B>ISTRIP</B>
+
+<DD>
+去掉第八位。
+<DT><B>INLCR</B>
+
+<DD>
+将输入中的 NL 翻译为 CR。
+<DT><B>IGNCR</B>
+
+<DD>
+忽略输入中的回车。
+<DT><B>ICRNL</B>
+
+<DD>
+将输入中的回车翻译为新行 (除非设置了 <B>IGNCR</B>)。
+<DT><B>IUCLC</B>
+
+<DD>
+(不属于 POSIX) 将输入中的大写字母映射为小写字母。
+<DT><B>IXON</B>
+
+<DD>
+启用输出的 XON/XOFF 流控制。
+<DT><B>IXANY</B>
+
+<DD>
+(不属于 POSIX.1；XSI) 允许任何字符来重新开始输出。(?)
+<DT><B>IXOFF</B>
+
+<DD>
+启用输入的 XON/XOFF 流控制。
+<DT><B>IMAXBEL</B>
+
+<DD>
+(不属于 POSIX) 当输入队列满时响零。Linux 没有实现这一位，总是将它视为已设置。
+</DL>
+<P>
+
+POSIX.1 中定义的 <I>c_oflag</I> 标志常量：
+<DL COMPACT>
+<DT><B>OPOST</B>
+
+<DD>
+启用具体实现自行定义的输出处理。
+</DL>
+<P>
+
+其余 <I>c_oflag</I> 标志常量定义在 POSIX 1003.1-2001 中，除非另外说明。
+<DL COMPACT>
+<DT><B>OLCUC</B>
+
+<DD>
+(不属于 POSIX) 将输出中的小写字母映射为大写字母。
+<DT><B>ONLCR</B>
+
+<DD>
+(XSI) 将输出中的新行符映射为回车-换行。
+<DT><B>OCRNL</B>
+
+<DD>
+将输出中的回车映射为新行符
+<DT><B>ONOCR</B>
+
+<DD>
+不在第 0 列输出回车。
+<DT><B>ONLRET</B>
+
+<DD>
+不输出回车。
+<DT><B>OFILL</B>
+
+<DD>
+发送填充字符作为延时，而不是使用定时来延时。
+<DT><B>OFDEL</B>
+
+<DD>
+(不属于 POSIX) 填充字符是 ASCII DEL (0177)。如果不设置，填充字符则是 ASCII NUL。
+<DT><B>NLDLY</B>
+
+<DD>
+新行延时掩码。取值为 <B>NL0</B> 和 <B>NL1</B>。
+<DT><B>CRDLY</B>
+
+<DD>
+回车延时掩码。取值为 <B>CR0</B>, <B>CR1</B>, <B>CR2</B>, 或 <B>CR3</B>。
+<DT><B>TABDLY</B>
+
+<DD>
+水平跳格延时掩码。取值为 <B>TAB0</B>, <B>TAB1</B>, <B>TAB2</B>, <B>TAB3</B> (或 <B>XTABS</B>)。取值为 TAB3，即 XTABS，将扩展跳格为空格 (每个跳格符填充 8 个空格)。(?)
+<DT><B>BSDLY</B>
+
+<DD>
+回退延时掩码。取值为 <B>BS0</B> 或 <B>BS1</B>。(从来没有被实现过)
+<DT><B>VTDLY</B>
+
+<DD>
+竖直跳格延时掩码。取值为 <B>VT0</B> 或 <B>VT1</B>。
+<DT><B>FFDLY</B>
+
+<DD>
+进表延时掩码。取值为 <B>FF0</B> 或 <B>FF1</B>。
+</DL>
+<P>
+
+<I>c_cflag</I> 标志常量：
+<DL COMPACT>
+<DT><B>CBAUD</B>
+
+<DD>
+(不属于 POSIX) 波特率掩码 (4+1 位)。
+<DT><B>CBAUDEX</B>
+
+<DD>
+(不属于 POSIX) 扩展的波特率掩码 (1 位)，包含在 CBAUD 中。
+</DL>
+<P>
+
+(POSIX 规定波特率存储在 termios 结构中，并未精确指定它的位置，而是提供了函数
+<B>cfgetispeed()</B>
+
+和
+<B>cfsetispeed()</B>
+
+来存取它。一些系统使用
+<I>c_cflag</I>
+
+中 CBAUD 选择的位，其他系统使用单独的变量，例如
+<I>sg_ispeed</I>
+
+和
+<I>sg_ospeed</I>
+
+。)
+<DL COMPACT>
+<DT><B>CSIZE</B>
+
+<DD>
+字符长度掩码。取值为 <B>CS5</B>, <B>CS6</B>, <B>CS7</B>, 或 <B>CS8</B>。
+<DT><B>CSTOPB</B>
+
+<DD>
+设置两个停止位，而不是一个。
+<DT><B>CREAD</B>
+
+<DD>
+打开接受者。
+<DT><B>PARENB</B>
+
+<DD>
+允许输出产生奇偶信息以及输入的奇偶校验。
+<DT><B>PARODD</B>
+
+<DD>
+输入和输出是奇校验。
+<DT><B>HUPCL</B>
+
+<DD>
+在最后一个进程关闭设备后，降低 modem 控制线 (挂断)。(?)
+<DT><B>CLOCAL</B>
+
+<DD>
+忽略 modem 控制线。
+<DT><B>LOBLK</B>
+
+<DD>
+(不属于 POSIX) 从非当前 shell 层阻塞输出(用于 <B>shl</B> )。(?)
+<DT><B>CIBAUD</B>
+
+<DD>
+(不属于 POSIX) 输入速度的掩码。CIBAUD 各位的值与 CBAUD 各位相同，左移了 IBSHIFT 位。
+<DT><B>CRTSCTS</B>
+
+<DD>
+(不属于 POSIX) 启用 RTS/CTS (硬件) 流控制。
+</DL>
+<P>
+
+<I>c_lflag</I> 标志常量：
+<DL COMPACT>
+<DT><B>ISIG</B>
+
+<DD>
+当接受到字符 INTR, QUIT, SUSP, 或 DSUSP 时，产生相应的信号。
+<DT><B>ICANON</B>
+
+<DD>
+启用标准模式 (canonical mode)。允许使用特殊字符
+EOF, EOL, EOL2, ERASE, KILL, LNEXT, REPRINT, STATUS, 和 WERASE，以及按行的缓冲。
+<DT><B>XCASE</B>
+
+<DD>
+(不属于 POSIX; Linux 下不被支持)
+如果同时设置了 <B>ICANON</B>，终端只有大写。输入被转换为小写，除了以 \ 前缀的字符。
+输出时，大写字符被前缀 \，小写字符被转换成大写。
+<DT><B>ECHO</B>
+
+<DD>
+回显输入字符。
+<DT><B>ECHOE</B>
+
+<DD>
+如果同时设置了 <B>ICANON</B>，字符 ERASE 擦除前一个输入字符，WERASE 擦除前一个词。
+<DT><B>ECHOK</B>
+
+<DD>
+如果同时设置了 <B>ICANON</B>，字符 KILL 删除当前行。
+<DT><B>ECHONL</B>
+
+<DD>
+如果同时设置了 <B>ICANON</B>，回显字符 NL，即使没有设置 ECHO。
+<DT><B>ECHOCTL</B>
+
+<DD>
+(不属于 POSIX) 如果同时设置了 <B>ECHO</B>，除了 TAB, NL, START, 和 STOP 之外的 ASCII 控制信号被回显为 ^X, 这里 X 是比控制信号大 0x40 的 ASCII 码。例如，字符 0x08 (BS) 被回显为 ^H。
+<DT><B>ECHOPRT</B>
+
+<DD>
+(不属于 POSIX) 如果同时设置了 <B>ICANON</B> 和 <B>IECHO</B>，字符在删除的同时被打印。
+<DT><B>ECHOKE</B>
+
+<DD>
+(不属于 POSIX) 如果同时设置了 <B>ICANON</B>，回显 KILL 时将删除一行中的每个字符，如同指定了 <B>ECHOE</B> 和 <B>ECHOPRT</B> 一样。
+<DT><B>DEFECHO</B>
+
+<DD>
+(不属于 POSIX) 只在一个进程读的时候回显。
+<DT><B>FLUSHO</B>
+
+<DD>
+(不属于 POSIX; Linux 下不被支持)
+输出被刷新。这个标志可以通过键入字符 DISCARD 来开关。
+<DT><B>NOFLSH</B>
+
+<DD>
+禁止在产生 SIGINT, SIGQUIT 和 SIGSUSP 信号时刷新输入和输出队列。
+
+<DT><B>TOSTOP</B>
+
+<DD>
+向试图写控制终端的后台进程组发送 SIGTTOU 信号。
+<DT><B>PENDIN</B>
+
+<DD>
+(不属于 POSIX; Linux 下不被支持)
+在读入下一个字符时，输入队列中所有字符被重新输出。(<B>bash</B> 用它来处理 typeahead)
+<DT><B>IEXTEN</B>
+
+<DD>
+启用实现自定义的输入处理。这个标志必须与 <B>ICANON</B> 同时使用，才能解释特殊字符 EOL2，LNEXT，REPRINT 和 WERASE，<B>IUCLC</B> 标志才有效。
+</DL>
+<P>
+
+<I>c_cc</I> 数组定义了特殊的控制字符。符号下标 (初始值) 和意义为：
+<DL COMPACT>
+<DT><B>VINTR</B>
+
+<DD>
+(003, ETX, Ctrl-C, or also 0177, DEL, rubout)
+中断字符。发出 SIGINT 信号。当设置 ISIG 时可被识别，不再作为输入传递。
+<DT><B>VQUIT</B>
+
+<DD>
+(034, FS, Ctrl-\)
+退出字符。发出 SIGQUIT 信号。当设置 ISIG 时可被识别，不再作为输入传递。
+<DT><B>VERASE</B>
+
+<DD>
+(0177, DEL, rubout, or 010, BS, Ctrl-H, or also #)
+删除字符。删除上一个还没有删掉的字符，但不删除上一个 EOF 或行首。当设置 ICANON 时可被识别，不再作为输入传递。
+<DT><B>VKILL</B>
+
+<DD>
+(025, NAK, Ctrl-U, or Ctrl-X, or also @)
+终止字符。删除自上一个 EOF 或行首以来的输入。当设置 ICANON 时可被识别，不再作为输入传递。
+<DT><B>VEOF</B>
+
+<DD>
+(004, EOT, Ctrl-D)
+文件尾字符。更精确地说，这个字符使得 tty 缓冲中的内容被送到等待输入的用户程序中，而不必等到 EOL。如果它是一行的第一个字符，那么用户程序的 <I>read()</I> 将返回 0，指示读到了 EOF。当设置 ICANON 时可被识别，不再作为输入传递。
+<DT><B>VMIN</B>
+
+<DD>
+非 canonical 模式读的最小字符数。
+<DT><B>VEOL</B>
+
+<DD>
+(0, NUL)
+附加的行尾字符。当设置 ICANON 时可被识别。
+<DT><B>VTIME</B>
+
+<DD>
+非 canonical 模式读时的延时，以十分之一秒为单位。
+<DT><B>VEOL2</B>
+
+<DD>
+(not in POSIX; 0, NUL)
+另一个行尾字符。当设置 ICANON 时可被识别。
+<DT><B>VSWTCH</B>
+
+<DD>
+(not in POSIX; not supported under Linux; 0, NUL)
+开关字符。(只为 <B>shl</B> 所用。)
+<DT><B>VSTART</B>
+
+<DD>
+(021, DC1, Ctrl-Q)
+开始字符。重新开始被 Stop 字符中止的输出。当设置 IXON 时可被识别，不再作为输入传递。
+<DT><B>VSTOP</B>
+
+<DD>
+(023, DC3, Ctrl-S)
+停止字符。停止输出，直到键入 Start 字符。当设置 IXON 时可被识别，不再作为输入传递。
+<DT><B>VSUSP</B>
+
+<DD>
+(032, SUB, Ctrl-Z)
+挂起字符。发送 SIGTSTP 信号。当设置 ISIG 时可被识别，不再作为输入传递。
+<DT><B>VDSUSP</B>
+
+<DD>
+(not in POSIX; not supported under Linux; 031, EM, Ctrl-Y)
+延时挂起信号。当用户程序读到这个字符时，发送 SIGTSTP 信号。当设置 IEXTEN 和 ISIG，并且系统支持作业管理时可被识别，不再作为输入传递。
+<DT><B>VLNEXT</B>
+
+<DD>
+(not in POSIX; 026, SYN, Ctrl-V)
+字面上的下一个。引用下一个输入字符，取消它的任何特殊含义。当设置 IEXTEN 时可被识别，不再作为输入传递。
+<DT><B>VWERASE</B>
+
+<DD>
+(not in POSIX; 027, ETB, Ctrl-W)
+删除词。当设置 ICANON 和 IEXTEN 时可被识别，不再作为输入传递。
+<DT><B>VREPRINT</B>
+
+<DD>
+(not in POSIX; 022, DC2, Ctrl-R)
+重新输出未读的字符。当设置 ICANON 和 IEXTEN 时可被识别，不再作为输入传递。
+<DT><B>VDISCARD</B>
+
+<DD>
+(not in POSIX; not supported under Linux; 017, SI, Ctrl-O)
+开关：开始/结束丢弃未完成的输出。当设置 IEXTEN 时可被识别，不再作为输入传递。
+<DT><B>VSTATUS</B>
+
+<DD>
+(not in POSIX; not supported under Linux; status request: 024, DC4, Ctrl-T).
+</DL>
+<P>
+
+这些符号下标值是互不相同的，除了 VTIME，VMIN 的值可能分别与 VEOL，VEOF 相同。
+(在 non-canonical 模式下，特殊字符的含义更改为延时含义。MIN 表示应当被读入的最小字符数。TIME 是以十分之一秒为单位的计时器。如果同时设置了它们，read 将等待直到至少读入一个字符，一旦读入 MIN 个字符或者从上次读入字符开始经过了 TIME 时间就立即返回。如果只设置了 MIN，read 在读入 MIN 个字符之前不会返回。如果只设置了 TIME，read 将在至少读入一个字符，或者计时器超时的时候立即返回。如果都没有设置，read 将立即返回，只给出当前准备好的字符。) (?)
+<P>
+
+<B>tcgetattr()</B>
+
+得到与 <I>fd</I> 指向的对象相关的参数，将它们保存于 <I>termios_p</I> 引用的 <B>termios</B> 结构中。函数可以从后台进程中调用；但是，终端属性可能被后来的前台进程所改变。
+<P>
+
+<B>tcsetattr()</B>
+
+设置与终端相关的参数 (除非需要底层支持却无法满足)，使用 <I>termios_p</I> 引用的 <B>termios</B> 结构。<I>optional_actions</I> 指定了什么时候改变会起作用：
+<DL COMPACT>
+<DT><B>TCSANOW</B><DD>
+改变立即发生
+<DT><B>TCSADRAIN</B><DD>
+改变在所有写入
+<I>fd</I>
+
+的输出都被传输后生效。这个函数应当用于修改影响输出的参数时使用。
+<DT><B>TCSAFLUSH</B><DD>
+改变在所有写入
+<I>fd</I>
+
+引用的对象的输出都被传输后生效，所有已接受但未读入的输入都在改变发生前丢弃。
+</DL>
+<P>
+
+<B>tcsendbreak()</B>
+
+传送连续的 0 值比特流，持续一段时间，如果终端使用异步串行数据传输的话。如果 <I>duration</I> 是 0，它至少传输 0.25 秒，不会超过 0.5 秒。如果 <I>duration</I> 非零，它发送的时间长度由实现定义。
+<P>
+
+如果终端并非使用异步串行数据传输，<B>tcsendbreak()</B> 什么都不做。
+<P>
+
+<B>tcdrain()</B>
+
+等待直到所有写入
+<I>fd</I>
+
+引用的对象的输出都被传输。
+<P>
+
+<B>tcflush()</B>
+
+丢弃要写入
+
+引用的对象，但是尚未传输的数据，或者收到但是尚未读取的数据，取决于
+<I>queue_selector</I>
+
+的值：
+<DL COMPACT>
+<DT><B>TCIFLUSH</B><DD>
+刷新收到的数据但是不读
+<DT><B>TCOFLUSH</B><DD>
+刷新写入的数据但是不传送
+<DT><B>TCIOFLUSH</B><DD>
+同时刷新收到的数据但是不读，并且刷新写入的数据但是不传送
+</DL>
+<P>
+
+<B>tcflow()</B>
+
+挂起
+<I>fd</I>
+
+引用的对象上的数据传输或接收，取决于
+<I>action</I>
+
+的值：
+<DL COMPACT>
+<DT><B>TCOOFF</B><DD>
+挂起输出
+<DT><B>TCOON</B><DD>
+重新开始被挂起的输出
+<DT><B>TCIOFF</B><DD>
+发送一个 STOP 字符，停止终端设备向系统传送数据
+<DT><B>TCION</B><DD>
+发送一个 START 字符，使终端设备向系统传输数据
+</DL>
+<P>
+
+打开一个终端设备时的默认设置是输入和输出都没有挂起。
+<P>
+
+波特率函数被用来获取和设置 <B>termios</B> 结构中，输入和输出波特率的值。新值不会马上生效，直到成功调用了 <B>tcsetattr()</B> 函数。
+<P>
+设置速度为 <B>B0</B> 使得 modem &quot;挂机&quot;。与 <B>B38400</B> 相应的实际比特率可以用 <B>setserial</A></B>(8) 调整。
+<P>
+
+输入和输出波特率被保存于 <B>termios</B> 结构中。
+<P>
+
+<B>cfmakeraw</B> 设置终端属性如下：
+<PRE>
+            termios_p-&gt;c_iflag &amp;= ~(IGNBRK|BRKINT|PARMRK|ISTRIP
+                            |INLCR|IGNCR|ICRNL|IXON);
+            termios_p-&gt;c_oflag &amp;= ~OPOST;
+            termios_p-&gt;c_lflag &amp;= ~(ECHO|ECHONL|ICANON|ISIG|IEXTEN);
+            termios_p-&gt;c_cflag &amp;= ~(CSIZE|PARENB);
+            termios_p-&gt;c_cflag |= CS8;
+</PRE>
+
+<P>
+
+<B>cfgetospeed()</B>
+
+返回 
+<I>termios_p</I>
+
+指向的 <B>termios</B> 结构中存储的输出波特率
+<P>
+
+<B>cfsetospeed()</B>
+
+设置
+<I>termios_p</I>
+
+指向的 <B>termios</B> 结构中存储的输出波特率为 <I>speed</I>。取值必须是以下常量之一：
+<PRE>
+<B>        B0
+        B50
+        B75
+        B110
+        B134
+        B150
+        B200
+        B300
+        B600
+        B1200
+        B1800
+        B2400
+        B4800
+        B9600
+        B19200
+        B38400
+        B57600
+        B115200
+        B230400
+</B></PRE>
+
+零值 <B>B0</B> 用来中断连接。如果指定了 B0，不应当再假定存在连接。通常，这样将断开连接。<B>CBAUDEX</B> 是一个掩码，指示高于 POSIX.1 定义的速度的那一些 (57600 及以上)。因此，<B>B57600</B> &amp; <B>CBAUDEX</B> 为非零。
+<P>
+
+<B>cfgetispeed()</B>
+
+返回 <B>termios</B> 结构中存储的输入波特率。
+<P>
+
+<B>cfsetispeed()</B>
+
+设置 <B>termios</B> 结构中存储的输入波特率为
+<I>speed</I>。如果输入波特率被设为<I>0，实际输入波特率将等于输出波特率。</I>
+
+
+<H2>RETURN VALUE 返回值</H2>
+
+<P>
+
+<B>cfgetispeed()</B>
+
+返回 <B>termios</B> 结构中存储的输入波特率。
+<P>
+
+<B>cfgetospeed()</B>
+
+返回 <B>termios</B> 结构中存储的输出波特率。
+<P>
+
+其他函数返回：
+<DL COMPACT>
+<DT>0<DD>
+成功
+<DT>-1<DD>
+失败，并且为
+<I>errno</I>
+
+置值来指示错误。
+</DL>
+<P>
+
+注意
+<B>tcsetattr()</B>
+
+返回成功，如果任何所要求的修改可以实现的话。因此，当进行多重修改时，应当在这个函数之后再次调用
+<B>tcgetattr()</B>
+
+来检测是否所有修改都成功实现。
+<P>
+
+<H2>NOTES 注意</H2>
+
+Unix V7 以及很多后来的系统有一个波特率的列表，在十四个值 B0, ..., B9600 之后可以看到两个常数 EXTA, EXTB (&quot;External A&quot; and &quot;External B&quot;)。很多系统将这个列表扩展为更高的波特率。
+<P>
+
+<B>tcsendbreak</B> 中非零的 <I>duration</I> 有不同的效果。SunOS 指定中断
+<I>duration</I><B>*</B><I>N</I>
+
+秒，其中 <I>N</I> 至少为 0.25，不高于 0.5 。Linux, AIX, DU, Tru64 发送
+<I>duration</I>
+
+微秒的 break 。FreeBSD, NetBSD, HP-UX 以及 MacOS 忽略
+<I>duration</I>
+
+的值。在 Solaris 和 Unixware 中，
+<B>tcsendbreak</B>
+
+搭配非零的
+<I>duration</I>
+
+效果类似于
+<B>tcdrain</B>。
+
+
+
+
+
+
+<H2>SEE ALSO 参见</H2>
+
+<B>stty</A></B>(1),
+
+<B>setserial</A></B>(8)
+
+<P>
+
+<HR>
+<H2>Index</H2>
+<DL>
+<DT>NAME</A><DD>
+<DT>SYNOPSIS 总览</A><DD>
+<DT>DESCRIPTION 描述</A><DD>
+<DT>RETURN VALUE 返回值</A><DD>
+<DT>NOTES 注意</A><DD>
+<DT>SEE ALSO 参见</A><DD>
+</DL>
+<HR>
+This document was created by
+man2html</A>,
+using the manual pages.<BR>
+Time: 06:25:07 GMT, July 01, 2004
+</BODY>
+</HTML>

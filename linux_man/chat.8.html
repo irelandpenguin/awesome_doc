@@ -1,0 +1,643 @@
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=gb2312">
+<META name="man2html Chinese version">
+<TITLE>CHAT</TITLE>
+</HEAD>
+<BODY>
+<H1>CHAT</H1>
+Section: Maintenance Commands (8)<BR>Updated: 22 May 1999<BR>Index</A>
+
+<H2>NAME</H2>
+
+chat - 與數據機自動溝通的指令稿
+
+<H2>总览 SYNOPSIS</H2>
+
+<B>chat</B>
+
+[
+<I>options</I>
+
+]
+<I>script</I>
+
+
+<H2>描述 DESCRIPTION</H2>
+
+<P>
+
+<I>chat</I> 程式在電腦與數據機之間定義溝通交換事宜。 它最主要的
+目的是用來在點對點協定的隱形程式 (pppd) 以及遠端的 pppd  程序
+之間建立連線。
+
+<H2>选项 OPTIONS</H2>
+
+<DL COMPACT>
+<DT><B>-f </B><I>&lt;chat file&gt;</I>
+
+<DD>
+從 chat 檔案讀取 chat 指令稿。這個選項的使用與 chat 的
+令稿參數互斥(mutually exclusive)。使用者必須具有存取該
+檔案的讀取權。在檔案中允許多線(multiple lines)設定。應
+該要以空白或是橫向定位(horizontal tab)字元來分隔字串。
+<DT><B>-t </B><I>&lt;timeout&gt;</I>
+
+<DD>
+對於所要接收的期待字串(expected string)設定逾時限制。  如果在該時間限制內沒有接收到該字串的話那麼就不送出回覆  字串(reply string)。 可以送出一個變通(alternate)的回覆  或者如果沒有變通的回覆字串則該指令稿將會失敗。一個失敗  的指令稿將會使得 chat 程式以一個非零的錯誤碼結束。
+<DT><B>-r </B><I>&lt;report file&gt;</I>
+
+<DD>
+Set the file for output of the report strings. If you use the keyword
+<I>REPORT</I>, the resulting strings are written to this file. If this
+option is not used and you still use <I>REPORT</I> keywords, the
+<I>stderr</I> file is used for the report strings.
+<DT><B>-e</B>
+
+<DD>
+Start with the echo option turned on. Echoing may also be turned on
+or off at specific points in the chat script by using the <I>ECHO</I>
+keyword. When echoing is enabled, all output from the modem is echoed
+to <I>stderr</I>.
+<DT><B>-E</B>
+
+<DD>
+Enables environment variable substituion within chat scripts using the
+standard <I>$xxx</I> syntax.
+<DT><B>-v</B>
+
+<DD>
+要求 chat 指令稿以冗長(verbose)模式執行。 這個 chat 程  式接下來會將所有從數據機接收的文字以及輸出的字串記錄到  SYSLOG 去。The default is to log through the SYSLOG;
+the logging method may be altered with the -S and -s flags.
+<DT><B>-V</B>
+
+<DD>
+Request that the <I>chat</I> script be executed in a stderr verbose
+mode. The <I>chat</I> program will then log all text received from the
+modem and the output strings sent to the modem to the stderr device. This
+device is usually the local console at the station running the chat or
+pppd program.
+<DT><B>-s</B>
+
+<DD>
+Use stderr.  All log messages from '-v' and all error messages will be
+sent to stderr.
+<DT><B>-S</B>
+
+<DD>
+Do not use the SYSLOG.  By default, error messages are sent to the
+SYSLOG.  The use of -S will prevent both log messages from '-v' and
+error messages from being sent to the SYSLOG.
+<DT><B>-T </B><I>&lt;phone number&gt;</I>
+
+<DD>
+Pass in an arbitary string, usually a phone number, that will be
+substituted for the \T substitution metacharacter in a send string.
+<DT><B>-U </B><I>&lt;phone number 2&gt;</I>
+
+<DD>
+Pass in a second string, usually a phone number, that will be
+substituted for the \U substitution metacharacter in a send string.
+This is useful when dialing an ISDN terminal adapter that requires two 
+numbers.
+<DT><B>script</B>
+
+<DD>
+script 如果指令稿沒有以 -f 選項指定在檔案裡那麼該指令稿會如同  參數般被包含在 chat 程式裡。
+</DL>
+
+<H2>CHAT 脚本 SCRIPT</H2>
+
+<P>
+
+<I>chat</I> 脚本定義通訊過程
+<P>
+
+一個指令稿裡包含一個或多個〞期待對方送出(expect-send)〞的配對
+字串(pairs of string)，以空白隔開，還有一個選擇性的〞期待對方
+送出之候補(subexpect-subsend)〞配對字串，以短線(dash)隔開。像
+下面這個例子：
+<DL COMPACT>
+<DT><DD>
+ogin:-BREAK-ogin: ppp ssword: hello2u2
+</DL>
+<P>
+
+這一行指示 chat 程式應該期待 &quot;ogin:&quot; 這個字串。如果在所分配的
+時間區間內接收簽入提示失敗的話， 那它就送出一個中斷程序(break
+sequence)給遠端然後期待 &quot;ogin:&quot; 這個字串。 如果第一個 &quot;ogin:&quot;
+被接收到那麼中斷程序就不會產生。
+<P>
+
+一旦它接收到該簽入提示則 chat 程式將會送出 ppp 這個字串然後期
+待 &quot;ssword:&quot; 這個提示。當它接收到密碼提示以後，它將會送出密碼
+hello2u2 。
+<P>
+
+一般在回覆字串後面會跟著送出一個機架返回(carriage return)。在
+〞期待〞字串裡除非以   字元程序(character sequence)指定為必
+須否則不會期待它的出現。
+<P>
+
+期待程序(expect sequence)應該只包含辨認字串所需要的資料。因為
+它一般是儲放在磁碟檔案裡，它不應該包含變動的資訊。 通常以期待
+字串來尋找時間字串(time strings)， 網路辨識字串(network iden-
+tification strings)，或是其它變動的資料是不被接受的。
+<P>
+
+為求協助修正在初始化程序中(initial sequence) 可能會傳送錯誤的
+字元，所以尋找 &quot;ogin:&quot; 這個字串而不是 &quot;login:&quot; 。 開頭的  &quot;l&quot;
+字元可能接收錯誤而你永遠找不到該字串， 即使它已經被系統送出。
+因此緣故，指令稿尋找 &quot;ogin:&quot; 而不是 &quot;login:&quot; 以及 &quot;ssword&quot; 而
+不是 &quot;password:&quot; 。
+<P>
+
+一個非常簡單的指令稿看起來可能像這樣：
+<DL COMPACT>
+<DT><DD>
+ogin: ppp ssword: hello2u2
+</DL>
+<P>
+
+換句話說， 期待 ...ogin:,  送出 ppp,  期待 ...ssword:, 再送出
+hello2u2 。
+<P>
+
+在實際使用上，簡單的指令稿是罕見的。最少最少， 原先的字串沒有
+被接收時你應該要把候補期待(sub-sequences)包括進來。例如，考慮
+下面這個例子：
+<DL COMPACT>
+<DT><DD>
+ogin:--ogin: ppp ssword: hello2u2
+</DL>
+<P>
+
+這會是一個比前面所用的簡單指令稿更好的指令稿。 這個會尋找相同
+同的 login: 提示，然而, 如果沒有接收到的話， 會送出一個單獨的
+返回程序(return sequence)並且它會接著再次尋找 login: 。要是雜
+雜訊掩蓋掉第一個 login 提示那麼接著送出空線路(empty line)經常
+將會再次產生簽入提示。
+
+<H2>COMMENTS</H2>
+
+Comments can be embedded in the chat script. A comment is a line which
+starts with the <B>#</B> (hash) character in column 1. Such comment
+lines are just ignored by the chat program. If a '#' character is to
+be expected as the first character of the expect sequence, you should
+quote the expect string.
+If you want to wait for a prompt that starts with a # (hash)
+character, you would have to write something like this:
+<DL COMPACT>
+<DT><DD>
+# Now wait for the prompt and send logout string
+<BR>
+
+'# ' logout
+</DL>
+<P>
+
+<P>
+
+<H2>SENDING DATA FROM A FILE</H2>
+
+If the string to send starts with an at sign (@), the rest of the
+string is taken to be the name of a file to read to get the string to
+send.  If the last character of the data read is a newline, it is
+removed.  The file can be a named pipe (or fifo) instead of a regular
+file.  This provides a way for <B>chat</B> to communicate with another
+program, for example, a program to prompt the user and receive a
+password typed in.
+<P>
+
+<P>
+
+<H2>放弃字符串 ABORT STRINGS</H2>
+
+許多數據機會以字串來回報呼叫的狀況。 這些字串可能是 CONNECTED
+或是 NO CARRIER 或是 BUSY 。 通常要是數據機連線到遠端失敗的話
+應該會希望結束指令稿。 困難是指令稿不會確實地知道它可能接收到
+哪個數據機字串。在某次嘗試時， 他可能接收到 BUSY 然而下次它可
+能接收到 NO CARRIER 。
+<P>
+
+這些〞失敗〞字串可以用 ABORT 程序指定到指令稿中。像是下面這個
+例子般地寫到指令稿裡：
+<DL COMPACT>
+<DT><DD>
+ABORT BUSY ABORT 'NO CARRIER' '' ATZ OK ATDT5551212 CONNECT
+</DL>
+<P>
+
+這個程序將不會期待什麼；而且接著送出 ATZ 這個字串。對此期待的
+回應是 OK 這個字串。當它接收到 OK 時，字串 ADTD5551212 就進行
+撥號。期待字串是 CONNECT 。 如果字串 CONNECT 被接收到那麼就會
+執行指令稿其餘的部份。然而，要是數據機發現電話忙線， 他將會送
+出 BUSY 這個字串。 這會使得該字串符合失敗字元程序(abort char-
+acter)。 這個指令稿將會因為它發現一個失敗字串(abort string)而
+失敗(fail)。如果他接收到的是 NO CARRIER 字串， 它也會因為同樣
+的原因而失敗。不是可以接收到字串就是字串將終結 chat 指令稿。
+
+<H2>CLR_ABORT STRINGS</H2>
+
+This sequence allows for clearing previously set <B>ABORT</B> strings.
+<B>ABORT</B> strings are kept in an array of a pre-determined size (at
+compilation time); <B>CLR_ABORT</B> will reclaim the space for cleared
+entries so that new strings can use that space.
+
+<H2>SAY STRINGS</H2>
+
+The <B>SAY</B> directive allows the script to send strings to the user
+at the terminal via standard error.  If <B>chat</B> is being run by
+pppd, and pppd is running as a daemon (detached from its controlling
+terminal), standard error will normally be redirected to the file
+/etc/ppp/connect-errors.
+<P>
+
+<B>SAY</B> strings must be enclosed in single or double quotes. If
+carriage return and line feed are needed in the string to be output,
+you must explicitely add them to your string.
+<P>
+
+The SAY strings could be used to give progress messages in sections of
+the script where you want to have 'ECHO OFF' but still let the user
+know what is happening.  An example is:
+<DL COMPACT>
+<DT><DD>
+ABORT BUSY 
+<BR>
+
+ECHO OFF 
+<BR>
+
+SAY &quot;Dialling your ISP...\n&quot; 
+<BR>
+
+'' ATDT5551212 
+<BR>
+
+TIMEOUT 120
+<BR>
+
+SAY &quot;Waiting up to 2 minutes for connection ... &quot;
+<BR>
+
+CONNECT '' 
+<BR>
+
+SAY &quot;Connected, now logging in ...
+<BR>
+
+ogin: account
+<BR>
+
+ssword: pass
+<BR>
+
+$ SAY &quot;Logged in OK ...
+<I>etc ...</I>
+</DL>
+<P>
+
+This sequence will only present the SAY strings to the user and all
+the details of the script will remain hidden. For example, if the
+above script works, the user will see:
+<DL COMPACT>
+<DT><DD>
+Dialling your ISP...
+<BR>
+
+Waiting up to 2 minutes for connection ... Connected, now logging in ...
+<BR>
+
+Logged in OK ...
+</DL>
+<P>
+
+<P>
+
+<H2>REPORT STRINGS</H2>
+
+A <B>report</B> string is similar to the ABORT string. The difference
+is that the strings, and all characters to the next control character
+such as a carriage return, are written to the report file.
+<P>
+
+The report strings may be used to isolate the transmission rate of the
+modem's connect string and return the value to the chat user. The
+analysis of the report string logic occurs in conjunction with the
+other string processing such as looking for the expect string. The use
+of the same string for a report and abort sequence is probably not
+very useful, however, it is possible.
+<P>
+
+The report strings to no change the completion code of the program.
+<P>
+
+These &quot;report&quot; strings may be specified in the script using the <I>REPORT</I>
+sequence. It is written in the script as in the following example:
+<DL COMPACT>
+<DT><DD>
+REPORT CONNECT ABORT BUSY '' ATDT5551212 CONNECT '' ogin: account
+</DL>
+<P>
+
+This sequence will expect nothing; and then send the string
+ATDT5551212 to dial the telephone. The expected string is
+<I>CONNECT</I>. If the string <I>CONNECT</I> is received the remainder
+of the script is executed. In addition the program will write to the
+expect-file the string &quot;CONNECT&quot; plus any characters which follow it
+such as the connection rate.
+
+<H2>CLR_REPORT STRINGS</H2>
+
+This sequence allows for clearing previously set <B>REPORT</B> strings.
+<B>REPORT</B> strings are kept in an array of a pre-determined size (at
+compilation time); <B>CLR_REPORT</B> will reclaim the space for cleared
+entries so that new strings can use that space.
+
+<H2>ECHO</H2>
+
+The echo options controls whether the output from the modem is echoed
+to <I>stderr</I>. This option may be set with the <I>-e</I> option, but
+it can also be controlled by the <I>ECHO</I> keyword. The &quot;expect-send&quot;
+pair <I>ECHO</I> <I>ON</I> enables echoing, and <I>ECHO</I> <I>OFF</I>
+disables it. With this keyword you can select which parts of the
+conversation should be visible. For instance, with the following
+script:
+<DL COMPACT>
+<DT><DD>
+ABORT   'BUSY'
+<BR>
+
+ABORT   'NO CARRIER'
+<BR>
+
+
+<BR>
+
+OK\r\n  ATD1234567
+<BR>
+
+\r\n    \c
+<BR>
+
+ECHO    ON
+<BR>
+
+CONNECT \c
+<BR>
+
+ogin:   account
+</DL>
+<P>
+
+all output resulting from modem configuration and dialing is not visible,
+but starting with the <I>CONNECT</I> (or <I>BUSY</I>) message, everything
+will be echoed.
+
+<H2>HANGUP</H2>
+
+The HANGUP options control whether a modem hangup should be considered
+as an error or not.  This option is useful in scripts for dialling
+systems which will hang up and call your system back.  The HANGUP
+options can be <B>ON</B> or <B>OFF</B>.
+<BR>
+
+When HANGUP is set OFF and the modem hangs up (e.g., after the first
+stage of logging in to a callback system), <B>chat</B> will continue
+running the script (e.g., waiting for the incoming call and second
+stage login prompt). As soon as the incoming call is connected, you
+should use the <B>HANGUP ON</B> directive to reinstall normal hang up
+signal behavior.  Here is an (simple) example script:
+<DL COMPACT>
+<DT><DD>
+ABORT   'BUSY'
+<BR>
+
+
+<BR>
+
+OK\r\n  ATD1234567
+<BR>
+
+\r\n    \c
+<BR>
+
+CONNECT \c
+<BR>
+
+'Callback login:' call_back_ID
+<BR>
+
+HANGUP OFF
+<BR>
+
+ABORT &quot;Bad Login&quot;
+<BR>
+
+'Callback Password:' Call_back_password
+<BR>
+
+TIMEOUT 120
+<BR>
+
+CONNECT \c
+<BR>
+
+HANGUP ON
+<BR>
+
+ABORT &quot;NO CARRIER&quot;
+<BR>
+
+ogin:--BREAK--ogin: real_account
+<BR>
+
+<I>etc ...</I>
+</DL>
+<P>
+
+
+<H2>超时 TIMEOUT</H2>
+
+初始的逾時值是 45 秒。這可以用 -t 參數來加以改變。
+<P>
+
+要對下一個期待字串改變逾時值的話，可以使用下面這個例子：
+<DL COMPACT>
+<DT><DD>
+ATZ OK ATDT5551212 CONNECT TIMEOUT 10 ogin:--ogin: TIMEOUT 5 assword: hello2u2
+</DL>
+<P>
+
+這將會在期待 &quot;login:&quot; 提示的時候把逾時限制改成 10 秒。 逾時限
+制接著在它尋找密碼提示時被改成 5 秒。
+<P>
+
+逾時限制一旦改變就會持續作用直到它再度被改變。
+
+<H2>SENDING 发送 EOT</H2>
+
+EOT 這個特別的回覆字串指示 chat 程式應該送出一個 EOT 字元到遠
+端去。這是一般的檔案結束(End-of-file)字元程序。 在 EOT 後面並
+不會跟著送出一個返回字元(return)。
+
+這個 EOT 程序可以用 ^D 序列嵌入到送出的字串裡。
+
+<H2>產生中斷 GENERATING BREAK</H2>
+
+BREAK 這個特別的回覆字串將會使得一個中斷情況被送出。 這個中斷
+是傳送端的一個特殊。接收端一般對此的處理是改變傳輸率。 它可以
+用來循環測試遠端可能的傳輸率直到你能夠接到有效的簽入提示。
+
+<BR>&nbsp;這
+個中斷程序可以用 <I>\K</I>  序列嵌入到送出的字串裡。
+
+<H2>转义序列 ESCAPE SEQUENCES</H2>
+
+期待以及回覆字串可以包含转义序列。 所有這種程序在回覆字串中都
+是合法的。有許多在期待字串中是合法的。 那些在期待程序中無效的
+會被指出。
+<DL COMPACT>
+<DT><B>''</B>
+
+<DD>
+期待或送出一個空字串(null string) 。如果你送出一個空字  串那麼它還會送出一個返回字元。這個程序可以是一對省略符  號(apostrophe)或者也可以是引用字元。
+<DT><B>\\b</B>
+
+<DD>
+代表一個退位(backspace)字元。
+<DT><B>\\c</B>
+
+<DD>
+抑制在回覆字串結尾的新列(newline)字元。 這是送出沒有返  回字元尾隨的字串的唯一方法。它必須在送出字串的結尾。例  如，這個程序 hello 將會簡單地送出字元 h, e, l, l, o。  （在期待字串中無效。）<DT><B>\\d</B>
+
+<DD>
+延遲一秒鐘。該程式使用最長延遲為一秒的 sleep</A>(1) 。（在  期待字串中無效。）
+<DT><B>\\K</B>
+
+<DD>
+插入一個中斷（在期待字串中無效。）
+<DT><B>\\n</B>
+
+<DD>
+送出一個新列(newline)或換行(linefeed)字元。
+<DT><B>\\N</B>
+
+<DD>
+送出一個空字元(null character)。同樣的程序可以用 &nbsp; 代  替。（在期待字串中無效。）
+<DT><B>\\p</B>
+
+<DD>
+暫停一小段時間。延遲 1/10 秒。（在期待字串中無效。）
+<DT><B>\\q</B>
+
+<DD>
+抑制字串寫往 SYSLOG 檔案。該 ?????? 字串被記錄到自己的  空間。（在期待字串中無效。）
+<DT><B>\\r</B>
+
+<DD>
+傳送或期待一個機架返回（字元）
+<DT><B>\\s</B>
+
+<DD>
+代替字串中的空白。這個可以用在不願引用包含空白的字串之  時。'HI TIM' 以及 HITIM 是相同的。
+<DT><B>\\t</B>
+
+<DD>
+傳送或期待一個定位(tab)字元。
+<DT><B>\\T</B>
+
+<DD>
+Send the phone number string as specified with the <I>-T</I> option
+<I>(not valid in expect.)</I>
+
+<DT><B>\\U</B>
+
+<DD>
+Send the phone number 2 string as specified with the <I>-U</I> option
+<I>(not valid in expect.)</I>
+
+<DT><B>\\\\</B>
+
+<DD>
+傳送或期待一個倒斜線(backslash)字元。
+<DT><B>\\ddd</B>
+
+<DD>
+將八進位數字 (ddd) 折疊(collapse)成單一的 ASCII 字元並  將其送出。（某些字元在期待字串中無效。）
+<DT><B>^C</B>
+
+<DD>
+替換含有以 C 代表之控制字元的程序。例如，字元 DC1(17)  是以 ^Q 表示。（某些字元在期待字串中無效。）
+</DL>
+
+<H2>ENVIRONMENT VARIABLES</H2>
+
+Environment variables are available within chat scripts, if  the <I>-E</I>
+option was specified in the command line. The metacharacter <I>$</I> is used
+to introduce the name of the environment variable to substitute. If the
+substition fails, because the requested environment variable is not set,
+<I>nothing</I> is replaced for the variable.
+
+<H2>TERMINATION CODES</H2>
+
+The <I>chat</I> program will terminate with the following completion
+codes.
+<DL COMPACT>
+<DT><B>0</B>
+
+<DD>
+The normal termination of the program. This indicates that the script
+was executed without error to the normal conclusion.
+<DT><B>1</B>
+
+<DD>
+One or more of the parameters are invalid or an expect string was too
+large for the internal buffers. This indicates that the program as not
+properly executed.
+<DT><B>2</B>
+
+<DD>
+An error occurred during the execution of the program. This may be due
+to a read or write operation failing for some reason or chat receiving
+a signal such as SIGINT.
+<DT><B>3</B>
+
+<DD>
+A timeout event occurred when there was an <I>expect</I> string without
+having a &quot;-subsend&quot; string. This may mean that you did not program the
+script correctly for the condition or that some unexpected event has
+occurred and the expected string could not be found.
+<DT><B>4</B>
+
+<DD>
+The first string marked as an <I>ABORT</I> condition occurred.
+<DT><B>5</B>
+
+<DD>
+The second string marked as an <I>ABORT</I> condition occurred.
+<DT><B>6</B>
+
+<DD>
+The third string marked as an <I>ABORT</I> condition occurred.
+<DT><B>7</B>
+
+<DD>
+The fourth string marked as an <I>ABORT</I> condition occurred.
+<DT><B>...</B>
+
+<DD>
+The other termination codes are also strings marked as an <I>ABORT</I>
+condition.
+</DL>
+<P>
+
+Using the termination code, it is possible to determine which event
+terminated the script. It is possible to decide if the string &quot;BUSY&quot;
+was received from the modem as opposed to &quot;NO DIAL TONE&quot;. While the
+first event may be retried, the second will probably have little
+chance of succeeding during a retry.
+
+</BODY>
+</HTML>
