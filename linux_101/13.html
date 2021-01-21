@@ -1,0 +1,97 @@
+<HEAD><TITLE>鸟哥的 Linux 私房菜 -- 一个 SPFDISK 的范例</TITLE>
+<META http-equiv=Content-Type content="text/html; charset=gb2312">
+<META content=VBird name=Author>
+<META content="Mozilla/4.5 [zh-TW] (WinNT; I) [Netscape]" name=GENERATOR><!-- saved from url=(0022)http://internet.e-mail -->
+<STYLE>
+   <!--
+   body{background-image=url("13_files/VBirdLinux[1].jpg");background-ATTACHMENT=FIXED}
+   -->
+</STYLE>
+</head>
+<BODY style="CURSOR: auto" background="13_files/VBirdLinux[2].jpg" nosave="">
+<CENTER>
+<CENTER><B><FONT color=#3333ff size=+2><FONT face=SimSun>鸟哥的</FONT><FONT face="Times New Roman,Times"> Linux </FONT><FONT face=SimSun>与</FONT><FONT face="Times New Roman,Times"> ADSL </FONT><FONT face=SimSun>私房菜</FONT></FONT></B> <BR><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR>
+<HR width="100%">
+</CENTER><U><FONT color=#3333ff size=+2><A href="http://linux.vbird.org/linux_basic/0140spfdisk.php" target=_self><FONT face=SimSun>以</FONT><FONT face="Times New Roman,Times"> spfdisk </FONT><FONT face=SimSun>分割硬盘的一个范例</FONT></A></FONT></U></CENTER>
+<DIV align=right><FONT face=SimSun color=#3333ff size=-1>最近更新日期：2003/02/03</FONT></DIV><FONT size=+1><A href="#fdisk">什么是硬盘分割</A>？</FONT> <BR><FONT size=+1><A href="#spfdisk">SPFdisk</A></FONT> <BR><FONT size=+1>　　<A href="#1">删除原有分割</A></FONT> <BR><FONT size=+1>　　<A href="#2">建立主要分割扇区</A></FONT> <BR><FONT size=+1>　　<A href="#3">储存分割表</A></FONT> <BR><FONT size=+1>　　<A href="#4">格式化硬盘</A></FONT> <BR>
+<HR width="100%">
+<A name=fdisk></A><FONT color=#000099 size=+1>什么是硬盘分割</FONT>？ 
+<BLOCKQUOTE>在开始进行 Linux 之前，应该有很多的工作要做的！最重要的就如同前面『<A href="http://linux.vbird.org/linux_basic/0130designlinux.php">Linux 主机规划</A>』当中说的，要如何规划硬盘呢？！到底要如何分割硬盘才好！是要将 swap （虚拟内存）规划的大一点比较好？或者是只要一个根目录就可以了呢？另外，如果我的硬盘上面已经有 Windows 系统，我又不想要将 Windows 杀掉，想使用多重开机来安装我的多个操作系统，那要怎么做呢？！况且，由于 DOS 的 fdisk 不认识 Linux 的档案格式，那么我要如何将 Linux 完全的从我的硬盘中移除呢？！呵呵！这里就来说一下该如何是好吧！</BLOCKQUOTE>
+<BLOCKQUOTE>由于不同的操作系统所使用的档案架构并不相同，有些甚至是不兼容的，例如 Windows 所使用的是 FAT 表，而 Linux 所使用的是 ext2 这个档案格式，这两种格式完全不相同，在 Linux 底下还可以藉由编辑核心来支持 Windows 的 FAT 档案格式，但是 Windows 则完全无法读取 Linux 的档案格式了！此外， Windows 使用的磁盘分割工具 fdisk ，很抱歉的，并不认识 Linux 的 ext2 这个档案格式，所以如果您有一棵已经安装有 Linux 系统的硬盘，呵呵，使用 Windows 的 fdisk 是完全无法分割这块硬盘的！</BLOCKQUOTE>
+<BLOCKQUOTE>那么到底什么是硬盘分割呢？真的要将硬盘用刀子割一割吗？！不是这样的，实际上，硬盘是以 blocks, clusters, partitions 这些东西来作为储存的单位，而最底层的硬盘单位就是 blocks 了，通常一个 blocks 大约是 512 bytes 左右。那么 partition 是什么？简单的来说，你知道你的 Windows 有所谓的 C:, D: 是吧！其实他们是同一颗硬盘，只是利用<FONT color=#3333ff>『磁盘分割表』(partition table)</FONT>来将实体的硬盘规划出不同的区块。举个例子说，假设你的硬盘总共有 1024 个 clusters （利用 blocks 结合而成的硬盘计算单位），那么你在这块硬盘的文件头地方（就是磁盘分割表，可以想成要读取一块硬盘时最先读取的地方）如果写入你的 partitions 共有两块，一块是 primary 一块是 extended ，而且 extended 也只规划成一个 logical ，那么你的硬盘就是只有两个槽啦（对于系统来说，真正能使用的有 Primary 与 Logical 的扇区， Extended 并无法直接使用的！需要再加以规划成为 Logical 才行！ ) ，而且在 partition table 也会记录 primary 是由『第 n1 个 cluster 到第 n2 个 cluster 』，所以啰，这样子一来，当系统要去读取 primary （就是 c 槽）的时后，就只会在！n1~n2 之间的实体硬盘当中活动啰！</BLOCKQUOTE>
+<BLOCKQUOTE>基本上， Windows 98 系统中的 Fdisk 这支程序仅支持一个 primary 与一个 extended ，其中， extended 可以再细分成多个 logical 的硬盘槽。NT 很抱歉，小弟不熟，所以就不提了！<B><FONT color=#3333ff>那么 Linux 呢？嗯！基本上最多可以有 4 个 primary 的硬盘，而可以支持到 3 个 primary 与一个 extended ，其中， extended 若再细分成 logical 的话，则全部 primary + extended + logical 应该可以支持到 64 个之多。</FONT></B><FONT color=#000000>底下我们将以 spfdisk 这个全中文接口的 fdisk 磁盘分割工具来介绍如何分割硬盘！</FONT></BLOCKQUOTE>
+<HR width="100%">
+<A name=spfdisk></A><FONT color=#000099 size=+1>硬盘分割<FONT face=SimSun> ==&gt; </FONT><FONT face="Times New Roman Baltic">SPFdisk</FONT></FONT> 
+<BLOCKQUOTE>SPFdisk 是一套由国人开发完成的全中文接口的硬盘分割工具，他要比微软出的 Fdisk 功能强多了，他的好处除了==&gt;<FONT color=#000099>全中文接口让你一定可以看的懂之外，简单的类图形接口可以让你轻易的进行硬盘分割，除此之外，这套软件的『DOS工具』内的『格式化工具』格式化硬盘的速度真是 DOS 比不上的，我格式化一个 30GB 的硬盘不用十秒就可以格式化完全！</FONT>&lt;==另外，其它的优点我在此也不多说了，若有需要你可以自行自一些搜寻网站下载最新的程序，或从<A href="http://linux.vbird.org/download/index.php#spfdisk">这里</A>下载我有的程序，不过可能旧一点。</BLOCKQUOTE>
+<BLOCKQUOTE>另外，由于 DOS 的 Fdisk 并不认识 Linux 的分割表，所以用 DOS 的 Fdisk 是无法将 Linux 的分割表去除的。因此，你要删除 Linux 的分割表，只有两个比较快的方法，一个是以 Linux 直接再分割，一个则是使用 SPfdisk 分割啦！</BLOCKQUOTE>
+<BLOCKQUOTE>由于这个页面的档案很大，有时候会有没办法显示的情况发生，这时请在画面上『按鼠标右键』，再选择『显示图片』这个选项，即可显示画面啦！</BLOCKQUOTE>
+<BLOCKQUOTE>硬盘分割主要可分为下面几个步骤： 
+<OL>
+<LI><A href="#1">将旧有的分割表删除</A>； 
+<LI><A href="#2">建立新的主分割及扩充分割（若有需要的话）</A>； 
+<LI><A href="#3">贮存分割表</A>； 
+<LI><A href="#4">以 DOS 工具格式化以分割的硬盘</A>。 </LI></OL>
+<HR width="100%">
+<BR><A name=1></A><FONT color=#000099 size=+1>1. 删除原有分割<FONT face=SimSun>：</FONT></FONT> 
+<BLOCKQUOTE>假设你的主机中没有任何系统存在，则请以 Windows98 制作开机片后，将 spfdisk 拷贝至开机片。以此磁盘开机之后，执行： <BR>&nbsp; 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face="Times New Roman Baltic" color=#ffffff size=+1>A:&gt;spfdisk</FONT></TD></TR></TBODY></TABLE>
+<P><FONT face=SimSun>会出现如下欢迎画面。</FONT></P></BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-1[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE><FONT face=SimSun>按任意键后出现下面画面：</FONT></BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-2[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>以方向键移动光标至『<FONT color=#000099>硬盘分割工具</FONT>』按 Enter 键后会出现画面如下：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-3[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>这是向你询问是否需要使用 FAT32 的档案系统，由于 Windows 98 支持的长文件名及相关的档案型态是以 <FONT color=#000099>FAT32</FONT> 为准，所以当然按『<FONT color=#000099>Y</FONT>』！按了 Y 之后会出现硬盘的信息，如下所示：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-4[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>因为我是在我原有的机器上执行这个程序，所以会有两颗硬盘，如果你的系统只有一颗硬盘的话，则只会显示你有的硬盘数据，在上图中，1.19GB 的硬盘其总磁柱仅有 621 单位，比可开机扇区范围（0 ~ 1023）小得多，所以可以随意分割。将光标以方向键移动至 1.19GB 这颗硬盘后，按 Enter ：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-5[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>因为这颗硬盘之前被我灌过 Linux ，所以会显示 Linux 的扇区划分情况。上面的意义为： 
+<UL>
+<LI>启动：由于系统开机时会去先去找分割表，由分割表所设定的『可开机扇区』进行开机程序，因此若这个扇区为开机扇区，则『启动』项目会有一个心型的符号存在！ 
+<LI>起始磁柱与结束磁柱：这一个被分割的扇区的开始与结束扇区。 
+<LI>MBytes：这个扇区的硬盘容量。 
+<LI>系统 ID 与系统种类：这一个分割表的类型。因为这是 Linux 的分割类型，所以其 ID 显示为 83，若是 FAT32 的话，则为 0b。 </LI></UL>将光标以方向键移动至这个扇区后，按 Enter ：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-6[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>在这个画面中，将光标以方向键移动至『删除分割』这个项目，并按下 Enter ：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-7[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>出现此画面后，确定要删除这个分割就按『<FONT color=#000099>[Y]是</FONT>』这个项目。</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-8[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE><FONT face=SimSun>删除分割之后你的硬盘中就没有分割表的存在了，所以这个硬盘的系统种类则变成了<FONT color=#000099>&lt;未规划&gt;</FONT>。</FONT></BLOCKQUOTE><A name=2></A><FONT color=#000099 size=+1>2. 建立主要分割扇区<FONT face=SimSun>：</FONT></FONT> 
+<BLOCKQUOTE>在上面的画面中，按下 Enter 键，会出现下面画面。</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-9[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>由于这一颗硬盘的分割表被删除了，所以『系统ID』与『删除分割』被取消了。这时按下『建立分割』会出现如下画面：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-10[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>然后选择『<FONT color=#000099>建立主分割</FONT>』，那何谓主分割与扩充分割呢？所谓的主分割在 windows 系统下即是 『<FONT color=#000099>C槽</FONT>』 啦！但是扩充分割并非『<FONT color=#000099>逻辑分割</FONT>』，这里要注意一下，所谓的『逻辑分割』是包含在扩充分割中的，例如当你的扩充分割共有 10GB 但是你想将之分为两槽，则可以使用逻辑分割将扩充分割分为两槽，这两槽即称为『逻辑分割』。所以这里要注意啦，建立扩充分割的时候就要选择『配置整个区域』啦！好！下一步按下『建立主分割』：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-11[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>这里会问你是否要将整个硬盘分割为仅有一个磁盘区？由于我们要将硬盘分为两槽，所以这里当然选择『<FONT color=#000099>[N]否</FONT>』啦！</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-12[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>由于你选择了『不要配置整个区域为一块扇区』，所以这时程序要你输入你所需要的扇区。通常在第一步是输入『<FONT color=#000099>启始磁柱</FONT>』，这时只要按 Enter 就可以啦，然后会要你输入『<FONT color=#000099>结束磁柱</FONT>』，结束磁柱的输入方法有两种模式，一种是输入磁柱区，一种是输入你所需要的 MB 数，通常我是输入 MB 数啦，例如如上所示，我所需要的空间大小是 600MB ，所以输入『+600』即可，而如果你的硬盘很大，你要输入 4GB 时，则需要输入 『+4000』，以此类推！输入『+600』并按 Enter 之后出现如下画面。</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-13[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>这时出现了你刚刚划分的硬盘信息啦，由于我们是划分为 DOS 分割区，所以系统种类是 FAT-32 ，而 ID 则为 0b 。至于另外尚未划分的就会显示为 <FONT color=#000099>&lt;未规划&gt;</FONT> 啦！如果你还需要再继续划分的话，这时将光标移动至 <FONT color=#000099>&lt;未规划&gt;</FONT> 的那一个扇区按 Enter 后选择『扩充分割』即可继续划分。如果划分完毕之后，当然就是贮存分割表啰。这里注意一下，因为刚刚的动作均尚未完成贮存的工作，所以要反悔还来得及！</BLOCKQUOTE><A name=3></A><FONT color=#000099 size=+1>3. 贮存分割表<FONT face=SimSun>：</FONT></FONT> 
+<BLOCKQUOTE>接下来要做贮存的动作了，按下『<FONT color=#000099>Esc</FONT>』键（键盘左上角那个键）后会出现如下画面：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-14[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE><FONT face=SimSun>按『<FONT color=#000099>[Y]是</FONT>』，将刚分割好的分割表贮存至硬盘中！然后出现如下画面：</FONT></BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-15[1].jpg" width=640 nosave=""> 
+<P><IMG height=480 src="13_files/spfdisk-16[1].jpg" width=640 nosave=""> </P>
+<P><IMG height=480 src="13_files/spfdisk-17[1].jpg" width=640 nosave=""> </P>
+<P><IMG height=480 src="13_files/spfdisk-18[1].jpg" width=640 nosave=""> </P>
+<P><IMG height=480 src="13_files/spfdisk-19[1].jpg" width=640 nosave=""></P></CENTER>
+<BLOCKQUOTE>这里的动作是连续的： 
+<OL>
+<LI>程序会先跟你确认你的硬盘有没有错误，这里还可以反悔。 
+<LI>然后程序会问你是否需要使用破坏贮存，一般来说是需要使用『破坏贮存』的，因为需要将你的硬盘划分完全啦！所以要按 [Y]； 
+<LI>为了可以让你以后回复分割情况，所以你可以选择 『建立 UNDO』档，所谓的 UNDO 文件即是记录你之前硬盘分割表信息的档案啦。 </LI></OL>这样一来你的硬盘就划分完毕而且贮存啦！这时要做的就是重新开机并格式化硬盘。格式化硬盘可以使用 DOS 的 Format ，当然也可以使用 spfdisk 的内建功能喔！</BLOCKQUOTE><A name=4></A><FONT color=#000099 size=+1>4. 格式化硬盘</FONT> 
+<BLOCKQUOTE>再进入刚刚你划分完毕的那个硬盘区，按下 Enter 之后会出现一串选单，然后最下方的选单为『<FONT color=#000099>DOS 工具』</FONT>，选择这一项并按 Enter 后，会出现另一个选单：</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-13[1].jpg" width=640 nosave=""></CENTER>
+<BLOCKQUOTE>在这个次选单中的第二项即是快速格式化，这个格式化的动作非常的快喔！比 DOS 的格式化快多了！不过，这里也必须指出一个问题，那就是若你的硬盘有坏轨的话，那最好还是使用 DOS 的 format 比较完整一点。</BLOCKQUOTE>
+<CENTER><IMG height=480 src="13_files/spfdisk-20[1].jpg" width=640 nosave=""></CENTER></BLOCKQUOTE>
+<HR width="100%">
+<FONT face=SimSun color=#000066 size=-1>2002/04/09：第一次完成吧？</FONT> <BR><FONT face=SimSun color=#000066 size=-1>2003/02/03：重新编排</FONT> <BR>
+<HR width="100%">
+<FONT face=SimSun color=#3333ff size=-1>2002/ 01/01以来统计人数</FONT> <BR><IMG height=15 src="13_files/Count[1].gif" width=60 align=middle nosave=""> <BR>
+<HR width="100%">
+
+<CENTER><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR><FONT color=#000066 size=-1>Designed by <A href="mailto:vbird@tsai.adsldns.org">VBird</A> during 2001-2004.&nbsp; Aerosol Lab.</FONT></CENTER></BODY>

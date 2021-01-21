@@ -1,0 +1,293 @@
+<HEAD><TITLE>鸟哥的 Linux 私房菜 -- NTP server</TITLE>
+<META http-equiv=Content-Type content="text/html; charset=gb2312">
+<META content=VBird name=Author>
+<META content="Mozilla/4.5 [zh-TW] (WinNT; I) [Netscape]" name=GENERATOR>
+<META content="Network Time Protocol 就是 NTP 的全名。NTP 主機主要在提供網路上可以進行網路校時的主機功能！" name=Description><!-- saved from url=(0022)http://internet.e-mail -->
+<STYLE>
+   <!--
+   body{background-image=url("72_files/VBirdLinux[1].jpg");background-ATTACHMENT=FIXED}
+   -->
+</STYLE>
+</head>
+<BODY background="72_files/VBirdLinux[15].jpg" nosave="">
+<CENTER>
+<CENTER><B><FONT color=#3333ff size=+2><FONT face=SimSun>鸟哥的</FONT><FONT face="Times New Roman,Times"> Linux </FONT><FONT face=SimSun>与</FONT><FONT face="Times New Roman,Times"> ADSL </FONT><FONT face=SimSun>私房菜</FONT></FONT></B> <BR><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR>
+<HR width="100%">
+</CENTER><FONT color=#3333ff size=+2><A href="http://linux.vbird.org/linux_server/0440ntp.php" target=_self><FONT face=SimSun>简易</FONT><FONT face="Times New Roman,Times"> NTP </FONT><FONT face=SimSun>服务器设定</FONT></A></FONT></CENTER>
+<DIV align=right><FONT face=SimSun color=#3333ff size=-1>最近更新日期：2003/08/21</FONT></DIV><FONT color=#000099 size=-2>　</FONT> 
+<TABLE cols=1 width="100%" bgColor=#ffcccc border=1>
+<TBODY>
+<TR>
+<TD><FONT color=#000099 size=-1>很多时候由于计算机硬件的问题，所以我们都会调整一下时间，好让电脑系统的时间可以一直保持正确的状态。而既然要调整时间，那么自然就会有一个让我们可以对照着来调整时间的『准确时间』咯！在实际生活中，我们可以透过电视台、广播电台、电话等等来调整我们的手表，那么如果是在网络上呢？该如何让我们的主机随时保持正确的时间信息？！另外，整个地球被切分成为 24 个时区，那么什么是GMT(格林威治时间)，我们所在的时区又是哪一区呢？！让我们来简单的谈一谈吧！</FONT></TD></TR></TBODY></TABLE><FONT color=#000099 size=-2>　</FONT> <BR><FONT color=#000099 size=+1><A href="#theory">原理</A>：</FONT> <BR><FONT color=#000099>　　：<A href="#theory_timezone">什么是时区？全球有多少时区？GMT 在那个时区？</A></FONT> <BR><FONT color=#000099>　　：<A href="#theory_summer">什么是夏季节约时间( daylight savings )？</A></FONT> <BR><FONT color=#000099>　　：<A href="#theory_UTC">Coordinated Universal Time (UTC)与系统时间的误差</A></FONT> <BR><FONT color=#000099>　　：<A href="#theory_NTP">NTP 是什么？</A></FONT> <BR><FONT color=#000099 size=+1><A href="#package">套件安装</A>：</FONT> <BR><FONT color=#000099>　　：<A href="#package_rpm">使用 RPM 安装</A></FONT> <BR><FONT color=#000099>　　：<A href="#package_tarball">使用 Tarball 安装</A></FONT> <BR><FONT color=#000099 size=+1><A href="#server">Server 端的设定</A>：</FONT> <BR><FONT color=#000099>　　：<A href="#server_packages">NTP 的套件结构</A></FONT> <BR><FONT color=#000099>　　：<A href="#server_partition">主机的规划技巧建议</A></FONT> <BR><FONT color=#000099>　　：<A href="#server_ntp.conf">编辑主要设定档 /etc/ntp.conf</A></FONT> <BR><FONT color=#000099>　　：<A href="#server_startandlook">NTP 的启动与观察</A></FONT> <BR><FONT color=#000099><FONT size=+1><A href="#client">Client 端的设定</A></FONT>：</FONT> <BR><FONT color=#000099>　　：<A href="#client_Linux_zone">如何调整 Linux 系统的时区与手动设定时间</A></FONT> <BR><FONT color=#000099>　　：<A href="#client_Linux">如何在 Linux 系统自动网络校时？</A></FONT> <BR><FONT color=#000099>　　：<A href="#client_win">如何在 Windows 系统上面进行网络校时？</A></FONT> <BR><FONT color=#000099 size=+1><A href="#security">安全相关方面</A>：</FONT> <BR><FONT color=#000099 size=+1><A href="#lpi">本章与 LPI 的关系</A></FONT> <BR><FONT color=#000099 size=+1><A href="#reference">参考资源</A>：</FONT> <BR><FONT color=#000099 size=+1><A href="#FAQ">本章习题练习</A></FONT> <BR>
+<HR width="100%">
+<A name=theory></A><FONT color=#000099 size=+1>原理</FONT> 
+<UL>『时间』对于现在人来说，是很重要的！因为时间就是金钱啊！在 Internet 上面，时间同样也是挺重要的！有些计算机需要时间同步才能够正常的运作哩！所以说，时间真的是挺重要的！在开始 NTP 服务器的介绍之前，我们先来简单的谈一谈关于『时区』的概念吧！ <BR>　 <BR>
+<HR width="100%">
+<A name=theory_timezone></A><FONT color=#000099>什么是时区？全球有多少时区</FONT> <BR>　 <BR>因为地球是圆的，所以同一个时刻，在地球的一边是白天，一边是黑夜。而因为人类使用一天 24 小时的制度，所以，在地球对角的两边就应该差了 12 的小时才对。由于同一个时间点上面，整个地球的时间应该都不一样，为了解决这个问题，所以可以想见的，地球就被分成 24 个时区了！ <BR>　 <BR>那么这 24 个时区是依据什么来划分的呢？由于地球被人类以『经纬度』坐标来进行定位，而经度为零的地点在英国『<FONT color=#000066>格林威治</FONT>』这个城市所在纵剖面上，(注：所谓的纵剖面就是由南极切到北极的直线，而横切面就是与赤道平行的切线)，如下图所示： <BR>　 
+<CENTER><IMG height=249 src="72_files/time[1].gif" width=240 nosave=""></CENTER>　 <BR>因为绕地球一圈是 360 度角，这 360 度角共分为 24 个时区，当然一个时区就是 15 度角啦！又由于是以<B><FONT color=#000066>格林威治时间为标准时间(<I>Greenwich Mean Time, GMT 时间</I>)</FONT>，</B>加上地球自转的关系，因此，在格林威治以东的区域时间是比较快的(+小时)，而以西的地方当然就是较慢啰！以台湾为例，因为台湾所在地为 120 这个东经度，又因为台湾在格林威治的东方 ( 废话！因为是东经嘛！ ^_^)，因此，台湾本地时间 (local time) 会比 GMT 时间快 8 小时 (GMT + 8)。当格林威治时间为零点，台湾就已经是早上八点了！底下列出各个时区的名称与所在经度，以及与 GMT 时间的时差： <BR>　 
+<TABLE cols=3 width=500 border=1>
+<TBODY>
+<TR bgColor=#ffcccc>
+<TD width=300>
+<CENTER><FONT face=SimSun color=#000066>标准时区</FONT></CENTER></TD>
+<TD width=100>
+<CENTER><FONT face=SimSun color=#000066>经度</FONT></CENTER></TD>
+<TD width=100>
+<CENTER><FONT face=SimSun color=#000066>时差</FONT></CENTER></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>GMT , Greenwich Mean Time</FONT></TD>
+<TD><FONT face=SimSun color=#000066>0&nbsp;&nbsp; W/E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>标准时间</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>CET , Central European</FONT></TD>
+<TD><FONT face=SimSun color=#000066>15&nbsp; E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+1&nbsp; 东一区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>EET , Eastern European</FONT></TD>
+<TD><FONT face=SimSun color=#000066>30&nbsp; E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+2&nbsp; 东二区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>BT&nbsp; , Baghdad</FONT></TD>
+<TD><FONT face=SimSun color=#000066>45&nbsp; E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+3&nbsp; 东三区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>USSR, Zone 3&nbsp;</FONT></TD>
+<TD><FONT face=SimSun color=#000066>60&nbsp; E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+4&nbsp; 东四区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>USSR, Zone 4</FONT></TD>
+<TD><FONT face=SimSun color=#000066>75&nbsp; E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+5&nbsp; 东五区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>Indian, First</FONT></TD>
+<TD><FONT face=SimSun color=#000066>82.3E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+5.5东五半区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>USSR, Zone 5</FONT></TD>
+<TD><FONT face=SimSun color=#000066>90&nbsp; E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+6&nbsp; 东六区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>SST , South Sumatra</FONT></TD>
+<TD><FONT face=SimSun color=#000066>105 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+7&nbsp; 东七区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>JT&nbsp; , Java</FONT></TD>
+<TD><FONT face=SimSun color=#000066>112 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+7.5东七半区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>CCT , China Coast <B>(台湾所在地)</B></FONT></TD>
+<TD><FONT face=SimSun color=#000066>120 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+8&nbsp; 东八区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>JST , Japan</FONT></TD>
+<TD><FONT face=SimSun color=#000066>135 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+9&nbsp; 东九区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>SAST, South Australia</FONT></TD>
+<TD><FONT face=SimSun color=#000066>142 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+9.5东九半区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>GST , Guam</FONT></TD>
+<TD><FONT face=SimSun color=#000066>150 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+10 东十区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>NZT , New Zealand</FONT></TD>
+<TD><FONT face=SimSun color=#000066>180 E</FONT></TD>
+<TD><FONT face=SimSun color=#000066>+12 东十二区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>Int'l Date Line</FONT></TD>
+<TD><FONT face=SimSun color=#000066>180 E/W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>国际日期变更线</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>BST , Bering</FONT></TD>
+<TD><FONT face=SimSun color=#000066>165 W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-11 西十一区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>SHST, Alaska/Hawaiian</FONT></TD>
+<TD><FONT face=SimSun color=#000066>150 W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-10 西十区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>YST , Yukon</FONT></TD>
+<TD><FONT face=SimSun color=#000066>135 W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-9&nbsp; 西九区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>PST , Pacific</FONT></TD>
+<TD><FONT face=SimSun color=#000066>120 W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-8&nbsp; 西八区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>MST , Mountain</FONT></TD>
+<TD><FONT face=SimSun color=#000066>105 W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-7&nbsp; 西七区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>CST , Central</FONT></TD>
+<TD><FONT face=SimSun color=#000066>90&nbsp; W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-6&nbsp; 西六区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>EST , Eastern</FONT></TD>
+<TD><FONT face=SimSun color=#000066>75&nbsp; W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-5&nbsp; 西五区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>AST , Atlantic</FONT></TD>
+<TD><FONT face=SimSun color=#000066>60&nbsp; W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-4&nbsp; 西四区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>Brazil, Zone 2</FONT></TD>
+<TD><FONT face=SimSun color=#000066>45&nbsp; W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-3&nbsp; 西三区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>AT&nbsp; , Azores</FONT></TD>
+<TD><FONT face=SimSun color=#000066>30&nbsp; W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-2&nbsp; 西二区</FONT></TD></TR>
+<TR>
+<TD><FONT face=SimSun color=#000066>WAT , West Africa</FONT></TD>
+<TD><FONT face=SimSun color=#000066>15&nbsp; W</FONT></TD>
+<TD><FONT face=SimSun color=#000066>-1&nbsp; 西一区</FONT></TD></TR></TBODY></TABLE>　 <BR>所以啰！台湾时间是 GMT + 8 就很容易推算出来了吧！要特别留意的是，很多朋友在安装 Linux 的时候，总是会发现目前的时间慢或者快了 8 小时，不要怀疑，绝对与时区有关！赶紧给他查一下如何调整时区吧！ ^_^。另外，在上表中有个比较有趣的时区，那就是在太平洋上面的国际日期变更线了！我们刚刚说，在格林威治的东边时间会较快，而在西边时间会较慢，但是两边各走了 180 度之后，就会碰头啊！那不就刚好差了 24 小时吗？！没错啦！所以才订定为『<B><FONT color=#000066>国际日期变更线</FONT></B>』啊！国际日期变更线刚好在太平洋上面，因此，如果您有坐飞机到美国的经验，应该会发现，咦！怎么出发的时间是星期六下午，坐了 13 个小时的飞机到了美国还是星期六？！因为刚好通过了国际日期变更线，日期减少了一天喔！如果反过来，由美国到台湾，日期就会多加一天喔！ ^_^ <BR>　 <BR>
+<HR width="100%">
+<A name=theory_summer></A><FONT color=#000099>什么是夏季节约时间(daylight savings)？</FONT> <BR>　 <BR>除了时区的概念先建立起来之后，现在再来谈一谈，那么什么是『<FONT color=#000066>夏季节约时间</FONT>』？既然是『夏季节约时间』当然主要是与夏天有关啦！因为地球在运行的时候是呈现一个倾斜角在绕太阳运转的，所以才有春夏秋冬(这个大家应该都知道啦！)，在夏天的时候，白天的时间会比较长，所以，为了节约用电，因此在夏天的时候，某些地区会将他们的时间定早一小时，也就是说，原本时区是 8 点好了，但是因为夏天太阳比较早出现，因此把时间向前挪，在 8 点的时候，订定为该天的 7 点～如此一来，我们就可以利用阳光照明，省去了花费电力的时间，因此才会称之为夏季节约时间！ <BR>　 <BR>因为台湾实在是太小了，并没有横跨两个时区，因此，夏季节约时间对我们来说，虽然还是有帮助啦！不过，似乎没有特别推行的样子说～ <BR>　 <BR>
+<HR width="100%">
+<A name=theory_UTC></A><FONT color=#000099>Coordinated Universal Time (UTC) 与系统时间的误差</FONT> <BR>　 <BR>了解了一些时区的概念之后，这里要谈的是『<FONT color=#000066>什么是正确的时间</FONT>！』。在计算时间的时候，最准确的计算应该是使用『<FONT color=#000066>原子震荡周期</FONT>』所计算的物理时钟了( Atomic Clock, 也被称为原子钟 )，这也被定义为标准时间(International Atomic Time)。而我们常常看见的 UTC 也就是 <FONT color=#000066>Coordinated Universal Time</FONT> (协和标准时间)就是利用这种 Atomic Clock 为基准所定义出来的<FONT color=#000066>正确时间</FONT>。例如 1999 年在美国启用的原子钟 NIST F-1，他所产生的时间误差每两千年才差一秒钟！真的是很准吶！这个 UTC 标准时间是以 GMT 这个时区为主的喔！所以本地时间与 UTC 时间的时差就是本地时间与 GMT 时间的时差就是了！ <BR>　 <BR>事实上，在我们的身边就有很多的原子钟！例如石英表，还有计算机主机上面的 BIOS 内部就含有一个原子钟在纪录与计算时间的进行吶！不过，由于原子钟主要是利用计算芯片 (crystal) 的原子震荡周期去计时的，这是因为每种芯片都有自己的独特的震荡周期之故。然而因为这种芯片的震荡周期在不同的芯片之间多多少少都会有点差异性，甚至同一批芯片也可能会或多或少有些许的差异(就连温度也可能造成这样的误差呢！)，因此，也就造成了 BIOS 的时间会三不五时的给他快了几秒或者慢了几秒。 <BR>　 <BR>或许您会认为，BIOS 定时器每天快个五秒也没有什么了不起的，不过如果您再仔细的算一算，会发现，一天快五秒，那么一个月快2.5分钟，一年就快了 75 分钟了！所以说，呵呵！时间差是真的会存在的！那么如果您的计算机真的有这样的情况，那要怎么来重新校正时间呢？！呵呵！那就需要『<FONT color=#000066>网络校时</FONT>』( <FONT color=#000066>Network Time Protocol, NTP</FONT> )的功能了！底下我们就谈一谈那个 NTP 的 daemon 吧！ <BR>　 <BR>
+<HR width="100%">
+<A name=theory_NTP></A><FONT color=#000099>NTP 是什么？</FONT> <BR>　 <BR>如同前面说的，计算机主机主要是以 BIOS 内部的时间为主要的时间依据，而偏偏这个时间可能因为 BIOS 内部芯片本身的问题，而导致 BIOS 时间与标准时间 (UTC) 有一点点的差异存在！所以，为了避免主机时间因为长期运作下所导致的时间偏差，进行时间同步 ( synchronize ) 的工作就显的很重要了！ <BR>　 <BR>那么怎么让时间同步化呢？想一想，如果我们选择几部主要主机 ( Primary server ) 调校时间，让这些 Primary Servers 的时间同步之后，再开放网络服务来让 Client 端联机，并且提供 Client 端调整 Client 自己的时间，不就可以达到全部的计算机时间同步化的运作了吗？！那么什么协议可以达到这样的功能呢？！那就是 <FONT color=#000066>Network Time Protocol</FONT> ，另外还有 Digital Time Synchronization Protocol (DTSS) 也可以达到相同的功能！ <BR>　 <BR>不过，到底 NTP 这个 daemon 是如何让 Server 与 Client 同步他们的时间呢？！ <BR>　 
+<OL>
+<LI><FONT color=#000066>首先，主机当然需要启动这个 daemon ，之后，</FONT> 
+<LI><FONT color=#000066>Client 会向 NTP Server 发送出调校时间的 message ，</FONT> 
+<LI><FONT color=#000066>然后 NTP Server 会送出目前的标准时间给 Client ，</FONT> 
+<LI><FONT color=#000066>Client 接收了来自 Server 的时间后，会据以调整自己的时间，就达成了网络校时咯！</FONT> </LI></OL><FONT color=#000066>　</FONT> <BR>不过，在上面的步骤中您有没有想到一件事啊，那就是如果 Client 到 Server 的讯息传送时间过长怎么办？！举例来说，我在台湾以 ADSL 的 PC 主机，联机到美国的 NTP Server 主机进行时间同步化要求，而美国 NTP Server 收到我的要求之后，就发送当时的正确时间给我，不过，由美国将数据传送回我的 PC 时，时间可能已经延迟了 10 秒钟去了！这样一来，我的 PC 校正的时间是 10 秒钟前的标准时间喔！此外，如果美国那么 NTP 主机有太多的人喜欢上去进行网络校时了，所以 loading (负荷) 太重啦！导致讯息的回传又延迟的更为严重！那怎么办？！ <BR>　 <BR>为了这些延迟的问题，有一些 program 已经开发了自动计算时间传送过程的误差，以更准确的校准自己的时间！当然啦，在 daemon 的部分，也同时以 server/client 及 master/slave 的架构来提供使用者进行网络校时的动作！所谓的 master/slave 就有点类似 DNS 的系统咯！举例来说，台湾的标准时间主机去国际标准时间的主机校时，然后各大专院校再到台湾的标准时间校时，然后我们再到各大专院校的标准时间校时！这样一来，那几部国际标准时间主机 ( Time server ) 的 loading 就不至于太大，而我们也可以很快速的达到正确的网络校时的目的呢！台湾常见的 Time Server 为： <BR>　 
+<UL><FONT color=#000066>time.stdtime.gov.tw</FONT> <BR><FONT color=#000066>clock.stdtime.gov.tw</FONT> <BR><FONT color=#000066>freq_f.stdtime.gov.tw</FONT> <BR><FONT color=#000066>tick.stdtime.gov.tw</FONT> <BR><FONT color=#000066>time.chttl.com.tw</FONT></UL>　 <BR>至于 <FONT color=#000066>ntp 这个 daemon 是以 port 123 </FONT>为连结的埠口 (使用 UDP 封包)，所以我们要利用 Time server 来进行时间的同步更新时，就得要使用 NTP 套件提供的 ntpdate 来进行 port 123 的联机喔！关于网络校时更多的说明，可以到 NTP 的官方网站上察看喔！ <BR>　 
+<UL><A href="http://www.ntp.org/" target=_blank>http://www.ntp.org</A></UL></UL>
+<HR width="100%">
+<A name=package></A><FONT color=#000099 size=+1>套件安装：</FONT> 
+<UL>
+<HR width="100%">
+<A name=package_rpm></A><FONT color=#000099>使用 RPM 安装</FONT> <BR>　 <BR>一般来说， NTP Server 在各个 distribution 的功能差异应该不很大啦！所以比较建议使用 RPM 的方式来进行安装！您可以拿出 Linux 的原版光盘，mount 上之后，搜寻以 ntp 为开头的套件档名，然后给他安装上去，就可以了！不过，需要特别留意的是，<FONT color=#000066>当您安装好了 NTP 之后，系统会自动的将 ntp 启动喔</FONT>！所以，<FONT color=#000066>如果您只是想利用 NTP 套件里面的 Client 功能，那么最好还是将 ntp 这个 daemon 关闭吧</FONT>！ <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> chkconfig --level 2345 ntpd off</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/ntpd stop</FONT></FONT></TD></TR></TBODY></TABLE>　 <BR>如此一来，您的 ntp 套件已经安装完毕，可以使用 ntp 的 client 功能去联机 Time server 进行网络校时了！至于 NTP Server 则需要继续的进行设定呢！ <BR>　 <BR>
+<HR width="100%">
+<A name=package_tarball></A><FONT color=#000099>使用 Tarball 安装</FONT> <BR>　 <BR>使用 Tarball 来安装 NTP 其实也是不困难的！简单的很！请先到 NTP 的官方网站下载最新的 NTP 套件：<A href="http://www.ntp.org/downloads.html" target=_blank>http://www.ntp.org/downloads.html</A>，这里我以 ntp-4.1.2.tar.gz 这个版本为范例，假设您下载的套件放置在 /root 底下，那么可以这样做： <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffcc size=-1>0. 解压缩，并阅读一下 ntp 底下的 README 与 INSTALL：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> cd /usr/local/src</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test src]# </FONT><FONT color=#ffff00>tar -zxvf /root/ntp-4.1.2.tar.gz</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test src]# </FONT><FONT color=#ffff00>cd ntp-4.1.2</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test ntp-4.1.2]#</FONT><FONT color=#ffff00> vi INSTALL (vi README)</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>　</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>1. 开始设定参数、编译与安装：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test ntp-4.1.2]# </FONT><FONT color=#ffff00>./configure --help | more </FONT><FONT color=#ff6666>#可以察看一下可用的参数！</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test ntp-4.1.2]# </FONT><FONT color=#ffff00>./configure --prefix=/usr/local/ntp&nbsp; \</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>&gt;</FONT><FONT color=#ffff00>&nbsp; --enable-all-clocks --enable-parse-clocks</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test ntp-4.1.2]# </FONT><FONT color=#ffff00>make clean ; make</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test ntp-4.1.2]# </FONT><FONT color=#ffff00>make check&nbsp;</FONT><FONT color=#ff6666> #确定一下，是否有问题！？</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test ntp-4.1.2]#</FONT><FONT color=#ffff00> make install</FONT><FONT color=#ff6666> # 将数据给他安装在 /usr/local/ntp 底下</FONT></FONT></TD></TR></TBODY></TABLE>　 <BR>设定完成之后，您就有 ntp 可以使用了！不过，无论怎么说，使用 RPM 来安装 NTP 还是比较简单一些啦！ ^_^</UL>
+<HR width="100%">
+<A name=server></A><FONT color=#000099 size=+1>Server 端的设定</FONT> 
+<UL>好了，假设您已经使用 RPM 来安装了 NTP 这个套件，那么我们就可以来谈一谈怎么设定 NTP 主机啦！ <BR>　 <BR>
+<HR width="100%">
+<A name=server_packages></A><FONT color=#000099>NTP 的套件结构</FONT> <BR>　 <BR>NTP 套件的结果主要分为两部份，一个是 NTP Server 的部分，一个则是 NTP Client 的部分，在这个章节里面，我们不谈比较困难的设定，主要介绍较为简易的设定而已喔！所以，您需要注意到的档案与指令有底下这几个： <BR>　 
+<UL>
+<LI><FONT face=SimSun color=#000099>与 NTP 及时区有关的几个设定档：</FONT> <BR><B><FONT face=SimSun color=#000066>　</FONT></B> 
+<UL>
+<LI><B><FONT face=SimSun color=#000066>/etc/ntp.conf</FONT></B> ：这个是 NTP daemon 的主要设定档，依据不同的版本放置的目录可能会不同，不过档名都是一样的！使用 locate ntp.conf 搜寻一下您的系统有没有这个档案吧！这也是 NTP 唯一的一个设定档案！ <BR>　 
+<LI><FONT face=SimSun><B><FONT color=#000066>/usr/share/zoneinfo</FONT></B><FONT color=#000000>：这是个目录，这个目录是 Linux 本身提供的，而不是 NTP 所提供的。在这个目录下的档案其实是规定了各主要时区的时间设定档案，例如台湾地区的时区设定档案在 </FONT><FONT color=#000066>/usr/share/zoneinfo/Asia/Taipei</FONT><FONT color=#000000> 就是了！这个目录里面的档案与底下要谈的两个档案( clock 与 localtime )是有关系的喔！</FONT></FONT> <BR><FONT face=SimSun color=#000000>　</FONT> 
+<LI><B><FONT face=SimSun color=#000066>/etc/sysconfig/clock</FONT></B>：这个档案其实也不包含在 NTP 的 daemon 当中，因为这个是 linux 的主要时区设定档案啊！每次开机后，Linux 会自动的读取这个档案来设定自己系统所预设要显示的时间说！举个例子来说，在我们台湾地区的本地时间设定中，这个档案内应该会出现一行『<FONT face=SimSun color=#000066>ZONE="Asia/Taipei"</FONT>』的字样，这表示我们的时间设定档案『要取用 <FONT face=SimSun color=#000066>/usr/share/zoneinfoe/Asia/Taipei</FONT> 那个档案』的意思！ <BR>　 
+<LI><FONT face=SimSun><B><FONT color=#000066>/etc/localtime</FONT></B><FONT color=#000000>：这个档案就是『</FONT><FONT color=#000066>本地端的时间设定档</FONT><FONT color=#000000>』啦！刚刚那个 clock 档案里面规定了使用的时间设定档 (ZONE) 为 /usr/share/zoneinfo/Asia/Taipei ，所以说，这就是本地端的时间了，此时， Linux 系统就会将 Taipei 那个档案复制一份成为 /etc/localtime ，所以未来我们的时间显示就会以 Taipei 那个时间设定档案为准。好了，如果现在我这部主机搬到日本东京去了，那么我应该如何调整时间呢？其实什么调整都不需要，因为我们的 localtime 主要是分析与 UTC 时间的时差来显示的格式，所以，您只要将 /etc/sysconfig/clock 里面的 ZONE 设定成为 Asia/Tokyo 并且将 /usr/share/zoneinfo/Asia/Tokyo 复制成为 /etc/localtime ，呵呵！什么设定都不需要更动，就能显示时间为日本东京的时间了！这样是否能够了解？</FONT></FONT> </LI></UL><FONT face=SimSun color=#000000>　</FONT> 
+<LI><FONT color=#000099>与 NTP 及时间有关的执行档：</FONT> <BR>　 
+<UL>
+<LI><B><FONT face=SimSun color=#000066>/bin/date</FONT></B>：这个是 Linux 系统上面常见的日期与时间输出指令，用途很广喔！除了输出时间外，也可以修改时间。 <BR>　 
+<LI><B><FONT face=SimSun color=#000066>/sbin/hwclock</FONT></B>：这是一个 root 才能执行的指令，因为 Linux 系统上面 BIOS 时间与 Linux 系统时间是分开的，所以使用 date 这个指令调整了时间之后，还需要使用 hwclock 才能将修改过后的时间写入 BIOS 当中！ <BR>　 
+<LI><B><FONT face=SimSun color=#000066>/usr/sbin/ntpd</FONT></B>：这就是 NTP 的主要 daemon 档案啦！得要启动他才能提供 NTP 服务。注意，这个指令预设会参考 /etc/ntp.conf 里面的设定喔！ <BR>　 
+<LI><B><FONT face=SimSun color=#000066>/usr/sbin/ntpdate</FONT></B>：这个就是 Client 端用来连接 NTP Server 的主要执行档啰！如果您没有要启用 NTP 而仅想要使用 NTP Client 功能的话，那么只会用到这个指令而已啦！ <BR>　 
+<LI><B><FONT face=SimSun color=#000066><A href="#ntptrace">/usr/sbin/ntptrace</A></FONT></B>：这个指令可以用来追踪某部时间服务器的时间对应关系，这也是个很有用的指令喔！底下我们会介绍如何使用这支程序！ </LI></UL>&nbsp;</LI></UL>
+<HR width="100%">
+<A name=server_partition></A><FONT color=#000099>主机的规划技巧建议</FONT> <BR>　 <BR>因为 NTP daemon 并没有花费什么硬盘空间，所以主机的规划上面就没有太多的考虑了！ <BR>　 <BR>
+<HR width="100%">
+<A name=server_ntp.conf></A><FONT color=#000099>编辑主要设定档 /etc/ntp.conf</FONT> <BR>　 <BR>在 NTP Server 的设定上面，其实最好不要对 Internet 无限制的开放，尽量仅提供您自己内部的 Client 端联机进行网络校时就好。此外， NTP Server 总也是需要网络上面较为准确的主机来自行更新自己的时间啊，所以在我们的 NTP Server 上面也要找一部最靠近自己的 Time Server 来进行自我校正喔！事实上，就如同前面的说明， NTP 这个服务也是 Server/Client 的一种模式 (当然也提供 Peer/Peer ，不过我们这里主要讨论 Server/Client 的架构 ) ，在 Internet 上面提供了多部主要的 (Primary) 时间服务器，如下的网页连结所示。不过，虽然 Primary Time Servers 不少，然而 Client 数量更是大的惊人，为了不让 Primary 的时间服务器负载太大，所以就有 Secondary (次要的) 时间服务器的出现了！这个 Secondary 主要就是利用 Primary 主机进行时间调校后，再提供 Internet 上面的 Client 进行校时。 <BR>　 
+<UL>
+<LI><FONT color=#000066>主要时间服务器：<A href="http://www.eecis.udel.edu/~mills/ntp/clock1a.html" target=_blank>http://www.eecis.udel.edu/~mills/ntp/clock1a.html</A></FONT> 
+<LI><FONT color=#000066>次要时间服务器：<A href="http://www.eecis.udel.edu/~mills/ntp/clock2a.html" target=_blank>http://www.eecis.udel.edu/~mills/ntp/clock2a.html</A></FONT> </LI></UL>　 <BR>如果想要在台湾地区进行网络校时，那么 <FONT color=#000066>time.stdtime.gov.tw</FONT> 这个国家单位的第二层主机 ( <FONT face=SimSun color=#000066>stratum-2</FONT> ) 应该是比较合适的！一般来说，我们在进行 NTP 主机的设定时，都会先选择数部上层的 Time Server 来做为我们这一部 NTP Server 的校正之用，选择多部的原因是因为可以避免因为某部时间服务器突然挂点时，其它主机仍然可以提供我们的 NTP 主机来自我更新啊！然后我们的 NTP Server 才提供给自己的 Client 端更新时间。如此一来，国家单位的 time.stdtime.gov.tw 负载才不会太大，而我们的 Client 也可以很快速的达到校时的动作！ <BR>　 <BR>这里还是需要注意一下，台湾地区的主要 ( 或称为第一层 stratum-1 ) 时间服务器 IP 为： 
+<UL>
+<LI><FONT color=#000066>210.59.157.40</FONT> 
+<LI><FONT color=#000066>210.59.157.41</FONT> 
+<LI><FONT color=#000066>210.59.157.151</FONT> </LI></UL>而第二层的主机有很多，例如： 
+<UL>
+<LI><FONT color=#000066>210.59.157.10</FONT> <BR><FONT color=#000066>210.59.157.30</FONT> <BR><FONT color=#000066>202.39.157.155</FONT></LI></UL>　 <BR>基于上面的说明，我的 NTP 服务器主要的设定项目是这样的： <BR>　 
+<UL>
+<LI><FONT color=#000066>以上面提到的六部时间服务器作为我的 NTP server 的上层主机；</FONT> 
+<LI><FONT color=#000066>不对 Internet 提供公开的服务，仅针对内部网域 192.168.0.0/24 提供服务；</FONT> 
+<LI><FONT color=#000066>亦对网络上 192.168.100.20 这个 IP 提供服务；</FONT> 
+<LI><FONT color=#000066>内部私有网络的网络校时不需要认证机制；</FONT> </LI></UL>　 <BR>这样的设定真的是很简单喔！我们就来设定一下吧！ <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> vi /etc/ntp.conf</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 1. 关于权限设定部分</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　权限的设定主要以 restrict 这个参数来设定，主要的语法为：</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>#　　restrict IP mask netmask_IP parameter</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　其中 IP 可以是软件地址，也可以是 default ，default 就类似 0.0.0.0 咯！</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　至于 paramter 则有：</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　　ignore　：关闭所有的 NTP 联机服务</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　　nomodify：表示 Client 端不能更改 Server 端的时间参数，不过，</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　　　　　　　Client 端仍然可以透过 Server 端来进行网络校时。</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　　notrust ：该 Client 除非通过认证，否则该 Client 来源将被视为不信任网域</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　　noquery ：不提供 Client 端的时间查询</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　如果 paramter 完全没有设定，那就表示该 IP (或网域) 『没有任何限制！』</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　在我们这个例子当中，因为拒绝所有，仅开放 192.168.0.0/24 ，</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　并且让 127.0.0.1 以及本机 IP 192.168.0.2 可以不受限制，所以：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffff00>restrict default ignore　</FONT><FONT color=#ff6666># 关闭所有的 NTP 要求封包</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffff00>restrict 127.0.0.1　　　 </FONT><FONT color=#ff6666># 开启内部递归网络接口 lo</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffff00>restrict 192.168.0.2　　</FONT><FONT color=#ff6666># 主机本身的 IP 也同时开启！</FONT></FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 192.168.100.20 mask 255.255.255.255 nomodify</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 针对另一个 IP 开放让他可以更新时间！</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 192.168.0.0 mask 255.255.255.0 nomodify</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 在网域里面的 client 可以进行网络校时，但不会影响 Server ！</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>　</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 2. 上层主机的设定</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　上层主机我们选择 time.stdtime.gov.tw ，要设定上层主机主要以 server&nbsp;</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　这个参数来设定，语法为：</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>#　　server [IP|FQDN] [prefer]</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　Server 后面接的就是我们上层 Time Server 啰！而如果 Server 参数</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　后面加上 perfer 的话，那表示我们的 NTP 主机主要以该部主机来作为</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　时间校正的对应。另外，为了解决更新时间封包的传送延迟动作，</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　所以可以使用 driftfile 来规定我们的主机</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　在与 Time Server 沟通时所花费的时间，可以记录在 driftfile&nbsp;</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　后面接的档案内，例如下面的范例中，我们的 NTP server 与&nbsp;</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>#　　time.stdtime.gov.tw 联机时所花费的时间会记录在 /etc/ntp/drift 档案内</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 先输入第二层主机的 IP</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>server 210.59.157.10 　prefer</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>server 210.59.157.30 　prefer</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>server 202.39.157.155&nbsp; prefer</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 第一层的主机就列为参考用！</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>server 210.59.157.40</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>server 210.59.157.41</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>server 202.39.157.151</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 当然要让 Server 可以进入我们的 NTP 主机啦！权限要开放啊！</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 210.59.157.10</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 210.59.157.30</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 202.39.157.155</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 210.59.157.40</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 210.59.157.41</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>restrict 202.39.157.151</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>driftfile /etc/ntp/drift</FONT></TD></TR></TBODY></TABLE>　 <BR>在上面的设定当中，最有趣的应该要算 <FONT color=#000066>driftfile</FONT> 那个咚咚了！因为我们的 NTP Server 本身的时间计算是依据 BIOS 的芯片震荡周期频率来计算的，但是这个数值与上层 Time Server 不见得会一致啊！所我 NTP 这个 daemon 会自动的去计算我们自己主机的频率与上层 Time server 的频率，并且将两个频率的误差记录下来，记录下来的档案就是在 driftfile 后面接的完整档名当中了！我们这里是以预设的档案 /etc/ntp/drift 来设定，您也可以自行设定其它的档名，不过请注意： 
+<UL>
+<LI><FONT color=#000066>driftfile 后面接的档案需要使用完整路径文件名；</FONT> 
+<LI><FONT color=#000066>该档案不能是连结档；</FONT> 
+<LI><FONT color=#000066>该档案需要设定成 ntpd 这个 daemon 可以写入的权限。</FONT> </LI></UL>driftfile 后面接的档案会被 ntpd 自动更新，所以他的权限一定要能够让 ntpd 写入才行。在 Red Hat 9 预设的 NTP 服务器中，使用的 ntpd 的 owner 是 ntp ，所以 /etc/ntp/drift 需要设定成 ntp 这个 user 可以写入喔！至于 owner 怎么会是 ntp 呢？请查阅 /etc/sysconfig/ntpd 就可以知道啦！而 /etc/ntp/drift 的内容则是仅有一行，里面的数据是具有小数点的浮点数字，单位则是百万分之一(ppm)。 <BR>　 <BR>事实上 ntp.conf 里头还有很多很有趣的设定，例如认证的机制、登入的 Client 观察以及其它的相关设定等等，不过这里我们就不多加介绍了！ <BR>　 <BR>
+<HR width="100%">
+<A name=server_startandlook></A><FONT color=#000099>NTP 的启动与观察</FONT> <BR>　 <BR>在设定好了 ntp.conf 之后，就可以来启动 NTP 这个 Time Server 了！我们可以这样做喔： <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/ntpd start</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>netstat -unl | grep 123</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 192.168.0.2:123&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 127.0.0.1:123&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:123&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 请注意喔，NTP 使用的是 UDP 的封包！而且 port number 为 123，</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 此外，我有两个接口，以及对外提供服务，所以自然就会有三个！</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>　</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#&nbsp;<A name=ntptrace></A></FONT><FONT color=#ffff00>ntptrace 192.168.0.2</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>192.168.0.2: stratum 3, offset 0.000056, synch distance 0.65865</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>210.59.157.10: stratum 2, offset -0.228265, synch distance 0.22488</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>ntp0.usno.navy.mil: stratum 1, offset -0.250685, synch distance 0.00038,</FONT> 
+<P><FONT face=SimSun color=#ff6666 size=-1># 我们也可以利用 ntptrace 来追踪一下到底我们的主机有没有正确的先经过</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 上层 Time Server 的校时了呢？如上所示，我们的主机 192.168.0.2&nbsp;</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 是第三层的时间服务器 (stratum 3)，与目前本机的时间误差(offset)</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 以及若要同步更新时(synch distance)的时间损耗，同时，也会将这个第三层</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 对哪一部第二层主机进行校时也列出来！有时候您会发现这样的错误讯息：</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>192.168.0.2: stratum 16, offset 0.000048, synch distance 0.00087</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>0.0.0.0:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *Not Synchronized*</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 这表示我们的主机尚未与 Internet 的上层 Time Server 进行校时，</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 最可能发生这样的错误在 ntp.conf 里面的 restrict 设定了！</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 此外，当启动 ntpd 后，您至少需要等待 5 分钟左右，这段时间</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 我们的 NTP Server 会不断的与上层时间服务器联系，如果尚未联系成功，</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 那么我们的 NTP 主机就会暂时无法让 Client 端来进行更新喔！</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 所以如果未能更新，不要太紧张，先等待一阵子再说吧！</FONT></P></TD></TR></TBODY></TABLE>　 <BR>如果 ntptrace 可以成功的话，那就表示您的主机 OK 啦！</UL>
+<HR width="100%">
+<A name=client></A><FONT color=#000099 size=+1>Client 端的设定：</FONT> 
+<UL>好了，再来就是要在 Client 端来向 Time Server 要求网络校时啦！不过，我们先谈一谈如何手动修正时间吧！ <BR>　 <BR>
+<HR width="100%">
+<A name=client_Linux_zone></A><FONT color=#000099>如何调整 Linux 系统的时区与手动设定时间 (date MMDDhhmmYYYY)</FONT> <BR>　 <BR>我们在前面说过， Linux 的时区档案放置在 /etc/localtime ，这是一个时间格式的档案，而不是 ASCII 类型的档案喔！(file /etc/localtime 可以看出)，至于所有的 Time Zone 则放置在 /usr/share/zoneinfo 这个目录下。请注意： <BR>　 
+<UL>
+<LI><FONT color=#000066>当 /etc/localtime 存在时，系统的时区以该档案代表的时区来显示、</FONT> 
+<LI><FONT color=#000066>当 /etc/localtime 不存在时，系统的时区主要以 GMT (或 UTC) 为准；</FONT> </LI></UL>　 <BR>所以，如果您想要变更您 Linux 系统的时区，那么只要在 /usr/share/zoneinfo 里面找到您需要的时区档案，然后将他复制一份成为 /etc/localtime 就可以顺利的更新时区设定了！另外，同时建议修正一下 <B><FONT color=#000066>/etc/sysconfig/clock</FONT></B> 这个档案里面的 ZONE 设定值！以我们台湾的 Time zone 为例，在 /etc/sysconfig/clock 这个档案当中应该是『ZONE="Asia/Taipei"』这就表示我们的时区档案为 /usr/share/zoneinfo/Asia/Taipei 这个档案啰！请对应着修改成您所想要的时区吧！ <BR>　 <BR>好了，时区修正完毕了，那么时间呢？！呵呵！目前 Linux 系统上面有两个时间喔，一个是 Linux 系统，另一个则是 BIOS 时间(真正的硬件记录的时间)！我们可以使用 date 这个指令来手动修正目前主机的时间，不过， date 这个指令仅修正 Linux 时间而已，我们还需要以 hwclock 这个指令来将 BIOS 时间也更新才行！ <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> date MMDDhhmmYYYY</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>MM：月份</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>DD：日期</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>hh：小时</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>mm：分钟</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>YYYY：公元年</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>date 082110002003</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Thu Aug 21 10:00:00 CST 2003</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 时间立刻就修正了！</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>　</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>hwclock [-rw]</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>-r：检视目前的 BIOS 时间</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>-w：将目前 Linux 的时间写入 BIOS 当中！</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>date ; hwclock -r</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Thu Aug 21 10:01:46 CST 2003</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Thu 21 Aug 2003 09:57:52 AM CST&nbsp; 0.647923 seconds</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 你可以看到， date 与 hwclock -r 所显示的时间是『不一致的』！</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 这就是因为 Linux 时间与 BIOS 时间不一致所导致的一个问题！</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 我们需要以 hwclock -w 来将 Linux 时间写入 BIOS 喔！</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> hwclock -w</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> date ; hwclock -r</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Thu Aug 21 10:03:42 CST 2003</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Thu 21 Aug 2003 10:03:43 AM CST&nbsp; 0.113323 seconds</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 呵呵！这样时间就一致啦！</FONT></TD></TR></TBODY></TABLE>　 <BR>这样可以了解了吗？！没错，<FONT color=#000066>当我们进行完 Linux 时间的校时后，还需要以 hwclock 来更新 BIOS 的时间</FONT>，因为每次开机的时候，系统会重新由 BIOS 将时间读出来，所以， BIOS 才是重要的时间依据吶！ <BR>　 <BR>
+<HR width="100%">
+<A name=client_Linux></A><FONT color=#000099>如何在 Linux 系统自动网络校时？</FONT> <BR>　 <BR>在 Linux 上面进行网络校时简单的很，直接以 ntpdate 这个指令来执行即可！如下所示： <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> ntpdate 192.168.0.2</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 那个 192.168.0.2 是我们刚刚建立的 NTP Server ，您也可以选择</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># time.stdtime.gov.tw 这部主机来校时喔！</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>21 Aug 10:05:29 ntpdate[23420]: step time server 192.168.0.2 offset -236.117047 sec</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> hwclock -w</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 这样时间就修正了！若要每日进行时间校正，可以写入 cron</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>　</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> vi /etc/crontab</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1># 加入这一行：</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>10 5 * * * root /usr/sbin/ntpdate 192.168.0.2 ; /sbin/hwclock -w</FONT></TD></TR></TBODY></TABLE>　 <BR>使用 cron 之后，每天 5:10 Linux 系统就会自动的进行网络校时啰！相当的简易吧！ <BR>　 <BR>
+<HR width="100%">
+<A name=client_win></A><FONT color=#000099>如何在 Windows 系统上面进行网络校时？</FONT> <BR>　 <BR>在 Windows 上面进行网络校时也很简单，目前已经有很多热心人士写好了在 Windows 上面的网络校时软件了！例如全中文接口的 ntpclock1_21.exe ，您可以在以下的网站下载： <BR>　 
+<UL>
+<LI><A href="http://www.stdtime.gov.tw/ntp/index.htm" target=_blank>http://www.stdtime.gov.tw/ntp/index.htm</A> 
+<LI><A href="http://www.stdtime.gov.tw/ntp_client/menu/NTPClockOperatingManualRelease1.21.html" target=_blank>http://www.stdtime.gov.tw/ntp_client/menu/NTPClockOperatingManualRelease1.21.html</A> </LI></UL>　 <BR>上面同时列出使用说明，请自行参考喔！当然，您也可以在鸟哥的网站下载： <BR>　 
+<UL>
+<LI><A href="http://linux.vbird.org/download/#ntp_win">http://linux.vbird.org/download/#ntp_win</A> </LI></UL></UL>
+<HR width="100%">
+<A name=security></A><FONT color=#000099 size=+1>安全相关方面</FONT> 
+<BLOCKQUOTE>NTP 服务器在安全的相关性方面，其实刚刚我们在 <A href="#server_ntp.conf">/etc/ntp.conf</A> 里面的 restrict 参数中就已经设定了 NTP 这个 daemon 的服务限制范围了！不过，在防火墙 iptables 的部分，还是需要启用的啦！所以，在您的 iptables 规则的脚本 (scripts) 当中，需要加入这一段 (我是以开放 192.168.0.0/24 这个网域作为范例的！) <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffff00 size=-1>/sbin/iptables -A INPUT -p UDP -i eth0 -s 192.168.0.0/24&nbsp; \</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>&gt; --dport 123 -j ACCEPT</FONT></TD></TR></TBODY></TABLE>　 <BR>若还要开放其它的网段或者主机，请自行修改您的防火墙机制咯！</BLOCKQUOTE>
+<HR width="100%">
+<A name=lpi></A><FONT color=#000099 size=+1>本章与 LPI 的关系</FONT> 
+<UL>在 LPI 网站 <A href="http://www.lpi.org/" target=_blank>http://www.lpi.org</A> 里面提到的，在 LPI 102 里面 NTP 其实考的还不少！Topic 1.111.6 Maintain system time 里面说到，应试者应该要了解 BIOS 时间与 UTC 时间的意义，同时需要知道怎么设定 timezone ，而时间差所使用的档案 driftfile 也需要了解吶！可能会考的内容含有： <BR>　 
+<UL>
+<LI><FONT face=SimSun color=#000066>date</FONT> 
+<LI><FONT face=SimSun color=#000066>hwclock</FONT> 
+<LI><FONT face=SimSun color=#000066>ntpd</FONT> 
+<LI><FONT face=SimSun color=#000066>ntpdate</FONT> 
+<LI><FONT face=SimSun color=#000066>/usr/share/zoneinfo</FONT> 
+<LI><FONT face=SimSun color=#000066>/etc/localtime</FONT> 
+<LI><FONT face=SimSun color=#000066>/etc/ntp.conf</FONT> 
+<LI><FONT face=SimSun color=#000066>/etc/ntp.drift (新版已经改至 /etc/ntp/drift 了)</FONT> </LI></UL></UL>
+<HR width="100%">
+<A name=reference></A><FONT color=#000099 size=+1>参考资源：</FONT> 
+<UL>
+<LI>NTP 的官方网站：<A href="http://www.ntp.org/" target=_blank>http://www.ntp.org</A> 
+<LI>成大计中：<A href="http://turtle.ee.ncku.edu.tw/~antony/xntpd/" target=_blank>http://turtle.ee.ncku.edu.tw/~antony/xntpd/</A> 
+<LI>台湾地区时间服务器：<A href="http://www.stdtime.gov.tw/ntp/index.htm" target=_blank>http://www.stdtime.gov.tw/ntp/index.htm</A> 
+<LI>NTP 网站：<A href="http://www.eecis.udel.edu/~mills/ntp/html/ntpd.html" target=_blank>http://www.eecis.udel.edu/~mills/ntp/html/ntpd.html</A> </LI></UL>
+<HR width="100%">
+<A name=FAQ></A><FONT color=#000099 size=+1>课后练习</FONT> 
+<UL>
+<LI>什么是 GMT (格林威治) 时间与 UTC 时间？ 
+<LI>Linux 系统的所有时区档案放置哪一个目录底下？ 
+<LI>我的 Linux 主机本来放置在日本东京，现在想将他拿到台湾来运作，不过因为日本与台湾有一个小时的时差，所以我的时间应该需要经过调整才行。不过，因为我的 BIOS Time 主要是依据 UTC 时间来设定的，所以似乎只要更动时区参数即可。请问我该如何设定时区，好让我的 Linux 主机能够显示正确的时间？ 
+<LI>目前 Linux 系统上面的时间服务器主要是以 NTP 为主，请问这个 daemon 的主要设定档放在哪里，而该设定档中，针对上层 time server 的设定参数为何？而那个 driftfile 参数是干嘛用的？ 
+<LI>请问 ntptrace 的功能为何？ 
+<LI>我以 date 更新了我 Linux 上面的时间后，该如何将时间数据写入 BIOS 内？ 
+<LI>在 Linux 上面如何进行网络校时？ <BR><A href="http://linux.vbird.org/linux_server/1000results.php#0440ntp">前往参考用解答</A></LI></UL>
+<CENTER><FONT color=#3333ff size=+1><A href="http://linux.vbird.org/linux_server/0440ntp.php" target=_self><FONT face=SimSun>简易</FONT><FONT face="Times New Roman,Times"> NTP </FONT><FONT face=SimSun>服务器设定</FONT></A></FONT></CENTER>
+<HR width="100%">
+<FONT face=SimSun color=#000066 size=-1>2003/08/21：首次完成</FONT> <BR>
+<HR width="100%">
+<FONT face=SimSun color=#3333ff size=-1>2003/08/21 以来统计人数</FONT> <BR><IMG height=15 src="72_files/Count[7].gif" width=60 align=middle nosave="">
+<HR width="100%">
+ 
+<CENTER><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR><FONT color=#000066 size=-1>Designed by <A href="mailto:vbird@tsai.adsldns.org">VBird</A> during 2001-2004.&nbsp; Aerosol Lab.</FONT></CENTER></BODY>

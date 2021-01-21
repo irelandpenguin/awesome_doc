@@ -1,0 +1,256 @@
+<HEAD><TITLE>鳥哥的 Linux 私房菜 -- MRTG 流量偵測法</TITLE>
+<META http-equiv=Content-Type content="text/html; charset=big5">
+<META content="Mozilla/4.5 [zh-TW] (WinNT; I) [Netscape]" name=GENERATOR>
+<META content="strart 101" name="Microsoft Theme">
+<META content="tl, default" name="Microsoft Border">
+<META content=VBird name=Author>
+<STYLE>
+      <!--
+      body{background-image=url("103_files/VBirdLinux[1].jpg");background-attachment=fixed}
+      -->
+   </STYLE>
+</head>
+<BODY background="103_files/VBirdLinux[1].jpg" nosave>
+<CENTER>
+<CENTER><B><FONT color=#3333ff><FONT size=+2><FONT face=標楷體>鳥哥的</FONT><FONT face="Times New Roman,Times"> Linux </FONT><FONT face=標楷體>與</FONT><FONT face="Times New Roman,Times"> ADSL </FONT><FONT face=標楷體>私房菜</FONT></FONT></FONT></B> <BR><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 NOSAVE></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 NOSAVE></A> <BR>
+<HR width="100%">
+</CENTER><U><FONT color=#3333ff><FONT size=+2><A href="103.html" target=_self><FONT face=標楷體>偵測 </FONT><FONT face="Times New Roman Baltic">Linux</FONT><FONT face=標楷體> 上面的流量</FONT></A></FONT></FONT></U></CENTER>
+<DIV align=right><FONT face=新細明體><FONT color=#3333ff><FONT size=-1>最近更新日期：2001/11/10</FONT></FONT></FONT></DIV><A href="#1">前言</A><A href="#2">MRTG運作過程</A> <BR><A href="#3">安裝前的準備工作</A> <BR><A href="#4">開始安裝 MRTG</A> <BR><A href="#5">偵測網路卡流量</A> <BR><A href="#6">偵測 CPU 負載量</A> <BR><A href="#online">即時偵測線上人數</A>&nbsp; (2001/10/29 update) <BR><A href="#linux_win">在 Linux 上面偵測 Win2000 的流量</A>&nbsp; (2001/11/05 update) <BR><A href="#MRTG-win98">在 Linux 上面偵測 Windows98 的流量</A> (2001/11/06 update) <BR><A href="#problem">一些問題彙整</A> <BR>
+<HR width="100%">
+
+<UL>
+<LI><A name=1></A><FONT color=#000099>前言</FONT><FONT color=#000000>：</FONT> </LI></UL>
+<UL><FONT color=#000000>先來『<A href="http://aerosol.ev.ncku.edu.tw/mrtg">看看我們的流量統計範例</A>』吧。</FONT></UL>
+<UL><FONT color=#000000>網路伺服器主機的資料總流量（網路卡的資料傳送總數），以及 CPU 使用率和特殊服務（例如 squid 的代理服務）等等的封包傳送率（或者說是流量），是網路管理人員所必須要注意的事項，因為當主機的 CPU 使用率過高的時候，系統可能呈現不穩定的狀態，而當流量過高的時候，就需要注意是哪一個服務或者是哪一個傢伙在嘗試竊取我們的資料呢？因此，網路管理方面，有必要瞭解一下，我們主機的流量狀態，並視流量來加以限制或者是加大頻寬！</FONT></UL>
+<UL><FONT color=#000000>目前網路上有一套蠻好用軟體可以用來偵測主機的資料流量，這也是各大伺服器常使用的軟體，就是 MRTG (Multi Router Traffic Grapher) 這一套軟體。MRTG 耗用的系統資源很小，因此有很多外掛的程式也依附在 MRTG 底下，因為 MRTG 的繪圖挺漂漂的說！我們這裡僅提供下面的偵測方法：</FONT></UL>
+<UL>
+<OL>
+<LI><FONT color=#000000>網路卡整體流量；（或者說是 Router 整體流量）</FONT> 
+<LI><FONT color=#000000>CPU 使用率；</FONT> 
+<LI><FONT color=#000000>RAM 使用率。</FONT> </LI></OL></UL>
+<HR width="100%">
+
+<UL>
+<LI><A name=2></A><FONT color=#000099>MRTG 的運作過程：</FONT> 
+<DT><FONT color=#000000>要瞭解 MRTG 的運作，就必須瞭解一下 SNMP (Simple Network Management Protocol) 這個協定，因為</FONT><FONT color=#3333ff> MRTG 是透過 SNMP 協定來監控流量的</FONT><FONT color=#000000>。所以，所有的 MRTG 所偵測的裝置都必須符合 SNMP 的協定。那什麼是 SNMP 呢？簡單的說，就是一種可以提供裝置（主機設備）的各類資訊的一種協定，諸如：網路流量、主機名稱、CPU用量等等的資訊都可以藉由此一協定來提供。不過，由於不同廠牌的裝置可能會有無法相容的情況，因而後來又有所謂 MIB (Management Information Base) 的協定產生。不論如何， MRTG 就是藉由 SNMP 這個協定來監測與取得相關的資訊以製作圖表的！詳細的 SNMP 你可以在 <A href="http://www.net-snmp.org/" target=_blank>http://www.net-snmp.org/</A> 查得。</FONT> </DT></LI></UL>
+<UL>
+<DT><FONT color=#000000>所以我們可以知道，MRTG 基本上是透過以 SNMP 的協定，向主機詢問相關的資料後，主機傳遞數值給 MRTG 程式，然後 MRTG 再繪製成網頁上的圖表。由於 MRTG 是以 SNMP 協定來向主機要求資料，因此，您</FONT><FONT color=#3333ff>要使用 MRTG 來製作圖表時，必須先確定您的機器（或者說是設備）必須支援 SNMP 協定</FONT><FONT color=#000000>。好在 Linux 上面的網路卡，通常已經支援了 SNMP 協定了！當然， Windows 2000 也可以被偵測的到喔！</FONT> </DT></UL>
+<UL>
+<DT><FONT color=#000000>另外，有一點是特別需要注意的，在 mrtg 這個程式中，其實他總共需要要求四個數據（前兩個用來作圖，後兩個提供相關資訊，基本上，繪圖只會用到前兩個數據），因此，</FONT><FONT color=#3333ff>你可以隨時製作 MRTG 的圖表，只要你能提供兩個數字</FONT><FONT color=#000000>（當然要是數字了，不然如何作圖！）給 mrtg 即可製圖！這個在後面的偵測 CPU 或者是 RAM 的地方，加掛自己寫的程式後，就可以得到啦！</FONT> </DT></UL>
+<DT>
+<HR width="100%">
+
+<UL>
+<LI><A name=3></A><FONT color=#000099>安裝前的準備工作：</FONT> <BR><FONT color=#000000>MRTG 為使用 Perl 程式寫成的，並且使用到 zlib 、 gd 及 png 的函式庫（zlib 用來壓縮圖表、gd 用來繪製圖表），且由於 MRTG 乃使用 SNMP 協定，並且最後是以 HTTP 的網頁型態輸出成圖表，因此，你需要確定 Linux 主機中已經含有下列的套件：</FONT></LI></UL>
+<UL>
+<UL>
+<LI><FONT color=#000000>perl&nbsp; (perl-5.0xx 以上)</FONT> 
+<LI><FONT color=#000000>zlib&nbsp; (zlib-1.1.3-xx 以上)</FONT> 
+<LI><FONT color=#000000>gd&nbsp; (gd-1.3.xx 以上)</FONT> 
+<LI><FONT color=#000000>libpng</FONT> 
+<LI><FONT color=#000000>apache</FONT> </LI></UL></UL>
+<UL><FONT color=#000000>確定的方法就以 RPM 來確認吧：</FONT></UL>
+<UL>
+<UL>
+<LI><FONT color=#000000>rpm -qa | grep perl</FONT> 
+<LI><FONT color=#000000>rpm -qa | grep zlib</FONT> 
+<LI><FONT color=#000000>rpm -qa | grep gd</FONT> 
+<LI><FONT color=#000000>rpm -qa | grep libpng</FONT> </LI></UL></UL>
+<UL><FONT color=#000000>另外的另外，由於 MRTG 的圖表顯示是以 HTTP 的型態（Web 的型態）來顯示的，因此，你也必須安裝好了 Apache 這個套件，如果沒有安裝好的話，請到這個網頁的 Linux 架站文件去看看吧！以下，我們使用了預設的 Apache 路徑，為 </FONT><FONT color=#3333ff>/usr/local/apache/htdocs</FONT><FONT color=#000000> 這個路徑來安裝 mrtg 輸出的圖表，要注意，如果沒有 apache 的話，那就沒有辦法顯示圖表了（雖然可以執行 MRTG !!）</FONT></UL>
+<UL><FONT color=#000000>其實在 Linux 安裝完畢之後，上面的幾個（除了 apache 可能會更新之外）套件都已經安裝好了！所以你可以直接來安裝 MRTG 囉！（基本上，我們這個網頁的 RedHat 6.1 已經包含了這些套件了，所以如果你在安裝的時候是選擇 All 的話，那就直接安裝下列的套件吧）</FONT></UL>
+<HR width="100%">
+
+<UL>
+<LI><A name=4></A>開始安裝 MRTG <BR><FONT color=#000000>由於 MRTG 是透過 SNMP 通訊協定來要求資料，因此你的 Linux 上面需要先安裝相關的軟體，通常我們都是安裝 ucd-snmp 這套軟體的，那就來安裝吧！</FONT></LI></UL>
+<UL>
+<OL>
+<LI><FONT color=#000000>下載 <A href="http://linux.vbird.org/download/index.php#ucd-snmp">ucd-snmp-4.2.1.tar.gz</A>, <A href="http://linux.vbird.org/download/index.php#mrtg">mrtg-2.9.17.tar.gz</A> ；</FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>安裝 ucd-snmp-4.2.1.tar.gz：</FONT> 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai /root]# cd /usr/local/src</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai src]# cp /root/ucd-snmp-4.2.1.tar.gz .</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai src]# tar -zxvf ucd-snmp-4.2.1.tar.gz</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai src]# cd ucd-snmp-4.2.1</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai ucd-snmp-4.2.1]# ./configure --prefix=/usr/local/snmp</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>.......（過程我就省略了）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ************** Configuration Section **************</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; You are about to be prompted by a series of questions.&nbsp; Answer</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>them carefully, as they determine how the snmp agent and related</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>applications are to function.</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; After the configure script finishes, you can browse the newly</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>created config.h file for further - less important - parameters to</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>modify.&nbsp; Be careful if you re-run configure though since config.h will</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>be over written.</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT size=-1><FONT color=#ffffff>-Press return to continue- </FONT><FONT color=#ffff00>（這裡按 enter 吧）</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>disabling above prompt for future runs...&nbsp; yes</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>checking System Contact Information...</FONT></FONT></FONT> <BR>&nbsp; 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>*** System Contact Information:</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Describes who should be contacted about the host the agent is</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>running on.&nbsp; This information is available in the MIB-II tree.&nbsp; This</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Can Also Be Over-Ridden Using The "syscontact" Syntax In The Agent'S</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Configuration Files.</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT size=-1><FONT color=#ffffff>System Contact Information (root@):root@tsai.adsldns.org </FONT><FONT color=#ffff00>（這裡輸入你的 e-mail）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>setting System Contact Information to...&nbsp; root@tsai.adsldns.org</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>checking System Location...</FONT></FONT></FONT> <BR>&nbsp; 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>*** System Location:</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Describes the location of the system.&nbsp; This information is</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>available in the MIB-II tree.&nbsp; This Can also be over-ridden using the</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>"syslocation" syntax in the agent's configuration files.</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT size=-1><FONT color=#ffffff>System Location (Unknown):RedHat 6.1 </FONT><FONT color=#ffff00>（這裡可以隨便輸入，不正確也沒關係）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>setting System Location to...&nbsp; RedHat 6.1</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>checking Location to write logfile...</FONT></FONT></FONT> <BR>&nbsp; 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>*** Logfile location:</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Enter the default location for the snmpd agent to dump</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>information &amp; errors to.&nbsp; If not defined (enter the keyword "none"</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>at the prompt below) the agent will use stdout and stderr instead.</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>(Note: This value can be over-ridden using command line options.)</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT size=-1><FONT color=#ffffff>Location to write logfile (/var/log/snmpd.log):</FONT><FONT color=#ffff00>（按 enter 即可）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>setting Location to write logfile to...&nbsp; /var/log/snmpd.log</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>checking Location to write persistent information...</FONT></FONT></FONT> <BR>&nbsp; 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>*** snmpd persistent storage location:</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Enter a directory for the snmp library to store persistent</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>data in the form of a configuration file.</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT size=-1><FONT color=#ffffff>Location to write persistent information (/var/ucd-snmp):</FONT><FONT color=#ffff00>（按 enter 即可）</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai ucd-snmp-4.2.1]# make</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai ucd-snmp-4.2.1]# make install</FONT></FONT></FONT></P></TD></TR></TBODY></TABLE><FONT color=#000000>上面輸入的資訊，在進行 MRTG 的製圖時，會顯示在圖表上面，不過，這也是可以改的資訊，所以，如果不小心輸入錯誤也沒關係的。這樣就將 ucd-snmp 安裝妥當了！</FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>啟動 ucd-snmp ：</FONT> <BR><FONT color=#000000>直接在 shell 下面打上 </FONT><FONT color=#3333ff>/usr/local/snmp/sbin/snmpd</FONT><FONT color=#000000> 即可！或者直接加在 /etc/rc.d/rc.local 當中，就可以自動開機時啟動了！</FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>安裝 MRTG ：</FONT> 
+<TABLE cols=1 width="80%">
+<TBODY>
+<TR>
+<TD bgColor=#000000><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai /root]# cd /usr/local/src</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai src]# cp /root/mrtg-2.9.17.tar.gz .</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai src]# tar -zxvf mrtg-2.9.17.tar.gz</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai src]# cd mrtg-2.9.17</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai mrtg-2.9.17]# ./configure&nbsp; --prefix=/usr/local/mrtg-2&nbsp; \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --with-gd=/usr/include&nbsp; \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --with-gd-lib=/usr/lib&nbsp; \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --with-gd-inc=/usr/include&nbsp; \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --with-png=/usr/include&nbsp; \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --with-zlib=/usr/include</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai mrtg-2.9.17]# make; make install</FONT></FONT></FONT> <BR><FONT face=細明體><FONT size=-1><FONT color=#ffffff>[root @tsai mrtg-2.9.17]# mkdir /usr/local/apache/htdocs/mrtg </FONT><FONT color=#ffff00>(請注意，這裡與你的 WWW 主頁的放置地點有關，請依你的系統來設定，另外，由於我們需要設定 網路流量、CPU與RAM使用率，因此在 mrtg 中，可以再建立三個子目錄，比較容易管理啦！)</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai mrtg-2.9.17]# mkdir /usr/local/apache/htdocs/mrtg/net</FONT></FONT></FONT> <BR><FONT face=細明體><FONT size=-1><FONT color=#ffffff>[root @tsai mrtg-2.9.17]# cp images/*&nbsp; /usr/local/apache/htdocs/mrtg/net </FONT><FONT color=#ffff00>(將一些影像檔拷貝到即將使用的目錄中去備用)</FONT></FONT></FONT></P></TD></TR></TBODY></TABLE><FONT color=#000000>就樣就安裝妥當了！再來就是開始要設定 MRTG 的組態囉！</FONT></LI></OL></UL>
+<HR width="100%">
+
+<UL>
+<LI><A name=5></A>偵測網路卡流量 <BR><FONT color=#000000>要使用 mrtg 來作圖真的是太簡單了，只要幾個小步驟就可以自動的監測流量喔！首先以 mrtg 附的程式來製作一個參數檔 （預設檔名是 mrtg.cfg），然後修改一下 mrtg.cfg 這個參數檔之後，在直接執行三次參數檔，之後以 mrtg 程式附的小軟體，直接製作成首頁，就可以察看圖表囉！看下去吧！</FONT></LI></UL>
+<UL>
+<OL>
+<LI><FONT color=#000000>設定 MRTG：</FONT> 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai mrtg-2.9.17]# cd /usr/local/mrtg-2/bin</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai bin]# ./cfgmaker --output=/usr/local/apache/htdocs/mrtg/net/mrtg.cfg&nbsp; \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt;&nbsp; public@vbird.adsldns.org</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>上面這個步驟會在你的主機上面製造一個參數檔，</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>而你未來的設定都會自動的在這個參數檔中設定完成了！</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai bin]# vi&nbsp; /usr/local/apache/htdocs/mrtg/net/mrtg.cfg</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>不過由於程式自動設定的 mrtg.cfg 有些地方會有瑕疵，</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>因此，請將底下這三行修改成你的樣式喔！</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>WorkDir: /usr/local/apache/htdocs/mrtg/net/</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Options[_]: growright, bits</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Language: big5</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai bin]# ./mrtg&nbsp; /usr/local/apache/htdocs/mrtg/net/mrtg.cfg</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>開始測試你的參數檔，正常的話，進行</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>這個動作要執行三次，就可以正常工作了，</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>不過，若是有問題的話，就需要改 mrtg.cfg ，再執行直到沒有錯誤發生為止！</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai bin]# ./indexmaker \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --output=/usr/local/apache/htdocs/mrtg/net/index.html \</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; --title=VBird主機流量統計表 \&nbsp;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&gt; /usr/local/apache/htdocs/mrtg/net/mrtg.cfg</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>上面這個程式 indexmaker 是在製作首頁！當然，你也可以自訂首頁！</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>上面是說，會自動的輸出一個 index.html 的檔案到&nbsp;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>/usr/local/apache/htdocs/mrtg/net 中，就是主網頁啦！</FONT></FONT></FONT> <BR>&nbsp;</P></TD></TR></TBODY></TABLE><FONT color=#000000>上面請特別注意：在 public@vbird.adsldns.org 這一行呢，</FONT><FONT color=#3333ff>public 是有其意義的（在 snmp 這個通訊服務裡面的預設搜尋的一個代碼）</FONT><FONT color=#000000>，所以，如果你的主機的動態 DNS 名稱為 your.domain.name 則你就『一定』要寫成 public@your.domain.name 才行！千萬不要弄錯了！已經有很多網友遇到這個問題！</FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>設定五分鐘偵測一次：</FONT> <BR><FONT color=#000000>好了，開始偵測吧，就修改 /etc/crontab 吧！</FONT> 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai bin]# vi /etc/crontab</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>#1. Runing The MRTG Net Flow Control</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>*/5 * * * * root /usr/local/mrtg-2/bin/mrtg /usr/local/apache/htdocs/mrtg/net/mrtg.cfg &gt; /dev/null 2&gt;&amp;1</FONT></FONT></FONT> <BR>&nbsp;</P></TD></TR></TBODY></TABLE><FONT color=#000000>這樣就每五分鐘可以自動偵測一次網路卡的流量囉！</FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>設定 Web site：</FONT> <BR><FONT color=#000000>以上面的例子為例，則你的 mrtg 圖表在：</FONT> <BR><FONT face=細明體><FONT color=#3333ff>http://your.host.domain/mrtg/net/index.html</FONT></FONT> <BR><FONT color=#000000>就可以看到你的主機上網路卡的流量囉！</FONT></LI></OL></UL>
+<UL><FONT color=#000000>好了，重點說完了，再來說說在 mrtg.cfg 這個參數檔當中你看到的幾個參數的意義吧！</FONT></UL>
+<BLOCKQUOTE>
+<UL>
+<LI><FONT color=#000099>Target[裝置名稱]</FONT><FONT color=#000000>：</FONT> </LI></UL>
+<UL>
+<UL>
+<LI><FONT face=細明體><FONT color=#3333ff>Target[vbird.adsldns.org_2]: 2: public@192.168.1.2</FONT></FONT> <BR><FONT color=#000000>上面是一般的用法，其中半括號內的是裝置的名稱，同一個裝置的各參數中，這個名稱要一致！</FONT></LI></UL></UL>
+<UL>
+<UL>
+<LI><FONT face=細明體><FONT color=#3333ff>Target[vbird.adsldns.org_3]:`/usr/local/apache/htdocs/mrtg/cpu/mrtg.cpu`</FONT></FONT> <BR><FONT color=#000000>後面接的是一個自訂的加掛的可執行檔案，這個檔案執行之後，會顯示四個數據，這樣就可以繪圖了！在繪製非 MRTG 程式的預設咚咚中，這個是最常使用的方法了！</FONT></LI></UL></UL>
+<UL>
+<LI><FONT color=#000099>MaxBytes[裝置名稱]：</FONT> </LI></UL>
+<UL>
+<UL>
+<LI><FONT face=細明體><FONT color=#3333ff>MaxBytes[vbird.adsldns.org_2]: 1250000</FONT></FONT> <BR><FONT color=#000000>後面的數字代表資料監測時，最大的傳送速率，使用 bytes，所以 10Mbps 則為&nbsp; 1.25MBytes，大約是 1250000 Bytes。這個數值程式會自動判斷啦！不過你也可以自己修改，用到這個數字的時候是在你的圖表下方，每一個說明後面的(xx%)時用到的。</FONT></LI></UL></UL>
+<UL>
+<UL>
+<LI><FONT face=細明體><FONT color=#3333ff>MaxBytes[vbird.adsldns.org_3]: 100</FONT></FONT> <BR><FONT color=#000000>如果你的資料並不是 Bytes 時，例如監測 CPU 負載率時，那這個數值就需要改變啦！</FONT></LI></UL></UL>
+<UL>
+<LI><FONT color=#000099>Options[裝置名稱]：</FONT> </LI></UL>
+<UL>
+<UL>
+<LI><FONT face=細明體><FONT color=#3333ff>Options[vbird.adsldns.org_2]: growright, bits</FONT></FONT><FONT color=#000000>&nbsp; （用在網路流量中）</FONT> 
+<LI><FONT face=細明體><FONT color=#3333ff>Options[vbird.adsldns.org_3]: growright, nopercent, gauge&nbsp;</FONT></FONT><FONT color=#000000> （用在 CPU 負載中）</FONT> </LI></UL></UL>
+<UL>
+<UL><FONT color=#000000>growright:將資料隨時間變化的順序以右而左繪圖；</FONT> <BR><FONT color=#000000>bits:資料單位為 bits；</FONT> <BR><FONT color=#000000>nopercent:在圖下方的說明文字中，不顯示百分比；</FONT> <BR><FONT color=#000000>gauge:圖表的上限固定！</FONT></UL></UL></BLOCKQUOTE>
+<HR width="100%">
+
+<UL>
+<LI><A name=6></A>偵測 CPU 負載量： <BR><FONT color=#000000>偵測 CPU 負載量時，需要使用到額外的外掛程式，就是 sysstat 這個程式，我只使用在 RedHat 6.1 上面過，是可以使用的！</FONT></LI></UL>
+<UL>
+<OL>
+<LI><FONT color=#000000>下載並安裝 <A href="http://linux.vbird.org/download/index.php#sysstat">sysstat-4.0.2-1.i386.rpm</A>：</FONT> <BR><FONT color=#000000>不要說還不會使用 rpm 安裝套件喔！打屁屁！</FONT> <BR><FONT face=細明體><FONT color=#3333ff>rpm -ivh sysstat-4.0.2-1.i386.rpm</FONT></FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>編寫外掛程式：</FONT> <BR><FONT color=#000000>以安裝完 sysstat 套件後，產生的 /usr/bin/sar 程式進行外掛程式的編寫，我寫了一個監測 CPU 的小程式，使用 bash 寫的，可以參考看看：</FONT> 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai cpu]# vi mrtg.cpu</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffff00><FONT size=-1>---- 檔案開始 ----</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>#!/bin/bash</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 這個程式是用來偵測 CPU 的小外掛程式！</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 1. 開始使用 sar 來監測 CPU 的 user 及 System 負載率</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; cpuusr=`/usr/bin/sar -u 1 3 | grep Average | awk '{print $3}'`</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; cpusys=`/usr/bin/sar -u 1 3 | grep Average | awk '{print $5}'`</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; UPtime=`/usr/bin/uptime | awk '{print $3 " " $4 " " $5}'`</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 2. 列出四個數據（前兩個為數字）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; echo $cpuusr</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; echo $cpusys</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; echo $UPtime</FONT></FONT></FONT> <BR><FONT face=細明體><FONT size=-1><FONT color=#ffffff>&nbsp; echo vbird.adsldns.org&nbsp; </FONT><FONT color=#ffff00>（這裡寫你的主機名稱）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>---- 檔案結束 ----</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT size=-1><FONT color=#ffffff>[root @tsai cpu]# chmod 755 mrtg.cpu </FONT><FONT color=#ffff00>（設定成可執行）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT size=-1><FONT color=#ffffff>[root @tsai cpu]# ./mrtg.cpu </FONT><FONT color=#ffff00>（測試看可執行否）</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>2.0</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>5.4</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>1 day, 22:30,</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>vbird.adsldns.org</FONT></FONT></FONT></P></TD></TR></TBODY></TABLE>
+<LI><FONT color=#000000>開始設定 mrtg 參數檔：</FONT> <BR><FONT color=#000000>我的參數檔有點像這樣：</FONT> 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai cpu]# vi mrtg.cfg.cpu</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffff00><FONT size=-1>---- 檔案開始 ----</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>### Global Config Options</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>### To get bits instead of bytes and graphs growing to the right</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>WorkDir: /usr/local/apache/htdocs/mrtg/cpu/</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Language: big5</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Target[localhost]: `/usr/local/apache/htdocs/mrtg/cpu/mrtg.cpu`</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>MaxBytes[localhost]: 100</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Options[localhost]: gauge, nopercent, growright</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>YLegend[localhost]: CPU loading (%)</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>ShortLegend[localhost]: %</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>LegendO[localhost]: &amp;nbsp; CPU 使用者負載;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>LegendI[localhost]: &amp;nbsp; CPU 純系統負載;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Title[localhost]: CPU ?t???v</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>PageTop[localhost]: &lt;H1&gt;VBird 主機 CPU 負載率&lt;/H1&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&lt;TABLE&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;System:&lt;/TD&gt;&nbsp;&nbsp;&nbsp;&nbsp; &lt;TD&gt;RedHat 6.1 in Linux Kernel 2.2.19&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&lt;/TABLE&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>---- 檔案結束 ----</FONT></FONT></FONT></P></TD></TR></TBODY></TABLE>
+<LI><FONT color=#000000>開始執行參數檔：（一樣，要執行三次以上）</FONT> <BR><FONT face=細明體><FONT color=#3333ff>/usr/local/mrtg-2/bin/mrtg&nbsp; /usr/local/apache/htdocs/mrtg/cpu/mrtg.cfg.cpu</FONT></FONT> <BR>&nbsp; 
+<LI><FONT color=#000000>寫入 /etc/crontab 當中：</FONT> <BR><FONT face=細明體><FONT color=#3333ff>*/2 * * * * root /usr/local/mrtg-2/bin/mrtg /usr/local/apache/htdocs/mrtg/cpu/mrtg.cfg.cpu &gt; /dev/null 2&gt;&amp;1</FONT></FONT> 
+<P><FONT color=#000000>這樣就OK了，直接將 Web 指向 http://your.host.domain/mrtg/cpu/localhost.html</FONT></P></LI></OL></UL>
+<BLOCKQUOTE><FONT color=#000000>重點說完了！再來說說 sar 吧！基本上， sar 可以用來偵測很多的咚咚，例如：</FONT> 
+<UL>
+<LI><FONT color=#000000><FONT face=細明體>sar -u 1 5</FONT> ：每一秒鐘測一次 cpu ，共計五次後算平均；</FONT> 
+<LI><FONT color=#000000><FONT face=細明體>sar -r 3 3</FONT>：每三秒看一次實體與虛擬記憶體用量，三次後算平均！</FONT> 
+<LI><FONT color=#000000>其他的功能有待你的發掘囉！</FONT> </LI></UL></BLOCKQUOTE>
+<HR width="100%">
+
+<UL>
+<LI><A name=online></A><FONT color=#000066>即時偵測線上人數</FONT> </LI></UL>
+<UL><FONT color=#000000>如果您曾經上過<A href="http://ftp.nsysu.edu.tw/htdocs/mrtg/" target=_blank>中山大學的 FTP 網站</A>的話，您會發現『</FONT><FONT color=#000099>咦！他們有偵測即時的上線人數(online users)呢！</FONT><FONT color=#000000>』同樣的，她們也是使用 MRTG 這一套相當漂亮的軟體來達成這個目標！那，要如何達到這個目標呢？其實也是很簡單，我們剛剛不是已經介紹了，</FONT><FONT color=#000099> mrtg 其實只要接受到 2 個數字就可以繪圖了</FONT><FONT color=#000000>嗎？那這裡就給他兩個數字就可以啦！兩個數字從何而來？如果您知道 netstat 這個指令的話，就會發現，當您下達 netstat -a 的時候，會有這個咚咚會出現：</FONT> <BR>&nbsp; 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai root]# netstat -a | more</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Active Internet connections (including servers)</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Proto Recv-Q Send-Q Local Address&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Foreign Address&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; State</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:ftp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:telnet&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:pop-2&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:pop-3&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:imap2&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:smtp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:www&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 211.72.119.19:58298&nbsp;&nbsp;&nbsp;&nbsp; SYN_RECV</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:mysql&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 *:netbios-ssn&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 57920 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 211.75.193.100:2965&nbsp;&nbsp;&nbsp;&nbsp; ESTABLISHED</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 57920 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 211.75.193.100:2966&nbsp;&nbsp;&nbsp;&nbsp; ESTABLISHED</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 57920 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 211.75.193.100:2967&nbsp;&nbsp;&nbsp;&nbsp; ESTABLISHED</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 57920 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 211.75.193.100:2968&nbsp;&nbsp;&nbsp;&nbsp; ESTABLISHED</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 57920 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 211.75.193.100:2969&nbsp;&nbsp;&nbsp;&nbsp; ESTABLISHED</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 202.98.131.11:4374&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIN_WAIT1</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 202.98.131.11:4404&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIN_WAIT1</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 202.98.131.11:4413&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIN_WAIT1</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1 tsai.adsldns.org:www&nbsp;&nbsp;&nbsp; 202.98.131.11:4453&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FIN_WAIT1</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>以下省略！</FONT></FONT></FONT></TD></TR></TBODY></TABLE>
+<P><FONT color=#000000>我們可以很清楚的發現：</FONT><FONT color=#000099>使用 netstat 可以查到 WWW 的連線數目</FONT><FONT color=#000000>，那只要將這些數目作一些重複性分析，以去除重複的 IP 網址後，不就可以知道以 WWW 方法上網連線的即時人數了嘛！這就是我們偵測的主要原理了！</FONT></P></UL>
+<UL><FONT color=#000000>那要如何寫這個偵測的批次檔呢？以下就是鳥哥嘗試寫的一個批次檔！你可以將一些註解符號取消，就可以知道為何這麼寫了：</FONT> <BR>&nbsp; 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai root]# vi mrtg.person.sh</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>檔案開始：</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>#!/bin/bash</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 這個程式主要在計算有多少人以 WWW 的方式連線進我們的主機！</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 1. 計算連線的數目</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>echo `netstat -a | grep www|awk '{print $5}'|sort | wc -l|awk '{print$1 - 1}'`</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 底下在說明整個咚咚的列出（檢查用）&nbsp;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># netstat -a | grep www|awk '{print $5}'|sort| uniq&nbsp;</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 2. 計算連線人數：</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>echo `netstat -a | grep www|awk '{print $5}'|cut -d":" -f1|sort| uniq |wc -l | awk '{print $1 - 1}'`</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># netstat -a | grep www|awk '{print $5}'|cut -d":" -f1|sort| uniq&nbsp;</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1># 3. 輸出時間咚咚</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; UPtime=`/usr/bin/uptime | awk '{print $3 " " $4 " " $5}'`</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; echo $UPtime</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; echo your.host.name</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>檔案結束！</FONT></FONT></FONT></P></TD></TR></TBODY></TABLE>
+<P><FONT color=#000000>在上面的式子中，你可以執行出你所需要的咚咚囉！你也可以將 <A href="http://linux.vbird.org/download/index.php#mrtg.person.sh">mrtg.person.sh</A> 這個檔案捉下去直接修改！所需要變更的就只有 最後一行的 your.host.name 要改囉！改成您的主機名稱吧！並且將這個檔案改成可以執行的狀態：</FONT> 
+<UL><FONT face=細明體><FONT color=#3333ff>chmod 755 mrtg.person</FONT></FONT></UL><FONT color=#000000>即可！</FONT></UL>
+<UL><FONT color=#000000>接下來則是修改 mrtg 的參數檔啦！我們可以建立一個名稱為 mrtg.cfg.person 的參數檔，內容有點像這樣！</FONT> <BR>&nbsp; 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root @tsai root]# vi mrtg.cfg.person</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>檔案開始：</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># Created by</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; VBird 2001/10/29</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>### Global Config Options</FONT></FONT></FONT> <BR><FONT face=細明體><FONT size=-1><FONT color=#ffffff>WorkDir: /usr/local/apache/htdocs/mrtg </FONT><FONT color=#ffff00>&lt;==請改成您圖表放置的目錄</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Language: big5&nbsp;</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>### CPU Loading detecting ...</FONT></FONT></FONT> <BR><FONT face=細明體><FONT size=-1><FONT color=#ffffff>Target[tsai.adsldns.org_person]: `/usr/local/mrtg-2/bin/mrtg.person.sh`</FONT><FONT color=#ffff00> &lt;==檔案放置的路徑與檔名</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>MaxBytes[tsai.adsldns.org_person]: 500</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Options[tsai.adsldns.org_person]: gauge, nopercent, growright</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>YLegend[tsai.adsldns.org_person]: Online Users</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>ShortLegend[tsai.adsldns.org_person]: %</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>LegendI[tsai.adsldns.org_person]: &amp;nbsp; 連線數目 :</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>LegendO[tsai.adsldns.org_person]: &amp;nbsp; 上線人數 :</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Title[tsai.adsldns.org_person]: WWW 上線人數統計表</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>PageTop[tsai.adsldns.org_person]: &lt;H1&gt; WWW 主機上線人數 &lt;/H1&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&lt;TABLE&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp; &lt;TR&gt;&lt;TD&gt;System:&lt;/TD&gt;&nbsp;&nbsp; &lt;TD&gt;Aerosol Lab. in Redhat 6.1 Kernel 2.2.18&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;Maintainer:&lt;/TD&gt; &lt;TD&gt;VBird&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&lt;/TABLE&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>檔案結束！</FONT></FONT></FONT></P></TD></TR></TBODY></TABLE>
+<P><FONT color=#000000>要注意的僅是 </FONT><FONT color=#3333ff>`/usr/local/mrtg-2/bin/mrtg.person.sh`</FONT><FONT color=#000000> 這一行字！這個就是我們剛剛才寫成的 scripts 啦！然後同樣的，執行</FONT> 
+<UL><FONT face=細明體><FONT color=#3333ff>./mrtg mrtg.cfg.person</FONT></FONT></UL><FONT color=#000000>三次之後，就可以正常的產生圖表啦！</FONT> <BR><FONT color=#000000>然後在將您的圖表加在 index.html 網頁中，如此則可以即時的偵測與記錄上線人數的統計囉！當然，如果您修改一下上面的 script (mrtg.person.sh)，將 www 改成 ftp 的話，那就等於是偵測 ftp 的即時上線人數！如何！簡單吧！</FONT> <BR><FONT color=#000000>祝大家架站愉快！</FONT></UL>
+<HR width="100%">
+
+<UL>
+<LI><A name=linux_win></A><FONT color=#000066><FONT size=+1>在 Linux 主機上偵測 windows 2000 的網路流量</FONT></FONT> </LI></UL>
+<UL><FONT color=#000000>好了！我們現在已經可以在 Linux 系統上面偵測任何咚咚啦！那如果要偵測 windows 2000 要如何作呢？其實也真是很簡單，(1) 你要先在 windows 2000 上面安裝 SNMP 通訊協定的套件；(2) 在 Linux 上面針對 windows 2000 進行參數檔的偵測； (3) 做成網頁輸出！簡單的很！</FONT></UL>
+<UL>
+<OL>
+<LI><FONT color=#3333ff>Windows 2000 下啟動 snmp 服務：</FONT> <BR><FONT color=#000000>windows 2000 這個系統底下已經有預設的 snmp 通訊協定了，只要開放他即可！那要如何開放呢？你可以開啟『</FONT><FONT color=#000099>開始</FONT><FONT color=#000000>』&gt;『</FONT><FONT color=#000099>設定</FONT><FONT color=#000000>』&gt;『</FONT><FONT color=#000099>控制台</FONT><FONT color=#000000>』&gt;『</FONT><FONT color=#000099>新增移除程式</FONT><FONT color=#000000>』&gt;『</FONT><FONT color=#000099>新增/移除 Windows 元件</FONT><FONT color=#000000>』。然後就像下面兩張圖一樣，先勾選 </FONT><FONT color=#000099>Management and Monitoring Tools</FONT><FONT color=#000000> ，之後選擇 『</FONT><FONT color=#000099>詳細資料</FONT><FONT color=#000000>』之後，出現的圖示中，選擇勾選 </FONT><FONT color=#000099>Simple Network Management Protocol</FONT><FONT color=#000000> ，然後按下確定之後，就開始安裝啦！在安裝的過程中，安裝程式會要求你放入 windows 2000 的 CD 進入 CD-ROM ，安裝完畢之後就已經有 SNMP 的通訊協定啦！</FONT> 
+<CENTER><IMG height=388 src="http://linux.vbird.org/linux_security/old/04mrtg_snmp_win2000_1.jpg" width=501 NOSAVE> <BR><IMG height=319 src="103_files/04mrtg_snmp_win2000_2[1].jpg" width=449 NOSAVE></CENTER>
+<LI><FONT color=#3333ff>在 Linux 上面針對 windows 2000 進行 MRTG 的參數偵測：</FONT> <BR><FONT color=#000000>接下來的工作跟之前的工作就差不多啦！先來建立參數檔吧，如何建立呢？假設你的 Windows 2000 的 IP 是 192.168.1.11 ，那麼你就必須要這樣來偵測 Windows 2000 的參數：</FONT> <BR>&nbsp; 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT size=-1><FONT color=#ffffff>[root@vbird mrtg]# /usr/local/mrtg-2/bin/cfgmaker </FONT><FONT color=#ffff00>public@192.168.1.11</FONT><FONT color=#ffffff> &gt; mrtg.cfg.vbird</FONT></FONT></FONT></TD></TR></TBODY></TABLE>
+<P><FONT color=#000000>注意囉！ public 是預設的指令，後面接的是你的 IP （當然也可以是 domain 說）。這樣一來，就可以做出一個參數檔案，名稱為 mrtg.cfg.vbird，我們來看一看這個檔案的大概內容吧！</FONT> <BR>&nbsp; 
+<TABLE cols=1 width="80%" bgColor=#000000>
+<TBODY>
+<TR>
+<TD><FONT face=細明體><FONT color=#ffffff><FONT size=-1>[root@vbird mrtg]# vi mrtg.cfg.vbird</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># Created by</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1># /usr/local/mrtg-2/bin/cfgmaker public@192.168.1.11</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>### Global Config Options</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>WorkDir: /usr/local/apache/htdocs/mrtg/</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffff00><FONT size=-1>Options[_]: growright, bits</FONT></FONT></FONT> 
+<P><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Target[192.168.1.11_16777219]: 16777219:public@192.168.1.11:</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>SetEnv[192.168.1.11_16777219]: MRTG_INT_IP="192.168.1.11" MRTG_INT_DESCR="NDIS 5</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>.0 driver"</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>MaxBytes[192.168.1.11_16777219]: 1250000</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>Title[192.168.1.11_16777219]: Traffic Analysis for 16777219 -- VBLAB2</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>PageTop[192.168.1.11_16777219]: &lt;H1&gt;Traffic Analysis for 16777219 -- VBLAB2&lt;/H1&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&lt;TABLE&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;System:&lt;/TD&gt;&nbsp;&nbsp;&nbsp;&nbsp; &lt;TD&gt;VBLAB2 in &lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;Maintainer:&lt;/TD&gt; &lt;TD&gt;&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;Description:&lt;/TD&gt;&lt;TD&gt;NDIS 5.0 driver&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;ifType:&lt;/TD&gt;&nbsp;&nbsp;&nbsp;&nbsp; &lt;TD&gt;ethernetCsmacd (6)&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;ifName:&lt;/TD&gt;&nbsp;&nbsp;&nbsp;&nbsp; &lt;TD&gt;&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;Max Speed:&lt;/TD&gt;&nbsp; &lt;TD&gt;1250.0 kBytes/s&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&nbsp; &lt;TR&gt;&lt;TD&gt;Ip:&lt;/TD&gt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &lt;TD&gt;192.168.1.11 ()&lt;/TD&gt;&lt;/TR&gt;</FONT></FONT></FONT> <BR><FONT face=細明體><FONT color=#ffffff><FONT size=-1>&nbsp;&lt;/TABLE&gt;</FONT></FONT></FONT> <BR>&nbsp;</P></TD></TR></TBODY></TABLE><FONT color=#000000>其他的設定不太需要改變，但是上面黃色的那兩行字中，請注意，修改成你的『工作目錄』與一些設定吧！最好是將一些圖表資料都放一起就好了！這樣子大概就OK啦！</FONT> <BR>&nbsp; </P>
+<LI><FONT color=#3333ff>做成網頁輸出：</FONT> <BR><FONT color=#000000>這一步跟前面就都一樣啦，先執行 mrtg mrtg.cfg.vbird（你的參數檔名）三次，然後在將輸出的圖表寫在你的 index.html 上面即可！這樣就已經可以偵測 windows 2000 的網路流量啦！而且還不需要在 windows 2000 上面有任何的咚咚發生喔！</FONT></LI></OL></UL>
+<HR width="100%">
+
+<UL>
+<LI><A name=MRTG-win98></A><FONT color=#000066><FONT size=+1>在 Linux 主機上偵測 windows 98 的網路流量</FONT></FONT> </LI></UL>
+<BLOCKQUOTE><FONT color=#000000>MRTG 流量偵測到此為止介紹的都是屬於 NT 或者是 Linux 上面的訊息，那要如何偵測 Windows 98 的系統呢？畢竟使用這個系統的用戶並不少呀！OK！偵測 Windows 系統，最主要的就是要有 snmp 啦！只要有 snmp 之後，往後的工作就都完全一模一樣了！哪我們就在 Windows98 上面安裝 snmp 的服務吧！其實， snmp 套件已經在 windows 98 的原版光碟中了，你可以到原版 98 光碟的 </FONT><FONT color=#3333ff>/tools/reskit/netadmin/snmp</FONT><FONT color=#000000> 這個路徑下找到以下僅提供 snmp 在 windows98 下的安裝方法，至於偵測的方法則與 Windows 2000 的情況一模一樣！目前我已經在 Linux 上以 MRTG 成功的將研究室所有的電腦之網路卡流量偵測了！往後將可便利於管理整個研究室的網路流量，並可以藉以分析是否有不明人士亂玩網路.....</FONT> 
+<OL>
+<LI><FONT color=#000000>你可以在 windows 98 下按下『開始』&gt;『控制台』&gt;『網路』，或者是在桌面的『網路上的芳鄰』按『右鍵』選『內容』，會出現如下方框：</FONT> <BR><IMG height=427 src="103_files/04mrtg_snmp-win98-1[1].jpg" width=367 NOSAVE> 
+<LI><FONT color=#000000>請按下『新增』之後，出現：</FONT> <BR><IMG height=184 src="103_files/04mrtg_snmp-win98-2[1].jpg" width=395 NOSAVE> 
+<LI><FONT color=#000000>選擇『服務』的項目後，並按下『新增』：</FONT> <BR><IMG height=300 src="103_files/04mrtg_snmp-win98-3[1].jpg" width=441 NOSAVE> 
+<LI><FONT color=#000000>然後再選擇『從磁片安裝』這一項！並將你的 snmp 套件指向你的原版 windows 98 光碟！</FONT> <BR><IMG height=222 src="103_files/04mrtg_snmp-win98-4[1].jpg" width=407 NOSAVE> 
+<LI><FONT color=#000000>按下確定之後，再按一次確定！即可安裝 snmp 套件囉！</FONT> <BR><IMG height=157 src="103_files/04mrtg_snmp-win98-5[1].jpg" width=386 NOSAVE> 
+<LI><FONT color=#000000>就像這樣，出現了這個東西！按下確定吧！開始安裝囉！</FONT> <BR><IMG height=300 src="103_files/04mrtg_snmp-win98-6[1].jpg" width=441 NOSAVE> 
+<LI><FONT color=#000000>有沒有看到如下圖所示！ Microsoft SNMP agent 已經出現了！表示安裝完畢！</FONT> <BR><IMG height=427 src="103_files/04mrtg_snmp-win98-7[1].jpg" width=367 NOSAVE></LI></OL></BLOCKQUOTE>
+<HR width="100%">
+
+<UL>
+<LI><A name=problem></A><FONT size=+1>一些問題彙整</FONT> </LI></UL>
+<BLOCKQUOTE><FONT color=#000000>在寫出這一篇文章之後，收到網友們的熱情支持！讓小弟不甚惶恐！不過，這裡面也出現了一些問題是當初所沒有發現的！以下就來說說問題的所在吧！</FONT> 
+<OL>
+<LI><FONT color=#000099>我的 Red Hat 本身就有 snmp 了，可不可以不要安裝 ucd-snmp 這個套件呢？</FONT> <BR><FONT color=#000000>當然了，Red Hat 本身就有 snmp 這個通訊服務存在了，可能的話當然就不要去動他比較好囉！不過，要讓你的 Red Hat 預設的 snmp 能動，那就一定需要修改 /etc/snmp/snmpd.conf 這個檔案！不過，小弟對於 snmpd.conf 的設定還不是很瞭解！因此，就會直接建議您，乾脆移除預設的 ucd-snmp 之後，重新安裝新版的吧！設定上比較簡單啦！當然，如果您英文不錯的話， /etc/snmp/snmpd.conf 這個檔案可要多看一些喔！</FONT> <BR>&nbsp; 
+<LI><FONT color=#000099>為何作完了 ./cfgmaker 這個動作之後，再執行 ./mrtg 時，會出現：『</FONT><FONT color=#3333ff>ERROR: Line 9</FONT><FONT color=#000099> 』的問題？</FONT> <BR><FONT color=#000000>這個是大家最容易犯的錯了，其實，就是在 public@your.hosts.name 這一個地方寫錯了！請千萬注意， public 是有意義的代碼，請不要將這一行寫成你的 e-mail 了！不然就會造成錯誤情況發生！</FONT> <BR>&nbsp; 
+<LI></LI></OL></BLOCKQUOTE>
+<HR width="100%">
+
+<UL>
+<DT><FONT color=#000000>參考資料：</FONT> 
+<DT><FONT color=#000000>高健智、賴阿福：Linux 網路實作經典之高手究極篇，知城出版社；</FONT> 
+<DT><FONT color=#000000><A href="http://freebsd.lab.mlc.edu.tw/snmp+mrtg.shtml" target=_blank>苗栗大南國小架站日誌</A></FONT> 
+<DT><FONT color=#000000><A href="http://www.hmes.kh.edu.tw/~jang/" target=_blank>張宏明的個人筆記簿</A></FONT> </DT></UL>
+<DT><FONT face=新細明體><FONT color=#3333ff><FONT size=-1>2002/ 01/01以來統計人數</FONT></FONT></FONT> <BR><IMG height=15 src="103_files/Count[26].gif" width=60 align=ABSCENTER NOSAVE>
+<HR width="100%">
+ 
+<CENTER><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 NOSAVE></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 NOSAVE></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 NOSAVE></A> <BR><FONT color=#000066><FONT size=-1>Designed by <A href="mailto:vbird@mail.vbird.idv.tw">VBird</A> during 2001-2004.&nbsp; Aerosol Lab.</FONT></FONT></CENTER></DT></BODY>

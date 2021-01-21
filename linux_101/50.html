@@ -1,0 +1,142 @@
+<HEAD><TITLE>鸟哥的 Linux 私房菜 -- Network Secure -- iptables and TCP_Wrappers</TITLE>
+<META http-equiv=Content-Type content="text/html; charset=gb2312">
+<META content=VBird name=Author>
+<META content="Mozilla/4.5 [zh-TW] (WinNT; I) [Netscape]" name=GENERATOR>
+<META content="認識 iptables 與 TCP_Wrappers 的概念！" name=Description><!-- saved from url=(0022)http://internet.e-mail -->
+<STYLE>
+   <!--
+   body{background-image=url("50_files/VBirdLinux[1].jpg");background-ATTACHMENT=FIXED}
+   -->
+</STYLE>
+</head>
+<BODY style="CURSOR: auto" background="50_files/VBirdLinux[17].jpg" nosave="">
+<CENTER>
+<CENTER><B><FONT color=#3333ff size=+2><FONT face=SimSun>鸟哥的</FONT><FONT face="Times New Roman,Times"> Linux </FONT><FONT face=SimSun>与</FONT><FONT face="Times New Roman,Times"> ADSL </FONT><FONT face=SimSun>私房菜</FONT></FONT></B> <BR><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR>
+<HR width="100%">
+</CENTER><FONT face=SimSun color=#3333ff size=+2><A href="http://linux.vbird.org/linux_server/0240network-secure-1.php" target=_self>认识网络安全</A></FONT></CENTER>
+<DIV align=right><FONT face=SimSun color=#3333ff size=-1>最近更新日期：2003/08/23</FONT></DIV><FONT face=SimSun color=#3333ff size=-2>　</FONT> 
+<TABLE cols=1 width="100%" bgColor=#ffcccc border=1>
+<TBODY>
+<TR>
+<TD><FONT color=#000099 size=-1>在介绍了『<A href="http://linux.vbird.org/linux_server/0110network_basic.php">网络基础</A>』、『<A href="http://linux.vbird.org/linux_server/0210port_limit.php">限制联机 port number </A>』、『<A href="http://linux.vbird.org/linux_server/0220upgrade.php">网络升级套件</A>』之后，再来准备要上 Internet 了吗？！如果只是想要上 Internet 去浏览，那么自然没有问题，如果是想要对 Internet 开放网络服务，那么最好还是先认识一下网络安全会比较好一些。什么？套件也更新了， port 也关闭了，还需要认识什么网络安全啊？！呵呵！当然啦！因为难保我们的主机不会被新的套件漏洞以及阻断式攻击(DoS)所困扰啊！在这个章节里面，我们会稍微介绍一些基础的网络防护观念，尤其是系统管理员应该要做的事情吶！</FONT></TD></TR></TBODY></TABLE><FONT color=#000099 size=-2>　</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#TCP_IP">TCP/IP 封包进入主机的基本流程</A></FONT>：</FONT> <BR><FONT color=#000099>　　：<A href="#TCP_IP_TCP">认识 TCP/IP</A></FONT> <BR><FONT color=#000099>　　：<A href="#TCP_IP_fllow">TCP 进入本机简易流程</A></FONT> <BR><FONT color=#000099><FONT size=+1><A href="#attack">一些常见的攻击手法</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#secure_basic">主机防护计划</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#admin">网管人员的技能</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#repaire">被入侵后的修复工作</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#review">重点回顾</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#reference">参考数据</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#ex">课后练习</A></FONT>：</FONT> <BR>
+<HR width="100%">
+<A name=TCP_IP></A><FONT color=#000099 size=+1>TCP/IP 封包进入主机的基本流程：</FONT> 
+<UL>这一章的主要内容是在介绍网络安全与基础防护方面的观念与建议，既然是与网络安全有关，那么主要用在网络传输时的 TCP 封包就不能不知道咯。这里就要来讨论一下，当有一个 TCP/IP 的封包要进入您的主机系统时，那个 TCP 封包应该会经过哪些关卡呢！？知道这些关卡之后，才会知道有哪些入侵的管道呀！然后才能知道如何去防御他！OK！那么首先自然就要来了解一下，什么是 TCP/IP 啰！ <BR>　 <BR>
+<HR width="100%">
+<A name=TCP_IP_TCP></A><FONT color=#000099>认识 TCP/IP：</FONT> <BR>　 <BR>由 <A href="http://linux.vbird.org/linux_server/0110network_basic.php">网络基础</A> 里头我们可以知道目前的网络联机协议以 <A href="http://linux.vbird.org/linux_server/0110network_basic.php#packet_tcp">TCP/IP</A> 为主要的架构，而其中相当重要的则是 TCP 封包，详细的 <A href="http://linux.vbird.org/linux_server/0110network_basic.php#packet_tcp">TCP 封包</A>请再回到网络基础篇去看个仔细，我们这里再来简单的复习一下： <BR>　 
+<UL>
+<LI><FONT color=#000066>主机的 IP 可以想成是地址；</FONT> 
+<LI><FONT color=#000066>而主机启动的 port 可以想成是窗口或楼层；</FONT> 
+<LI><FONT color=#000066>至于在两个 IP 之间传送数据的 TCP 封包则可以被想成是包裹</FONT>。 </LI></UL>　 <BR>好了，既然 TCP 是个包裹，那么想当然尔，真正的数据是在包裹里面的 Messages/Data ，但是由于要将包裹传送到正确的地点去，所以就有个表头 (Header) ，亦即在包裹不是都需要有填写数据的那一面吗？在这一面上面必须要填写正确的来源与目的之地址以及该地址的楼层，才能够正确的将这个包裹传送到正确的地方！当然啰，由于可能会收到回信，所以自然那个包裹上面，寄信的地址与楼层也需要填写正确啰！^_^。所以呢，您可以简单的将 TCP 封包想成有两个主要的部分，一个是放置资料的 Messages/Data ，另一个则是表头( Header )数据填写区，在这个 Header 区域中，有相当多的数据，您可以回到网络基础去瞧一瞧 <A href="http://linux.vbird.org/linux_server/0110network_basic.php#packet_tcp">TCP 封包的完整格式</A>，我们这里将 TCP 封包的 Header 简化成为来源与目的之 IP 及传送的 port ！所以基本的 TCP 封包可以由下图来表示啰： <BR>　 
+<CENTER><IMG height=184 src="56_files/0250simple_firewall_2[1].jpg" width=153 nosave=""></CENTER>　 <BR>由上图我们可以清楚的发现到，您的主机能不能接收这个 TCP 封包，就需要合乎 TCP 封包的 IP 与 port 的规定啰！ <BR>　 <BR>
+<HR width="100%">
+<A name=TCP_IP_fllow></A><FONT color=#000099>简易 TCP 封包进入主机之流程：</FONT> <BR>　 <BR>好了，现在我们知道主机收不收的到数据跟 TCP 上面的表头数据( Header )是有关系的！那么假如有个 TCP 封包要进入到您的主机时，他会经过哪些步骤呢？基本上会有底下这些手续的啦： <BR>　 
+<CENTER><IMG height=88 src="50_files/0240network-secure-2[1].jpg" width=467 nosave=""> <BR><FONT color=#000066>图一、TCP 封包进入本机要通过的管制步骤</FONT> <BR>&nbsp;</CENTER>
+<OL>
+<LI>首先， TCP 封包会先经过所谓的<FONT color=#000066>封包过滤机制 ( IP Filtering 或称为 NetFilter </FONT>)，这是 Linux 提供的第一层保护。IP Filter 可以将 TCP 封包进行分析，并依据您所订定的过滤规则来将该封包进行处理。举例来说，我们知道 TCP 封包的表头有 Port 与 IP 的信息，假如您知道有个黑客网站，因为恶名昭彰所以您不想要允许该网站的任何数据进入到主机的话，可以透过设定 IP Filter 的机制，命令 IP Filter 只要分析到 TCP 封包是来自该黑客网站的 IP 时，就将该 TCP 封包丢弃 (Drop) ！这也是 Linux 本机的最外部的防火墙啰。任何 TCP 封包要能进入到本机，就得先经过 IP Filter 这一关，如果能够通过您所设定的机制之后，TCP 封包就会进入到下一关； <BR>　 
+<LI>通过 IP Filter 之后，TCP 封包会开始接受 Super daemons 及 TCP_Wrappers 的检验，那个是什么呢？呵呵！说穿了就是 /etc/hosts.allow 与 /etc/hosts.deny 的设定文件功能啰。这个功能也是针对 TCP 的 Header 进行再次的分析，同样您可以设定一些机制来抵制某些 IP 或 Port ，好让来源端的封包被丢弃或通过检验； <BR>　 
+<LI>经过了上两道基本的防火设施之后，再接下来则是每一项服务的个别设定功能！举例来说，如果是以 FTP 联机的话，那么在 ftp 的设定档案当中，可能会经由 PAM 模块( 未来在网络安全当中会提及)来抵挡特殊的 users ，当然也会以特别的设定来抵挡某些 TCP 封包！另外，以 WWW 服务器的设定来看，在 WWW 的设定档 httpd.conf 里头也有类似的 deny 功能呦！不过要注意的是，当 TCP 到达这个步骤时，其实已经算是进入到本机的服务范围内了，所以，<FONT color=#000066>要小心您的套件是否有漏洞啊</FONT>！ <BR>　 
+<LI>假使上面的几道火墙都通过了，那么才能进入主机来登入！此时，一经登入就会被系统记录在『登录文件』当中，藉以了解主机的历史历程！ </LI></OL>　 <BR>注意一下，上面的步骤是 Linux 预设具有的防备功能，当然您还可以在 IP Filter 之前外加硬件防火墙设备！不过，在这里我们主要以 Linux 系统本身具有的功能来进行说明喔！好了，那么如何利用 Linux 所提供的这些功能来防备我们的主机呢？您可以尝试这样做： <BR>　 
+<UL>
+<LI><FONT color=#000099>封包过滤( IP Filter )：</FONT> <BR>封包过滤是 Linux 提供的第一道防火墙呦！但是不同的核心版本会有不一样的封包过滤机制！<FONT color=#000066>以 2.2.xx 为核心的 Linux 主要以 ipchains 作为过滤机制，至于目前新版的 2.4.xx 则以 iptables 为机制</FONT>！OK！既然我们的新版 Linux&nbsp; 为 kernel 2.4.xx ，所以自然以 iptables 来进行 IP 抵挡的工作啦！那么由于 TCP 封包里头有 IP 及 port 嘛！所以要抵挡来源 IP 或者是自身的 port ，嘿嘿！自然就很容易来进行啦！您目前只要晓得， iptables 可以经由 TCP 的封包 Header 资料来进行分析的工作，并设定『特殊动作』，例如：符合我们 iptables 的设定规则，就让他可以经过防火墙，若是该 TCP 封包在我们的不欢迎 IP 的行列，那就将他丢弃，他就没有办法进入 Linux 主机啦！ <BR>　 
+<LI><FONT color=#000099>Super daemons 与 TCP_Wrappers：</FONT> <BR>目前新推出的 Linux 所使用的 super daemons 是以 xinet 为主，至于抵挡封包的工作则可以让 TCP_Wrappers 来进行！Wrappers 是包裹的意思，那么 TCP_Wrappers 自然就是要对 TCP 这个包裹进行解析的工具啦！嘿嘿！没错，他可以再次的分析 TCP 的封包啊！利用每个服务的特色，来将 TCP 封包抵挡，这个 TCP_Wrappers 主要以『 服务 , services』为主的抵挡方针，例如 FTP, Telnet, SSH 都可以经由他来进行 IP 分析的动作呦！ <BR>　 
+<LI><FONT color=#000099>服务过滤：</FONT> <BR>每个服务还有特别的自订的防火机制，例如 Apache 这个 WWW 的套件里头，就含有『 deny from IP 』来抵挡某些不受欢迎的 IP 机制，而 ssh 也可以在设定档里头决定是否要开放 root 的登入权限！FTP 当然也可以制定一些规则来挡掉不受欢迎的 IP 啦！不过，到这一步时，该封包已经进入主机的服务之内啰，是经由服务来关闭该 IP 的联机的呦！而由于某些服务天生就有些小漏洞，呵呵， Cracker 相当的容易利用这些漏洞来进行破坏的行为！<FONT color=#000066>由于该封包已经进入主机了，万一服务真的有漏洞，那可就惨了</FONT>......所以，虽然我们可以利用每个服务器软件来设定抵挡的功能，但是如果该服务器软件本身就有漏洞的话，那么这一步就会行不通啰！ <BR>　 
+<LI><FONT color=#000099>登入主机：</FONT> <BR>上面提到的大多是在某些服务里头来取用我们主机系统的资源，那么如果该封包是想要直接登入我们的主机呢( login )？这个时候就需要取得我们主机的『<FONT color=#000066>账号与密码, ID &amp; PasswdWord</FONT>』的权限啦！如果通过 <FONT color=#000066>ID &amp; pass word</FONT> 的验证之后，就可以进入我们的主机啦！最常见的就是 SSH 或者是 telnet 以及 FTP 等软件了，这些软件在 Client 端的封包数据经过上面数道手续而进入后，再来就会要求 client 端的使用者输入账号与密码，藉以分析对方的身份来开放权限给 Client 的使用者登入。所以啦，在这个手续里面，最重要的就是密码啦！如果您的密码设定的太简单，或者是为了方便您的使用者，而让他们可以将密码设定的相当的简易，例如密码设定为 123 之类的，那么您的系统的密码就很容易被猜出来！很危险吶！ <BR>　 
+<LI><FONT color=#000099>登录文件记录：</FONT> <BR>『为了防止世界的破坏.....』喔！不！那个是皮卡丘的里头坏人的台词....这里要谈的是，『为了防止主机的破坏....可爱又迷人的角色...』那就是 <FONT color=#000066>登录档</FONT> 啦！为了记录历史历程，以方便管理者在未来的错误查询与入侵侦测，<FONT color=#000066>良好的分析登录档</FONT>的习惯是一定要建立的，尤其是 <B><FONT color=#000066>/var/log/messages</FONT></B> 与 <B><FONT color=#000066>/var/log/secure</FONT></B> 这些个档案！虽然各大主要 Linux distribution 大多有推出适合他们自己的登录档分析套件，例如 Red hat 的 logwatch ，不过毕竟该套件并不见得适合所有的 distributions ，所以 VBird 尝试自己写了一个 logfile.sh 的 shell script，目前在 Red Hat, Mandrake, 及 Openlinux 都可以进行登录档的分析呢！您可以在底下的网址下载该程序：<A href="http://linux.vbird.org/download/index.php#logfile">http://linux.vbird.org/download/index.php#logfile</A></LI></UL>　 <BR>好了，底下我们来谈一谈几个常见的 Cracker 攻击手法。</UL>
+<HR width="100%">
+<A name=attack></A><FONT color=#000099 size=+1>一些常见的攻击手法：</FONT> 
+<UL>粗略了解了 TCP 封包如何进入到本机之后，再来我们先提供几个可能的入侵方法，然后才来聊一聊怎样防备我们的主机呢： <BR>　 
+<UL>
+<LI><FONT color=#000099>使用工具程序入侵您的主机：</FONT> <BR>千万不要怀疑，目前网络上面有太多的入侵侦测型态的攻击软件了！只要您主机上面的防护作的不够好，他就可以经由攻击软件提供的功能，取得您主机上面的 root 权限，并进一步操纵您的主机！并且，为了怕被您的一些工具程序发现他的 PID，所以一般来说，他会去修改您的主机里面的几个档案，例如：who, w, last, top, ps, netstat, find 等等，让您永远找不到他是否在您的系统当中！怕了吧？！不过，这些工具程序主要都是利用『<FONT color=#000066>您的 Linux distribution 所提供的套件的漏洞</FONT>』来设计的，咦！为什么各主要的 distribution 要提供有问题的套件啊！？呵呵！并不是这样的啦，因为当一个新版的 Linux distribution 释出后，他就会开始接受 Internet 的检验，很多的『盈盈美黛子』(台语，闲闲没事干之意)就会分析该 distribution 所提供的套件是否有漏洞来让他们有可趁之机？！如果发现了 distribution 提供的套件有漏洞，功力高强的就会写成黑客软件，然后只要有人拿到该软件，嘿嘿！您晓得会发生什么事了～<B><FONT color=#000066>所以啰，当您安装了 Linux 之后，立刻请进行套件升级啊！才能避免被这一类的工具程序所害</FONT></B>！(<I><FONT color=#000066>很多人都会问到说：咦！怎么 Linux 这么多漏洞啊？！好可怕？！其实，目前每一套操作系统上面都有很多的漏洞的，例如您可到 Windows 的漏洞通报网站：<A href="http://www.microsoft.com/taiwan/download/" target=_blank>http://www.microsoft.com/taiwan/download/ </A>就能知道为什么了！所以，安全防备并不止于 Linux 系统，如果您刚刚完成 Windows 系统的安装，最好也是要立刻到 Windows 所提供的 update 网站去更新 Windows 的套件啊！</FONT></I>) <BR>&nbsp;</LI></UL>
+<UL>
+<LI><FONT color=#000099>蠕虫或木马程序 ( Trojan horse )：</FONT> <BR>取自木马屠城记的意思，木马程序会主动的将您的主机开一个后门 ( 可以想成是 port 被启动了 )，让攻击者可以轻轻松松的进出您的主机呢！那么木马程序怎么会在您的系统上面呢？很简单呀！如果今天您下载了一个不明程序，而且就安装了他，他就可能会常驻在您的内存当中了！所以不要随意安装不明来源的档案，或者是不要随意安装不明网站的档案呀！例如前一阵的那个有名的某个软件，在自家的网站上面还被放置了有木马的程序在原套件中～呀！真可怕～那么计算机蠕虫是什么？其实他也是一支程序，可以透过自我繁殖来感染其它网站或网域内的主机，最可怕的是，因为他会自我繁殖，并且会大量的发送封包到某个地方去，因为大量发送封包，所以就会占用到整个网络媒体的频宽，哇！网络就会停顿的厉害了！例如前2001- 2003年间相当有名的 Nimda 与 Code Red 病毒，会让您的网络频宽被吃光光！！<B><FONT color=#000066>要避免这类型的攻击，那就不要随便下载不明的档案，并且，下载的档案如果原始网站有提供 MD5 的信息，那就务必以 <A href="http://linux.vbird.org/linux_basic/0520rpmtarball.php#md5sum">md5sum</A> 这个指令来检验该软件是否被修改过，然后才能比较放心的安装喔！</FONT></B> <BR>&nbsp;</LI></UL>
+<UL>
+<LI><FONT color=#000099>DoS 攻击法 ( Denial of Service )：</FONT> <BR>这类型的攻击中文翻译成『<FONT color=#000066>阻断式攻击</FONT>』，这种攻击法也很要命，而且方法有很多，最常见的就属 SYN Flood 攻击法了！还记得我们在<A href="http://linux.vbird.org/linux_server/0110network_basic.php#packet_transfer">网络基础</A>里面提到的，当主机接收了一个带有 SYN 的 TCP 封包之后，会随机开启一个大于 1024 的 port ，并且发送出回应封包 (带有 SYNACK 旗标的 TCP 封包)，并等待 Client 端的再次回应。好了，在这个步骤当中我们来想一想，如果 cient 端在发送出 SYN 的封包后，却将来自 Server 端的确认封包丢弃，那么您的 Server 端就会一直空等，而且 Client 端可以透过软件功能，在短短的时间内持续发送出这样的 SYN 封包，那么您的 Server 就会持续不断的发送确认封包，并且开启大量的 port 在空等～呵呵！等到全部主机的 port 都启用完毕，那么.....系统就挂了！这种 DoS 的攻击手法比较类似『玉石俱焚』的手段，他不是入侵您的系统，而是要让您的系统挂点呢！ <BR>&nbsp;</LI></UL>
+<UL>
+<LI><FONT color=#000099>IP 欺骗：</FONT> <BR>这个是比较高竿的人搞出来的把戏，他把送到您主机的封包的文件头数据改过了，并宣告成为您内部网络的一份子！如果您没有挡掉这样的封包的话，那么通常就会变成『接受他』！结果就是对方又可以轻而易举的进入您的主机了....唉！真难防～ <BR>&nbsp;</LI></UL>
+<UL>
+<LI><FONT color=#000099>Port scan：</FONT> <BR>这个最讨厌了！因为目前很多的 distribution 为了自身测量自己的漏洞，都会附上类似 <A href="http://linux.vbird.org/linux_server/0210port_limit.php#nmap">nmap</A> 这一类的扫瞄软件！这种软件自己玩自己还无所谓，可以检查一下自己的主机开了哪些 port ！但是一旦被使用来攻击别人的主机，那可就不好玩了....如果您有这种机会的话，也不要随意去侦测别人的主机呦！很是危险呢！ <BR>&nbsp;</LI></UL>当然，攻击的手法还不只如此，这里仅不过列出一些比较常见的攻击手段而已～而由上面的攻击手段看起来，呵呵！<FONT color=#000066>套件的升级应该是最重要的预防工作了</FONT>！</UL>
+<HR width="100%">
+<A name=secure_basic></A><FONT color=#000099 size=+1>主机防护计划：</FONT> 
+<BLOCKQUOTE>在网络上面( 尤其是 BBS )最常听到的就是这样的哀嚎声音：『<FONT color=#000066>阿！！救命哪！我被入侵了！要怎么办？</FONT>』真是伤脑筋的很！我也不知道要怎么帮助您呢！因为这真是......『自作自受』吶！一些老人家常常在讲，架设一个『网站』很容易，因为目前的在线教学实在是太多了，市面上的『教战手册』之类的书籍也真是多如过江之鲫，然而，大家都只知道『我要架设网站』却不知到『<FONT color=#000066>我要架设的是一个安全的网站</FONT>』，这就是我们老人家的心声哪！因为『<FONT color=#000066>架设一个安全的网站，真的很难....</FONT>』！其中，维护的心力更难哪！为什么呢？由上面的 TCP/IP 的封包路线图，我们可以发现，嘿嘿！目前的入侵您的主机的管道实在是太多了！而一个良好的防火系统又不是只要上述的其中一层就可以做好的！而是复合式的整体规划，并且要『持续不断的』监测您的主机系统，才能够较为完善的保护好您的主机呢！唉～还真是不容易吶！底下我们来谈一谈，如果由主机内部到外部来规划，要怎样来加强主机的安全性呢？</BLOCKQUOTE>
+<BLOCKQUOTE>
+<OL>
+<LI><FONT color=#000099>建立完善的登入密码规则限制：</FONT> <BR>要做好主机的防护，<FONT color=#000066>第一步就是要建立完善的密码规则啦</FONT>！因为这个咚咚常常是 cracker 尝试入侵的第一步！您必须要建立好主机的密码规则，请参考 <A href="http://linux.vbird.org/linux_basic/0410accountmanager.php">鸟哥的 linux 私房菜--基础学习篇之账号管理</A> 那一篇文章，里头提到的<A href="http://linux.vbird.org/linux_basic/0410accountmanager.php"> /etc/shadow</A> 档案格式，还有 /etc/login.defs 这个档案的内容，都是相当重要的密码规则订定的所在！另外，有些 cracker 软件会利用套件的漏洞而主动的在您的系统上面新增一个可以让远程 cracker 登入的账号，所以，如果您的账号更动并不会很频繁时，可以尝试以 <A href="http://linux.vbird.org/linux_basic/0220filemanager.php#chattr">chattr</A> 来将 /etc/passwd 及 /etc/shadow 做成不可变更的档案！较为安全啦！ <BR>　 
+<LI><FONT color=#000099>完善的主机权限设定：</FONT> <BR><FONT color=#000000>换个角度来想，如果搞破坏的人是您系统上面具有可以登入的使用者呢？呵呵！那么主机的权限设定就显的相当的重要了！还记得 <A href="http://linux.vbird.org/linux_basic/0220filemanager.php#suid_sgid_sticky">SUID 与 SGID</A> 吧！？如果您的系统上面具有很多这样权限的执行档，那么一般身份的使用者就可以很轻易的取得系统管理员的执行权限了！很麻烦的～所以，主机的权限需要好好的管理，千万不可掉以轻心～</FONT> <BR><FONT color=#000000>　</FONT> 
+<LI><FONT color=#000099>升级与修补套件漏洞、及移除危险套件：</FONT> <BR>这个真的相当的重要的！那就是因为您的服务套件的安全性啦！例如有名的 wu-ftpd 这个 ftp 套件，被说了很多次，好像不怎么安全哩！那么就好就不要启动他，或者是虽然启动，但是限制他的使用网域，这样最起码可以达到一点保护的效果！此外，定时的升级与不定时上网查看危险通告，是很重要的态度呢！那么从那里知道这些安全信息？底下的网站记得要常常观看： 
+<UL>
+<LI><FONT color=#000066>台湾计算机危机处理小组：<A href="http://www.cert.org.tw/" target=_blank>http://www.cert.org.tw/</A></FONT> 
+<LI><FONT color=#000066>Mandrake security：<A href="http://www.mandrakesecure.net/en/docs.php" target=_blank>http://www.mandrakesecure.net/en/docs.php</A></FONT> 
+<LI><FONT color=#000066>Red Hat update：<A href="http://www.redhat.com/apps/support/errata/" target=_blank>http://www.redhat.com/apps/support/errata/</A></FONT> </LI></UL>如果想要让系统自动升级套件的话，那么前一篇『<A href="http://linux.vbird.org/linux_server/0220upgrade.php">Linux 套件的网络更新</A>』就不能不去看一看。 <BR>　 
+<LI><FONT color=#000099>每项系统服务的安全设定项目：</FONT> <BR>每个服务器软件都有自己开发的功能，有些功能很强大，强大到可以让 Client 端取得 root 的权限来操作。这些功能都是便利管理者来进行主机的管理，不过，却也可能造成一些为网络安全的疑虑。举例来说，SSH 这个提供远程登入的服务器软件，可以提供 root 这个账号来登入，但是，由于每个 Linux 系统都有 root 这个账号，所以，只要有人知道您的系统启动了 SSH ，那么他就可能会以 root 这个账号来猜测您主机上的密码，并据以登入您的系统！很危险，不是吗？！所以，可能的话，尽量将服务器软件的较为危险的功能取消，例如拿掉 SSH, FTP, Telnet 等软件的 root 登入权限！另外，大部分的服务器软件也会提供安全设定的项目，例如 SSH 就具有 deny 某些 IP 或是使用者身份的设定项目呢！所以，发现危险人士，就加入拒绝往来名单当中吧！ <BR>　 
+<LI><FONT color=#000099>TCP_Wrappers 的基础防火设定：</FONT> <BR>这是最基础的防火墙了！您可以订定某些比较危险的服务仅针对内部网络开放，例如 FTP 与 Telnet 这两个极度危险的服务，让他们仅能在内部私有网域使用，那么 TCP_Wrappers 就可以达到这样的功能咯！因为 TCP_Wrappers 主要是针对服务来设计的，他可以针对某些服务的服务 IP 网段来进行通过与否的检查呢！这个我们会在下一章继续说明。 <BR>　 
+<LI><FONT color=#000099>iptables 的防火规则设定：</FONT> <BR>这个是 Linux 核心支持的工作咯！可以利用一行一行的规则订定，来设定防火墙的安全规则，如此则可以抵挡掉大部分的不受欢迎的 TCP 封包啰！这部份我们也会在下个章节中继续说明。 <BR>　 
+<LI><FONT color=#000099>主机资源侦测系统( MRTG )：</FONT> <BR>当主机受到不明原因的攻击时，通常会有一些端倪可以瞧出来，例如最明显的是 CPU 的 loading 会飙到 90 ~ 100% 左右！还有，当有内部无聊人士在大量下载数据时，网络流量频宽被他占光了！这个时候<FONT color=#000066>主机的资源侦测系统</FONT>就显的重要了，我们也可以用简易的 snmp 配合 MRTG 来捉取数据，以实时的角度来观察主机的现况！ <BR>　 
+<LI><FONT color=#000099>登录档案分析系统：</FONT> <BR>还是要再说一遍，登录档的良好的分析习惯，对于系统管理员来说，是真的很重要的一件事情！</LI></OL>基本上，主机的防护至少需要达到上面的要求，多多观察网络上面的安全通报是真的很重要的事情，此外，由于系统管理员或许无法全天都在主机前面管理，此时自动分析的系统就很重要了！例如我们可以透过 apt 或 urpmi 之类的套件管理进行网络自动套件升级、利用类似 logwatch 之类的套件来进行登录档的仔细分析等等，都可以帮助系统管理员有效率的管理主机吶！OK！那么系统管理员的主要任务是什么呢？</BLOCKQUOTE>
+<HR width="100%">
+<A name=admin></A><FONT color=#000099 size=+1>网管人员的技能：</FONT> 
+<BLOCKQUOTE>从上面的情况来看，嘿嘿嘿嘿！要作为一个称职的网管人员，还真是难呀！基本上，您必需要具备这些能力才行呢： 
+<UL>
+<LI><FONT color=#000099>了解什么是需要保护的内容：</FONT> <BR>我的天吶，还要知道什么是需要保护的呀！？呵呵！没错，就是如此！由刚刚我们知道的主机入侵方法当中，不难了解，只要有人坐在您的主机前面，那么任何事都有可能会发生！因此，如果您的主机相当的重要，请『<FONT color=#000066>不要让任何人靠近</FONT>！』您可以参考一下汤姆克鲁斯在『不可能的任务』里面要窃取一部计算机内的数据的困难度！！ ^_^"" 
+<UL>
+<LI>硬件：能锁就锁吧！ 
+<LI>软件：还包含最重要的数据呢！！ </LI></UL></LI></UL>
+<UL>
+<LI><FONT color=#000099>预防黑客( Black hats )的入侵：</FONT> <BR>这可不是开玩笑的，什么是黑客呀！这是因为原本在西部电影当中，坏人都是戴黑色帽子的，所以之前的人们就称网络攻击者为 Black hats 啦！在预防这方面的攻击者时，除了严格管制网络的登入之外，还需要特别控制原本您的主机中的人物！就我们小网站来说，不要以为好朋友就随便他啦！他说要指定密码是跟他的账号相同比较好记，您就答应他！等到人家用他的密码登入您的主机，并破坏您的主机，那可就得不偿失了！如果是大企业的话，那么<FONT color=#000066>员工使用网络时，也要分等级的呢</FONT>！ ^_^</LI></UL>
+<UL>
+<LI><FONT color=#000099>主机环境安全化：</FONT> <BR>没什么好讲的，除了多关心，还是多关心！仔细的分析登录档，常常上网看看最新的安全通告，这都是最基础的！还包含了以最快的速度更新有问题的套件！因为，越快更新您的套件，就越快可以杜绝黑客的入侵！</LI></UL>
+<UL>
+<LI><FONT color=#000099>防火墙规则的订定：</FONT> <BR>这部份比较麻烦一些啦！因为您必需要不断的测试测试再测试！以取得最佳化的网络安全设定！怎么说呢？要晓得的是，如果您的防火墙规则订定得太多的时候，那么一个数据封包就要经过越多的关卡才能完整的通过防火墙，以进入到主机内部！嘿嘿！这可是相当的花费时间的！会造成主机的效能不彰！特别留意这一点呢！</LI></UL>
+<UL>
+<LI><FONT color=#000099>实时维护您的主机：</FONT> <BR>就像刚刚说的，您必需要随时维护您的主机，因为，防火墙不是一经设定之后就不用在再他了！因为，再严密的防火墙，也会有漏洞的！这些漏洞包括防火规则设定不良、利用较新的侦测入侵技术、利用您的旧软件的服务漏洞等等！所以，必需要实时维护您的主机呀！这方面除了分析 log files 之外，也可以藉由实时侦测来进行这个工作！例如 PortSentry 就是蛮不错的一套软件呢！</LI></UL>
+<UL>
+<LI><FONT color=#000099>良好的教育训练课程：</FONT> <BR><FONT color=#000000>不是所有的人都是计算机网络高手，尤其虽然现在信息爆炸，但是仍然有很多的机会会遇到计算机白痴呀！这个时候，要晓得的是，我们对于内部网域通常没有太多的规范，那如果他用内部的计算机去做坏事怎么办？！有时候还是无心的～挖哩～所以说，需要特别的教育训练课程呀！</FONT></LI></UL>
+<UL>
+<LI><FONT color=#000099>完善的备份计划：</FONT> <BR>天有不测风云，人有旦夕祸福呀！什么人都不知道什么时候会有大地震、我们也都不知道什么时候会突然的硬盘挂掉去～所以说，完善的备份计划是相当重要的！！这一部份请参考一下 <A href="http://linux.vbird.org/linux_basic/0580backup.php">鸟哥的 linux 私房菜--基础学习篇之Linux 主机备份</A> 的内容吧！</LI></UL>反正呦，就是要花蛮多心力在上面的就是了！不然，真的会一天到晚接到您的主管、您的用户、您的客户哇哇大叫的呦！ ^_^""！而为了让您这个管理的工作可以做的比较轻松，学习 BASH Shell 以及会使用到的程序语言，尤其是 Linux 上面惯用的 C ，则也是挺重要的吶！</BLOCKQUOTE>
+<HR width="100%">
+<A name=repaire></A><FONT color=#000099 size=+1>被入侵后的修复工作：</FONT> 
+<OL>所谓『百密一疏』啊，人不是神，总会有考虑不周的情况，万一您的主机就因为这『一疏』导致被入侵了，那该怎么办？由上面的说明当中，我们知道『木马』是很严重的，因为他会在您的系统下开个后门(Back door)让攻击者可以登入您的主机，而且还会窜改您 Linux 上面的程序，让您找不到该木马程序！怎么办？很多朋友都习惯『<FONT color=#000066>反正只要将 root 的密码改回来就好了</FONT>』这样的观点，事实上，那样一部主机还是有被做为中继站的危险啊！所以，<FONT color=#000066>万一您的主机被入侵了，最好的方法还是『重新安装 Linux 』会比较干净</FONT>！那该如何重新安装呢？很多朋友一再地安装，却一再地被入侵～为什么呢？因为他没有『记取教训』啊！呵呵！底下我们就来谈一谈，一部被入侵的主机应该如何修复比较好？ <BR>　 
+<OL>
+<LI><FONT color=#000099>立即拔除网络线：</FONT> <BR>既然发现被入侵了，那么第一件事情就是拿掉网络功能！拿掉网络功能最简单的作法自然就是拔掉网络线了！事实上，拿掉网络线最主要的功能除了保护自己之外，还可以保护同网域的其它主机。怎么说呢？举个最近 (2003/08) 发病的疾风病毒好了，他会感染同网域之内的其它主机喔！所以，拔除网络线之后，远程的攻击者立即就无法进入您的 Linux 主机，而且您还可以保护网域内的其它相关主机啊！ <BR>　 
+<LI><FONT color=#000099>分析登录文件信息，搜寻可能的入侵途径：</FONT> <BR>被入侵之后，决不是只要重新安装就好，还需要额外分析『<FONT color=#000066>为什么我的主机这一次会被入侵，对方是如何入侵的？</FONT>』，如果您能够找出问题点，那么不但您的 Linux 功力立刻增强了，主机也会越来越安全喔！而如果您不知道如何找出被入侵的可能途径，那么重新安装后，下次还是可能被以同样的方法入侵啊！粉麻烦的啦！好了，那该如何找出入侵的途径呢？ 
+<UL>
+<LI><B><FONT color=#000066>分析登录档</FONT></B>：低级的 Cracker 通常仅是利用工具软件来入侵您的系统，所以我们可以藉由分析一些主要的登录档来找出对方的 IP 以及可能有问题的漏洞。可以分析 /var/log/messages, /var/log/secure 还有利用 last 指令来找出上次登入者的信息。 
+<LI><B><FONT color=#000066>检查主机开放的服务</FONT></B>：很多 Linux 使用者常常不晓得自己的系统上面开了多少的服务？我们说过，每个服务都有其漏洞或者是不应该启用的增强型或者是测试型功能，所以，找出您系统上面的服务，并且检查一下每个服务是否有漏洞，或者是在设定上面有了缺失，然后一个一个的整理吧！ 
+<LI><B><FONT color=#000066>查询 Internet 上面的安全通报</FONT></B>：透过安全通报来了解一下最新的漏洞信息，说不定您的问题就在上面！ </LI></UL>　 
+<LI><FONT color=#000099>重要数据备份：</FONT> <BR>主机被入侵后，显得问题相当的严重，为什么呢？因为主机上面有相当重要的数据啊！如果主机上面没有重要的数据，那么直接重新安装就好了！所以，被入侵之后，检查完了入侵途径，再来就是要备份重要的数据了。好了，问个问题，什么是『<FONT color=#000066>重要数据</FONT>』？ who, ps, ls 等等指令是重要数据吗？还是 httpd.conf 等设定文件是重要数据？又或者是 /etc/passwd, /etc/shadow 才是重要数据？呵呵！基本上，重要的数据应该是『<FONT color=#000066>非 Linux 系统上面原有的数据</FONT>』，例如 /etc/passwd, /etc/shadow, WWW 网页的数据, /home 里面的使用者重要档案等等，至于 /etc/*, /usr/, /var 等目录下的数据，就不见得需要备份了。注意：不要备份一些 binary 执行文件，因为 Linux 系统安装完毕后本来就有这些档案，此外，这些档案也很有可能『已经被窜改过了』，那备份这些数据，反而造成下次系统还是不干净！ <BR>　 
+<LI><FONT color=#000099>重新全新安装：</FONT> <BR>备份完了数据，再来就是重新安装 Linux 系统了。而在这次的安装中，您最好选择适合您自己的安装套件即可，不要全部套件都给他安装上去啊！挺危险的！ <BR>　 
+<LI><FONT color=#000099>套件的漏洞修补：</FONT> <BR>记得啊，重新安装完毕之后，请立即更新您的系统套件，否则还是会被入侵的啦！我喜欢先在其它比较干净的环境下将 Internet 上面的漏洞修补套件下载下来，然后烧录起来，然后拿到自己的刚刚安装完成的系统上面，mount CD 之后全部给他更新，更新之后，并且设定了相关的防火墙机制，同时进行下一步骤『<FONT color=#000066>关闭或移除不需要的服务</FONT>』后，我才将网络线插上主机的网络卡上！因为我不敢确定在安装完毕后，连上 Internet 去更新套件的这段时间，会不会又受到入侵攻击说.... <BR>　 
+<LI><FONT color=#000099>关闭或移除不需要的服务：</FONT> <BR>这个重要性不需要再讲了吧？！启用越少的服务，系统当然可以被入侵的可能性就比较低。 <BR>　 
+<LI><FONT color=#000099>数据回复与恢复服务设定：</FONT> <BR>刚刚备份的数据要赶紧的复制回来系统，同时将系统的服务再次的重新开放，请注意，这些服务的设定最好能够再次的确认一下，避免一些不恰当的设定参数在里头喔！ <BR>　 
+<LI><FONT color=#000099>连上 Internet：</FONT> <BR>所有的工作都进行的差不多了，那么才将刚刚拿掉的网络线接上来吧！恢复主机的运作了！</LI></OL>　 <BR>经过这一连串的动作后，您的主机应该会恢复到比较干净的环境，此时还不能掉以轻心，最好还是参考防火墙的设定，并且多方面的参考 Internet 上面一些老手的经验，好让您的主机可以更安全一些！</OL>
+<HR width="100%">
+<A name=review></A><FONT color=#000099 size=+1>重点回顾</FONT>： 
+<UL>
+<LI><FONT color=#000066>要管制登入主机的 Client ，得要了解 TCP 封包。 TCP 封包分为 Header 与 Messages 两部份，其中， Header 里面最重要的信息包含目的端与来源端的 IP 与 Port ，还有一些旗标，例如 SYN/ACK 等等；</FONT> 
+<LI><FONT color=#000066>TCP 封包要进入我们 Linux 本机，至少需要通过 IP Filter, super daemon/TCP Wrappers, Daemons, 密码验证功能 等等步骤；</FONT> 
+<LI><FONT color=#000066>一些所谓的黑客软件，都是透过您的 Linux 上面的套件漏洞来攻击 Linux 主机的；</FONT> 
+<LI><FONT color=#000066>套件升级是预防被入侵的最有效方法之一；</FONT> 
+<LI><FONT color=#000066>良好的登录档分析习惯可以在短时间内发现系统的漏洞，并加以修复。</FONT> </LI></UL>
+<HR width="100%">
+<A name=reference></A><FONT color=#000099 size=+1>参考数据</FONT> 
+<UL>
+<LI><FONT color=#000000>台湾计算机危机处理小组：<A href="http://www.cert.org.tw/" target=_blank>http://www.cert.org.tw/</A></FONT> 
+<LI><FONT color=#000000>Windows 的漏洞通报网站：<A href="http://www.microsoft.com/taiwan/download/" target=_blank>http://www.microsoft.com/taiwan/download/</A></FONT> 
+<LI><FONT color=#000000>Mandrake security：<A href="http://www.mandrakesecure.net/en/docs.php" target=_blank>http://www.mandrakesecure.net/en/docs.php</A></FONT> 
+<LI><FONT color=#000000>Red Hat update：<A href="http://www.redhat.com/apps/support/errata/" target=_blank>http://www.redhat.com/apps/support/errata/</A></FONT> </LI></UL>
+<HR width="100%">
+<A name=ex></A><FONT color=#000099 size=+1>课后练习</FONT>： 
+<UL>
+<LI>我老是发现我的系统怪怪的，似乎有点停顿的模样，怀疑可能是 CPU 负荷太大，所以要去检查一下系统相关的信息。请问，我该以什么指令去检查我的系统相关的信息？ 
+<LI>我怀疑我的系统上面有过多的具有 SUID 的档案存在，导致一般使用者可以随意的取得 root 的权限，请问，我要如何找出这些具有 SUID 权限的档案？ 
+<LI>我由国内一些 ftp 网站上下载了 Red Hat 公司释出的套件，我想安装他，但又不知道该套件档案是否被修改过！请问我该如何确定这个套件的可用性？ 
+<LI>良好的密码规划是防备主机的第一要务，请问 Linux 系统当中，关于密码相关的档案与规则设定在哪些档案里面？ 
+<LI>简易说明，当一部主机被入侵之后，应该如何处理？ <BR><A href="http://linux.vbird.org/linux_server/1000results.php#0240network-secure-1">前往参考用解答</A></LI></UL>
+<CENTER><FONT face=SimSun color=#3333ff size=+1><A href="http://linux.vbird.org/linux_server/0240network-secure-1.php" target=_self>认识网络安全</A></FONT></CENTER>
+<HR width="100%">
+<FONT face=SimSun color=#000066 size=-1>2002/08/12：第一次完成日期！</FONT> <BR><FONT face=SimSun color=#000066 size=-1>2003/08/23：重新编排与增加重点回顾、课后练习</FONT> <BR>
+<HR width="100%">
+<FONT face=SimSun color=#3333ff size=-1>2002/08/12 以来统计人数</FONT> <BR><IMG height=15 src="50_files/Count[19].gif" width=60 align=middle nosave="">
+<HR width="100%">
+ 
+<CENTER><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR><FONT color=#000066 size=-1>Designed by <A href="mailto:vbird@tsai.adsldns.org">VBird</A> during 2001-2004.&nbsp; Aerosol Lab.</FONT></CENTER></BODY>

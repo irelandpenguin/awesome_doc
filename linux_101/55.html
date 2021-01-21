@@ -1,0 +1,371 @@
+<HEAD><TITLE>鸟哥的 Linux 私房菜 -- Network File System ( NFS ) Server</TITLE>
+<META http-equiv=Content-Type content="text/html; charset=gb2312">
+<META content=VBird name=Author>
+<META content="Mozilla/4.5 [zh-TW] (WinNT; I) [Netscape]" name=GENERATOR>
+<META content="NFS 伺服器的安裝與設定！" name=Description><!-- saved from url=(0022)http://internet.e-mail -->
+<STYLE>
+   <!--
+   body{background-image=url("55_files/VBirdLinux[1].jpg");background-ATTACHMENT=FIXED}
+   -->
+</STYLE>
+</head>
+<BODY background="55_files/VBirdLinux[7].jpg" nosave="">
+<CENTER>
+<CENTER><B><FONT color=#3333ff size=+2><FONT face=SimSun>鸟哥的</FONT><FONT face="Times New Roman,Times"> Linux </FONT><FONT face=SimSun>与</FONT><FONT face="Times New Roman,Times"> ADSL </FONT><FONT face=SimSun>私房菜</FONT></FONT></B> <BR><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR>
+<HR width="100%">
+</CENTER><FONT color=#3333ff size=+2><A href="http://linux.vbird.org/linux_server/0330nfs.php" target=_self><FONT face=SimSun>简易</FONT><FONT face="Times New Roman,Times"> NFS </FONT><FONT face=SimSun>服务器设定</FONT></A></FONT></CENTER>
+<DIV align=right><FONT face=SimSun color=#3333ff size=-1>最近更新日期：2003/09/10</FONT></DIV><FONT color=#000099 size=-2>　</FONT> 
+<TABLE cols=1 width="100%" bgColor=#ffcccc border=1>
+<TBODY>
+<TR>
+<TD><FONT color=#000099 size=-1>NFS为 Network FileSystem 的简称，最早之前是由 Sun 这家公司所发展出来的，他的目的就是想让不同的机器、不同的操作系统可以彼此分享个别的档案啦！目前在 Unix Like 当中用来做为 file server 是相当不错的一个方案喔！基本上， Unix Like 主机连接到另一部 Unix Like 主机来分享彼此的档案时，使用 NFS 要比 SAMBA 快速且方便的多了！此外， NFS 的设定真的很简单，几乎只要记得启动 Remote Pocedure Call 这个咚咚 ( 就是 portmap 这个套件啦！ ) 就一定可以架设的起来！真是不错啊！不过，如果要达成 Windows 与 Linux 之间的沟通，那么还是以 SAMBA 比较容易啊！无论如何， NFS 还是可以做为小公司或学校单位内部 Unix Like 机器共享 file 的一个 Server 喔！</FONT></TD></TR></TBODY></TABLE><FONT color=#000099 size=-2>　</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#What_NFS_0">NFS 的由来与其功能</A></FONT>：</FONT> <BR><FONT color=#000099>　　：<A href="#What_NFS_NFS">什么是 NFS ( Network FileSystem )</A></FONT> <BR><FONT color=#000099>　　：<A href="#What_NFS_RPC">什么是 RPC ( Remote Procedure Call )</A></FONT> <BR><FONT color=#000099>　　：<A href="#What_NFS_daemons">NFS 启动的 RPC daemons</A></FONT> <BR><FONT color=#000099><FONT size=+1><A href="#needed">需要的套件</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#NFS_Server_0">Server 端的设定</A></FONT>：</FONT> <BR><FONT color=#000099>　　：<A href="#NFS_Server_package">NFS 的套件结构</A></FONT> <BR><FONT color=#000099>　　：<A href="#NFS_Server_partition">主机的规划技巧建议</A></FONT> <BR><FONT color=#000099>　　：<A href="#NFS_Server_fllow">设定流程(/etc/exports)</A></FONT> <BR><FONT color=#000099>　　：<A href="#NFS_server_RPC_comm">RPC server 的相关指令</A></FONT> <BR><FONT color=#000099><FONT size=+1><A href="#NFS_client">Client 端的设定</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#close_your_linux">关机或结束时的注意事项</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#firewall">安全设定(被防火墙挡掉了)</A></FONT>：</FONT> <BR><FONT color=#000099><FONT size=+1><A href="#excer">实际演练</A></FONT>：</FONT> <BR><FONT color=#000099 size=+1><A href="#important">重点回顾</A></FONT> <BR><FONT color=#000099 size=+1><A href="#lpi">本章与 LPI 的关系</A></FONT> <BR><FONT color=#000099 size=+1><A href="#reference">参考资源</A>：</FONT> <BR><FONT color=#000099 size=+1><A href="#FAQ">本章习题练习</A></FONT> <BR>
+<HR width="100%">
+<A name=What_NFS_0></A><FONT color=#000099 size=+1>NFS 的由来与其功能</FONT> 
+<UL>
+<HR width="100%">
+<A name=What_NFS_NFS></A><FONT color=#000099>什么是 NFS ( Network FileSystem )</FONT> <BR>　 <BR>在开始进行 NFS 的设定之前，我们得先来了解一下，什么是 NFS 呢？不然讲了一堆也没有用，对吧！ ^_^！所谓的 NFS 就是 Network FileSystem 的缩写，最早之前是由 Sun 这家公司所发展出来的。<FONT color=#000066>他最大的功能就是可以透过网络，让不同的机器、不同的操作系统、可以彼此分享个别的档案 ( share file )</FONT>，所以，您也可以简单的将他看做是一个 file server 呢！这个 NFS Server 可以让您的 PC 来将网络远程的 NFS 主机分享的目录，挂载到本地端的机器当中，所以，在本地端的机器看起来，那个远程主机的目录就好像是自己的一个磁盘分割槽一样 ( partition )！使用上面相当的便利！ <BR>　 
+<CENTER><IMG height=298 src="55_files/0330nfs-1[1].jpg" width=467 nosave=""> <BR><A name=fig_01></A><FONT color=#000066>图一、NFS 主机分享目录与 Client 挂载示意图</FONT> <BR>&nbsp;</CENTER>就如同上面的图示一般，当我们的 NFS Server 设定好了分享出来的 <FONT color=#000066>/home/sharefile</FONT> 这个目录后，其它的 Client 端就可以将这个目录挂载到自己系统上面的某个挂载点(挂载点可以自订！)，例如前面图示中的 Personal Computer 1 与 Personal Computer 2 挂载的目录就不相同。我只要在 Personal Computer 1 系统中进入 /home/data/sharefile 内，就可以看到 NFS Server 系统内的 /home/sharefile 目录下的所有数据了 (当然，权限要足够啊！^_^)！这个 /home/data/sharefile 就好像我自己 Personal Computer 1 里面的一个 partition 喔！只要权限对了，那么您可以使用 cp, cd, mv, rm... 等等磁盘或档案相关的指令！真是他X的方便吶！ <BR>　 <BR>那么您或许会问啦：『咦！那么这个 NFS 是藉由什么样的协议来进行传输的呢？』虽然 NFS 有属于自己的协议与使用的 port number ，但是在数据传送或者其它相关讯息传递的时候， NFS 使用的则是一个称为<FONT color=#000066>远程过程调用( Remote Procedure Call, RPC )</FONT>的协定来协助 NFS 本身的运作！ <BR>　 <BR>
+<HR width="100%">
+<A name=What_NFS_RPC></A><FONT color=#000099>什么是 RPC ( Remote Procedure Call )</FONT> <BR>　 <BR>那么什么是 RPC 呢？由字面上的意思来看『远程过程调用』不就是一些程序( Program )在执行远程联机时，需要用到的程序吗？呵呵！是这样没错啦！简单的来说，当我们在使用某些服务来进行远程联机的时候，有些信息，例如主机的 IP、服务的 port number、与对应到的服务之 PID 等等，都需要管理与对应！这些管理 port 的对应与服务相关性的工作，就是这个 Remote Procedure Call, RPC 的任务了！ <BR>　 <BR>好了，如果我们将 NFS 与 RPC 两者的相关性连接起来的话，那么您应该就可以知道： NFS 本身的服务并没有提供数据传递的协议，但是 NFS 却能让我们进行档案的分享，这其中的原因，就是 NFS 使用到一些其它相关的传输协议！而这些传输的协议，就是使用到这个所谓的 RPC 的功能啰！这也就是说， <FONT color=#000000>NFS 本身就是使用 RPC 的一个 program 就是了！说的更白话一点， NFS 也可以视作是一个 RPC server 啦！</FONT>同时要注意到的是，在某些状况中，不但跑 NFS 的 Server 需要启动 RPC 的服务，连带的，要挂载 NFS partition 的 Client 机器，也需要同步启动 RPC 才行！这样 Server 端与 Client 端才能藉由 RPC 的协议来进行 program port 的对应喔！ <BR>　 <BR>OK！简单的说， NFS 也可以看做是 RPC server 的一种，因为他是使用这种协议的 program 呀！ ^_^ ！那么为什么 NFS 要使用 RPC 执行呢？这是因为 NFS 本身可以被看做是一个档案系统，那么一来的话，您的使用者联机常常变化，而且您的档案内容啦、分享的目录啦，还有其它档案相关的信息等等，也都会常常在变化，这个时候，使用类似这种可以对应 program number 与 port number 的 RPC 就相当的方便了！也就是说，NFS 主要在管理分享出来的目录，而至于数据的传递，就直接将他丢给 RPC 的协定来运作就是了！ <BR>　 <BR>更多关于 NFS 协议的信息您可以参考底下的网页： <BR>　 
+<UL>
+<LI><A href="http://www.faqs.org/rfcs/rfc1094.html" target=_blank>http://www.faqs.org/rfcs/rfc1094.html</A> 
+<LI><A href="http://www.tldp.org/HOWTO/NFS-HOWTO/index.html" target=_blank>http://www.tldp.org/HOWTO/NFS-HOWTO/index.html</A> </LI></UL>　 <BR>
+<HR width="100%">
+<A name=What_NFS_daemons></A><FONT color=#000099>NFS 启动的 RPC daemons</FONT> <BR>　 <BR>NFS server 总共需要启用到至少两个 daemons ，一个管理 Client 是否可以登入的问题，另一个管理登入主机后的 Client 能够使用的档案权限！如果您还要管理 quota 的话，那么 NFS 还会自动的再加载其它相关的 RPC program 呢！我们这里以最简单的方式来设定 NFS，说明如下：</UL>
+<UL>
+<UL>
+<LI><FONT color=#000066>rpc.nfsd</FONT>：这个 daemon 主要的功能就是在管理 Client 是否能够登入主机的权限啦，其中还包含这个登入者的 ID 的判别喔！ </LI></UL></UL>
+<UL>
+<UL>
+<LI><FONT color=#000066>rpc.mountd</FONT>：这个 daemon 主要的功能，则是在管理 NFS 的档案系统哩！当 Client 端顺利的通过 rpc.nfsd 而登入主机之后，在他可以使用 NFS server 提供的档案之前，还会经过档案使用权限 ( 就是那个 -rwxrwxrwx 与 owner, group 那几个权限啦 ) 的认证程序！他会去读 NFS 的设定档<FONT face=SimSun color=#000066> /etc/exports</FONT>来比对 Client 的权限，当通过这一关之后， Client 就可以取得使用 NFS 档案的权限啦！(注：这个也是我们用来管理 NFS 分享之目录的使用权限与安全设定的地方哩！) </LI></UL></UL>
+<HR width="100%">
+<A name=needed></A><FONT color=#000099 size=+1>需要的套件</FONT> 
+<UL>要启动 NFS 我们必须要有两个套件才行，分别是：</UL>
+<UL>
+<UL>
+<LI><FONT face=SimSun color=#000099>nfs-utils 与 nfs-utils-clients (有时后仅有一个)</FONT> 
+<LI><FONT face=SimSun color=#000099>portmap</FONT> </LI></UL></UL>
+<UL>
+<LI><B><FONT color=#000066>portmap</FONT></B>： <BR>就如同刚刚提的到，我们的 NFS 其实可以被视为一个 RPC server program，而要启动任何一个 RPC server program 之前，我们都需要做好 port 的对应 ( mapping ) 的工作才行，这个工作其实就是『 portmap 』这个服务所负责的！也就是说，<FONT color=#000066>在启动任何一个 RPC server 之前，我们都需要启动 portmap 才行呢</FONT>！那么这个 portmap 到底在干嘛呢？就如同这个服务的名称，哈哈！就是作 port 的 mapping 啊！举个例子来说：当 Client 端尝试来使用 RPC server 所提供的服务时，由于 Client 需要取得一个可以连接的 port 才能够使用 RPC server 所提供的服务，因此， Client 首先就会去跟 portmap 讲『喂！可不可以通知一下，给我个 port number ，好让我可以跟 RPC 联络吧！』这个时候 portmap 就自动的将自己管理的 port mapping 告知 Client ，好让他可以连接上来 server 呢！所以啰：『<FONT color=#000066>启动 NFS 之前，请先启动 portmap ！</FONT>』</LI></UL>
+<UL>
+<LI><B><FONT color=#000066>nfs-utils：</FONT></B> <BR>就是提供 rpc.nfsd 及 rpc.mountd 这两个 NFS daemons 与其它相关 documents 与说明文件、执行档等的套件！这个就是 NFS 的主要套件啦！一定要有喔！</LI></UL>
+<UL>好了，知道我们需要这两个套件之后，现在干嘛？！赶快去您的系统先用 RPM 看一下有没有这两个套件啦！没有的话赶快用 RPM 去安装喔！不然就玩不下去了！ <BR>　 
+<TABLE cols=1 width="90%" bgColor=#ffffff border=1>
+<TBODY>
+<TR>
+<TD>例题： <BR>请问我的主机是以 RPM 为套件管理的 Linux distribution ，例如 Red Hat, Mandrake 与 OpenLinux 等版本，那么我要如何知道我的主机里面是否已经安装了 portmap 与 nfs 相关的套件呢？ <BR>答： 
+<BLOCKQUOTE>简单的使用 rpm -qa | grep nfs 与 rpm -qa | grep portmap 即可知道啦！</BLOCKQUOTE></TD></TR></TBODY></TABLE></UL>
+<HR width="100%">
+<A name=NFS_Server_0></A><FONT color=#000099 size=+1>Server 端的设定：</FONT> 
+<UL>
+<HR width="100%">
+<A name=NFS_Server_package></A><FONT color=#000099>NFS 的套件结构</FONT> <BR>　 <BR>NFS 这个咚咚真的是很简单，上面我们提到的 NFS 套件中，设定档只有一个，执行文件也不多，记录文件也三三两两而已吶！赶紧先来看一看吧！ ^_^ <BR>　 
+<UL>
+<LI><B><FONT face=SimSun color=#000066>/etc/exports</FONT></B>：这个档案就是 NFS 的主要设定档了！不过，系统并没有默认值，所以这个档案『不一定会存在』，所以您必须要使用 vi 主动的建立起这个档案喔！我们等一下要谈的设定也仅只是这个档案而已吶！ <BR>　 
+<LI><B><FONT face=SimSun color=#000066>/usr/sbin/exportfs</FONT></B>：这个是维护 NFS 分享资源的指令，我们可以利用这个指令重新分享 /etc/exports 变更的目录资源、将 NFS Server 分享的目录卸载或重新分享等等，这个指令是 NFS 系统里面相当重要的一个喔！至于指令的用法我们在底下会再介绍。 <BR>　 
+<LI><B><FONT face=SimSun color=#000066>/usr/sbin/showmount</FONT></B>：这是另一个重要的 NFS 指令。exportfs 是用在 NFS Server 端，而 showmount 则主要用在 Client 端。这个 showmount 可以用来察看 NFS 分享出来的目录资源喔！ <BR>　 
+<LI><B><FONT face=SimSun color=#000066>/var/lib/nfs/xtab</FONT></B>：这个档案则是主要的 NFS 的纪录文件咯！当我们的 NFS 分享出目录资源后，到底有哪些 Client 端曾经连接上我们的 NFS 主机呢？呵呵！就是看这个档案的内容即可啰！ ^_^ </LI></UL>　 <BR>就说不难吧！主要就是这几个啰！ <BR>　 <BR>
+<HR width="100%">
+<A name=NFS_Server_partition></A><FONT color=#000099>主机的规划技巧建议</FONT> <BR>　 <BR>如果您的工作环境中，具有多部的 Linux 主机，并且预计彼此分享出目录时，那么在安装 Linux distribution 的时候，最好可以规划出一块 partition 作为预留之用。因为『 <FONT color=#000066>NFS 可以针对目录来分享</FONT>』，因此，您可以将预留的 partition 挂载在任何一个挂载点，再将该挂载点(就是目录啦！)由 /etc/exports 的设定中分享出去，那么整个工作环境中的其它 Linux 主机就可以使用该 NFS 主机的那块预留的 partition 了！所以，在主机的规划上面，主要需要留意的只有 partition 而已。此外，由于分享的 partition 可能较容易被入侵，<FONT color=#000066>最好可以针对该 partition 设定比较严格的参数在 /etc/fstab 当中喔</FONT>！ <BR>　 <BR>
+<HR width="100%">
+<A name=NFS_Server_fllow></A><FONT color=#000099>设定流程(/etc/exports)</FONT> <BR>　 <BR>我们在原理的部分对于 NFS 稍微解释了一下，哇！怎么看起来好像粉难喔！其实一点也不！为什么呢？因为 portmap 只要一支 scripts 就可以启动， NFS 只要设定一个档案就可以顺利运作！那么怎么能说不简单呢！呵呵！这个 NFS 真是他 X 的太太太.....简单了～在开始 NFS 之前，让我们先以 Windows 的系统当中的『资源共享』来说明一下整个流程吧： <BR>　 
+<OL>
+<LI><FONT face=SimSun color=#000066>在 Windows Server 上面，开启档案总管，在某个目录上面按右键选择启动资源共享；</FONT> 
+<LI><FONT face=SimSun color=#000066>在资源共享的内容当中，需要设定『使用者权限』( 以 Windows 2000 为例 )；</FONT> 
+<LI><FONT face=SimSun color=#000066>在 Client 端需要登入 Windows server 时，需要启动『网络上的芳邻』来寻找可用的网络上面分享的目录，然后点选该目录，若可以登入该 Windows server 时，则可以依据步骤一的权限使用该目录下的档案！</FONT> </LI></OL>　 <BR>呵呵！没错！ NFS 的整个流程也差不多是这样： <BR>　 
+<UL>
+<LI><FONT face=SimSun color=#000066>首先，需要确认一下您的 Linux 主机是否可以支持 NFS 这项服务，然后再设定一下使用者的来源IP或主机名称以及分享出去的目录的权限，之后呢，启动 NFS 即可将刚刚设定的目录给他分享出去了！</FONT> 
+<LI><FONT face=SimSun color=#000066>那么在 Client 端怎么使用这个分享出来的目录？就是先以 showmount 这支程序检查 Linux Server 是否有可以使用的 NFS 目录，如果有的话，就将他 mount 在本机上面，如果可以 mount ，那么就可以使用 NFS 主机提供的资源了！</FONT> </LI></UL>　 <BR>哈哈！果然很简单吧！所以底下我们就来一个一个步骤的说明一下 NFS 怎么设定啰： <BR>　 
+<OL>
+<LI><FONT color=#000099><A href="#NFS_server_neede">系统需求</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_exports">/etc/exports</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_permission">关于权限问题</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_startup">启动服务 portmap, nfsd</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_exportfs">exportfs</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_xtab">检验目录 /var/lib/nfs/xtab</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_showmount">showmount</A></FONT> 
+<LI><FONT color=#000099><A href="#NFS_server_ports">观察启动的 port number</A></FONT> </LI></OL>　 <BR>OK！每个咚咚的细部项目就来谈一谈吧：</UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_neede></A><FONT color=#000066>系统需求</FONT>： <BR>嗄！NFS 有最低硬件需求吗？呵呵！您误会了！这里的需求其实指的是『软件需求』啦！需要的是： 
+<OL>
+<LI><FONT face=SimSun color=#000066>除了刚刚我们已经提到的两个套件『 portmap 与 nfs-utils 』必需要存在之外；</FONT> 
+<LI><FONT face=SimSun color=#000066>您的核心版本最好能够高于 2.2.xx 以后比较好！</FONT> 
+<LI><FONT face=SimSun color=#000066>此外，如果重新编译过核心，您必需『一定要选择』NFS 支援才行！</FONT> </LI></OL>目前，如果您使用的是安装时候的 Linux distribution 预设核心时，那么您都不用太担心，因为系统已经预设有支持 NFS 啰！所以底下的咚咚您都可以玩！但是，如果您已经重新编译过核心，并且不知道您是怎么编译的 ( 例如道听途说啦、试试看新鲜玩意啦等等的来编译您的核心时，所以没有注意到这个项目的选择 ) ，这个时候请拿出『<A href="http://linux.vbird.org/linux_basic/">鸟哥的 Linux 私房菜 -- 基础学习篇</A>』好好的再次的读一遍『<A href="http://linux.vbird.org/linux_basic/0540kernel.php">核心编译</A>』！</LI></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_exports></A><FONT color=#000066>/etc/exports：</FONT> <BR>好了，已经确认『一切OK』之后，我们就真的要来玩弄 NFS 啦！这个东西真的很简单的啦，只要一个档案就可以搞定了！那就是编辑 /etc/exports 这个档案，请注意，<FONT color=#000066>这个档案如果不存在，请自行建立</FONT>！并且，档名不要写错了喔！这个档案的内容很简单啦，我们列出他的规则： <BR>　 
+<TABLE cols=1 width=550 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>[欲分享的目录]&nbsp; [主机名称1或IP1(参数1,参数2)] [主机名称2或IP2(参数3,参数4)]</FONT></TD></TR></TBODY></TABLE>　 <BR>上面的规则是这样的：[欲分享的目录]主要是要分享给[主机名称1]及[主机名称2]，但是提供给这两者的权限并不一样，其中，给主机名称1的权限是参数1与参数2，至于给主机名称2的 Client 权限则是参数3与参数4。好了，那么那个『权限』也就是『参数』主要有哪些呢？</LI></UL></UL>
+<UL>
+<UL>
+<UL>
+<LI><FONT color=#3333ff>rw</FONT>：可擦写的权限； 
+<LI><FONT color=#3333ff>ro</FONT>：只读的权限； 
+<LI><FONT color=#3333ff>no_root_squash</FONT>：登入 NFS 主机使用分享目录的使用者，如果是 root 的话，那么对于这个分享的目录来说，他就具有 root 的权限！这个项目『极不安全』，不建议使用！ 
+<LI><FONT color=#3333ff>root_squash</FONT>：在登入 NFS 主机使用分享之目录的使用者如果是 root 时，那么这个使用者的权限将被压缩成为匿名使用者，通常他的 UID 与 GID 都会变成 nobody 那个系统账号的身份； 
+<LI><FONT color=#3333ff>all_squash</FONT>：不论登入 NFS 的使用者身份为何，他的身份都会被压缩成为匿名使用者，通常也就是 nobody 啦！ 
+<LI><FONT color=#3333ff>anonuid</FONT>：前面关于 *_squash 提到的匿名使用者的 UID 设定值，通常为 nobody，但是您可以自行设定这个 UID 的值！当然，这个 UID 必需要存在于您的 /etc/passwd 当中！ 
+<LI><FONT color=#3333ff>anongid</FONT>：同 anonuid ，但是变成 group ID 就是了！ 
+<LI><FONT color=#3333ff>sync</FONT>：数据同步写入到内存与硬盘当中； 
+<LI><FONT color=#3333ff>async</FONT>：数据会先暂存于内存当中，而非直接写入硬盘！ </LI></UL></UL></UL>
+<UL>
+<UL>大致的参数就是这几样啰！那么我们来假设几个例子好了：</UL></UL>
+<UL>
+<UL>
+<UL>
+<LI><FONT color=#000066>思考一</FONT>：我要将 /tmp 分享出去给大家使用，由于这个目录本来就是大家都可以读写的，因此我要让所有的人都可以存取。此外，我要让 root 写入的档案还是具有 root 的权限！那么您可以这么写喔！ 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp&nbsp; *(rw,no_root_squash)</FONT></TD></TR></TBODY></TABLE>这样一来，无论来自哪里(*万用字符！表示万事OK！)都可以使用我的 /tmp 这个目录。请注意，那个 *(rw,no_root_squash) 中间没有空格符喔！而 /tmp 与 *(rw,no_root_squash) 则是有空格符来隔开的！特别注意到那个 no_root_squash 的功能！在这个例子中，如果您是 client 端，而且您是以 root 的身份登入您的 Linux 主机，那么当您 mount 上我这部主机的 /tmp 之后，您在该 mount 的目录当中，将具有『root 的权限！』 <BR>　 
+<LI><FONT color=#000066>思考二</FONT>：我要将一个公共的目录 /home/public 公开出去，但是只有限定我的局域网络内 192.168.0.0/24 这个网域可以读写，其它人则只能读取： 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp　　　　　*(rw,no_root_squash)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/public　192.168.0.*(rw)　　 *(ro)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/public　192.168.0.0/24(rw)　*(ro)</FONT></TD></TR></TBODY></TABLE>请注意，在上面的例子中，倒数两行的格式都可以适用！所以只要写一行即可！上面的例子说的是，当我的 IP 是在 192.168.0.0/24 这个网段的时候，那么当我在 Client 端挂载了 Server 端的 /home/public 后，针对这个被我挂载的目录我就具有可以读写的权限～至于如果我不是在这个网段之内，那么这个目录的数据我就仅能读取而已，亦即为只读的属性啦！ <BR>　 
+<LI><FONT color=#000066>思考三</FONT>：我要将一个私人的目录 /home/test 开放给 192.168.0.100 这个 Client 端的机器来使用，那么我就必需这么写： 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp　　　　　*(rw,no_root_squash)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/public　192.168.0.*(rw)　　 *(ro)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/test　　192.168.0.100(rw)</FONT></TD></TR></TBODY></TABLE>这样就设定完成了！而且，只有 192.168.0.100 这部机器才能对 /home/test 这个目录进行存取喔！ <BR>　 
+<LI><FONT color=#000099>思考四</FONT>：我要让 *.linux.org 网域的主机，登入我的 NFS 主机时，可以存取 /home/linux ，但是他们存数据的时候，我希望他们的 UID 与 GID 都变成 40 这个身份的使用者： 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp　　　　　*(rw,no_root_squash)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/public　192.168.0.*(rw)　　 *(ro)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/test　　192.168.0.100(rw)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/linux　 *.linux.org(rw,all_squash,anonuid=40,anongid=40)</FONT></TD></TR></TBODY></TABLE>特别注意到那个 all_squash 与 anonuid, anongid 的功能！如此一来，当 test.linux.org 登入这部 NFS 主机，并且在 /home/linux 写入档案时，该档案的所有人与所有群组，就会变成 /etc/passwd 里面对应的 UID 为 40 的那个身份的使用者了！</LI></UL></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_permission></A><FONT color=#000066>关于权限问题：</FONT> <BR>无论任何时候，权限的问题都是需要考虑到的！让我们来看看刚刚建立的 /etc/exports 档案的内容： 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>/tmp　　　　　*(rw,no_root_squash)</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>/home/public　192.168.0.*(rw)　　 *(ro)</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>/home/test　　192.168.0.100(rw)</FONT> <BR><FONT face=SimSun color=#ffff00 size=-1>/home/linux　 *.linux.org(rw,all_squash,anonuid=40,anongid=40)</FONT></TD></TR></TBODY></TABLE>假设我在 192.168.0.100 登入这部 NFS ( IP 假设为 192.168.0.2 ) 主机，并且我在 192.168.0.100 的账号为 test 这个身份，同时，在这部 NFS 上面也有 test 这个账号，果真如此的话，那么： 
+<OL>
+<LI>由于 192.168.0.2 这部 NFS 主机的 /tmp 权限为 -rwxrwxrwt ，所以我 ( test 在 192.168.0.100 上面 ) 在 /tmp 底下具有存取的权限，并且写入的档案所有人为 test ； 
+<LI>在 /home/public 当中，由于我有读写的权限，所以如果在 /home/public 这个目录的权限对于 test 有开放写入的话，那么我就可以读写，并且我写入的档案所有人是 test 。<FONT color=#000099>但是万一 /home/public 对于 test 这个使用者并没有开放可以写入的权限时，那么我还是没有办法写入档案喔</FONT>！这点请特别留意！ 
+<LI>在 /home/test 当中，我的权限与 /home/public 相同的状态！还需要 NFS 主机的 /home/test 对于 test 有开放权限； 
+<LI>在 /home/linux 当中就比较麻烦！因为不论您是何种 user ，您的身份一定会被变成 UID=40 这个账号！所以，这个目录就必需要针对 UID = 40 的那个账号名称，修改他的权限才行！ </LI></OL>　 <BR>那么假如我在 192.168.0.100 的身份为 test2 ，但是 192.168.0.2 这部 NFS 主机却没有 test2 这个账号时，情况会变成怎样呢？ 
+<OL>
+<LI>我在 /tmp 底下还是可以写入，但是<FONT color=#000066>写入的档案所有人变成 nobody </FONT>了； 
+<LI>我在 /home/public 里面是否可以写入，还需要视 /home/public 的权限而定，不过，反正我的身份就被变成 nobody 了就是； 
+<LI>/home/test 的观点与 /home/public 相同！ 
+<LI>/home/linux 底下，我的身份就被变成 UID = 40 那个使用者就是了！ </LI></OL>　 <BR>那么假如我在 192.168.0.100 的身份为 root 呢？ root 这个账号每个系统都会有呀！呵呵！权限变成怎样呢？ 
+<OL>
+<LI>我在 /tmp 里面可以写入，并且由于 no_root_squash 的参数，改变了预设的 root_squash 设定值，所以在 /tmp 写入的档案所有人为 root 喔！ 
+<LI>我在 /home/public 底下的身份还是被压缩成为 nobody 了！因为预设属性里面都具有 root_squash 呢！所以，如果 /home/public 有针对 nobody 开放写入权限时，那么我就可以写入，但是档案所有人变成 nobody 就是了！ 
+<LI>/home/test 与 /home/public 相同； 
+<LI>/home/linux 的情况中，我 root 的身份也被压缩成为 UID = 40 的那个使用者了！ </LI></OL>　 <BR>这样的权限讲解之后，您可以了解了吗？这里是最重要的地方，如果这一关通过了，底下的咚咚就没有问题啦！ ^_^</LI></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_startup></A><FONT color=#000099>启动服务 portmap, nfsd</FONT> <BR><FONT color=#000000>好了，设定OK也没有权限的问题之后 ( 有问题也没关系，可以事后在好好的检视与修改一番！) ，再来自然就是启动他啰！如何启动呢？简单的很，直接给他OK下去！</FONT> 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/portmap start</FONT><FONT color=#ff6666>&lt;==启动 portmap ！</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/nfs start</FONT><FONT color=#ffffff>　　</FONT><FONT color=#ff6666> &lt;==启动 NFS</FONT></FONT></TD></TR></TBODY></TABLE><FONT color=#000000>那个 portmap 根本就不需要设定！只要直接启动他就可以啦！启动之后，</FONT><FONT color=#000066>会出现一个 port 111 的 sunrpc 的服务</FONT><FONT color=#000000>！那就是 portmap 啦！至于 nfs 则会启动至少两个以上的 daemon 出现！然后就开始在监听 Client 端的需求啦！启动之后，请赶快到 /var/log/messages 里面看看有没有被正确的启动呢？</FONT> 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /var/log/messages</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Nov 16 15:04:45 test portmap: portmap startup succeeded</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Nov 16 15:04:53 test nfs: Starting NFS services:&nbsp; succeeded</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Nov 16 15:04:54 test nfs: rpc.rquotad startup succeeded</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Nov 16 15:04:54 test nfs: rpc.mountd startup succeeded</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Nov 16 15:04:54 test nfs: rpc.nfsd startup succeeded</FONT></TD></TR></TBODY></TABLE><FONT color=#000000>要正常的出现上面的字样之后，才算是正确的启动喔！</FONT></LI></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_exportfs></A><FONT color=#000099>exportfs：</FONT> <BR>好了，那么如果我们修改了 /etc/exports 这个档案之后，是否需要重新启动 nfs 呢？呵呵，并不需要，只要使用 exportfs 重新扫瞄一次 /etc/exports 这的档案，并且重新将设定加载即可！因此，就要来了解一下 exportfs 的用法了： 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffcc size=-1>语法：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>exportfs [-aruv]</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>参数说明：</FONT> <BR><FONT face=SimSun color=#ffff99 size=-1>-a ：全部挂载(或卸载) /etc/exports 档案内的设定</FONT> <BR><FONT face=SimSun color=#ffff99 size=-1>-r ：重新挂载 /etc/exports 里面的设定，此外，亦同步更新 /etc/exports</FONT> <BR><FONT face=SimSun color=#ffff99 size=-1>　　 及 /var/lib/nfs/xtab 的内容！</FONT> <BR><FONT face=SimSun color=#ffff99 size=-1>-u ：卸载某一目录</FONT> <BR><FONT face=SimSun color=#ffff99 size=-1>-v ：在 export 的时候，将分享的目录显示到屏幕上！</FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>范例：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>exportfs -rv&nbsp; </FONT><FONT color=#ff6666>&lt;==全部重新 export 一次！</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>exporting 192.168.0.100:/home/test</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>exporting 192.168.0.*:/home/public</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>exporting *.linux.org:/home/linux</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>exporting *:/home/public</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>exporting *:/tmp</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>reexporting 192.168.0.100:/home/test to kernel</FONT> 
+<P><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> exportfs -au</FONT><FONT color=#ff6666> &lt;==全部都卸载了！</FONT></FONT></P></TD></TR></TBODY></TABLE><FONT color=#000000>要熟悉一下这个指令的用法喔！这样一来，就可以直接重新 export 我们的记录在 /etc/exports 的目录数据啰！</FONT></LI></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_xtab></A><FONT color=#000099>检验目录 /var/lib/nfs/xtab</FONT> <BR><FONT color=#000000>&nbsp;好了，当您顺利的将您的目录都分享出去之后，您怎么知道每个目录的分享权限呢？不要忘记了，因为我们有相当多的预设属性呢！因此，这个时候就得需要检验一下您所分享的目录内容啰！看一下 /var/lib/nfs/xtab 这个档案吧！他有点像这样：</FONT> 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> vi /var/lib/nfs/xtab</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/test&nbsp; 192.168.0.100(rw,sync,wdelay,hide,secure,root_squash,</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>no_all_squash,subtree_check,secure_locks,mapping=identity,anonuid=-2,</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>anongid=-2)</FONT></TD></TR></TBODY></TABLE><FONT color=#000000>看到没？这个就是 /home/test 这个分享出去的目录的预设 NFS 里面的属性啦！这个属性状态里头有个比较奇怪的，那就是 anonuid=-2 这个，怎么有 uid=-2 的呢？呵呵！其实它说的是将 65536 - 2 的值，也就是 65534 的那个 UID 啦！对照一下 /etc/passwd ，您就会发现，哇！原来那就是 nobody 的啦！</FONT></LI></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_showmount></A><FONT color=#000099>showmount：</FONT> <BR><FONT color=#000000>showmount 顾名思义，就是看看有没有可以 mount 的指令嘛！怎么用呢？</FONT> 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffcc size=-1>语法：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> showmount [-ae] hostname</FONT></FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>-a ：在屏幕上显示目前主机与 Client 所连上来的使用目录状态</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>-e ：显示 hostname 这部机器的 /etc/exports 里面的分享目录！</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>范例：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>showmount -e localhost</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Export list for localhost:</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/linux&nbsp; *.linux.org</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/public (everyone)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/test&nbsp;&nbsp; 192.168.0.100</FONT></TD></TR></TBODY></TABLE><FONT color=#000000>很简单吧！所以，当您要扫瞄某一部主机他提供的 NFS 分享的目录时，就使用 showmount -e IP(或hostname)即可！非常的方便吧！</FONT></LI></UL></UL>
+<UL>
+<UL>
+<LI><A name=NFS_server_ports></A><FONT color=#000099>观察启动的 port number：</FONT> <BR><FONT color=#000000>OK！来看看我们启动 NFS 之后，到底启动了多少的 port 呢？要注意的是，我们有启动 portmap 与 nfs 两支 scripts 喔！</FONT> 
+<TABLE cols=1 width=700 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> netstat -utln&nbsp;</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Active Internet connections (only servers)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Proto Recv-Q Send-Q Local Address&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Foreign Address&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; State</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:111&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT><FONT color=#ff6666> &lt;==来自 portmap</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:817&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN</FONT><FONT color=#ff6666> &lt;==来自 rpc.xxxx&nbsp;</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>tcp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:1266&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; LISTEN </FONT><FONT color=#ff6666>&lt;==来自 rpc.xxxx</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:2049&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*　　　　　　　　　　　</FONT><FONT color=#ff6666>&lt;==就是 nfs 的 port</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:814&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*　　　　　　　　　　　</FONT><FONT color=#ff6666>&lt;==来自 rpc.xxxx</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:1327&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*　　　　　　　　　　</FONT><FONT color=#ff6666>　&lt;==来自 rpc.xxxx</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>udp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0 0.0.0.0:111&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0.0.0.0:*　　　　　　　　　　</FONT><FONT color=#ff6666>　&lt;==来自 portmap&nbsp;</FONT></FONT></TD></TR></TBODY></TABLE>注意看到上面喔！总共产生了好多的 port 喔！真是可怕！先注意到 nfs 自己所开启的 port ，就是那个 2049 的 port 啦！那个就是 NFS 主要产生的 port 啰。那么其它的 rpc.xxxx 的 port 又是从何而来？ NFS server 在前面我们就提过了，他是 RPC server 的一种，而 NFS 由于提供了多个 program ( 例如 rpc.mountd, rpc.rquotad, rpc.nfsd... ) ，因此就需要启动多个 port 了！而且这些 port 是『随机产生的』，也就是那个 port number 不会是固定的啦！每次 restart nfs 都会得到不一样的 port number 呢！那么 Client 端怎么知道要连接上那个 port 来呼叫需要的 program 呢？呵呵！那就是 sunrpc ( port 111 ) 那个 portmap 服务所产生的 port number 的功用啦！Client 会先连接到 sunrpc 那个 port 去知道应该到那个 port 去呼叫所需要的程序！所以啰， rpc.xxxx 等之类的 daemon 自然就不需要有固定的 port number 啰！</LI></UL></UL>
+<UL>OK！这样一来， Server 端的设定就 OK 啦！ <BR>　 <BR>
+<HR width="100%">
+<A name=NFS_server_RPC_comm></A><FONT color=#000099>RPC server 的相关指令：</FONT> <BR>　 <BR>好了，既然我们知道这个 NFS 其实使用的是 RPC 这个咚咚，所以当然要知道 RPC 的每个 port 在干什么呀！这个时候，就不能不知道 rpcinfo 这个指令了！先来谈一谈这个指令的用法吧！ <BR>　 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffcc size=-1>语法：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>rpcinfo [-p] hostname(orIP)</FONT></FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>-p ：显示所有的 port 与 program 的信息！</FONT> <BR><FONT face=SimSun color=#ffffcc size=-1>范例：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>rpcinfo -p test.linux.org</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp; program vers proto&nbsp;&nbsp; port</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100000&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; tcp&nbsp;&nbsp;&nbsp; 111&nbsp; portmapper</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100000&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; udp&nbsp;&nbsp;&nbsp; 111&nbsp; portmapper</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100011&nbsp;&nbsp;&nbsp; 1&nbsp;&nbsp; udp&nbsp;&nbsp; 1014&nbsp; rquotad</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100011&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; udp&nbsp;&nbsp; 1014&nbsp; rquotad</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100011&nbsp;&nbsp;&nbsp; 1&nbsp;&nbsp; tcp&nbsp;&nbsp; 1017&nbsp; rquotad</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100011&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; tcp&nbsp;&nbsp; 1017&nbsp; rquotad</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100003&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; udp&nbsp;&nbsp; 2049&nbsp; nfs</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100003&nbsp;&nbsp;&nbsp; 3&nbsp;&nbsp; udp&nbsp;&nbsp; 2049&nbsp; nfs</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100021&nbsp;&nbsp;&nbsp; 1&nbsp;&nbsp; udp&nbsp;&nbsp; 1339&nbsp; nlockmgr</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100021&nbsp;&nbsp;&nbsp; 3&nbsp;&nbsp; udp&nbsp;&nbsp; 1339&nbsp; nlockmgr</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100021&nbsp;&nbsp;&nbsp; 4&nbsp;&nbsp; udp&nbsp;&nbsp; 1339&nbsp; nlockmgr</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100005&nbsp;&nbsp;&nbsp; 1&nbsp;&nbsp; udp&nbsp;&nbsp; 1340&nbsp; mountd</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100005&nbsp;&nbsp;&nbsp; 1&nbsp;&nbsp; tcp&nbsp;&nbsp; 1271&nbsp; mountd</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100005&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; udp&nbsp;&nbsp; 1340&nbsp; mountd</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100005&nbsp;&nbsp;&nbsp; 2&nbsp;&nbsp; tcp&nbsp;&nbsp; 1271&nbsp; mountd</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100005&nbsp;&nbsp;&nbsp; 3&nbsp;&nbsp; udp&nbsp;&nbsp; 1340&nbsp; mountd</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>&nbsp;&nbsp;&nbsp; 100005&nbsp;&nbsp;&nbsp; 3&nbsp;&nbsp; tcp&nbsp;&nbsp; 1271&nbsp; mountd</FONT></TD></TR></TBODY></TABLE>　 <BR>这样就可以知道每个 port number 所对应的 program 啰！您也就知道这个 RPC server 提供给您的 program 是什么了！当然了，要让这个 rpcinfo 可以正确的动作，您的 portmap 得真的动起来才行吶！加油啰！</UL>
+<HR width="100%">
+<A name=NFS_client></A><FONT color=#000099 size=+1>Client 端的设定：</FONT> 
+<UL><B><FONT color=#000066>挂载远程主机</FONT></B>： <BR>好了， Server 端已经设定完毕，接着下来自然就是要使用 Client 端连接上 Server 端啰！那么连接上 Server 的步骤是怎样呢？</UL>
+<UL>
+<OL>
+<LI><FONT color=#000066>扫瞄可以使用的 Server 目录；</FONT> 
+<LI><FONT color=#000066>在 Client 本地端建立 mount point；</FONT> 
+<LI><FONT color=#000066>使用 mount 将远程主机分享的目录挂载进来；</FONT> 
+<LI><FONT color=#000066>可能发生的问题解决(被防火墙挡掉了！？)。</FONT> </LI></OL></UL>
+<BLOCKQUOTE>OK啦！所以我们得先知道一下我们的主机里面有什么？假设我的主机名称是 test.linux.org ，那么我要知道里头有些什么藉由 NFS 分享出来的目录，就给他 showmount 一下啰！ <BR>　 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>showmount -e test.linux.org</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Export list for localhost:</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/linux&nbsp; *.linux.org</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/public (everyone)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/test&nbsp;&nbsp; 192.168.0.100</FONT></TD></TR></TBODY></TABLE>　 <BR>然后呢？假设我要将 /home/public 挂载在我的 /home/nfs/public 底下，那么我就得先有这个目录才行呀！然后再利用 mount 这个指令来挂载 /home/public 这个目录！有点像这样： <BR>　 
+<TABLE cols=1 width=700 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>mkdir -p /home/nfs/public </FONT><FONT color=#ff6666>&lt;==建立 public 这个目录，加 -p 可以持续增加目录</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>mount -t nfs test.linux.org:/home/public /home/nfs/public</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>挂载的格式：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>mount -t nfs hostname(orIP):/directory /mount/point</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>df</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Filesystem&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1K-blocks&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Used Available Use% Mounted on</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/dev/hda1&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1904920&nbsp;&nbsp; 1235380&nbsp;&nbsp;&nbsp; 572776&nbsp; 69% /</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/dev/hdb1&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 976344&nbsp;&nbsp;&nbsp; 115212&nbsp;&nbsp;&nbsp; 810736&nbsp; 13% /backup</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>test.linux.org:/home/public</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1904920&nbsp;&nbsp; 1235376&nbsp;&nbsp;&nbsp; 572776&nbsp; 69% /home/nfs/public </FONT><FONT color=#ff6666>&lt;==这个是远程主机的容量</FONT></FONT></TD></TR></TBODY></TABLE>　 <BR>先注意一下挂载 NFS 档案的格式范例喔！呵呵！这样就可以将数据挂载进来啦！请注意喔！以后，只要您进入您的目录 /home/nfs/public 就等于到了 test.linux.org 那部远程主机的 /home/public 那个目录中啰！很不错吧！那么如何将挂载的 NFS 目录卸载呢？就使用 umount 啊！ <BR>　 
+<TABLE cols=1 width=500 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>umount /home/nfs/public</FONT></FONT></TD></TR></TBODY></TABLE>　 <BR><B><FONT color=#000066>可能发生的问题</FONT></B>： <BR>通常无法挂载的原因有底下这几个： 
+<OL>
+<LI><FONT color=#000099>使用者的权限不符</FONT>：以上面的例子来说明，我的 /home/test 只能提供 192.168.0.0/24 这个网域，所以，如果我在 test.linux.org 这部机器中，以 localhost 来挂载时，就会无法挂载上，这个权限概念没问题吧！那么您可以试试看： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>mount -t nfs localhost:/home/test /home/nfs</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>mount: localhost:/home/test failed, reason given by server: Permission denied</FONT></TD></TR></TBODY></TABLE>所以啰！如果您发现上面的显示的讯息时，就表示您的主机权限不能够进入该目录啰！如果确定您的 IP 没有错误，那么请回到 /etc/exports 这个档案中，针对您自己的 IP 来进行修正吧！ <BR>　 
+<LI><FONT color=#000099>忘记启动 portmap ：</FONT> <BR><FONT color=#000000>这个最容易被忘记了！就是忘记了启动 portmap 这个服务啦！如果您发现您的 mount 的讯息是这样：</FONT> 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>mount -t nfs localhost:/home/test /home/nfs</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>mount: RPC: Port mapper failure - RPC: Unable to receive</FONT></TD></TR></TBODY></TABLE><FONT color=#000000>或者是：</FONT> 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>mount -t nfs localhost:/home/test /home/nfs</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>mount: RPC: Program not registered</FONT></TD></TR></TBODY></TABLE><FONT color=#000000>那么就赶紧将 portmap 启动吧！！并且也需要将 nfs 重新启动喔！</FONT> 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/portmap start</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/nfs restart</FONT></FONT></TD></TR></TBODY></TABLE><FONT color=#000000>　</FONT> 
+<LI><FONT color=#000099>被防火墙挡掉了</FONT>： <BR>这个也很容易忘记了！那就是重新设定一下您的防火墙，这包含了两部份，包括 iptables 与 TCP_Wrappers ！因为我们启动了 portmap ，这个东西有两个数据需要分享出来，一个是 port 111 需要提供出去，因此您的 iptables 规则当中，需要开放这个 port 喔！有点像这样的几行字要加入您的 iptables rules 当中： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffff size=-1>iptables -A INPUT -p TCP --dport 111 -j ACCEPT</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>iptables -A INPUT -p UDP --dport 111 -j ACCEPT</FONT></TD></TR></TBODY></TABLE>如果您已经开放了这个 port 的连接权限，却还是无法连接成功，那么应该就是 TCP_Wrappers 的问题了！检查一下您的 /etc/hosts.deny 里头是否有这行： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/hosts.deny</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>ALL: ALL</FONT></TD></TR></TBODY></TABLE>果真如此的话，由于 portmap 是由 portmap 这个 daemon 所启动的，所以您就必须要在 /etc/hosts.allow 里面加入这一行： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> vi /etc/hosts.allow</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>portmap: ALL&nbsp;</FONT></TD></TR></TBODY></TABLE>或者是将 ALL 改成您所想要让他使用 NFS 的网域即可！这样说可以了解了吗？若想进一步了解一下防火墙，请参考前面章节提过的：<A href="http://linux.vbird.org/linux_server/0250simple_firewall.php">简易防火墙建置</A>。</LI></OL></BLOCKQUOTE>
+<HR width="100%">
+<A name=close_your_linux></A><FONT color=#000099 size=+1>关机或结束时的注意事项：</FONT> 
+<BLOCKQUOTE>需要注意的是，由于 NFS 使用的这个 RPC 在 client 端连上主机时，那么您的主机想要关机，那可就会成为『不可能的任务』！如果您的 Server 上面还有 Client 在联机，那么您要关机，可能得要等到数个钟头才能够正常的关机成功！嗄！真的假的！不相信吗？不然您自个儿试试看！ ^_^！所以啰，建议您的 NFS Server 想要关机之前，能先『关掉 portmap 与 nfs 』这两个东西！如果无法正确的将这两个 daemons 关掉，那么先以 netstat -utlp 找出 PID ，然后以 kill 将他关掉先！这样才有办法正常的关机成功喔！这个请特别特别的注意呢！</BLOCKQUOTE>
+<HR width="100%">
+<A name=firewall></A><FONT color=#000099 size=+1>安全设定(被防火墙挡掉了)：</FONT> 
+<BLOCKQUOTE>好了！一些注意事项讲完了之后，再来呢？对了！又是最重要的安全设定方面的问题了！那么 NFS 可以设定安全的地方有哪里呢？其实还不少呢？由外而内可以这样看： 
+<OL>
+<LI>iptables 防火墙设定； 
+<LI>TCP_Wrappers 防火墙设定； 
+<LI>/etc/exports 权限设定。 </LI></OL>防火墙的基本概念请参考『<A href="http://linux.vbird.org/linux_server/0250simple_firewall.php">简易防火墙建置</A>』一文，最好能将该篇文章给他看完，否则还真难了解底下在干嘛～嗯！假设您已经看完该篇短文了，接着下来我们就得要一步一步的接着建立防火墙啰！ 
+<UL>
+<LI><FONT color=#000099>使用 iptables 限制大范围联机：</FONT> <BR>假设我们的 NFS 主要是针对内部网络开放而已，而对于外部网络只有对学术网络开放，亦即是 140.0.0.0/8 ，那么您可以使用这样的语法： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffff size=-1>iptables -A INPUT -i eth0 -p TCP -s 192.168.0.0/24 --dport 111 -j ACCEPT</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>iptables -A INPUT -i eth0 -p UDP -s 192.168.0.0/24 --dport 111 -j ACCEPT</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>iptables -A INPUT -i eth0 -p TCP -s 140.0.0.0/8&nbsp;&nbsp;&nbsp; --dport 111 -j ACCEPT</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>iptables -A INPUT -i eth0 -p UDP -s 140.0.0.0/8&nbsp;&nbsp;&nbsp; --dport 111 -j ACCEPT</FONT></TD></TR></TBODY></TABLE>这样大致上就可以让 192.168.0.0/24 这个 C Class 的网域与 140.0.0.0/8 这个 A Class 的网域到您的主机里面来，而其它的联机就视您的原本的 iptables 的状态而定喔！ <BR>　 
+<LI><FONT color=#000099>使用 TCP_Wrappers 限制更细的范围：</FONT> <BR>事实上，如果您不懂得如何设定 iptables 的话，那也没关系，我们可以使用 TCP_Wrappers 阿！因为要使用 NFS 就必须要通过 portmap 这一关( 因为要使用 RPC 啦！ )，而这个 portmap 可以藉由 TCP_Wrappers 来管理！呵呵！太好了！那么就将他联机的范围限制的更小啰！我们可以在 /etc/hosts.allow 里面规定连上 NFS 主机的主机 IP 与名称，假设限制中的主机只有 192.168.0.0/24 这个 C class 及 140.116.44.125 这个主机，以及后面接的是 ncku.edu.tw 的网域可以连上我的 NFS 主机，那么我可以写成这样： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> vi /etc/hosts.allow</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>portmap: 192.168.0.0/255.255.255.0&nbsp;</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>portmap: 140.116.44.125&nbsp;</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>portmap: .ncku.edu.tw&nbsp;</FONT> 
+<P><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]# </FONT><FONT color=#ffff00>vi /etc/hosts.deny</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>portmap: ALL</FONT></P></TD></TR></TBODY></TABLE>呵呵！这样可就设定好啰！很简单的吧！ <BR>　 
+<LI><FONT color=#000099>使用 /etc/exports 设定更安全的权限：</FONT> <BR>这就牵涉到您的逻辑思考了！怎么设定都没有关系，但是在『便利』与『安全』之间，要找到您的平衡点吶！善用 root_squash 及 all_squash 等功能，再利用 anonuid 等等的设定来规范登入您主机的使用者身份！应该还是有办法提供一个较为安全的 NFS 主机的！</LI></UL>
+<UL>
+<LI><FONT color=#000099>Client 端挂载的问题：</FONT> <BR>基本上，在 Client 端挂载的时候，为了担心会不小心刚 NFS 端挂进来的具有 SUID 权限档案的程序执行！这个很可能会危害到系统的安全呢！因为 SUID 本来就不是很安全的嘛！所以呢，您这个 root 也可以将 NFS 所分享的目录以较为安全的情况挂载进来！例如： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root@test root]#</FONT><FONT color=#ffff00> mount -t nfs -o nosuid,ro hostname:/directory /mount/point</FONT></FONT></TD></TR></TBODY></TABLE>选择 nosuid 也是一个很不错的抉择喔！</LI></UL>通常我们都会约略的建议，不要启动 NFS Server ，即使要启动，最好也是针对某个范围来进行目录的分享！并且，『要分使用者层级来管理』会比较好一些喔！底下我们就来实际的在您的机器上面搞一个简单的 NFS server 吧！</BLOCKQUOTE>
+<HR width="100%">
+<A name=excer></A><FONT color=#000099 size=+1>实际演练：</FONT> 
+<BLOCKQUOTE><B><FONT color=#000066>假设环境：</FONT></B> 
+<OL>
+<LI>假设我的 Linux 主机为 192.168.0.100 这一部； 
+<LI>预计将 /tmp 以可擦写，并且不限制使用者身份的方式分享给所有 192.168.0.0/24 这个网域中的所有 Linux 工作站； 
+<LI>预计开放 /home/nfs 这个目录，使用的属性为只读，可提供除了网域内的工作站外，向外亦提供数据内容； 
+<LI>预计开放 /home/upload 做为 192.168.0.0/24 这个网域的数据上传目录，其中，这个 /home/upload 的使用者及所属群组为 nfs-upload 这个名字，他的 UID 与 GID 均为 210； 
+<LI>预计将 /home/andy 这个目录仅分享给 192.168.0.50 这部 Linux 主机，以提供该主机上面 andy 这个使用者来使用，也就是说， andy 在 192.168.0.50 及 192.168.0.100 均有账号，且账号均为 andy ，所以预计开放 /home/andy 给 andy 使用他的家目录啦！ </LI></OL><B><FONT color=#000066>实地演练：</FONT></B> <BR>好了，那么请您先不要看底下的答案，先自己动笔或者直接在自己的机器上面动手作作看，等到得到您要的答案之后，在看底下的说明吧！ 
+<UL>
+<LI>首先，就是要建立 /etc/exports 这个档案的内容啰，您可以这样写吧！ 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]#</FONT><FONT color=#ffff00> vi /etc/exports</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp　　　　　192.168.0.*(rw,no_root_squash)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/nfs　　192.168.0.*(ro)&nbsp; *(ro,all_squash)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/upload　192.168.0.*(rw,all_squash,anonuid=210,anongid=210)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/andy　　192.168.0.50(rw)</FONT></TD></TR></TBODY></TABLE>大概就是这样子吧！您可以自行测试看看！ <BR>　 
+<LI>再来，就是要建立每个对应的目录的实际 Linux 权限了！我们一个一个来看： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffcc size=-1>1. /tmp</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]#</FONT><FONT color=#ffff00> ll /&nbsp;</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffff00>drwxrwxrwt</FONT><FONT color=#ffffff>&nbsp;&nbsp;&nbsp; 6 root&nbsp;&nbsp;&nbsp;&nbsp; root&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 4096 Nov 16 09:07 tmp</FONT></FONT> 
+<P><FONT face=SimSun color=#ffffcc size=-1>2. /home/nfs</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>mkdir -p /home/nfs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</FONT><FONT color=#ff6666>&nbsp; &lt;==建立所需要的目录</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>chmod 755 -R /home/nfs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</FONT><FONT color=#ff6666> &lt;==修改较为严格的档案权限</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>将目录与档案设定成只读！不能写入的状态，会更保险一点！</FONT> </P>
+<P><FONT face=SimSun color=#ffffcc size=-1>3. /home/upload</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>groupadd -g 210 nfs-upload&nbsp;</FONT><FONT color=#ff6666> &lt;==先建立所需要的 210 这个群组</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>useradd -g 210 -u 210 -M nfs-upload </FONT><FONT color=#ff6666>&lt;==建立需要的使用者名称</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>mkdir -p /home/upload</FONT><FONT color=#ffffff>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</FONT><FONT color=#ff6666> &lt;==建立起目录了！</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>chown -R nfs-upload:nfs-upload /home/upload </FONT><FONT color=#ff6666>&lt;==修改拥有者！</FONT></FONT> <BR><FONT face=SimSun color=#ff6666 size=-1>如此，则使用者与目录的权限都设定妥当啰！</FONT> </P>
+<P><FONT face=SimSun color=#ffffcc size=-1>4. /home/andy</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>ll /home</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>drwx------&nbsp;&nbsp;&nbsp; 3 andy&nbsp;&nbsp;&nbsp;&nbsp; andy&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 4096 Oct 28 13:37 andy</FONT></P></TD></TR></TBODY></TABLE>这样子一来，权限的问题大概就可以解决啰！ <BR>　 
+<LI>启动 portmap 与 nfs 服务： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]#</FONT><FONT color=#ffff00> /etc/rc.d/init.d/portmap start</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @test root]# </FONT><FONT color=#ffff00>/etc/rc.d/init.d/nfs start</FONT></FONT></TD></TR></TBODY></TABLE>　 
+<LI>在 192.168.0.50 这部机器上面演练一下： 
+<TABLE cols=1 width=600 bgColor=#000000 border=1>
+<TBODY>
+<TR>
+<TD><FONT face=SimSun color=#ffffcc size=-1>1. 确认可用目录</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[andy @linux50 andy]$ </FONT><FONT color=#ffff00>showmount -e 192.168.0.100</FONT></FONT> <BR><FONT face=SimSun color=#ffffff size=-1>Export list for 192.168.0.100:</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/tmp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 192.168.0.*</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/nfs&nbsp;&nbsp;&nbsp; (everyone)</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/upload 192.168.0.*</FONT> <BR><FONT face=SimSun color=#ffffff size=-1>/home/andy&nbsp;&nbsp; 192.168.0.50</FONT> 
+<P><FONT face=SimSun color=#ffffcc size=-1>2. 建立挂载点：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[andy @linux50 andy]$ </FONT><FONT color=#ffff00>mkdir -p /home/zzz/tmp</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[andy @linux50 andy]$ </FONT><FONT color=#ffff00>mkdir -p /home/zzz/nfs</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[andy @linux50 andy]$ </FONT><FONT color=#ffff00>mkdir -p /home/zzz/upload</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[andy @linux50 andy]$ </FONT><FONT color=#ffff00>mkdir -p /home/zzz/andy</FONT></FONT> </P>
+<P><FONT face=SimSun color=#ffffcc size=-1>3. 实际挂载：</FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[andy @linux50 andy]$ </FONT><FONT color=#ffff00>su&nbsp;&nbsp; </FONT><FONT color=#ff6666>&lt;==通常 Linux 只允许 root 来挂载！</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @linux50 andy]# </FONT><FONT color=#ffff00>mount -t nfs 192.168.0.100:/tmp /home/zzz/tmp</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @linux50 andy]# </FONT><FONT color=#ffff00>mount -t nfs 192.168.0.100:/home/nfs /home/zzz/nfs</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @linux50 andy]# </FONT><FONT color=#ffff00>mount -t nfs 192.168.0.100:/home/upload /home/zzz/upload</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @linux50 andy]# </FONT><FONT color=#ffff00>mount -t nfs 192.168.0.100:/home/andy /home/zzz/andy</FONT></FONT> <BR><FONT face=SimSun size=-1><FONT color=#ffffff>[root @linux50 andy]# </FONT><FONT color=#ffff00>exit</FONT></FONT></P></TD></TR></TBODY></TABLE></LI></UL>整个步骤大致上就是这样吶！加油喔！</BLOCKQUOTE>
+<HR width="100%">
+<A name=important></A><FONT color=#000099 size=+1>重点回顾</FONT> 
+<UL>
+<LI><FONT color=#000066>Network FileSystem (NFS) 可以让主机之间透过网络分享彼此的档案与目录；</FONT> 
+<LI><FONT color=#000066>NFS 主要是透过 RPC 来进行 file share 的目的，所以 Server 与 Client 的 RPC 一定要启动才行！</FONT> 
+<LI><FONT color=#000066>NFS 主机可以控制联机的 Client 端的登入与权限；</FONT> 
+<LI><FONT color=#000066>NFS 的设定档就是 /etc/exports 这个档案；</FONT> 
+<LI><FONT color=#000066>NFS 的重要登录档可以参考 /var/lib/nfs/xtab 这个档案，还包含相当多有用的信息在其中！</FONT> 
+<LI><FONT color=#000066>NFS 主机要关机之前，请务必先关闭 portmap 与 nfs server ，否则关机无法顺利成功；</FONT> 
+<LI><FONT color=#000066>NFS 主机在更动 /etc/exports 这个档案之后，可以透过 exportfs 这个指令来重新挂载分享的目录！</FONT> 
+<LI><FONT color=#000066>可以使用 rpcinfo 来观察 RPC program 之间的关系！！！</FONT> 
+<LI><FONT color=#000066>NFS 主机在设定之初，就必须要考虑到 client 端登入的权限问题，很多时候无法写入或者无法进行分享，主要是 Linux 实体档案的权限设定问题所致！</FONT> 
+<LI><FONT color=#000066>NFS 的防火墙设定可以透过控制 RPC 的主要 port ，亦即是 111 这个 port 来管理！此外，亦可透过 TCP_Wrappers 来管理！</FONT> 
+<LI><FONT color=#000066>NFS 客户端只要成功 mount NFS 主机分享的目录之后，使用上面就好像自己的 partition 一般；</FONT> 
+<LI><FONT color=#000066>NFS 客户端可以透过使用 showmount, mount 与 umount 来使用 NFS 主机提供的分享的目录！</FONT> </LI></UL>
+<HR width="100%">
+<A name=lpi></A><FONT color=#000099 size=+1>本章与 LPI 的关系</FONT> 
+<BLOCKQUOTE>在 LPI 网站 <A href="http://www.lpi.org/" target=_blank>http://www.lpi.org</A> 里面提到的，关于 NFS 的考试题库的地方，只有在 LPI level 1 的 102 ，里面的 topic 113 Networking Services ，第四点当中，简易的 NFS 设定。强调的是『应试者需了解 NFS 的设定、启动与关闭的关系』至于会考的档案与指令可能有这些： 
+<UL>
+<LI>/etc/exports 
+<LI>/etc/fstab 
+<LI>mount 
+<LI>umount </LI></UL></BLOCKQUOTE>
+<HR width="100%">
+<A name=reference></A><FONT color=#000099 size=+1>参考资源：</FONT> 
+<UL>
+<LI><A href="http://www.faqs.org/rfcs/rfc1094.html" target=_blank>http://www.faqs.org/rfcs/rfc1094.html</A> 
+<LI><A href="http://www.tldp.org/HOWTO/NFS-HOWTO/index.html" target=_blank>http://www.tldp.org/HOWTO/NFS-HOWTO/index.html</A> 
+<LI>man exports </LI></UL>
+<HR width="100%">
+<A name=FAQ></A><FONT color=#000099 size=+1>本章习题练习</FONT> 
+<UL>
+<LI><FONT color=#000000>NFS 的主要设定档为何？而在该档案内主要设定项目为何？</FONT> 
+<LI><FONT color=#000000>在 NFS 主要的设定档当中仅有少许的参数说明，至于预设的参数说明则没有在该档案当中出现，请问，如果要查阅更详细的分享出来的档案的属性，要看那个档案？</FONT> 
+<LI><FONT color=#000000>如果已经启动了 nfs 这个服务器，但是却又修改过主要设定档，请问可以使用那个指令来重新挂载分享出来的目录与 client 端权限的设定值？</FONT> 
+<LI><FONT color=#000000>在 client 端如果要挂载 NFS 所提供分享的档案，可以使用那个指令？</FONT> 
+<LI><FONT color=#000000>在 NFS 主要设定档当中，可以透过那个参数来控制不让 client 端以 root 的身份使用您所分享出来的目录与档案？</FONT> 
+<LI><FONT face=SimSun color=#000000>我在 client 端挂载了 NFS Server 的某个目录在我的 /home/data 底下，当我执行其中某个程序时，却发现我的系统被破坏了？您认为可能的原因为何？该如何克服这样的问题，尤其是当我的 Client 端主机其实是多人共享的环境，怕其它的使用者也同样发生类似的问题呢？！</FONT> <BR><FONT face=SimSun color=#000000><A href="http://linux.vbird.org/linux_server/1000results.php#0330nfs">前往参考解答</A></FONT></LI></UL>
+<CENTER><FONT color=#3333ff size=+1><A href="http://linux.vbird.org/linux_server/0330nfs.php" target=_self><FONT face=SimSun>简易</FONT><FONT face="Times New Roman,Times"> NFS </FONT><FONT face=SimSun>服务器机设定</FONT></A></FONT></CENTER>
+<HR width="100%">
+<FONT face=SimSun color=#000066 size=-1>2002/11/17：第一次完成</FONT> <BR><FONT face=SimSun color=#000066 size=-1>2003/03/09：修改部分内容，并且新增 LPI 相关性与重点整理部分！</FONT> <BR><FONT face=SimSun color=#000066 size=-1>2003/09/10：又重新修改版面，以及新增主机的规划等部分。</FONT> <BR>
+<HR width="100%">
+<FONT face=SimSun color=#3333ff size=-1>2002/11/17以来统计人数</FONT> <BR><IMG height=15 src="55_files/Count[12].gif" width=60 align=middle nosave="">
+<HR width="100%">
+ 
+<CENTER><A href="http://linux.vbird.org/" target=_top><IMG height=25 src="61_files/VBirdTitle2[10].jpg" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_basic"><IMG height=25 src="39_files/icon_system[3].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_server"><IMG height=25 src="55_files/icon_server[13].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/linux_security"><IMG height=25 src="71_files/icon_security[10].jpg" width=90 border=0 nosave=""></A> <A href="http://phorum.vbird.org/" target=_blank><IMG height=25 src="60_files/icon_forums[10].gif" width=90 border=0 nosave=""></A> <A href="http://linux.vbird.org/adsl"><IMG height=25 src="50_files/icon_adsl[13].gif" width=90 border=0 nosave=""></A> <BR><FONT color=#000066 size=-1>Designed by <A href="mailto:vbird@tsai.adsldns.org">VBird</A> during 2001-2004.&nbsp; Aerosol Lab.</FONT></CENTER></BODY>

@@ -1,0 +1,1270 @@
+<!DOCTYPE html PUBLIC "-//w3c//dtd html 4.0 transitional//en">
+<html><head>
+   <meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+   <meta name="Author" content="VBird">
+   <meta name="GENERATOR" content="Mozilla/4.5 [zh-TW] (WinNT; I) [Netscape]">
+   
+<title>鸟哥的 Linux 私房菜 -- Network Information Service, NIS 服务器</title><style>
+  <!--
+  body{background-image=url("101_files/VBirdLinux[1].jpg");background-ATTACHMENT=FIXED}
+   -->
+</style></head>
+
+<body nosave="" background="101_files/VBirdLinux[20].jpg">
+
+<center><center><b><font size="+2" color="#3333ff"><font face="SimSun">鸟哥的</font><font face="Times New Roman,Times"> Linux </font>
+<font face="SimSun">与</font><font face="Times New Roman,Times"> ADSL </font>
+<font face="SimSun">私房菜</font></font></b>
+<br>
+<a href="http://linux.vbird.org/" target="_top"><img src="61_files/VBirdTitle2[10].jpg" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/linux_basic"><img src="39_files/icon_system[3].gif" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/linux_server"><img src="55_files/icon_server[13].gif" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/linux_security"><img src="71_files/icon_security[10].jpg" nosave="" border="0" height="25" width="90"></a>
+<a href="http://phorum.vbird.org/" target="_blank"><img src="60_files/icon_forums[10].gif" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/adsl"><img src="50_files/icon_adsl[13].gif" nosave="" border="0" height="25" width="90"></a>
+<br>
+<hr width="100%">
+</center>
+<font size="+2" color="#3333ff"><a href="http://linux.vbird.org/linux_server/0430nis.php">
+<font face="SimSun">简易</font>
+NIS Server <font face="SimSun">架设</font></a></font></center>
+
+<div align="right"><font size="-1" color="#3333ff" face="SimSun">最近更新日期：2003/09/16</font></div>
+<font size="-2" color="#3333ff" face="SimSun">　</font>
+<table bgcolor="#ffcccc" border="1" cols="1" width="100%">
+<tbody><tr>
+<td><font size="-1" color="#000099">有没有想过，如果我有十部 Linux
+主机，这十部主机仅负责不同的功能，事实上，所有的主机账号与对应的密码都相同！那么我是将账号与密码分别设定置在十部计算机上面，还是可以透过一部主机做
+为账号管理的功能，然后其它的主机只要当用户用登入时，就必须要到管理账号的主机上面确认其账号与密码呢？哪一个比较方便而且灵活？当然是找一个账号管理
+的主机比较方便的多啦！如果有使用者要修改密码，不必要去到十部主机修改密码啦！只要到主要管理主机去修改，其它的主机根本就不需要更动！哈哈！轻松又愉
+快呢！这个功能的达成有很多的方式，在这里，我们介绍一个很简单的方式，那就是
+Network Information Service 这个 NIS 服务器的架设啦！</font></td>
+</tr>
+</tbody></table>
+<font size="-2" color="#000099">　</font>
+<br><font size="+1" color="#000099"><a href="#theory">原理</a>：</font>
+<br><font color="#000099">　　：<a href="#theory_what_is_nis">什么是 NIS
+与 NIS 的主要功能</a></font>
+<br><font color="#000099">　　：<a href="#theory_NIS_work">NIS 的运作流程</a></font>
+<br><font color="#000099">　　：<a href="#theory_NIS_RPC">NIS 与 RPC 的关系</a></font>
+<br><font color="#000099">　　：<a href="#theory_NIS_master_slave">NIS
+Server 的 master 与 slave 架构</a></font>
+<br><font size="+1" color="#000099"><a href="#package">套件安装</a>：</font>
+<br><font color="#000099"><font size="+1"><a href="#server">Server 端设定</a></font>：</font>
+<br><font color="#000099">　　：<a href="#server_nis">NIS Server 的结构</a></font>
+<br><font color="#000099">　　：<a href="#server_nis_setup">NIS Server
+设定流程</a></font>
+<br><font color="#000099"><font size="+1"><a href="#client">Client 端设定</a></font>：</font>
+<br><font color="#000099">　　：<a href="#client_NIS">NIS Client 的结构</a></font>
+<br><font color="#000099">　　：<a href="#client_NIS_Setup">NIS Client
+的设定流程</a></font>
+<br><font color="#000099">　　：<a href="#client_yp_tools">NIC Client 端检验
+NIS 设定</a>：<a href="#client_yp_tools_yptest">yptest</a>, <a href="#client_yp_tools_ypwhich">ypwhich</a>,
+<a href="#client_yp_tools_ypcat">ypcat</a></font>
+<br><font color="#000099">　　：<a href="#client_yp_tools_2">修改使用者密码
+( 需要有 root 身份 )</a>： yppasswd, ypchfn, ypchsh</font>
+<br><font size="+1" color="#000099"><a href="#serverahead">主机进阶设定</a>：</font>
+<br><font color="#000099">　　：<a href="#serverahead_nis_nfs">NIS 与 NFS
+的结合设定</a></font>
+<br><font color="#000099">　　：<a href="#serverahead_firewall">防火墙的规划</a></font>
+<br><font color="#000099"><a href="#important">重点回顾</a></font>
+<br><font color="#000099"><a href="#reference">参考资源</a></font>
+<br><font color="#000099"><a href="#FAQ">本章习题练习</a></font>
+<br>
+<hr width="100%"><a name="theory"></a><font size="+1" color="#000099">原理：</font>
+<ul>在一个大型的网域当中，如果有多部 Linux 主机时，万一要每部主机都设定相同的账号与密码的设定，还真是啰唆。所以，适时的使用一部主要主机
+( master server ) 管理网域中的所有账号，其它的主机则使用这部主要主机提供的账号与密码来达成让使用者『登入』的作用即可！这样的功能有很多的服务器软件可以达成，这里我们要介绍的则是
+<font color="#000066">Network
+Information Services, NIS server</font> 这个服务器软件喔！
+<br>　
+<br>
+<hr width="100%"><a name="theory_what_is_nis"></a>
+	<font size="+1" color="#000099">什么是
+NIS 与 NIS 的主要功能：</font>
+<br><font color="#000000">　</font>
+<br>通常我们都会建议，一部 Linux 主机的功能越简单越好，也就是说，一部 Linux
+就专门进行一项服务，这样有许多的好处，这包含功能简单所以系统资源得以完整运用，并且在发生入侵或者是系统产生状况的时候，也比较容易追查问题所在。因此，一个公司内部常常会有好几部
+Linux 主机，有的专门负责 WWW 、有的专门负责 Mail 、有的专门负责 SAMBA 等等的服务。不过，这样虽然有分散风险、容易追踪问题的好处，不过，由于主机数量多了，然而因为是同一个公司里面，所以，事实上所有的
+Linux 主机的账号与密码都是一样的！哇！如果公司里面有 100 的人的话，那么我们就需要针对这么多部的主机去设定账号密码了！而且，如果未来还有新进员工的话，呵呵！那么光是设定密码就会使系统管理员抓狂了！
+<br>　
+<br>这个时候，如果我们换一个角度来思考：如果我设计了一部专门管理账号与密码的主机，而其它的
+Linux 主机当有客户端要登入的时候，就必须要到这部管理密码的主机来查寻使用者的账号与密码，如此一来，哈哈！我要管理所有的
+Linux 主机的账号与密码，只要到那部主要主机上面去进行设定即可！包括新进人员的设定，反正其它的
+Linux 主机都是向他查寻的嘛！没错！真是好～这个就是 Network Information
+Service, NIS 主机的主要功能啦！
+<br>　
+<br>事实上， Network Information Service 最早应该是称为 <font color="#000066">Sun
+Yellow Pages</font> ( 简称 yp )，也就是 Sun 这家公司出的一个名为 Yellow
+Pages 的服务器软件，请注意， NIS 与 YP 是一模一样的咚咚喔！这个 Yellow
+Pages 名字取的真是好！怎么说呢？知道黄页( Yellow Pages )是什么吗？没错！就是我们家里的电话簿啦！今天如果你要查寻一家厂商的电话号码，通常就是直接去查黄页上面的纪录来取得电话号码啊！而这个
+NIS 也一样，当使用者要登入时， Linux 系统就会到 NIS 主机上面去找寻这个使用的账号与密码信息来加以比对，以提供使用者登入之用的检验啊！很棒吧！
+^_^
+<br>　
+<br>那么 NIS 主机提供了哪些信息呢？还记得账号与密码放置在哪里吧？！那么
+NIS 就是提供那些数据啦！有底下这些基本的数据提供给 Client 端喔：
+<br>　
+<ul>
+<li>
+<font color="#000066">登入账号/密码/家目录：就是 /etc/passwd 这个档案</font></li>
+
+<li>
+<font color="#000066">群组信息：就是 /etc/group 这个档案</font></li>
+
+<li>
+<font color="#000066">相关主机名称与IP：就是 /etc/hosts 这个档案。</font></li>
+</ul>
+　
+<br>
+<hr width="100%"><a name="theory_NIS_work"></a><font size="+1" color="#000099">NIS
+的运作流程</font>
+<br>　
+<br>事实上， NIS 的运作流程一点也不困难。如果在一个不是很大的网域当中，那么大约会有一部
+NIS Server ，并且同时有很多部的 NIS Client 才对！这里我们不谈 NIS Server
+的 Primary 与 Slave 架构，仅谈 NIS Server 与 NIS Client 的架构，整体架构有点像底下的图示：
+<br>　
+<center><img src="101_files/0430nis-1[1].jpg" nosave="" height="219" width="468"></center>
+　
+<br>就如同上面图示的模样。我们已经晓得 NIS 提供的其实就是 /etc/passwd,
+/etc/group 以及 /etc/hosts 等 ASCII 格式档案的信息，而 NIS Server 会将前述几个
+ASCII 档案内容复制成为 DBM 数据库格式的档案，当用户藉由个人计算机联机到 NIS
+Client 主机尝试登入时， NIS Client 将会到 NIS Server 去查寻该用户的账号与密码，以做为用户登入验证的依据。
+<br>　
+<ul>
+<li>
+<font color="#000066">NIS Server 将自己系统内的 /etc/passwd, /etc/group,
+/etc/hosts 等制作成为 DBM 的数据库格式档案；</font></li>
+
+<li>
+<font color="#000066">NIS Client 若有用户登入的要求时，会前往 NIS Server
+搜寻数据库里面的数据做为验证之用。</font></li>
+
+<li>
+<font color="#000066">每次更动 NIS Server 上面的用户数据时，则 NIS Server
+需要重新制作 DBM 数据库档案才行！</font></li>
+</ul>
+　
+<br>这样可以了解吗？！很简单的啦！不过，需要特别留意的是，我们需要设定的有：
+<br>　
+<ul>
+<li>
+<font color="#000066">NIS Server 端；</font></li>
+
+<li>
+<font color="#000066">NIS Client 端。</font></li>
+</ul>
+　
+<br>设定方面需要两者的设定喔！
+<br>　
+<br>
+<hr width="100%"><a name="theory_NIS_RPC"></a><font size="+1" color="#000099">NIS
+与 RPC 的关系</font>
+<br>　
+<br>还记得另一个 Sun 公司开发的服务器软件 <a href="http://linux.vbird.org/linux_server/0330nfs.php">NFS</a>
+吗？他是由 <a href="http://linux.vbird.org/linux_server/0330nfs.php#What_NFS_RPC">RPC (Remote Procedure Call)</a>
+所统一管理的。呵呵！我们这个 NIS 也是使用 RPC 来管理的喔！所以啰！您最好回到前面
+NFS 的章节去瞧一瞧 RPC 的一些相关说明比较好喔！那个 RPC 就是我们常常见到的
+Portmapper 啦！也就是 sunrpc ( port 111 ) 啰！在 NIS 里面，我们不但需要启动
+portmap ，还需要启动另一个玩意儿，那就是由 super daemon 管理的 time 与
+time-udp 这两个宝贝蛋了！嗯！底下我们将会来探讨一下各个套件啰！
+<br>　
+<br>
+<hr width="100%"><a name="theory_NIS_master_slave"></a>
+	<font size="+1" color="#000099">NIS
+Server 的 master 与 slave 架构</font>
+<br>　
+<br>刚刚我们仅提到只有一部 NIS Server 在整个网域之中，这是一般比较小型的网域常见的方法。万一，如果我们的网域里面有几乎
+100 部以上的主机呢？而且每一部的流量还真的很大的时候，这个时候，只有一部
+NIS Server 可能无法提供快速的数据查寻与响应的状态！这个时候就需要 NIS Sever
+的 master 与 slave 的架构了。
+<br>　
+<br>还记得在 DNS 主机架设当中，我们曾经提过关于 master 与 slave 的关系吧？！就是
+slave 主要是藉由将来自 master 主机的数据加以更新到自己的数据库当中，并且提供与
+master 相同的查寻功能！这个 NIS 的 master 与 slave 架构则完全相同！
+<br>　
+<ul>
+<li>
+<font color="#000066">NIS Server 的 master 先将自己的账号、密码相关档案制作成为数据库档案(database
+file)；</font></li>
+
+<li>
+<font color="#000066">NIS Server 的 master 将自己的数据库档案传送到 slave
+上面；</font></li>
+
+<li>
+<font color="#000066">NIS Server 的 slave 接收来自『信任的 NIS Server master
+主机』的数据后，更新自己的数据库，使自己的数据库与 master 主机的数据同步；</font></li>
+
+<li>
+<font color="#000066">网域当中的所有 NIS Client 查寻 NIS Server 时，会找寻『最先回应的那一部
+NIS 主机的数据库内容』。</font></li>
+</ul>
+　
+<br>所以，我们可以知道的是，NIS 的 master 与 slave 架构主要在分散查寻 NIS
+时候的主机负荷，因此，除非您的网域真的很大，否则是没有必要架设 NIS Slave
+与 master 的架构的啦！底下我们没有架设 master 与 slave 喔！只有一部主要的
+master 而已啦！</ul>
+
+<hr width="100%"><a name="package"></a><font size="+1" color="#000099">套件安装</font>
+<ul>基本上， NIS 建议直接使用原版光盘上面给我们的 RPM 来安装即可！但是需要安装哪些套件呢？您至少需要底下几个套件才行：
+<br>　
+<ul>
+<li>
+<font color="#000066" face="SimSun">yp-tools ：提供 NIS 相关的查寻指令功能</font></li>
+
+<li>
+<font color="#000066" face="SimSun">ypbind&#160;&#160; ：提供 NIS
+Client 端的设定套件</font></li>
+
+<li>
+<font color="#000066" face="SimSun">ypserv&#160;&#160; ：提供 NIS
+Server 端的设定套件</font></li>
+
+<li>
+<font color="#000066" face="SimSun">portmap&#160; ：就是 RPM 一定需要的数据啊！</font></li>
+</ul>
+　
+<br>我是在 Red Hat 系统上面使用的设定，所以档名是这样的一个模样，你可以使用『
+ 
+	<font color="#000066" face="SimSun">rpm
+-qa | grep yp</font> 』来检查一下是否真的有安装这些个套件才行！不过，为什么
+NIS Server 的套件名称会是 yp 呢？还记得我们在上面提到的信息吗？ NIS 最早的名称是
+Sun Yellow Pages ，所以啰，套件名称才会是 yp 啊！ ^_^！这样好记多了吧！闲话不多说，马上来进行设定吧！</ul>
+
+<hr width="100%"><a name="server"></a><font size="+1" color="#000099">Server
+端设定：</font>
+<ul><font color="#000000">终于来到了设定的地方了， NIS 的设定与 NFS 的设定有点小小的相同之处，就是他的设定『粉简单！』的啦！架设他吧！</font>
+<br><font color="#000000">　</font>
+<br>
+<hr width="100%"><a name="server_nis"></a><font size="+1" color="#000099">NIS
+Server 的结构</font>
+<br>　
+<br>NIS Server 主要以 ypserv 这个套件提供的数据来进行设定的，他主要的内容有：
+<br>　
+<ul>
+<li>
+<font color="#000066" face="SimSun">/etc/ypserv.conf&#160;&#160;&#160;&#160;&#160;&#160;
+：就是主要的设定档了</font></li>
+
+<li>
+<font color="#000066" face="SimSun">/usr/sbin/ypserv&#160;&#160;&#160;&#160;&#160;&#160;
+：主要的服务(daemon)执行档</font></li>
+
+<li>
+<font color="#000066" face="SimSun">/usr/sbin/rpc.yppasswdd：RPC
+的服务啰！</font></li>
+
+<li>
+<font color="#000066" face="SimSun">/usr/sbin/rpc.ypxfrd&#160;&#160;
+：同样的， RPC 的服务啰！</font></li>
+
+<li>
+<font color="#000066" face="SimSun">/usr/lib/yp/ypinit&#160;&#160;&#160;&#160;
+：建立 NIS 数据库的执行程序</font></li>
+</ul>
+　
+<br>所以，事实上我们最重要的就是设定 ypserv.conf 这个档案而已啦！至于 RPC
+的设定，就直接启动他即可！另外，还有 yp-tools 会提供的相关数据喔：
+<br>　
+<ul>
+<li>
+<font color="#000066" face="SimSun">/usr/bin/yppasswd ：更改你在
+NIS database (NIS Server 所制作的数据库) 的密码</font></li>
+
+<li>
+<font color="#000066" face="SimSun">/usr/bin/ypchsh&#160;&#160; ：同上，但是是更改
+shell</font></li>
+
+<li>
+<font color="#000066" face="SimSun">/usr/bin/ypchfn&#160;&#160; ：同上，但是是更改一些使用者的讯息！</font></li>
+</ul>
+　
+<br>
+<hr width="100%"><a name="server_nis_setup"></a><font size="+1" color="#000099">NIS
+Server 设定流程</font>
+<br>　
+<br>开始设定吧！在我的系统当中，假定我的网络状况如下：
+<br>　
+<ul>
+<li>
+<font color="#000066">网域为 192.168.10.0/24</font></li>
+
+<li>
+<font color="#000066">NIS Server 的 IP 为 192.168.10.30，对应的主机名称为
+server.cluster</font></li>
+
+<li>
+<font color="#000066">NIS 的领域名称设定为 cluster</font></li>
+</ul>
+　
+<br>在 NIS Server 端以 root 身份登入后，进行下面的工作：
+<br>　
+<ol>
+<li>
+<b><font color="#000099">启动 portmap 并设定开机时启动：</font></b></li>
+
+<br>这个应该不难吧！使用：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">/etc/rc.d/init.d/portmap start</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> netstat -tl</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Active Internet
+connections (only servers)</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Proto Recv-Q
+Send-Q Local Address&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+Foreign Address&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160; State</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">tcp&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+0&#160;&#160;&#160;&#160;&#160; 0 *:</font><font color="#ffffcc">sunrpc</font><font color="#ffffff">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+*:*&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+LISTEN</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 如果看到
+sunrpc 的话，就表示启动成功了！</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">chkconfig --level 35 portmap on</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 上面这一行在设定
+portmap 在 run-level 为 3, 5 的时候就开机时启动！</font></td>
+</tr>
+</tbody></table>
+很简单吧！这样 portmap 就启动了！
+<br>　
+<li>
+<b><font color="#000099">启动 time 与 time-udp ：</font></b></li>
+
+<br>由于 time 与 time-upd 是在 NIS 运作时所需要的 daemon ，所以也必须要启动他啦！启动的方式也很简单，就是利用
+xinet 这个 super daemon 来进行即可！
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">vi /etc/xinetd.d/time</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 找到底下这一行：</font>
+<br><font size="-1" color="#ffffff" face="SimSun">disable = yes</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 将他改成&#160;</font>
+<br><font size="-1" color="#ffff00" face="SimSun">disable = no</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 储存后离开</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">vi /etc/xinetd.d/time-udp</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666"># 同样的将
+</font><font color="#ffffcc">disable
+= yes</font><font color="#ff6666"> 改成 </font><font color="#ffffcc">disable
+= no</font><font color="#ff6666"> 即可！</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">/etc/rc.d/init.d/xinetd restart</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">netstat -utl</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Active Internet
+connections (only servers)</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Proto Recv-Q
+Send-Q Local Address&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+Foreign Address&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160; State</font>
+<br><font size="-1" color="#ffffff" face="SimSun">tcp&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+0&#160;&#160;&#160;&#160;&#160; 0 *:time&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+*:*&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+LISTEN</font>
+<br><font size="-1" color="#ffffff" face="SimSun">tcp&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+0&#160;&#160;&#160;&#160;&#160; 0 *:sunrpc&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+*:*&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+LISTEN</font>
+<br><font size="-1" color="#ffffff" face="SimSun">udp&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+0&#160;&#160;&#160;&#160;&#160; 0 *:time&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+*:*</font>
+<br><font size="-1" color="#ffffff" face="SimSun">udp&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+0&#160;&#160;&#160;&#160;&#160; 0 *:sunrpc&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+*:*</font></td>
+</tr>
+</tbody></table>
+注意喔！目前至少也要有上面四个 LISTEN 的 port 才行喔！分别是 UDP 与 TCP
+封包的啦！
+<br>　
+<li>
+<b><font color="#000099">建立 NIS 的领域名称 ( nisdomainname )</font></b></li>
+
+<br><font color="#000000">在 NIS 的系统当中，他的领域名称 (domain name)
+是与 DNS 没有绝对关系的，由于这个领域名称会常被使用到，因此我们需要将他建立起来！建立起来的方法很简单，直接执行一个指令，并修改一个档案即可！</font>
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 建立 NIS
+的领域名称 (我这里是设定为 cluster )：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">nisdomainname cluster</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">vi /etc/rc.d/rc.local</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 将底下这一行加入这个档案的最后一行内：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">&#160;/bin/nisdomainname
+cluster</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 设定好网络参数：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">vi /etc/sysconfig/network</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 加入底下这一行：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">NISDOMAIN=cluster</font></td>
+</tr>
+</tbody></table>
+<font color="#000000">　</font>
+<li>
+<b><font color="#000099">设定 ypserv 的设定档： ypserv.conf</font></b></li>
+
+<br>这个设定档的内容其实也是很简单，大概只有几行而已，设定的主要语法为：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffff" face="SimSun">&lt;设定项目&gt;:&lt;设定项目的值&gt;</font></td>
+</tr>
+</tbody></table>
+我们先谈一谈他里面的几个设定细项：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">vi /etc/ypserv.conf</font></font>
+<br><font size="-1" color="#ffff00" face="SimSun">files: 30</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 这说的是『有多少数据库档案(database
+file)会被先读进高速缓存当中』</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 的意思，一般来说，
+30 是已经很足够的数值了，不需要更动他；</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" color="#ffff00" face="SimSun">trusted_master:
+your.master.servers.name</font>
+<br><font size="-1" color="#ffff00" face="SimSun">xfr_check_port:
+yes</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 上面这两个都仅与
+Master + Slave 架构有关的设定值，一般来说，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 只有一部主要
+NIS Server 的系统中是用不到这两个设定值的！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 如果你的
+NIS 是 slave 的架构，那么需要指定一部 master 做为数据库内容的</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 同步时候的主机，那就是
+trusted_master 的设定内容啰！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 如果没有
+master/slave 架构时，那就不需要 trusted_master 这个设定了！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 至于 xfr_check_port
+则是指定 master 与 slave 是否都要以 &lt; 1024&#160;</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 以下的 port
+来进行沟通的讯息！通常预设就是 yes ，不需要更动他！</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun"># &lt;主机名称/IP&gt;:&lt;网域名称&gt;:&lt;数据库类别&gt;:&lt;安全性&gt;</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 这个是这个档案里面最重要的部分了！主要在设定安全性的方面，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 可以设定多行，而是否能够通过的规则是『一行一行检查』的方式！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 所以这里的设定应该是：先开放要开放的网域，然后全部都关闭！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 先谈一谈各个相关的项目：</font>
+<br><font size="-1" face="SimSun"><font color="#ff6666"># 1. </font><font color="#ffffcc">主机名称/IP：</font><font color="#ff6666">这里可以这样设定：192.168.1.0/255.255.255.0</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666"># 2. </font><font color="#ffffcc">网域名称</font><font color="#ff6666">：通常都设定成为
+* 即可！</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666"># 3. </font><font color="#ffffcc">数据库类别</font><font color="#ff6666">：可以使用
+* 来表示所有的数据库！</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666"># 4. </font><font color="#ffffcc">安全性</font><font color="#ff6666">：主要有三种参数：</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666">#　　　　　　</font><font color="#ffffcc">none</font><font color="#ff6666">
+：无论如何就是可以无条件进入本机；</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666">#　　　　　　</font><font color="#ffffcc">port</font><font color="#ff6666">
+：仅允许 &lt; 1024 以下的 port 进入；</font></font>
+<br><font size="-1" face="SimSun"><font color="#ff6666">#　　　　　　</font><font color="#ffffcc">deny</font><font color="#ff6666">
+：无论如何就是关闭不让人家登入主机！</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 由于我是允许
+127.0.0.0/255.0.0.0 以及 192.168.10.0/255.255.255.0 进入，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 其它的都关闭！所以我可以这样设定：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">127.0.0.0/255.255.255.0&#160;&#160;
+:&#160; *&#160; :&#160; *&#160; :&#160; none</font>
+<br><font size="-1" color="#ffff00" face="SimSun">192.168.10.0/255.255.255.0:&#160;
+*&#160; :&#160; *&#160; :&#160; none</font>
+<br><font size="-1" color="#ffff00" face="SimSun">*&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+:&#160; *&#160; :&#160; *&#160; :&#160; deny</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 但是因为
+/etc/shadow 里面的档案总不好让人看到吧！而又由于 Linux&#160;</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 系统当中，只有
+root 可以启用 &lt; 1024 以下的 port ，因此，更安全的设定，</font>
+<br><font size="-1" color="#ff6666" face="SimSun">可以这样做：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">127.0.0.0/255.255.255.0&#160;&#160;
+:&#160; *&#160; :&#160; *&#160; :&#160; port</font>
+<br><font size="-1" color="#ffff00" face="SimSun">192.168.10.0/255.255.255.0:&#160;
+*&#160; :&#160; *&#160; :&#160; port</font>
+<br><font size="-1" color="#ffff00" face="SimSun">*&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+:&#160; *&#160; :&#160; *&#160; :&#160; deny</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 三行也就够了！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 无论如何，如果您想要让您的
+NIS Server 运作的较为快速，并且安全性上面</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 没有太多的考虑(内部网域时！)，那么使用
+none 是一个不错的主意！</font></td>
+</tr>
+</tbody></table>
+<font color="#000066" face="SimSun">　</font>
+<li>
+<b><font color="#000099">建立网络信任群组：</font></b></li>
+
+<br>这个 /etc/netgroup 档案可以记录在我们网域里面被信任的群，这个档案的内容当中，每一行都有三个字段，分别以逗号『,』隔开，意义为：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffff" face="SimSun">&lt;host&gt;,&lt;user&gt;,&lt;domain&gt;</font>
+<br><font size="-1" color="#ffffff" face="SimSun">主机,使用者账号,领域名称</font></td>
+</tr>
+</tbody></table>
+事实上，如果这个档案是『空的』的话，那么代表着『全部的主机、账号与领域名称都接受』的意思，因为我们已经在
+/etc/ypserv.conf 里头设定好了关于安全的项目了，所以这个档案只要建立即可(本来是不存在的！)：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> touch /etc/netgroup</font></font></td>
+</tr>
+</tbody></table>
+　
+<li>
+<b><font color="#000099">启动 ypserv 这个 daemon ，并且设定开机时启动：</font></b></li>
+
+<br>好了！都设定完成之后，在接下来自然就是要启动了！启动有两个 daemons
+，启动的方式为：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 启动啰！</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> /etc/rc.d/init.d/ypserv&#160;&#160;&#160;
+start</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> /etc/rc.d/init.d/yppasswdd start</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 观察一下是否真的有动作？</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">rpcinfo -u localhost ypserv</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">program 100004
+version 1 ready and waiting</font>
+<br><font size="-1" color="#ffffff" face="SimSun">program 100004
+version 2 ready and waiting</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root @test
+root]# </font><font color="#ffff00">rpcinfo -u localhost yppasswdd</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">program 100009
+version 1 ready and waiting</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 这个 rpcinfo
+就是在观察与 RPC Server 有关的 program 目前的状况！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 因此可以用他来观察你的
+ypserv 喔！</font>
+<br><font size="-1" color="#ff6666" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">3. 设定开机时启动：</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 你可以使用
+ntsysv ，这里我们使用 chkconfig 啰！</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> chkconfig --level 35 ypserv on</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> chkconfig --level 35 yppasswdd on</font></font></td>
+</tr>
+</tbody></table>
+　
+<li>
+<b><font color="#000099">制作数据库、并重新启动 ypserv 与 yppasswd ：</font></b></li>
+
+<br>好了，既然 NIS Server 主要是要提供数据库给大家参考用的，所以当然要制作数据库啰！然后，我们又将这些数据库读入快取当中，所以<font color="#000066">数据库制作完毕之后，一定要重新启动
+ypserv 与 yppasswdd 才行</font>！
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 制作数据库：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> /usr/lib/yp/ypinit -m</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">At this point,
+we have to construct a list of the hosts which will run NIS</font>
+<br><font size="-1" color="#ffffff" face="SimSun">servers.&#160;
+server.cluster is in the list of NIS server hosts.&#160; Please continue
+to add</font>
+<br><font size="-1" color="#ffffff" face="SimSun">the names for
+the other hosts, one per line.&#160; When you are done with the</font>
+<br><font size="-1" color="#ffffff" face="SimSun">list, type
+a &lt;control D&gt;.</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+next host to add:&#160; server.cluster</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+next host to add: </font><font color="#ffff00">&lt;==在这里按下[ctrl +
+d]跳出</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">The current
+list of NIS servers looks like this:</font>
+<p><font size="-1" color="#ffffff" face="SimSun">server.cluster</font>
+</p><p><font size="-1" face="SimSun"><font color="#ffffff">Is this correct?&#160;
+[y/n: y]&#160; </font><font color="#ffff00">y</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">We need a few
+minutes to build the databases...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Building /var/yp/cluster/ypservers...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Running /var/yp/Makefile...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">gmake[1]: Entering
+directory `/var/yp/cluster'</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating passwd.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating passwd.byuid...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating group.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating group.bygid...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating hosts.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating hosts.byaddr...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating rpc.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating rpc.bynumber...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating services.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating services.byservicename...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating netid.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating protocols.bynumber...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating protocols.byname...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Updating mail.aliases...</font>
+<br><font size="-1" color="#ffffff" face="SimSun">gmake[1]: Leaving
+directory `/var/yp/cluster'</font>
+<br><font size="-1" color="#ffffff" face="SimSun">server.cluster
+has been set up as a NIS master server.</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Now you can
+run ypinit -s server.cluster on all slave server.</font>
+</p><p><font size="-1" color="#ff6666" face="SimSun"># 这个动作是每次修改使用者数据后一定要做的动作！，就是重新制作数据库，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 然后并且需要重新启动
+ypserv 与 yppasswdd 喔！</font>
+<br><font size="-1" color="#ff6666" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 重新启动服务：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> /etc/rc.d/init.d/ypserv&#160;&#160;&#160;
+restart</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> /etc/rc.d/init.d/yppasswdd restart</font></font></p></td>
+</tr>
+</tbody></table>
+这个动作的重点是在 /var/yp 这个目录当中，制作了多个的等待 NIS Clients 查寻的数据库！请注意的是，每次在
+NIS server 上面更动使用者的数据时，一定需要重新做这个步骤喔！
+<br>&nbsp;</ol>
+这样 Server 的部分就设定妥当了！如果您还想要玩一玩 master 与 slave 的架构的话，那就请参考：
+<br>NIS HOW-TO：<a href="http://www.linux-nis.org/nis-howto/HOWTO/index.html" target="_blank">http://www.linux-nis.org/nis-howto/HOWTO/index.html</a></ul>
+
+<hr width="100%"><a name="client"></a><font size="+1" color="#000099">Client
+端设定</font>
+<ul>设定完了 Sever 之后， NIS Client 也需要设定喔！( <font color="#000066">注：在
+NIS clients 主机记录的登入者的信息中，仅记录 UID 大于 500 以上的使用者喔！因为小于
+500 以下的 UID 都是预设给系统使用的，因此是预设不开放给 NIS 来查寻，自然也就不会被写入
+NIS 数据库档案当中了！ </font>)
+<br>　
+<br>
+<hr width="100%"><a name="client_NIS"></a><font size="+1" color="#000099">NIS
+Client 的结构</font>
+<br>　
+<br>还记得上面提过的，NIS Client 需要的套件是：
+<br>　
+<ul>
+<li>
+<font color="#000066">ypbind</font></li>
+
+<li>
+<font color="#000066">yp-tools</font></li>
+</ul>
+　
+<br>至少也要这两个套件才可以喔！至于相关的设定档为：
+<br>　
+<ul>
+<li>
+<font color="#000066">/etc/yp.conf ：设定 NIS Server 的主机名称与领域名称</font></li>
+
+<li>
+<font color="#000066">/etc/hosts ：至少需要设定 NIS server 主机 IP 对应的主机名称喔！</font></li>
+
+<li>
+<font color="#000066">/etc/passwd ：指定需要查寻的是什么；</font></li>
+
+<li>
+<font color="#000066">/etc/nsswitch.conf ：指定要使用什么 daemon 查寻账号与密码。</font></li>
+</ul>
+<font color="#000066">　</font>
+<br><font color="#000000">大致上就是如此啦！我们要设定的信息也就是如同上面的档案啰！好！设定吧！</font>
+<br>　
+<br>
+<hr width="100%"><a name="client_NIS_Setup"></a><font size="+1" color="#000099">NIS
+Client 的设定流程</font>
+<br>　
+<br>请留意的是，底下的设定都是在 Client 端喔！不要在主机端作这些设定了！^_^
+<br>　
+<ol>
+<li>
+<b><font color="#000099">启动 portmap 并设定开机时启动：</font></b></li>
+
+<br>不论是 RPC Server 还是 RPC Client ，反正只要是 RPC 的相关服务要应用，就一定要有
+portmap 的辅助才行！所以，启动并设定开机时启动吧！
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">/etc/rc.d/init.d/portmap start</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> netstat -tl</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Active Internet
+connections (only servers)</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Proto Recv-Q
+Send-Q Local Address&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+Foreign Address&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160; State</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">tcp&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+0&#160;&#160;&#160;&#160;&#160; 0 *:</font><font color="#ffffcc">sunrpc</font><font color="#ffffff">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+*:*&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+LISTEN</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun">如果看到 sunrpc
+的话，就表示启动成功了！</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">chkconfig --level 35 portmap on</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun">上面这一行在设定
+portmap 在 run-level 为 3, 5 的时候就开机时启动！</font></td>
+</tr>
+</tbody></table>
+很简单吧！这样 portmap 就启动了！
+<br><b><font color="#000099">　</font></b>
+<li>
+<b><font color="#000099">设定 NIS Server 的 IP 对应主机名称：</font></b></li>
+
+<br>请看上面 Server 设定之前的假设，我的 NIS Server 的 IP 与主机名称记录在
+Client 端的 /etc/hosts 上面：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> vi /etc/hosts</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 要有底下这一行喔！</font>
+<br><font size="-1" color="#ffff00" face="SimSun">192.168.10.30
+server.cluster</font></td>
+</tr>
+</tbody></table>
+　
+<li>
+<b><font color="#000099">设定 NIS 的 domain 与 NIS 的主机：</font></b></li>
+
+<br>NIS Server 与 Client 的 NIS domain 一定要相同，所以我们必须要花一点时间来将这个咚咚搞定：
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 建立 NIS
+domain name：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> nisdomainname cluster</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">vi /etc/rc.d/rc.local</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 加入底下这一行：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">/bin/nisdomainname
+cluster</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">vi /etc/sysconfig/network</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 加入底下这一行：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">NISDOMAIN=cluster</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 建立 NIS
+查寻的主机名称</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> vi /etc/yp.conf</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 加入这两行：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">domain cluster</font>
+<br><font size="-1" color="#ffff00" face="SimSun">ypserver server.cluster</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 还是要记得，那个
+cluster 是你的 NIS 的 domain ，至于 server.cluster&#160;</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 则是 NIS
+Server 的主机名称，我这里是使用内部私有 IP ，所以名称可以随便</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 我喜欢来选择的喔！</font></td>
+</tr>
+</tbody></table>
+　
+<li>
+<b><font color="#000099">修改密码验证的方式：</font></b></li>
+
+<br>密码验证的方式是一定要修改的，不然你的系统怎么知道要去哪里使用什么方式查寻账号、密码数据呢？！所以您至少需要更改两个档案喔！
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 密码文件的修改：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> vi /etc/passwd</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 还记得这个档案吗？这个档案总共有七个字段，而每个字段都以分号『:』隔开，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 相关的信息请参考基础学习篇里面的账号管理章节。由于我们要将数据</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 设定以 NIS
+Server 的数据库来验证，因此，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 在这个档案的最后面加入这一行：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">+::::::</font>
+<br><font size="-1" color="#ffffcc" face="SimSun"># 注意喔！在
++ 之后连续加六个『 : 』，并且中间没有空格符！</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 查寻密码的程序：</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 因为我们有很多方式来查寻密码，需要修改
+/etc/nsswitch.conf 这个档案才行</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">vi /etc/nsswitch.conf</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 找到相关的参数，并改成底下这样：</font>
+<br><font size="-1" color="#ffff00" face="SimSun">passwd:&#160;&#160;&#160;&#160;
+files nis nisplus</font>
+<br><font size="-1" color="#ffff00" face="SimSun">shadow:&#160;&#160;&#160;&#160;
+files nis nisplus</font>
+<br><font size="-1" color="#ffff00" face="SimSun">group:&#160;&#160;&#160;&#160;&#160;
+files nis nisplus</font>
+<br><font size="-1" color="#ffff00" face="SimSun">hosts:&#160;&#160;&#160;&#160;&#160;
+files nis dns</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 这个档案在设定一些信息的查寻程序！那个
+files 指的是本机的相关档案，</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 至于 nis
+则是透过 NIS 来进行查寻，至于 nisplus 则是 NIS+ 这是比较新</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 版的 NIS
+啦！不过，官方网站上面说，目前这个发展的计划已经暂停了！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 1. passwd:
+就是使用者相关信息查寻，分别为 /etc/passwd, nis 与 nisplus</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 2. shadow:
+就是使用者密码的查寻， /etc/shadow, nis 及 nisplus</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 3. group:&#160;
+就是使用者的群组信息查寻， /etc/group, nis 及 nisplus</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 4. hosts:&#160;
+就是主机名称与IP对应的查寻，/etc/hosts, nis 及 /etc/resolv.conf</font></td>
+</tr>
+</tbody></table>
+　
+<li>
+<b><font color="#000099">启动 ypbind 与设定开机启动：</font></b></li>
+
+<br>这样几乎就设定完成了！而我们前面说过， NIS Client 也需要启动 ypbind
+这个 daemon 的，所以就给他启动吧！
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 直接手动启动
+ypbind 吧：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> /etc/rc.d/init.d/ypbind start</font></font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> rpcinfo -p localhost</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;
+program vers proto&#160;&#160; port</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;
+100000&#160;&#160;&#160; 2&#160;&#160; tcp&#160;&#160;&#160; 111&#160;
+portmapper</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;
+100000&#160;&#160;&#160; 2&#160;&#160; udp&#160;&#160;&#160; 111&#160;
+portmapper</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;
+100007&#160;&#160;&#160; 2&#160;&#160; udp&#160;&#160;&#160; 735&#160;
+ypbind</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;
+100007&#160;&#160;&#160; 1&#160;&#160; udp&#160;&#160;&#160; 735&#160;
+ypbind</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;
+100007&#160;&#160;&#160; 2&#160;&#160; tcp&#160;&#160;&#160; 738&#160;
+ypbind</font>
+<br><font size="-1" color="#ffffff" face="SimSun">&#160;&#160;&#160;
+100007&#160;&#160;&#160; 1&#160;&#160; tcp&#160;&#160;&#160; 738&#160;
+ypbind</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 至少要有上面几个信息才是对的喔！不过，需要记得的是，那个
+port number</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 是系统随机启动的，所以
+port number 每次都会不太一样啊！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 记得要经常用
+rpcinfo 去检查一下 RPC Server 相关的服务才行！</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 设定开机时启动：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> chkconfig --level 35 ypbind on</font></font></td>
+</tr>
+</tbody></table>
+&nbsp;</ol>
+基本上，上面的动作就已经设定好了一部 NIS Client 主机了！而且已经可以跑啰！不过，我们毕竟不知道到底目前我们的
+NIS Client 主机使用的 NIS Server 主机里面的哪些数据，并且如何去确认我们的数据库与设定值都没有问题呢？！呵呵！所以底下我们就来谈一谈那个
+yp-tools 提供的相关好用的工具程序来检验啰！
+<br>　
+<br>
+<hr width="100%"><a name="client_yp_tools"></a><font size="+1" color="#000099">NIC
+Client 端检验 NIS 设定：yptest, ypwhich, ypcat</font>
+<br>　
+<br>设定好了 NIS Client 之后，先以 netstat 与 rpcinfo 检验一下是否成功的启动之后，接下来就是要测试到底我们的
+NIS Client 与 NIS Server 之间沟通的情况如何了！此时就需要使用到 NIS 提供的
+yp-tools 这个套件，里面的几个小小的执行程序来动作了：
+<br>　
+<ul>
+<li>
+<font color="#000066" face="SimSun">yptest ：主要在测试 yp 的设定内容、数据库内容等等所有
+NIS 相关的资料测试；</font></li>
+
+<li>
+<font color="#000066" face="SimSun">ypwhich：主要在测试 NIS Client
+与 Server 之间沟通的数据库 (database) 到底是哪几个档案；</font></li>
+
+<li>
+<font color="#000066" face="SimSun">ypcat&#160; ：主要在取得 NIS
+Server 上面的使用者密码信息！</font></li>
+</ul>
+　
+<br>分别谈一谈每个程序的用途与说明吧！
+<br>　
+<ul>
+<hr width="100%"><a name="client_yp_tools_yptest"></a>yptest
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">yptest</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Test 1: domainname</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Configured
+domainname is "cluster"</font>
+<p><font size="-1" color="#ffffff" face="SimSun">Test 2: ypbind</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Used NIS server:
+server.cluster</font>
+<br><font size="-1" color="#ffffff" face="SimSun">....</font>
+<br><font size="-1" color="#ffffff" face="SimSun">....</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Test 8: yp_maplist</font>
+<br><font size="-1" color="#ffffff" face="SimSun">rpc.bynumber</font>
+<br><font size="-1" color="#ffffff" face="SimSun">rpc.byname</font>
+<br><font size="-1" color="#ffffff" face="SimSun">hosts.byaddr</font>
+<br><font size="-1" color="#ffffff" face="SimSun">hosts.byname</font>
+<br><font size="-1" color="#ffffff" face="SimSun">group.byname</font>
+<br><font size="-1" color="#ffffff" face="SimSun">passwd.byname</font>
+<br><font size="-1" color="#ffffff" face="SimSun">ypservers</font>
+<br><font size="-1" color="#ffffff" face="SimSun">passwd.byuid</font>
+</p><p><font size="-1" color="#ffffff" face="SimSun">Test 9: yp_all</font>
+<br><font size="-1" color="#ffffff" face="SimSun">test test:dkoUW2XHV30sEV5gLM4NapyuhBcpVs.:500:500::/home/test:/bin/bash</font></p></td>
+</tr>
+</tbody></table>
+看到了吗？会有很多的资料一项一项的去测试，测试的结果都会显示在屏幕上面，最好都没有问题之后再开始
+NIS Client 的服务吧！ ^_^
+<br>　
+<br>
+<hr width="100%"><a name="client_yp_tools_ypwhich"></a>ypwhich
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">ypwhich</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">server.cluster</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@clent
+root]# </font><font color="#ffff00">ypwhich -x</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "ethers"&#160;&#160;&#160;
+for map "ethers.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "aliases"&#160;&#160;
+for map "mail.aliases"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "services"&#160;
+for map "services.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "protocols"
+for map "protocols.bynumber"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "hosts"&#160;&#160;&#160;&#160;
+for map "hosts.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "networks"&#160;
+for map "networks.byaddr"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "group"&#160;&#160;&#160;&#160;
+for map "group.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "passwd"&#160;&#160;&#160;
+for map "passwd.byname"</font></td>
+</tr>
+</tbody></table>
+单纯使用 ypwhich 的时候显示的是『<font color="#000066">NIS Client 的 domain</font>』名称，而当加入
+-x 这个参数时，则是显示『<font color="#000066">NIS Client 与 Server 之间沟通的数据库有哪些？</font>』由上面我们可以很清楚的就看到相关的档案啦！这些数据库档案则是放置在我的
+NIS Server 的 /var/yp/cluster/* 里面啰！
+<br>　
+<br>
+<hr width="100%"><a name="client_yp_tools_ypcat"></a>ypcat
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">ypcat -x</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "ethers"&#160;&#160;&#160;
+for map "ethers.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "aliases"&#160;&#160;
+for map "mail.aliases"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "services"&#160;
+for map "services.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "protocols"
+for map "protocols.bynumber"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "hosts"&#160;&#160;&#160;&#160;
+for map "hosts.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "networks"&#160;
+for map "networks.byaddr"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "group"&#160;&#160;&#160;&#160;
+for map "group.byname"</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Use "passwd"&#160;&#160;&#160;
+for map "passwd.byname"</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 主要的功能就是『列出数据库』啰！与
+ypwhich -x 相同功能！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 所以我们有
+ethers, aliases......passwd 等数据库名称与文件名！</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> ypcat [数据库名称或功能]</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 这个指令可以用来取得
+NIS Server 上面各个数据库的内容！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 举例来说，我们想要知道
+passwd ( 密码数据 ) 的所有使用者内容，就需要：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> ypcat passwd&#160; (或 ypcat passwd.byname
+)</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">test:dkoUW2XHV30sEV5gLM4NapyuhBcpVs.:500:500::/home/test:/bin/bash</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 如果是想要知道
+hosts 的内容 (NIS Server 主机上面 /etc/hosts 的内容)：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]#</font><font color="#ffff00"> ypcat hosts</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">127.0.0.1&#160;&#160;&#160;&#160;&#160;&#160;
+localhost&#160;&#160;&#160;&#160;&#160;&#160; localhost.localdomain</font>
+<br><font size="-1" color="#ffffff" face="SimSun">192.168.10.30&#160;&#160;
+server.cluster</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 反正就是加上数据库，你就可以取得
+NIS server 主机上面的数据库内容啦！</font></td>
+</tr>
+</tbody></table>
+&nbsp;</ul>
+这三个指令在进行 NIS Client 端的检验时，是相当有用的喔！不要忽略了他的存在啊！尤其是刚架设好
+NIS Client 时，一定要使用 yptest 去检查看看有没有设定错误喔！根据屏幕显示的讯息去一个一个校正错误才行啊！
+<br>　
+<br>
+<hr width="100%"><a name="client_yp_tools_2"></a>
+	<font size="+1" color="#000099">修改使用者密码
+( 需要有 root 身份 )： yppasswd, ypchfn, ypchsh</font>
+<br>　
+<br>好了，既然 NIS Client 已经可以正式的来 run 了，那么还可能有什么大问题呢！？最大的问题在于....<font color="#000066">我能不能在
+NIS Client 端修改各个账号的密码呢</font>？答案是『能！』但是不怎么方便～因为，我们要修改的是
+NIS Server 端的数据库喔！也就是说，我们在 NIS Client 端登入之后，要修改自己这个账号的密码，其实改到的是
+NIS Server 的数据库密码啊！而要修改数据库密码时，需要使用 root 的身份，所以一定需要
+root 的密码～如此一来，实在是不太方便～如果真的要修改的话，那么可以使用底下三个小指令来进行修改，不过，不怎么建议这样做就是了！
+<br>　
+<ul>
+<li>
+<font color="#000066" face="SimSun">yppasswd ：与 passwd 指令相同功能；</font></li>
+
+<li>
+<font color="#000066" face="SimSun">ypchfn&#160;&#160; ：与 chfn
+相同功能；</font></li>
+
+<li>
+<font color="#000066" face="SimSun">ypchsh&#160;&#160; ：与 chsh
+相同功能。</font></li>
+</ul>
+　
+<br>无论如何，我是不太建议大家使用这些指令去修改数据库的内容啦！比较建议这样做：
+<br>　
+<ol>
+<li>
+<font color="#000066">登入到 NIS Server 主机里面去，进行 useradd 或者是
+passwd 修改账号与密码等等的更动；</font></li>
+
+<li>
+<font color="#000066">使用 /usr/lib/yp/ypinit -m 重新制作数据库档案！</font></li>
+</ol>
+　
+<br>这样就 OK 啦！比较简单啦我想～至于上面三个指令，请使用 Linux 的好朋友
+man 来查看一下吧！ ^_^</ul>
+
+<hr width="100%"><a name="serverahead"></a><font size="+1" color="#000099">主机进阶设定</font>
+<ul>
+<li>
+<a name="serverahead_nis_nfs"></a><font size="+1" color="#000099">NIS
+与 NFS 的结合设定：</font></li>
+
+<br>　
+<br>不晓得您有没有发现一件事情啊！那就是：我们的 NIS Server 设定的使用者家目录是在
+/home 底下，例如 test 这个人的家目录在 /home/test (这个目录在 server.cluster
+这部主机上面才有)，问题是，当我们登入 NIS Client 主机时，那么我们取得的家目录数据还是在
+/home/test ，问题是，NIS Client 主机并没有 /home/test 这个目录啊：
+<br>　
+<ul>
+<li>
+<font color="#000066">test 这个 User 是在 server 上面建立的，所以有 /home/test
+这个目录；</font></li>
+
+<li>
+<font color="#000066">在 NIS Client 上面没有真正的 test 这个账号，因为他是由
+NIS server 上面取得的，所以自然也就没有 /home/test 这个目录在 NIS client
+上面。</font></li>
+</ul>
+　
+<br>这样会造成什么问题呢？呵呵！就是你的 test 这个使用者，登入 NIS client
+的时候，『<font color="#000066">会找不到自己的家目录</font>』！啊！真是糟糕～而且，因为我们的
+NIS client 可能有很多部，要是每次登入 NIS Clients 主机的时候，所拥有的家目录都是个别
+NIS client 上面的目录，那么就没有达到 NIS 的功能啦！您说是吧！所以，如果你需要『<font color="#000066">登入的每个
+NIS Client 所拥有的家目录都是相同的</font>！』的一个情况，呵呵！就可以使用
+NFS 来加以设定啦！详细的 NFS 设定我们之前已经提过了，这里不在赘言，单纯谈一下简单的设定技巧：
+<br>　
+<ul>
+<li>
+<font color="#000066">在 NIS Server 上面开放 /home 这个目录出来；</font></li>
+
+<li>
+<font color="#000066">在 NIS Client 上面， mount NIS 主机的 /home 到自己的
+/home 里面去！</font></li>
+
+<li>
+<font color="#000066">如此一来，不论登入哪一部 NIS Server 或 client ，使用者都是进入到
+NIS Server 的 /home 里面的家目录啰！</font></li>
+</ul>
+　
+<br>设定的方法也不难，我们就简单的谈一谈吧！
+<br>　
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffcc" face="SimSun">1. 设定 NIS
+Server 主机的 NFS 开放目录：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">vi /etc/exports</font></font>
+<br><font size="-1" color="#ffff00" face="SimSun">/home&#160;
+192.168.10.0/24(rw,async,no_root_squash)</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> exportfs -rv</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">exporting 192.168.10.0/24:/home</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]# </font><font color="#ffff00">/etc/rc.d/init.d/nfs start</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">Starting NFS
+services:&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+[&#160; OK&#160; ]</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Starting NFS
+quotas:&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+[&#160; OK&#160; ]</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Starting NFS
+daemon:&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+[&#160; OK&#160; ]</font>
+<br><font size="-1" color="#ffffff" face="SimSun">Starting NFS
+mountd:&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;
+[&#160; OK&#160; ]</font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@test
+root]#</font><font color="#ffff00"> chkconfig --level 35 nfs on</font></font>
+<br><font size="-1" color="#ffffff" face="SimSun">　</font>
+<br><font size="-1" color="#ffffcc" face="SimSun">2. 设定 NIS
+Client 的 mount 资料！</font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 先以 root
+的身份登入到 NIS Client 主机上面：</font>
+<br><font size="-1" face="SimSun"><font color="#ffffff">[root@client
+root]# </font><font color="#ffff00">mount -t nfs 192.168.10.30:/home /home</font></font>
+<br><font size="-1" color="#ff6666" face="SimSun"># 如果没有问题了，就将上面这一行加入
+/etc/rc.d/rc.local 当中吧！</font></td>
+</tr>
+</tbody></table>
+　
+<br>这样一来，您的 NIS Clients 就具有和 NIS Server 主机一模一样的家目录了！现在您可以立刻登入看看喔！
+<br>　
+<ul>
+<li>
+不过，很可惜的是，目前安装妥当的系统当中， <b><font color="#000066">NIS
+并没有办法让 SSH 顺利的登入的！</font></b>这牵涉到整个 key pair 的问题，比较麻烦，或许可以藉由
+NIS+ (nisplus) 来克服这个问题，网络上目前有相当多的讨论在讨论这个情况，由于
+NIS plus 与 NIS 功能差不多，实在不想再 NIS 上面又架设一部 NIS+，因此目前倾向于不要管
+ssh 这种登入的方法，反正做了 NIS 在内部网络当中，最主要的功能其实是在于
+R shell 这个比较危险等级的 shell 说！</li>
+</ul>
+　
+<br>
+<hr width="100%"><a name="serverahead_firewall"></a>
+<font size="+1" color="#000099">防火墙的规划</font>
+<br>　
+<br>又来到了防火墙的规划了！要注意的是，我们的 NIS 与 NFS 都是使用 RPC
+Server 的，所以啰，都可以直接管制 111 这个 port 即可！能够直接以 iptables
+管理 111 这个 port ，例如仅允许 192.168.10.0/24 这个网域进来的话，可以在你的防火墙规则上面加上：
+<br>　
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" color="#ffffff" face="SimSun">/sbin/iptables
+-A -s 192.168.10.0/24 --dport 111 -j ACCEPT</font>
+<br><font size="-1" color="#ffffff" face="SimSun">/sbin/iptables
+-A --dport 111 -j DROP</font></td>
+</tr>
+</tbody></table>
+　
+<br>此外，你也可以使用 TCP_Wrappers 来掌管喔：
+<br>　
+<table bgcolor="#000000" border="1" cols="1" width="550">
+<tbody><tr>
+<td><font size="-1" face="SimSun"><font color="#ffffff">[root @test
+root]# </font><font color="#ffff00">vi /etc/hosts.allow</font></font>
+<br><font size="-1" color="#ffff00" face="SimSun">portmap: 192.168.10.0/255.255.255.0</font>
+<p><font size="-1" face="SimSun"><font color="#ffffff">[root @test
+root]# </font><font color="#ffff00">vi /etc/hosts.deny</font></font>
+<br><font size="-1" color="#ffff00" face="SimSun">portmap: ALL</font></p></td>
+</tr>
+</tbody></table>
+　
+<br>至于其它的管理，嘿嘿！就得靠您自己发挥创意啰！ ^_^</ul>
+
+<hr width="100%"><a name="important"></a><font size="+1" color="#000099">重点回顾</font>
+<ul>
+<li>
+<font color="#000066">Network Information Service ( NIS ) 也可以称为 Sun
+Yellow Pages (yp) 主要是负责在网域当中帮忙 NIS Client 端查寻账号与密码以及其它相关网络参数的服务，只是在
+Linux 上面称为 NIS 而在 Sun Unix 上面称为 Yellow Pages 而已～</font></li>
+
+<li>
+<font color="#000066">网域当中有很多 linux 主机时，可以让一台 Linux 主机做为
+NIS Server 主机，负责整个网域当中账号与密码的数据库档案制作；至于其它的
+Linux 主机则设定为 NIS client 端，当有用户要进行登入的行为时， NIS client
+会前往 NIS server 搜寻数据库里面记录的内容，以做为用户登入的验证信息。</font></li>
+
+<li>
+<font color="#000066">不论是 NIS 或者是 NFS 都是藉由 RPC Server 所启用的，因此，都可以使用
+rpcinfo 来查寻 NIS 是否已经启动，以及该 daemon 是否已经向 portmapper (
+RPC server ) 注册了！</font></li>
+
+<li>
+<font color="#000066">NIS 使用的套件就是 yp 这个套件，主要分为两部份，
+ypserv 用在 NIS Server，至于 ypbind 与 yp-tools 则用在 NIS Client 上面。</font></li>
+
+<li>
+<font color="#000066">NIS server 其实就是提供本身的 /etc/passwd, /etc/shadow,
+/etc/group, /etc/hosts 等账号密码数据，以及相关的网络参数等，以提供网域当中
+NIS Client 的搜寻之用；</font></li>
+
+<li>
+<font color="#000066">在 NIS Server 的设定当中，最重要的一个步骤就是将账号、密码、网络参数等
+ASCII 格式档案转成数据库档案( database file )，以提供 NIS client 的查寻！而启动
+ASCII 转成 database 的程序可以使用 /usr/lib/yp/ypinit -m 或者到 /var/yp
+底下执行 make 均可。</font></li>
+
+<li>
+<font color="#000066">NIS client 端的设定当中，最重要的为 /etc/passwd 里面的设定，需要让
+NIS Server 的数据加在 /etc/passwd 后面；</font></li>
+
+<li>
+<font color="#000066">NIS client 端的设定当中，另一个重要的设定档为 /etc/nsswitch.conf
+，里头设定了相当多的数据查寻程序。</font></li>
+</ul>
+
+<hr width="100%"><a name="reference"></a><font size="+1" color="#000099">参考资源</font>
+<ul>
+<li>
+Study Area 之 NIS 服务器架设：<a href="http://www.study-area.org/linux/servers/linux_nfs.htm" target="_blank">http://www.study-area.org/linux/servers/linux_nfs.htm</a></li>
+
+<li>
+NIS 官方网站：<a href="http://www.linux-nis.org/" target="_blank">http://www.linux-nis.org/</a></li>
+
+<li>
+NIS HOW-TO：<a href="http://www.linux-nis.org/nis-howto/HOWTO/index.html" target="_blank">http://www.linux-nis.org/nis-howto/HOWTO/index.html</a></li>
+</ul>
+
+<hr width="100%"><a name="FAQ"></a><font size="+1" color="#000099">本章习题练习</font>
+<ul>
+<li>
+<font color="#000000">请简单说明 NIS server 的功能与工作流程</font></li>
+
+<li>
+<font color="#000000">请简单说明 NIS Server/client 的架构</font></li>
+
+<li>
+<font color="#000000">NIS 启动之前需要先启动那个服务，否则就无法启动成功
+( 提示：RPC Server )</font></li>
+
+<li>
+<font color="#000000">我的 NIS 网域名称为 bird ，另外，我主机的 IP 与主机名称为
+192.168.5.1/bird.nis.org ，请问要这些信息需要设定在 NIS Server 的哪些档案之内？</font></li>
+
+<li>
+<font color="#000000">/etc/nsswitch.conf 的功能为何？如果我想要让密码查寻先本地的密码文件，再查寻
+NIS ，需要如何设定？</font></li>
+
+<li>
+<font color="#000000">NIS Server 将密码等档案做成数据库以提供 NIS client
+来查寻，那么请问使用什么动作后，可以将密码档案转成 NIS 的数据库格式档案？</font></li>
+
+<li>
+<font color="#000000">如果我想要增加网域当中一个新的账号：newaccount，并且这个
+newaccount 可以让 NIS Client 查寻到他的账号与密码，需要进行哪些步骤？</font></li>
+
+<li>
+<font color="#000000">实作范例题：底下是我的网域参数特征：</font></li>
+
+<br><font color="#000000">network/netmask:192.168.1.0/255.255.255.0</font>
+<br><font color="#000000">NIS server : 192.168.1.100 (hostname: server.nis.test
+)</font>
+<br><font color="#000000">NIS cient: 192.168.1.200 (hostname: client1.nis.test
+)</font>
+<br><font color="#000000">NIS domain name: nis.test</font>
+<br><font color="#000000">利用上面的参数来设定 NIS 架构，请一步一步的写下你的设定。</font>
+<li>
+<font color="#000000">承上题：如果我的网域太大了，所以有一部 NIS slave
+主机，这部主机的 IP 为 192.168.1.50 ，请问这部主机该如何设定？</font></li>
+
+<br><font color="#000000"><a href="http://linux.vbird.org/linux_server/1000results.php#0430nis">前往参考用解答</a></font></ul>
+
+<center><font size="+1" color="#3333ff"><a href="http://linux.vbird.org/linux_server/0430nis.php">
+<font face="SimSun">简易</font>
+Network Information Service, NIS Server <font face="SimSun">架设</font></a></font></center>
+
+<hr width="100%"><font size="-1" color="#000066" face="SimSun">2003/05/06：第一次完成日期！</font>
+<br><font size="-1" color="#000066" face="SimSun">2003/09/16：稍微加入一些信息与微幅修改版面！</font>
+<br>
+<hr width="100%"><font size="-1" color="#3333ff" face="SimSun">2003/
+05/06以来统计人数</font>
+<br><img src="101_files/Count[12].gif" nosave="" align="middle" height="15" width="60"><hr width="100%">
+<center>
+<a href="http://linux.vbird.org/" target="_top"><img src="61_files/VBirdTitle2[10].jpg" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/linux_basic"><img src="39_files/icon_system[3].gif" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/linux_server"><img src="55_files/icon_server[13].gif" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/linux_security"><img src="71_files/icon_security[10].jpg" nosave="" border="0" height="25" width="90"></a>
+<a href="http://phorum.vbird.org/" target="_blank"><img src="60_files/icon_forums[10].gif" nosave="" border="0" height="25" width="90"></a>
+<a href="http://linux.vbird.org/adsl"><img src="50_files/icon_adsl[13].gif" nosave="" border="0" height="25" width="90"></a>
+<br><font size="-1" color="#000066">Designed by <a href="mailto:vbird@tsai.adsldns.org">VBird</a>
+during 2001-2004.&#160; Aerosol Lab.</font></center>
+</body></html>
