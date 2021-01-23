@@ -1,0 +1,377 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>tabwriter - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="../../doc/style.css">
+<script type="text/javascript" src="../../doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Package tabwriter</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<!--
+	Copyright 2009 The Go Authors. All rights reserved.
+	Use of this source code is governed by a BSD-style
+	license that can be found in the LICENSE file.
+-->
+
+	
+		<div id="short-nav">
+			<dl>
+			<dd><code>import "text/tabwriter"</code></dd>
+			</dl>
+			<dl>
+			<dd><a href="#overview" class="overviewLink">Overview</a></dd>
+			<dd><a href="#index">Index</a></dd>
+			
+				<dd><a href="#examples">Examples</a></dd>
+			
+			
+			</dl>
+		</div>
+		<!-- The package's Name is printed as title by the top-level template -->
+		<div id="overview" class="toggleVisible">
+			<div class="collapsed">
+				<h2 class="toggleButton" title="Click to show Overview section">Overview ?</h2>
+			</div>
+			<div class="expanded">
+				<h2 class="toggleButton" title="Click to hide Overview section">Overview ?</h2>
+				<p>
+Package tabwriter implements a write filter (tabwriter.Writer) that
+translates tabbed columns in input into properly aligned text.
+</p>
+<p>
+The package is using the Elastic Tabstops algorithm described at
+<a href="http://nickgravgaard.com/elastictabstops/index.html">http://nickgravgaard.com/elastictabstops/index.html</a>.
+</p>
+
+			</div>
+		</div>
+		
+	
+		<h2 id="index">Index</h2>
+		<!-- Table of contents for API; must be named manual-nav to turn off auto nav. -->
+		<div id="manual-nav">
+			<dl>
+			
+				<dd><a href="#constants">Constants</a></dd>
+			
+			
+			
+			
+				
+				<dd><a href="#Writer">type Writer</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewWriter">func NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Writer.Flush">func (b *Writer) Flush() (err error)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Writer.Init">func (b *Writer) Init(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Writer.Write">func (b *Writer) Write(buf []byte) (n int, err error)</a></dd>
+				
+			
+			
+		</dl>
+
+		
+			<h4 id="examples">Examples</h4>
+			<dl>
+			
+			<dd><a class="exampleLink" href="#example_Writer_Init">Writer.Init</a></dd>
+			
+			</dl>
+		
+
+		
+			<h4>Package files</h4>
+			<p>
+			<span style="font-size:90%">
+			
+				<a href="src/pkg/text/tabwriter/tabwriter.htm">tabwriter.go</a>
+			
+			</span>
+			</p>
+		
+	
+		
+			<h2 id="constants">Constants</h2>
+			
+				<pre>const (
+    <span class="comment">// Ignore html tags and treat entities (starting with &#39;&amp;&#39;</span>
+    <span class="comment">// and ending in &#39;;&#39;) as single characters (width = 1).</span>
+    FilterHTML uint = 1 &lt;&lt; iota
+
+    <span class="comment">// Strip Escape characters bracketing escaped text segments</span>
+    <span class="comment">// instead of passing them through unchanged with the text.</span>
+    StripEscape
+
+    <span class="comment">// Force right-alignment of cell content.</span>
+    <span class="comment">// Default is left-alignment.</span>
+    AlignRight
+
+    <span class="comment">// Handle empty columns as if they were not present in</span>
+    <span class="comment">// the input in the first place.</span>
+    DiscardEmptyColumns
+
+    <span class="comment">// Always use tabs for indentation columns (i.e., padding of</span>
+    <span class="comment">// leading empty cells on the left) independent of padchar.</span>
+    TabIndent
+
+    <span class="comment">// Print a vertical bar (&#39;|&#39;) between columns (after formatting).</span>
+    <span class="comment">// Discarded columns appear as zero-width columns (&#34;||&#34;).</span>
+    Debug
+)</pre>
+				<p>
+Formatting can be controlled with these flags.
+</p>
+
+			
+				<pre>const Escape = &#39;\xff&#39;</pre>
+				<p>
+To escape a text segment, bracket it with Escape characters.
+For instance, the tab in this string &#34;Ignore this tab: \xff\t\xff&#34;
+does not terminate a cell and constitutes a single character of
+width one for formatting purposes.
+</p>
+<p>
+The value 0xff was chosen because it cannot appear in a valid UTF-8 sequence.
+</p>
+
+			
+		
+		
+		
+		
+			
+			
+			<h2 id="Writer">type <a href="src/pkg/text/tabwriter/tabwriter.htm#L67">Writer</a></h2>
+			<pre>type Writer struct {
+    <span class="comment">// contains filtered or unexported fields</span>
+}</pre>
+			<p>
+A Writer is a filter that inserts padding around tab-delimited
+columns in its input to align them in the output.
+</p>
+<p>
+The Writer treats incoming bytes as UTF-8 encoded text consisting
+of cells terminated by (horizontal or vertical) tabs or line
+breaks (newline or formfeed characters). Cells in adjacent lines
+constitute a column. The Writer inserts padding as needed to
+make all cells in a column have the same width, effectively
+aligning the columns. It assumes that all characters have the
+same width except for tabs for which a tabwidth must be specified.
+Note that cells are tab-terminated, not tab-separated: trailing
+non-tab text at the end of a line does not form a column cell.
+</p>
+<p>
+The Writer assumes that all Unicode code points have the same width;
+this may not be true in some fonts.
+</p>
+<p>
+If DiscardEmptyColumns is set, empty columns that are terminated
+entirely by vertical (or &#34;soft&#34;) tabs are discarded. Columns
+terminated by horizontal (or &#34;hard&#34;) tabs are not affected by
+this flag.
+</p>
+<p>
+If a Writer is configured to filter HTML, HTML tags and entities
+are passed through. The widths of tags and entities are
+assumed to be zero (tags) and one (entities) for formatting purposes.
+</p>
+<p>
+A segment of text may be escaped by bracketing it with Escape
+characters. The tabwriter passes escaped text segments through
+unchanged. In particular, it does not interpret any tabs or line
+breaks within the segment. If the StripEscape flag is set, the
+Escape characters are stripped from the output; otherwise they
+are passed through as well. For the purpose of formatting, the
+width of the escaped text is always computed excluding the Escape
+characters.
+</p>
+<p>
+The formfeed character (&#39;\f&#39;) acts like a newline but it also
+terminates all columns in the current line (effectively calling
+Flush). Cells in the next line start new columns. Unless found
+inside an HTML tag or inside an escaped text segment, formfeed
+characters appear as newlines in the output.
+</p>
+<p>
+The Writer must buffer input internally, because proper spacing
+of one line may depend on the cells in future lines. Clients must
+call Flush when done calling Write.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewWriter">func <a href="src/pkg/text/tabwriter/tabwriter.htm#L542">NewWriter</a></h3>
+				<pre>func NewWriter(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer</pre>
+				<p>
+NewWriter allocates and initializes a new tabwriter.Writer.
+The parameters are the same as for the the Init function.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Writer.Flush">func (*Writer) <a href="src/pkg/text/tabwriter/tabwriter.htm#L438">Flush</a></h3>
+				<pre>func (b *Writer) Flush() (err error)</pre>
+				<p>
+Flush should be called after the last call to Write to ensure
+that any data buffered in the Writer is written to output. Any
+incomplete escape sequence at the end is considered
+complete for formatting purposes.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Writer.Init">func (*Writer) <a href="src/pkg/text/tabwriter/tabwriter.htm#L162">Init</a></h3>
+				<pre>func (b *Writer) Init(output io.Writer, minwidth, tabwidth, padding int, padchar byte, flags uint) *Writer</pre>
+				<p>
+A Writer must be initialized with a call to Init. The first parameter (output)
+specifies the filter output. The remaining parameters control the formatting:
+</p>
+<pre>minwidth	minimal cell width including any padding
+tabwidth	width of tab characters (equivalent number of spaces)
+padding		padding added to a cell before computing its width
+padchar		ASCII char used for padding
+		if padchar == &#39;\t&#39;, the Writer will assume that the
+		width of a &#39;\t&#39; in the formatted output is tabwidth,
+		and cells are left-aligned independent of align_left
+		(for correct-looking results, tabwidth must correspond
+		to the tab width in the viewer displaying the result)
+flags		formatting control
+</pre>
+
+				
+				<div id="example_Writer_Init" class="toggle">
+	<div class="collapsed">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+	</div>
+	<div class="expanded">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+		
+		<p>Code:</p>
+		<pre class="code">w := new(tabwriter.Writer)
+
+<span class="comment">// Format in tab-separated columns with a tab stop of 8.</span>
+w.Init(os.Stdout, 0, 8, 0, &#39;\t&#39;, 0)
+fmt.Fprintln(w, &#34;a\tb\tc\td\t.&#34;)
+fmt.Fprintln(w, &#34;123\t12345\t1234567\t123456789\t.&#34;)
+fmt.Fprintln(w)
+w.Flush()
+
+<span class="comment">// Format right-aligned in space-separated columns of minimal width 5</span>
+<span class="comment">// and at least one blank of padding (so wider column entries do not</span>
+<span class="comment">// touch each other).</span>
+w.Init(os.Stdout, 5, 0, 1, &#39; &#39;, tabwriter.AlignRight)
+fmt.Fprintln(w, &#34;a\tb\tc\td\t.&#34;)
+fmt.Fprintln(w, &#34;123\t12345\t1234567\t123456789\t.&#34;)
+fmt.Fprintln(w)
+w.Flush()
+
+<span class="comment"></pre>
+		
+		<p>Output:</p>
+		<pre class="output">a	b	c	d		.
+123	12345	1234567	123456789	.
+
+    a     b       c         d.
+  123 12345 1234567 123456789.</pre>
+		
+	</div>
+</div>
+
+			
+				
+				<h3 id="Writer.Write">func (*Writer) <a href="src/pkg/text/tabwriter/tabwriter.htm#L463">Write</a></h3>
+				<pre>func (b *Writer) Write(buf []byte) (n int, err error)</pre>
+				<p>
+Write writes buf to the writer b.
+The only errors returned are ones encountered
+while writing to the underlying output stream.
+</p>
+
+				
+				
+			
+		
+		</div>
+	
+
+	
+
+
+
+
+
+
+
+
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>

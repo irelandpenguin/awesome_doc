@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/doc/example.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/doc/example.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Extract example functions from file ASTs.</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package doc
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;go/ast&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;go/token&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;regexp&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;sort&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;strings&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;unicode&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;unicode/utf8&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	type Example struct {
+<a id="L20"></a><span class="ln">    20</span>		Name     string <span class="comment">// name of the item being exemplified</span>
+<a id="L21"></a><span class="ln">    21</span>		Doc      string <span class="comment">// example function doc string</span>
+<a id="L22"></a><span class="ln">    22</span>		Code     ast.Node
+<a id="L23"></a><span class="ln">    23</span>		Comments []*ast.CommentGroup
+<a id="L24"></a><span class="ln">    24</span>		Output   string <span class="comment">// expected output</span>
+<a id="L25"></a><span class="ln">    25</span>	}
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	func Examples(files ...*ast.File) []*Example {
+<a id="L28"></a><span class="ln">    28</span>		var list []*Example
+<a id="L29"></a><span class="ln">    29</span>		for _, file := range files {
+<a id="L30"></a><span class="ln">    30</span>			hasTests := false <span class="comment">// file contains tests or benchmarks</span>
+<a id="L31"></a><span class="ln">    31</span>			numDecl := 0      <span class="comment">// number of non-import declarations in the file</span>
+<a id="L32"></a><span class="ln">    32</span>			var flist []*Example
+<a id="L33"></a><span class="ln">    33</span>			for _, decl := range file.Decls {
+<a id="L34"></a><span class="ln">    34</span>				if g, ok := decl.(*ast.GenDecl); ok &amp;&amp; g.Tok != token.IMPORT {
+<a id="L35"></a><span class="ln">    35</span>					numDecl++
+<a id="L36"></a><span class="ln">    36</span>					continue
+<a id="L37"></a><span class="ln">    37</span>				}
+<a id="L38"></a><span class="ln">    38</span>				f, ok := decl.(*ast.FuncDecl)
+<a id="L39"></a><span class="ln">    39</span>				if !ok {
+<a id="L40"></a><span class="ln">    40</span>					continue
+<a id="L41"></a><span class="ln">    41</span>				}
+<a id="L42"></a><span class="ln">    42</span>				numDecl++
+<a id="L43"></a><span class="ln">    43</span>				name := f.Name.Name
+<a id="L44"></a><span class="ln">    44</span>				if isTest(name, &#34;Test&#34;) || isTest(name, &#34;Benchmark&#34;) {
+<a id="L45"></a><span class="ln">    45</span>					hasTests = true
+<a id="L46"></a><span class="ln">    46</span>					continue
+<a id="L47"></a><span class="ln">    47</span>				}
+<a id="L48"></a><span class="ln">    48</span>				if !isTest(name, &#34;Example&#34;) {
+<a id="L49"></a><span class="ln">    49</span>					continue
+<a id="L50"></a><span class="ln">    50</span>				}
+<a id="L51"></a><span class="ln">    51</span>				var doc string
+<a id="L52"></a><span class="ln">    52</span>				if f.Doc != nil {
+<a id="L53"></a><span class="ln">    53</span>					doc = f.Doc.Text()
+<a id="L54"></a><span class="ln">    54</span>				}
+<a id="L55"></a><span class="ln">    55</span>				flist = append(flist, &amp;Example{
+<a id="L56"></a><span class="ln">    56</span>					Name:     name[len(&#34;Example&#34;):],
+<a id="L57"></a><span class="ln">    57</span>					Doc:      doc,
+<a id="L58"></a><span class="ln">    58</span>					Code:     f.Body,
+<a id="L59"></a><span class="ln">    59</span>					Comments: file.Comments,
+<a id="L60"></a><span class="ln">    60</span>					Output:   exampleOutput(f, file.Comments),
+<a id="L61"></a><span class="ln">    61</span>				})
+<a id="L62"></a><span class="ln">    62</span>			}
+<a id="L63"></a><span class="ln">    63</span>			if !hasTests &amp;&amp; numDecl &gt; 1 &amp;&amp; len(flist) == 1 {
+<a id="L64"></a><span class="ln">    64</span>				<span class="comment">// If this file only has one example function, some</span>
+<a id="L65"></a><span class="ln">    65</span>				<span class="comment">// other top-level declarations, and no tests or</span>
+<a id="L66"></a><span class="ln">    66</span>				<span class="comment">// benchmarks, use the whole file as the example.</span>
+<a id="L67"></a><span class="ln">    67</span>				flist[0].Code = file
+<a id="L68"></a><span class="ln">    68</span>			}
+<a id="L69"></a><span class="ln">    69</span>			list = append(list, flist...)
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>		sort.Sort(exampleByName(list))
+<a id="L72"></a><span class="ln">    72</span>		return list
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	var outputPrefix = regexp.MustCompile(`(?i)^[[:space:]]*output:`)
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	func exampleOutput(fun *ast.FuncDecl, comments []*ast.CommentGroup) string {
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// find the last comment in the function</span>
+<a id="L79"></a><span class="ln">    79</span>		var last *ast.CommentGroup
+<a id="L80"></a><span class="ln">    80</span>		for _, cg := range comments {
+<a id="L81"></a><span class="ln">    81</span>			if cg.Pos() &lt; fun.Pos() {
+<a id="L82"></a><span class="ln">    82</span>				continue
+<a id="L83"></a><span class="ln">    83</span>			}
+<a id="L84"></a><span class="ln">    84</span>			if cg.End() &gt; fun.End() {
+<a id="L85"></a><span class="ln">    85</span>				break
+<a id="L86"></a><span class="ln">    86</span>			}
+<a id="L87"></a><span class="ln">    87</span>			last = cg
+<a id="L88"></a><span class="ln">    88</span>		}
+<a id="L89"></a><span class="ln">    89</span>		if last != nil {
+<a id="L90"></a><span class="ln">    90</span>			<span class="comment">// test that it begins with the correct prefix</span>
+<a id="L91"></a><span class="ln">    91</span>			text := last.Text()
+<a id="L92"></a><span class="ln">    92</span>			if loc := outputPrefix.FindStringIndex(text); loc != nil {
+<a id="L93"></a><span class="ln">    93</span>				return strings.TrimSpace(text[loc[1]:])
+<a id="L94"></a><span class="ln">    94</span>			}
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>		return &#34;&#34; <span class="comment">// no suitable comment found</span>
+<a id="L97"></a><span class="ln">    97</span>	}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// isTest tells whether name looks like a test, example, or benchmark.</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// It is a Test (say) if there is a character after Test that is not a</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// lower-case letter. (We don&#39;t want Testiness.)</span>
+<a id="L102"></a><span class="ln">   102</span>	func isTest(name, prefix string) bool {
+<a id="L103"></a><span class="ln">   103</span>		if !strings.HasPrefix(name, prefix) {
+<a id="L104"></a><span class="ln">   104</span>			return false
+<a id="L105"></a><span class="ln">   105</span>		}
+<a id="L106"></a><span class="ln">   106</span>		if len(name) == len(prefix) { <span class="comment">// &#34;Test&#34; is ok</span>
+<a id="L107"></a><span class="ln">   107</span>			return true
+<a id="L108"></a><span class="ln">   108</span>		}
+<a id="L109"></a><span class="ln">   109</span>		rune, _ := utf8.DecodeRuneInString(name[len(prefix):])
+<a id="L110"></a><span class="ln">   110</span>		return !unicode.IsLower(rune)
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	type exampleByName []*Example
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>	func (s exampleByName) Len() int           { return len(s) }
+<a id="L116"></a><span class="ln">   116</span>	func (s exampleByName) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+<a id="L117"></a><span class="ln">   117</span>	func (s exampleByName) Less(i, j int) bool { return s[i].Name &lt; s[j].Name }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

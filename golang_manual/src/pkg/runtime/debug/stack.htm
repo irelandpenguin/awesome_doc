@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/runtime/debug/stack.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/runtime/debug/stack.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package debug contains facilities for programs to debug themselves while</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// they are running.</span>
+<a id="L7"></a><span class="ln">     7</span>	package debug
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;bytes&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io/ioutil&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;os&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;runtime&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	var (
+<a id="L18"></a><span class="ln">    18</span>		dunno     = []byte(&#34;???&#34;)
+<a id="L19"></a><span class="ln">    19</span>		centerDot = []byte(&#34;·&#34;)
+<a id="L20"></a><span class="ln">    20</span>		dot       = []byte(&#34;.&#34;)
+<a id="L21"></a><span class="ln">    21</span>	)
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// PrintStack prints to standard error the stack trace returned by Stack.</span>
+<a id="L24"></a><span class="ln">    24</span>	func PrintStack() {
+<a id="L25"></a><span class="ln">    25</span>		os.Stderr.Write(stack())
+<a id="L26"></a><span class="ln">    26</span>	}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// Stack returns a formatted stack trace of the goroutine that calls it.</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// For each routine, it includes the source line information and PC value,</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// then attempts to discover, for Go functions, the calling function or</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// method and the text of the line containing the invocation.</span>
+<a id="L32"></a><span class="ln">    32</span>	func Stack() []byte {
+<a id="L33"></a><span class="ln">    33</span>		return stack()
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// stack implements Stack, skipping 2 frames</span>
+<a id="L37"></a><span class="ln">    37</span>	func stack() []byte {
+<a id="L38"></a><span class="ln">    38</span>		buf := new(bytes.Buffer) <span class="comment">// the returned data</span>
+<a id="L39"></a><span class="ln">    39</span>		<span class="comment">// As we loop, we open files and read them. These variables record the currently</span>
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// loaded file.</span>
+<a id="L41"></a><span class="ln">    41</span>		var lines [][]byte
+<a id="L42"></a><span class="ln">    42</span>		var lastFile string
+<a id="L43"></a><span class="ln">    43</span>		for i := 2; ; i++ { <span class="comment">// Caller we care about is the user, 2 frames up</span>
+<a id="L44"></a><span class="ln">    44</span>			pc, file, line, ok := runtime.Caller(i)
+<a id="L45"></a><span class="ln">    45</span>			if !ok {
+<a id="L46"></a><span class="ln">    46</span>				break
+<a id="L47"></a><span class="ln">    47</span>			}
+<a id="L48"></a><span class="ln">    48</span>			<span class="comment">// Print this much at least.  If we can&#39;t find the source, it won&#39;t show.</span>
+<a id="L49"></a><span class="ln">    49</span>			fmt.Fprintf(buf, &#34;%s:%d (0x%x)\n&#34;, file, line, pc)
+<a id="L50"></a><span class="ln">    50</span>			if file != lastFile {
+<a id="L51"></a><span class="ln">    51</span>				data, err := ioutil.ReadFile(file)
+<a id="L52"></a><span class="ln">    52</span>				if err != nil {
+<a id="L53"></a><span class="ln">    53</span>					continue
+<a id="L54"></a><span class="ln">    54</span>				}
+<a id="L55"></a><span class="ln">    55</span>				lines = bytes.Split(data, []byte{&#39;\n&#39;})
+<a id="L56"></a><span class="ln">    56</span>				lastFile = file
+<a id="L57"></a><span class="ln">    57</span>			}
+<a id="L58"></a><span class="ln">    58</span>			line-- <span class="comment">// in stack trace, lines are 1-indexed but our array is 0-indexed</span>
+<a id="L59"></a><span class="ln">    59</span>			fmt.Fprintf(buf, &#34;\t%s: %s\n&#34;, function(pc), source(lines, line))
+<a id="L60"></a><span class="ln">    60</span>		}
+<a id="L61"></a><span class="ln">    61</span>		return buf.Bytes()
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// source returns a space-trimmed slice of the n&#39;th line.</span>
+<a id="L65"></a><span class="ln">    65</span>	func source(lines [][]byte, n int) []byte {
+<a id="L66"></a><span class="ln">    66</span>		if n &lt; 0 || n &gt;= len(lines) {
+<a id="L67"></a><span class="ln">    67</span>			return dunno
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		return bytes.Trim(lines[n], &#34; \t&#34;)
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// function returns, if possible, the name of the function containing the PC.</span>
+<a id="L73"></a><span class="ln">    73</span>	func function(pc uintptr) []byte {
+<a id="L74"></a><span class="ln">    74</span>		fn := runtime.FuncForPC(pc)
+<a id="L75"></a><span class="ln">    75</span>		if fn == nil {
+<a id="L76"></a><span class="ln">    76</span>			return dunno
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		name := []byte(fn.Name())
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// The name includes the path name to the package, which is unnecessary</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// since the file name is already included.  Plus, it has center dots.</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// That is, we see</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">//	runtime/debug.*T·ptrmethod</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// and want</span>
+<a id="L84"></a><span class="ln">    84</span>		<span class="comment">//	*T.ptrmethod</span>
+<a id="L85"></a><span class="ln">    85</span>		if period := bytes.Index(name, dot); period &gt;= 0 {
+<a id="L86"></a><span class="ln">    86</span>			name = name[period+1:]
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>		name = bytes.Replace(name, centerDot, dot, -1)
+<a id="L89"></a><span class="ln">    89</span>		return name
+<a id="L90"></a><span class="ln">    90</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/debug/dwarf/type.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/debug/dwarf/type.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// DWARF type information structures.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// The format is heavily biased toward C, but for simplicity</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// the String methods use a pseudo-Go syntax.</span>
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	package dwarf
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import &#34;strconv&#34;
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// A Type conventionally represents a pointer to any of the</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// specific Type structures (CharType, StructType, etc.).</span>
+<a id="L15"></a><span class="ln">    15</span>	type Type interface {
+<a id="L16"></a><span class="ln">    16</span>		Common() *CommonType
+<a id="L17"></a><span class="ln">    17</span>		String() string
+<a id="L18"></a><span class="ln">    18</span>		Size() int64
+<a id="L19"></a><span class="ln">    19</span>	}
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// A CommonType holds fields common to multiple types.</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// If a field is not known or not applicable for a given type,</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// the zero value is used.</span>
+<a id="L24"></a><span class="ln">    24</span>	type CommonType struct {
+<a id="L25"></a><span class="ln">    25</span>		ByteSize int64  <span class="comment">// size of value of this type, in bytes</span>
+<a id="L26"></a><span class="ln">    26</span>		Name     string <span class="comment">// name that can be used to refer to type</span>
+<a id="L27"></a><span class="ln">    27</span>	}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	func (c *CommonType) Common() *CommonType { return c }
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	func (c *CommonType) Size() int64 { return c.ByteSize }
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// Basic types</span>
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// A BasicType holds fields common to all basic types.</span>
+<a id="L36"></a><span class="ln">    36</span>	type BasicType struct {
+<a id="L37"></a><span class="ln">    37</span>		CommonType
+<a id="L38"></a><span class="ln">    38</span>		BitSize   int64
+<a id="L39"></a><span class="ln">    39</span>		BitOffset int64
+<a id="L40"></a><span class="ln">    40</span>	}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	func (b *BasicType) Basic() *BasicType { return b }
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	func (t *BasicType) String() string {
+<a id="L45"></a><span class="ln">    45</span>		if t.Name != &#34;&#34; {
+<a id="L46"></a><span class="ln">    46</span>			return t.Name
+<a id="L47"></a><span class="ln">    47</span>		}
+<a id="L48"></a><span class="ln">    48</span>		return &#34;?&#34;
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// A CharType represents a signed character type.</span>
+<a id="L52"></a><span class="ln">    52</span>	type CharType struct {
+<a id="L53"></a><span class="ln">    53</span>		BasicType
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// A UcharType represents an unsigned character type.</span>
+<a id="L57"></a><span class="ln">    57</span>	type UcharType struct {
+<a id="L58"></a><span class="ln">    58</span>		BasicType
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// An IntType represents a signed integer type.</span>
+<a id="L62"></a><span class="ln">    62</span>	type IntType struct {
+<a id="L63"></a><span class="ln">    63</span>		BasicType
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// A UintType represents an unsigned integer type.</span>
+<a id="L67"></a><span class="ln">    67</span>	type UintType struct {
+<a id="L68"></a><span class="ln">    68</span>		BasicType
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// A FloatType represents a floating point type.</span>
+<a id="L72"></a><span class="ln">    72</span>	type FloatType struct {
+<a id="L73"></a><span class="ln">    73</span>		BasicType
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// A ComplexType represents a complex floating point type.</span>
+<a id="L77"></a><span class="ln">    77</span>	type ComplexType struct {
+<a id="L78"></a><span class="ln">    78</span>		BasicType
+<a id="L79"></a><span class="ln">    79</span>	}
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// A BoolType represents a boolean type.</span>
+<a id="L82"></a><span class="ln">    82</span>	type BoolType struct {
+<a id="L83"></a><span class="ln">    83</span>		BasicType
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// An AddrType represents a machine address type.</span>
+<a id="L87"></a><span class="ln">    87</span>	type AddrType struct {
+<a id="L88"></a><span class="ln">    88</span>		BasicType
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// qualifiers</span>
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// A QualType represents a type that has the C/C++ &#34;const&#34;, &#34;restrict&#34;, or &#34;volatile&#34; qualifier.</span>
+<a id="L94"></a><span class="ln">    94</span>	type QualType struct {
+<a id="L95"></a><span class="ln">    95</span>		CommonType
+<a id="L96"></a><span class="ln">    96</span>		Qual string
+<a id="L97"></a><span class="ln">    97</span>		Type Type
+<a id="L98"></a><span class="ln">    98</span>	}
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>	func (t *QualType) String() string { return t.Qual + &#34; &#34; + t.Type.String() }
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>	func (t *QualType) Size() int64 { return t.Type.Size() }
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// An ArrayType represents a fixed size array type.</span>
+<a id="L105"></a><span class="ln">   105</span>	type ArrayType struct {
+<a id="L106"></a><span class="ln">   106</span>		CommonType
+<a id="L107"></a><span class="ln">   107</span>		Type          Type
+<a id="L108"></a><span class="ln">   108</span>		StrideBitSize int64 <span class="comment">// if &gt; 0, number of bits to hold each element</span>
+<a id="L109"></a><span class="ln">   109</span>		Count         int64 <span class="comment">// if == -1, an incomplete array, like char x[].</span>
+<a id="L110"></a><span class="ln">   110</span>	}
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>	func (t *ArrayType) String() string {
+<a id="L113"></a><span class="ln">   113</span>		return &#34;[&#34; + strconv.FormatInt(t.Count, 10) + &#34;]&#34; + t.Type.String()
+<a id="L114"></a><span class="ln">   114</span>	}
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>	func (t *ArrayType) Size() int64 { return t.Count * t.Type.Size() }
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">// A VoidType represents the C void type.</span>
+<a id="L119"></a><span class="ln">   119</span>	type VoidType struct {
+<a id="L120"></a><span class="ln">   120</span>		CommonType
+<a id="L121"></a><span class="ln">   121</span>	}
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>	func (t *VoidType) String() string { return &#34;void&#34; }
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// A PtrType represents a pointer type.</span>
+<a id="L126"></a><span class="ln">   126</span>	type PtrType struct {
+<a id="L127"></a><span class="ln">   127</span>		CommonType
+<a id="L128"></a><span class="ln">   128</span>		Type Type
+<a id="L129"></a><span class="ln">   129</span>	}
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>	func (t *PtrType) String() string { return &#34;*&#34; + t.Type.String() }
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// A StructType represents a struct, union, or C++ class type.</span>
+<a id="L134"></a><span class="ln">   134</span>	type StructType struct {
+<a id="L135"></a><span class="ln">   135</span>		CommonType
+<a id="L136"></a><span class="ln">   136</span>		StructName string
+<a id="L137"></a><span class="ln">   137</span>		Kind       string <span class="comment">// &#34;struct&#34;, &#34;union&#34;, or &#34;class&#34;.</span>
+<a id="L138"></a><span class="ln">   138</span>		Field      []*StructField
+<a id="L139"></a><span class="ln">   139</span>		Incomplete bool <span class="comment">// if true, struct, union, class is declared but not defined</span>
+<a id="L140"></a><span class="ln">   140</span>	}
+<a id="L141"></a><span class="ln">   141</span>	
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// A StructField represents a field in a struct, union, or C++ class type.</span>
+<a id="L143"></a><span class="ln">   143</span>	type StructField struct {
+<a id="L144"></a><span class="ln">   144</span>		Name       string
+<a id="L145"></a><span class="ln">   145</span>		Type       Type
+<a id="L146"></a><span class="ln">   146</span>		ByteOffset int64
+<a id="L147"></a><span class="ln">   147</span>		ByteSize   int64
+<a id="L148"></a><span class="ln">   148</span>		BitOffset  int64 <span class="comment">// within the ByteSize bytes at ByteOffset</span>
+<a id="L149"></a><span class="ln">   149</span>		BitSize    int64 <span class="comment">// zero if not a bit field</span>
+<a id="L150"></a><span class="ln">   150</span>	}
+<a id="L151"></a><span class="ln">   151</span>	
+<a id="L152"></a><span class="ln">   152</span>	func (t *StructType) String() string {
+<a id="L153"></a><span class="ln">   153</span>		if t.StructName != &#34;&#34; {
+<a id="L154"></a><span class="ln">   154</span>			return t.Kind + &#34; &#34; + t.StructName
+<a id="L155"></a><span class="ln">   155</span>		}
+<a id="L156"></a><span class="ln">   156</span>		return t.Defn()
+<a id="L157"></a><span class="ln">   157</span>	}
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>	func (t *StructType) Defn() string {
+<a id="L160"></a><span class="ln">   160</span>		s := t.Kind
+<a id="L161"></a><span class="ln">   161</span>		if t.StructName != &#34;&#34; {
+<a id="L162"></a><span class="ln">   162</span>			s += &#34; &#34; + t.StructName
+<a id="L163"></a><span class="ln">   163</span>		}
+<a id="L164"></a><span class="ln">   164</span>		if t.Incomplete {
+<a id="L165"></a><span class="ln">   165</span>			s += &#34; /*incomplete*/&#34;
+<a id="L166"></a><span class="ln">   166</span>			return s
+<a id="L167"></a><span class="ln">   167</span>		}
+<a id="L168"></a><span class="ln">   168</span>		s += &#34; {&#34;
+<a id="L169"></a><span class="ln">   169</span>		for i, f := range t.Field {
+<a id="L170"></a><span class="ln">   170</span>			if i &gt; 0 {
+<a id="L171"></a><span class="ln">   171</span>				s += &#34;; &#34;
+<a id="L172"></a><span class="ln">   172</span>			}
+<a id="L173"></a><span class="ln">   173</span>			s += f.Name + &#34; &#34; + f.Type.String()
+<a id="L174"></a><span class="ln">   174</span>			s += &#34;@&#34; + strconv.FormatInt(f.ByteOffset, 10)
+<a id="L175"></a><span class="ln">   175</span>			if f.BitSize &gt; 0 {
+<a id="L176"></a><span class="ln">   176</span>				s += &#34; : &#34; + strconv.FormatInt(f.BitSize, 10)
+<a id="L177"></a><span class="ln">   177</span>				s += &#34;@&#34; + strconv.FormatInt(f.BitOffset, 10)
+<a id="L178"></a><span class="ln">   178</span>			}
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>		s += &#34;}&#34;
+<a id="L181"></a><span class="ln">   181</span>		return s
+<a id="L182"></a><span class="ln">   182</span>	}
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>	<span class="comment">// An EnumType represents an enumerated type.</span>
+<a id="L185"></a><span class="ln">   185</span>	<span class="comment">// The only indication of its native integer type is its ByteSize</span>
+<a id="L186"></a><span class="ln">   186</span>	<span class="comment">// (inside CommonType).</span>
+<a id="L187"></a><span class="ln">   187</span>	type EnumType struct {
+<a id="L188"></a><span class="ln">   188</span>		CommonType
+<a id="L189"></a><span class="ln">   189</span>		EnumName string
+<a id="L190"></a><span class="ln">   190</span>		Val      []*EnumValue
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	<span class="comment">// An EnumValue represents a single enumeration value.</span>
+<a id="L194"></a><span class="ln">   194</span>	type EnumValue struct {
+<a id="L195"></a><span class="ln">   195</span>		Name string
+<a id="L196"></a><span class="ln">   196</span>		Val  int64
+<a id="L197"></a><span class="ln">   197</span>	}
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>	func (t *EnumType) String() string {
+<a id="L200"></a><span class="ln">   200</span>		s := &#34;enum&#34;
+<a id="L201"></a><span class="ln">   201</span>		if t.EnumName != &#34;&#34; {
+<a id="L202"></a><span class="ln">   202</span>			s += &#34; &#34; + t.EnumName
+<a id="L203"></a><span class="ln">   203</span>		}
+<a id="L204"></a><span class="ln">   204</span>		s += &#34; {&#34;
+<a id="L205"></a><span class="ln">   205</span>		for i, v := range t.Val {
+<a id="L206"></a><span class="ln">   206</span>			if i &gt; 0 {
+<a id="L207"></a><span class="ln">   207</span>				s += &#34;; &#34;
+<a id="L208"></a><span class="ln">   208</span>			}
+<a id="L209"></a><span class="ln">   209</span>			s += v.Name + &#34;=&#34; + strconv.FormatInt(v.Val, 10)
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>		s += &#34;}&#34;
+<a id="L212"></a><span class="ln">   212</span>		return s
+<a id="L213"></a><span class="ln">   213</span>	}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// A FuncType represents a function type.</span>
+<a id="L216"></a><span class="ln">   216</span>	type FuncType struct {
+<a id="L217"></a><span class="ln">   217</span>		CommonType
+<a id="L218"></a><span class="ln">   218</span>		ReturnType Type
+<a id="L219"></a><span class="ln">   219</span>		ParamType  []Type
+<a id="L220"></a><span class="ln">   220</span>	}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>	func (t *FuncType) String() string {
+<a id="L223"></a><span class="ln">   223</span>		s := &#34;func(&#34;
+<a id="L224"></a><span class="ln">   224</span>		for i, t := range t.ParamType {
+<a id="L225"></a><span class="ln">   225</span>			if i &gt; 0 {
+<a id="L226"></a><span class="ln">   226</span>				s += &#34;, &#34;
+<a id="L227"></a><span class="ln">   227</span>			}
+<a id="L228"></a><span class="ln">   228</span>			s += t.String()
+<a id="L229"></a><span class="ln">   229</span>		}
+<a id="L230"></a><span class="ln">   230</span>		s += &#34;)&#34;
+<a id="L231"></a><span class="ln">   231</span>		if t.ReturnType != nil {
+<a id="L232"></a><span class="ln">   232</span>			s += &#34; &#34; + t.ReturnType.String()
+<a id="L233"></a><span class="ln">   233</span>		}
+<a id="L234"></a><span class="ln">   234</span>		return s
+<a id="L235"></a><span class="ln">   235</span>	}
+<a id="L236"></a><span class="ln">   236</span>	
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">// A DotDotDotType represents the variadic ... function parameter.</span>
+<a id="L238"></a><span class="ln">   238</span>	type DotDotDotType struct {
+<a id="L239"></a><span class="ln">   239</span>		CommonType
+<a id="L240"></a><span class="ln">   240</span>	}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>	func (t *DotDotDotType) String() string { return &#34;...&#34; }
+<a id="L243"></a><span class="ln">   243</span>	
+<a id="L244"></a><span class="ln">   244</span>	<span class="comment">// A TypedefType represents a named type.</span>
+<a id="L245"></a><span class="ln">   245</span>	type TypedefType struct {
+<a id="L246"></a><span class="ln">   246</span>		CommonType
+<a id="L247"></a><span class="ln">   247</span>		Type Type
+<a id="L248"></a><span class="ln">   248</span>	}
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>	func (t *TypedefType) String() string { return t.Name }
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	func (t *TypedefType) Size() int64 { return t.Type.Size() }
+<a id="L253"></a><span class="ln">   253</span>	
+<a id="L254"></a><span class="ln">   254</span>	func (d *Data) Type(off Offset) (Type, error) {
+<a id="L255"></a><span class="ln">   255</span>		if t, ok := d.typeCache[off]; ok {
+<a id="L256"></a><span class="ln">   256</span>			return t, nil
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>		r := d.Reader()
+<a id="L260"></a><span class="ln">   260</span>		r.Seek(off)
+<a id="L261"></a><span class="ln">   261</span>		e, err := r.Next()
+<a id="L262"></a><span class="ln">   262</span>		if err != nil {
+<a id="L263"></a><span class="ln">   263</span>			return nil, err
+<a id="L264"></a><span class="ln">   264</span>		}
+<a id="L265"></a><span class="ln">   265</span>		if e == nil || e.Offset != off {
+<a id="L266"></a><span class="ln">   266</span>			return nil, DecodeError{&#34;info&#34;, off, &#34;no type at offset&#34;}
+<a id="L267"></a><span class="ln">   267</span>		}
+<a id="L268"></a><span class="ln">   268</span>	
+<a id="L269"></a><span class="ln">   269</span>		<span class="comment">// Parse type from Entry.</span>
+<a id="L270"></a><span class="ln">   270</span>		<span class="comment">// Must always set d.typeCache[off] before calling</span>
+<a id="L271"></a><span class="ln">   271</span>		<span class="comment">// d.Type recursively, to handle circular types correctly.</span>
+<a id="L272"></a><span class="ln">   272</span>		var typ Type
+<a id="L273"></a><span class="ln">   273</span>	
+<a id="L274"></a><span class="ln">   274</span>		<span class="comment">// Get next child; set err if error happens.</span>
+<a id="L275"></a><span class="ln">   275</span>		next := func() *Entry {
+<a id="L276"></a><span class="ln">   276</span>			if !e.Children {
+<a id="L277"></a><span class="ln">   277</span>				return nil
+<a id="L278"></a><span class="ln">   278</span>			}
+<a id="L279"></a><span class="ln">   279</span>			kid, err1 := r.Next()
+<a id="L280"></a><span class="ln">   280</span>			if err1 != nil {
+<a id="L281"></a><span class="ln">   281</span>				err = err1
+<a id="L282"></a><span class="ln">   282</span>				return nil
+<a id="L283"></a><span class="ln">   283</span>			}
+<a id="L284"></a><span class="ln">   284</span>			if kid == nil {
+<a id="L285"></a><span class="ln">   285</span>				err = DecodeError{&#34;info&#34;, r.b.off, &#34;unexpected end of DWARF entries&#34;}
+<a id="L286"></a><span class="ln">   286</span>				return nil
+<a id="L287"></a><span class="ln">   287</span>			}
+<a id="L288"></a><span class="ln">   288</span>			if kid.Tag == 0 {
+<a id="L289"></a><span class="ln">   289</span>				return nil
+<a id="L290"></a><span class="ln">   290</span>			}
+<a id="L291"></a><span class="ln">   291</span>			return kid
+<a id="L292"></a><span class="ln">   292</span>		}
+<a id="L293"></a><span class="ln">   293</span>	
+<a id="L294"></a><span class="ln">   294</span>		<span class="comment">// Get Type referred to by Entry&#39;s AttrType field.</span>
+<a id="L295"></a><span class="ln">   295</span>		<span class="comment">// Set err if error happens.  Not having a type is an error.</span>
+<a id="L296"></a><span class="ln">   296</span>		typeOf := func(e *Entry) Type {
+<a id="L297"></a><span class="ln">   297</span>			toff, ok := e.Val(AttrType).(Offset)
+<a id="L298"></a><span class="ln">   298</span>			if !ok {
+<a id="L299"></a><span class="ln">   299</span>				<span class="comment">// It appears that no Type means &#34;void&#34;.</span>
+<a id="L300"></a><span class="ln">   300</span>				return new(VoidType)
+<a id="L301"></a><span class="ln">   301</span>			}
+<a id="L302"></a><span class="ln">   302</span>			var t Type
+<a id="L303"></a><span class="ln">   303</span>			if t, err = d.Type(toff); err != nil {
+<a id="L304"></a><span class="ln">   304</span>				return nil
+<a id="L305"></a><span class="ln">   305</span>			}
+<a id="L306"></a><span class="ln">   306</span>			return t
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>	
+<a id="L309"></a><span class="ln">   309</span>		switch e.Tag {
+<a id="L310"></a><span class="ln">   310</span>		case TagArrayType:
+<a id="L311"></a><span class="ln">   311</span>			<span class="comment">// Multi-dimensional array.  (DWARF v2 §5.4)</span>
+<a id="L312"></a><span class="ln">   312</span>			<span class="comment">// Attributes:</span>
+<a id="L313"></a><span class="ln">   313</span>			<span class="comment">//	AttrType:subtype [required]</span>
+<a id="L314"></a><span class="ln">   314</span>			<span class="comment">//	AttrStrideSize: size in bits of each element of the array</span>
+<a id="L315"></a><span class="ln">   315</span>			<span class="comment">//	AttrByteSize: size of entire array</span>
+<a id="L316"></a><span class="ln">   316</span>			<span class="comment">// Children:</span>
+<a id="L317"></a><span class="ln">   317</span>			<span class="comment">//	TagSubrangeType or TagEnumerationType giving one dimension.</span>
+<a id="L318"></a><span class="ln">   318</span>			<span class="comment">//	dimensions are in left to right order.</span>
+<a id="L319"></a><span class="ln">   319</span>			t := new(ArrayType)
+<a id="L320"></a><span class="ln">   320</span>			typ = t
+<a id="L321"></a><span class="ln">   321</span>			d.typeCache[off] = t
+<a id="L322"></a><span class="ln">   322</span>			if t.Type = typeOf(e); err != nil {
+<a id="L323"></a><span class="ln">   323</span>				goto Error
+<a id="L324"></a><span class="ln">   324</span>			}
+<a id="L325"></a><span class="ln">   325</span>			t.StrideBitSize, _ = e.Val(AttrStrideSize).(int64)
+<a id="L326"></a><span class="ln">   326</span>	
+<a id="L327"></a><span class="ln">   327</span>			<span class="comment">// Accumulate dimensions,</span>
+<a id="L328"></a><span class="ln">   328</span>			ndim := 0
+<a id="L329"></a><span class="ln">   329</span>			for kid := next(); kid != nil; kid = next() {
+<a id="L330"></a><span class="ln">   330</span>				<span class="comment">// TODO(rsc): Can also be TagEnumerationType</span>
+<a id="L331"></a><span class="ln">   331</span>				<span class="comment">// but haven&#39;t seen that in the wild yet.</span>
+<a id="L332"></a><span class="ln">   332</span>				switch kid.Tag {
+<a id="L333"></a><span class="ln">   333</span>				case TagSubrangeType:
+<a id="L334"></a><span class="ln">   334</span>					max, ok := kid.Val(AttrUpperBound).(int64)
+<a id="L335"></a><span class="ln">   335</span>					if !ok {
+<a id="L336"></a><span class="ln">   336</span>						max = -2 <span class="comment">// Count == -1, as in x[].</span>
+<a id="L337"></a><span class="ln">   337</span>					}
+<a id="L338"></a><span class="ln">   338</span>					if ndim == 0 {
+<a id="L339"></a><span class="ln">   339</span>						t.Count = max + 1
+<a id="L340"></a><span class="ln">   340</span>					} else {
+<a id="L341"></a><span class="ln">   341</span>						<span class="comment">// Multidimensional array.</span>
+<a id="L342"></a><span class="ln">   342</span>						<span class="comment">// Create new array type underneath this one.</span>
+<a id="L343"></a><span class="ln">   343</span>						t.Type = &amp;ArrayType{Type: t.Type, Count: max + 1}
+<a id="L344"></a><span class="ln">   344</span>					}
+<a id="L345"></a><span class="ln">   345</span>					ndim++
+<a id="L346"></a><span class="ln">   346</span>				case TagEnumerationType:
+<a id="L347"></a><span class="ln">   347</span>					err = DecodeError{&#34;info&#34;, kid.Offset, &#34;cannot handle enumeration type as array bound&#34;}
+<a id="L348"></a><span class="ln">   348</span>					goto Error
+<a id="L349"></a><span class="ln">   349</span>				}
+<a id="L350"></a><span class="ln">   350</span>			}
+<a id="L351"></a><span class="ln">   351</span>			if ndim == 0 {
+<a id="L352"></a><span class="ln">   352</span>				<span class="comment">// LLVM generates this for x[].</span>
+<a id="L353"></a><span class="ln">   353</span>				t.Count = -1
+<a id="L354"></a><span class="ln">   354</span>			}
+<a id="L355"></a><span class="ln">   355</span>	
+<a id="L356"></a><span class="ln">   356</span>		case TagBaseType:
+<a id="L357"></a><span class="ln">   357</span>			<span class="comment">// Basic type.  (DWARF v2 §5.1)</span>
+<a id="L358"></a><span class="ln">   358</span>			<span class="comment">// Attributes:</span>
+<a id="L359"></a><span class="ln">   359</span>			<span class="comment">//	AttrName: name of base type in programming language of the compilation unit [required]</span>
+<a id="L360"></a><span class="ln">   360</span>			<span class="comment">//	AttrEncoding: encoding value for type (encFloat etc) [required]</span>
+<a id="L361"></a><span class="ln">   361</span>			<span class="comment">//	AttrByteSize: size of type in bytes [required]</span>
+<a id="L362"></a><span class="ln">   362</span>			<span class="comment">//	AttrBitOffset: for sub-byte types, size in bits</span>
+<a id="L363"></a><span class="ln">   363</span>			<span class="comment">//	AttrBitSize: for sub-byte types, bit offset of high order bit in the AttrByteSize bytes</span>
+<a id="L364"></a><span class="ln">   364</span>			name, _ := e.Val(AttrName).(string)
+<a id="L365"></a><span class="ln">   365</span>			enc, ok := e.Val(AttrEncoding).(int64)
+<a id="L366"></a><span class="ln">   366</span>			if !ok {
+<a id="L367"></a><span class="ln">   367</span>				err = DecodeError{&#34;info&#34;, e.Offset, &#34;missing encoding attribute for &#34; + name}
+<a id="L368"></a><span class="ln">   368</span>				goto Error
+<a id="L369"></a><span class="ln">   369</span>			}
+<a id="L370"></a><span class="ln">   370</span>			switch enc {
+<a id="L371"></a><span class="ln">   371</span>			default:
+<a id="L372"></a><span class="ln">   372</span>				err = DecodeError{&#34;info&#34;, e.Offset, &#34;unrecognized encoding attribute value&#34;}
+<a id="L373"></a><span class="ln">   373</span>				goto Error
+<a id="L374"></a><span class="ln">   374</span>	
+<a id="L375"></a><span class="ln">   375</span>			case encAddress:
+<a id="L376"></a><span class="ln">   376</span>				typ = new(AddrType)
+<a id="L377"></a><span class="ln">   377</span>			case encBoolean:
+<a id="L378"></a><span class="ln">   378</span>				typ = new(BoolType)
+<a id="L379"></a><span class="ln">   379</span>			case encComplexFloat:
+<a id="L380"></a><span class="ln">   380</span>				typ = new(ComplexType)
+<a id="L381"></a><span class="ln">   381</span>			case encFloat:
+<a id="L382"></a><span class="ln">   382</span>				typ = new(FloatType)
+<a id="L383"></a><span class="ln">   383</span>			case encSigned:
+<a id="L384"></a><span class="ln">   384</span>				typ = new(IntType)
+<a id="L385"></a><span class="ln">   385</span>			case encUnsigned:
+<a id="L386"></a><span class="ln">   386</span>				typ = new(UintType)
+<a id="L387"></a><span class="ln">   387</span>			case encSignedChar:
+<a id="L388"></a><span class="ln">   388</span>				typ = new(CharType)
+<a id="L389"></a><span class="ln">   389</span>			case encUnsignedChar:
+<a id="L390"></a><span class="ln">   390</span>				typ = new(UcharType)
+<a id="L391"></a><span class="ln">   391</span>			}
+<a id="L392"></a><span class="ln">   392</span>			d.typeCache[off] = typ
+<a id="L393"></a><span class="ln">   393</span>			t := typ.(interface {
+<a id="L394"></a><span class="ln">   394</span>				Basic() *BasicType
+<a id="L395"></a><span class="ln">   395</span>			}).Basic()
+<a id="L396"></a><span class="ln">   396</span>			t.Name = name
+<a id="L397"></a><span class="ln">   397</span>			t.BitSize, _ = e.Val(AttrBitSize).(int64)
+<a id="L398"></a><span class="ln">   398</span>			t.BitOffset, _ = e.Val(AttrBitOffset).(int64)
+<a id="L399"></a><span class="ln">   399</span>	
+<a id="L400"></a><span class="ln">   400</span>		case TagClassType, TagStructType, TagUnionType:
+<a id="L401"></a><span class="ln">   401</span>			<span class="comment">// Structure, union, or class type.  (DWARF v2 §5.5)</span>
+<a id="L402"></a><span class="ln">   402</span>			<span class="comment">// Attributes:</span>
+<a id="L403"></a><span class="ln">   403</span>			<span class="comment">//	AttrName: name of struct, union, or class</span>
+<a id="L404"></a><span class="ln">   404</span>			<span class="comment">//	AttrByteSize: byte size [required]</span>
+<a id="L405"></a><span class="ln">   405</span>			<span class="comment">//	AttrDeclaration: if true, struct/union/class is incomplete</span>
+<a id="L406"></a><span class="ln">   406</span>			<span class="comment">// Children:</span>
+<a id="L407"></a><span class="ln">   407</span>			<span class="comment">//	TagMember to describe one member.</span>
+<a id="L408"></a><span class="ln">   408</span>			<span class="comment">//		AttrName: name of member [required]</span>
+<a id="L409"></a><span class="ln">   409</span>			<span class="comment">//		AttrType: type of member [required]</span>
+<a id="L410"></a><span class="ln">   410</span>			<span class="comment">//		AttrByteSize: size in bytes</span>
+<a id="L411"></a><span class="ln">   411</span>			<span class="comment">//		AttrBitOffset: bit offset within bytes for bit fields</span>
+<a id="L412"></a><span class="ln">   412</span>			<span class="comment">//		AttrBitSize: bit size for bit fields</span>
+<a id="L413"></a><span class="ln">   413</span>			<span class="comment">//		AttrDataMemberLoc: location within struct [required for struct, class]</span>
+<a id="L414"></a><span class="ln">   414</span>			<span class="comment">// There is much more to handle C++, all ignored for now.</span>
+<a id="L415"></a><span class="ln">   415</span>			t := new(StructType)
+<a id="L416"></a><span class="ln">   416</span>			typ = t
+<a id="L417"></a><span class="ln">   417</span>			d.typeCache[off] = t
+<a id="L418"></a><span class="ln">   418</span>			switch e.Tag {
+<a id="L419"></a><span class="ln">   419</span>			case TagClassType:
+<a id="L420"></a><span class="ln">   420</span>				t.Kind = &#34;class&#34;
+<a id="L421"></a><span class="ln">   421</span>			case TagStructType:
+<a id="L422"></a><span class="ln">   422</span>				t.Kind = &#34;struct&#34;
+<a id="L423"></a><span class="ln">   423</span>			case TagUnionType:
+<a id="L424"></a><span class="ln">   424</span>				t.Kind = &#34;union&#34;
+<a id="L425"></a><span class="ln">   425</span>			}
+<a id="L426"></a><span class="ln">   426</span>			t.StructName, _ = e.Val(AttrName).(string)
+<a id="L427"></a><span class="ln">   427</span>			t.Incomplete = e.Val(AttrDeclaration) != nil
+<a id="L428"></a><span class="ln">   428</span>			t.Field = make([]*StructField, 0, 8)
+<a id="L429"></a><span class="ln">   429</span>			var lastFieldType Type
+<a id="L430"></a><span class="ln">   430</span>			var lastFieldBitOffset int64
+<a id="L431"></a><span class="ln">   431</span>			for kid := next(); kid != nil; kid = next() {
+<a id="L432"></a><span class="ln">   432</span>				if kid.Tag == TagMember {
+<a id="L433"></a><span class="ln">   433</span>					f := new(StructField)
+<a id="L434"></a><span class="ln">   434</span>					if f.Type = typeOf(kid); err != nil {
+<a id="L435"></a><span class="ln">   435</span>						goto Error
+<a id="L436"></a><span class="ln">   436</span>					}
+<a id="L437"></a><span class="ln">   437</span>					if loc, ok := kid.Val(AttrDataMemberLoc).([]byte); ok {
+<a id="L438"></a><span class="ln">   438</span>						b := makeBuf(d, &#34;location&#34;, 0, loc, d.addrsize)
+<a id="L439"></a><span class="ln">   439</span>						if b.uint8() != opPlusUconst {
+<a id="L440"></a><span class="ln">   440</span>							err = DecodeError{&#34;info&#34;, kid.Offset, &#34;unexpected opcode&#34;}
+<a id="L441"></a><span class="ln">   441</span>							goto Error
+<a id="L442"></a><span class="ln">   442</span>						}
+<a id="L443"></a><span class="ln">   443</span>						f.ByteOffset = int64(b.uint())
+<a id="L444"></a><span class="ln">   444</span>						if b.err != nil {
+<a id="L445"></a><span class="ln">   445</span>							err = b.err
+<a id="L446"></a><span class="ln">   446</span>							goto Error
+<a id="L447"></a><span class="ln">   447</span>						}
+<a id="L448"></a><span class="ln">   448</span>					}
+<a id="L449"></a><span class="ln">   449</span>	
+<a id="L450"></a><span class="ln">   450</span>					haveBitOffset := false
+<a id="L451"></a><span class="ln">   451</span>					f.Name, _ = kid.Val(AttrName).(string)
+<a id="L452"></a><span class="ln">   452</span>					f.ByteSize, _ = kid.Val(AttrByteSize).(int64)
+<a id="L453"></a><span class="ln">   453</span>					f.BitOffset, haveBitOffset = kid.Val(AttrBitOffset).(int64)
+<a id="L454"></a><span class="ln">   454</span>					f.BitSize, _ = kid.Val(AttrBitSize).(int64)
+<a id="L455"></a><span class="ln">   455</span>					t.Field = append(t.Field, f)
+<a id="L456"></a><span class="ln">   456</span>	
+<a id="L457"></a><span class="ln">   457</span>					bito := f.BitOffset
+<a id="L458"></a><span class="ln">   458</span>					if !haveBitOffset {
+<a id="L459"></a><span class="ln">   459</span>						bito = f.ByteOffset * 8
+<a id="L460"></a><span class="ln">   460</span>					}
+<a id="L461"></a><span class="ln">   461</span>					if bito == lastFieldBitOffset &amp;&amp; t.Kind != &#34;union&#34; {
+<a id="L462"></a><span class="ln">   462</span>						<span class="comment">// Last field was zero width.  Fix array length.</span>
+<a id="L463"></a><span class="ln">   463</span>						<span class="comment">// (DWARF writes out 0-length arrays as if they were 1-length arrays.)</span>
+<a id="L464"></a><span class="ln">   464</span>						zeroArray(lastFieldType)
+<a id="L465"></a><span class="ln">   465</span>					}
+<a id="L466"></a><span class="ln">   466</span>					lastFieldType = f.Type
+<a id="L467"></a><span class="ln">   467</span>					lastFieldBitOffset = bito
+<a id="L468"></a><span class="ln">   468</span>				}
+<a id="L469"></a><span class="ln">   469</span>			}
+<a id="L470"></a><span class="ln">   470</span>			if t.Kind != &#34;union&#34; {
+<a id="L471"></a><span class="ln">   471</span>				b, ok := e.Val(AttrByteSize).(int64)
+<a id="L472"></a><span class="ln">   472</span>				if ok &amp;&amp; b*8 == lastFieldBitOffset {
+<a id="L473"></a><span class="ln">   473</span>					<span class="comment">// Final field must be zero width.  Fix array length.</span>
+<a id="L474"></a><span class="ln">   474</span>					zeroArray(lastFieldType)
+<a id="L475"></a><span class="ln">   475</span>				}
+<a id="L476"></a><span class="ln">   476</span>			}
+<a id="L477"></a><span class="ln">   477</span>	
+<a id="L478"></a><span class="ln">   478</span>		case TagConstType, TagVolatileType, TagRestrictType:
+<a id="L479"></a><span class="ln">   479</span>			<span class="comment">// Type modifier (DWARF v2 §5.2)</span>
+<a id="L480"></a><span class="ln">   480</span>			<span class="comment">// Attributes:</span>
+<a id="L481"></a><span class="ln">   481</span>			<span class="comment">//	AttrType: subtype</span>
+<a id="L482"></a><span class="ln">   482</span>			t := new(QualType)
+<a id="L483"></a><span class="ln">   483</span>			typ = t
+<a id="L484"></a><span class="ln">   484</span>			d.typeCache[off] = t
+<a id="L485"></a><span class="ln">   485</span>			if t.Type = typeOf(e); err != nil {
+<a id="L486"></a><span class="ln">   486</span>				goto Error
+<a id="L487"></a><span class="ln">   487</span>			}
+<a id="L488"></a><span class="ln">   488</span>			switch e.Tag {
+<a id="L489"></a><span class="ln">   489</span>			case TagConstType:
+<a id="L490"></a><span class="ln">   490</span>				t.Qual = &#34;const&#34;
+<a id="L491"></a><span class="ln">   491</span>			case TagRestrictType:
+<a id="L492"></a><span class="ln">   492</span>				t.Qual = &#34;restrict&#34;
+<a id="L493"></a><span class="ln">   493</span>			case TagVolatileType:
+<a id="L494"></a><span class="ln">   494</span>				t.Qual = &#34;volatile&#34;
+<a id="L495"></a><span class="ln">   495</span>			}
+<a id="L496"></a><span class="ln">   496</span>	
+<a id="L497"></a><span class="ln">   497</span>		case TagEnumerationType:
+<a id="L498"></a><span class="ln">   498</span>			<span class="comment">// Enumeration type (DWARF v2 §5.6)</span>
+<a id="L499"></a><span class="ln">   499</span>			<span class="comment">// Attributes:</span>
+<a id="L500"></a><span class="ln">   500</span>			<span class="comment">//	AttrName: enum name if any</span>
+<a id="L501"></a><span class="ln">   501</span>			<span class="comment">//	AttrByteSize: bytes required to represent largest value</span>
+<a id="L502"></a><span class="ln">   502</span>			<span class="comment">// Children:</span>
+<a id="L503"></a><span class="ln">   503</span>			<span class="comment">//	TagEnumerator:</span>
+<a id="L504"></a><span class="ln">   504</span>			<span class="comment">//		AttrName: name of constant</span>
+<a id="L505"></a><span class="ln">   505</span>			<span class="comment">//		AttrConstValue: value of constant</span>
+<a id="L506"></a><span class="ln">   506</span>			t := new(EnumType)
+<a id="L507"></a><span class="ln">   507</span>			typ = t
+<a id="L508"></a><span class="ln">   508</span>			d.typeCache[off] = t
+<a id="L509"></a><span class="ln">   509</span>			t.EnumName, _ = e.Val(AttrName).(string)
+<a id="L510"></a><span class="ln">   510</span>			t.Val = make([]*EnumValue, 0, 8)
+<a id="L511"></a><span class="ln">   511</span>			for kid := next(); kid != nil; kid = next() {
+<a id="L512"></a><span class="ln">   512</span>				if kid.Tag == TagEnumerator {
+<a id="L513"></a><span class="ln">   513</span>					f := new(EnumValue)
+<a id="L514"></a><span class="ln">   514</span>					f.Name, _ = kid.Val(AttrName).(string)
+<a id="L515"></a><span class="ln">   515</span>					f.Val, _ = kid.Val(AttrConstValue).(int64)
+<a id="L516"></a><span class="ln">   516</span>					n := len(t.Val)
+<a id="L517"></a><span class="ln">   517</span>					if n &gt;= cap(t.Val) {
+<a id="L518"></a><span class="ln">   518</span>						val := make([]*EnumValue, n, n*2)
+<a id="L519"></a><span class="ln">   519</span>						copy(val, t.Val)
+<a id="L520"></a><span class="ln">   520</span>						t.Val = val
+<a id="L521"></a><span class="ln">   521</span>					}
+<a id="L522"></a><span class="ln">   522</span>					t.Val = t.Val[0 : n+1]
+<a id="L523"></a><span class="ln">   523</span>					t.Val[n] = f
+<a id="L524"></a><span class="ln">   524</span>				}
+<a id="L525"></a><span class="ln">   525</span>			}
+<a id="L526"></a><span class="ln">   526</span>	
+<a id="L527"></a><span class="ln">   527</span>		case TagPointerType:
+<a id="L528"></a><span class="ln">   528</span>			<span class="comment">// Type modifier (DWARF v2 §5.2)</span>
+<a id="L529"></a><span class="ln">   529</span>			<span class="comment">// Attributes:</span>
+<a id="L530"></a><span class="ln">   530</span>			<span class="comment">//	AttrType: subtype [not required!  void* has no AttrType]</span>
+<a id="L531"></a><span class="ln">   531</span>			<span class="comment">//	AttrAddrClass: address class [ignored]</span>
+<a id="L532"></a><span class="ln">   532</span>			t := new(PtrType)
+<a id="L533"></a><span class="ln">   533</span>			typ = t
+<a id="L534"></a><span class="ln">   534</span>			d.typeCache[off] = t
+<a id="L535"></a><span class="ln">   535</span>			if e.Val(AttrType) == nil {
+<a id="L536"></a><span class="ln">   536</span>				t.Type = &amp;VoidType{}
+<a id="L537"></a><span class="ln">   537</span>				break
+<a id="L538"></a><span class="ln">   538</span>			}
+<a id="L539"></a><span class="ln">   539</span>			t.Type = typeOf(e)
+<a id="L540"></a><span class="ln">   540</span>	
+<a id="L541"></a><span class="ln">   541</span>		case TagSubroutineType:
+<a id="L542"></a><span class="ln">   542</span>			<span class="comment">// Subroutine type.  (DWARF v2 §5.7)</span>
+<a id="L543"></a><span class="ln">   543</span>			<span class="comment">// Attributes:</span>
+<a id="L544"></a><span class="ln">   544</span>			<span class="comment">//	AttrType: type of return value if any</span>
+<a id="L545"></a><span class="ln">   545</span>			<span class="comment">//	AttrName: possible name of type [ignored]</span>
+<a id="L546"></a><span class="ln">   546</span>			<span class="comment">//	AttrPrototyped: whether used ANSI C prototype [ignored]</span>
+<a id="L547"></a><span class="ln">   547</span>			<span class="comment">// Children:</span>
+<a id="L548"></a><span class="ln">   548</span>			<span class="comment">//	TagFormalParameter: typed parameter</span>
+<a id="L549"></a><span class="ln">   549</span>			<span class="comment">//		AttrType: type of parameter</span>
+<a id="L550"></a><span class="ln">   550</span>			<span class="comment">//	TagUnspecifiedParameter: final ...</span>
+<a id="L551"></a><span class="ln">   551</span>			t := new(FuncType)
+<a id="L552"></a><span class="ln">   552</span>			typ = t
+<a id="L553"></a><span class="ln">   553</span>			d.typeCache[off] = t
+<a id="L554"></a><span class="ln">   554</span>			if t.ReturnType = typeOf(e); err != nil {
+<a id="L555"></a><span class="ln">   555</span>				goto Error
+<a id="L556"></a><span class="ln">   556</span>			}
+<a id="L557"></a><span class="ln">   557</span>			t.ParamType = make([]Type, 0, 8)
+<a id="L558"></a><span class="ln">   558</span>			for kid := next(); kid != nil; kid = next() {
+<a id="L559"></a><span class="ln">   559</span>				var tkid Type
+<a id="L560"></a><span class="ln">   560</span>				switch kid.Tag {
+<a id="L561"></a><span class="ln">   561</span>				default:
+<a id="L562"></a><span class="ln">   562</span>					continue
+<a id="L563"></a><span class="ln">   563</span>				case TagFormalParameter:
+<a id="L564"></a><span class="ln">   564</span>					if tkid = typeOf(kid); err != nil {
+<a id="L565"></a><span class="ln">   565</span>						goto Error
+<a id="L566"></a><span class="ln">   566</span>					}
+<a id="L567"></a><span class="ln">   567</span>				case TagUnspecifiedParameters:
+<a id="L568"></a><span class="ln">   568</span>					tkid = &amp;DotDotDotType{}
+<a id="L569"></a><span class="ln">   569</span>				}
+<a id="L570"></a><span class="ln">   570</span>				t.ParamType = append(t.ParamType, tkid)
+<a id="L571"></a><span class="ln">   571</span>			}
+<a id="L572"></a><span class="ln">   572</span>	
+<a id="L573"></a><span class="ln">   573</span>		case TagTypedef:
+<a id="L574"></a><span class="ln">   574</span>			<span class="comment">// Typedef (DWARF v2 §5.3)</span>
+<a id="L575"></a><span class="ln">   575</span>			<span class="comment">// Attributes:</span>
+<a id="L576"></a><span class="ln">   576</span>			<span class="comment">//	AttrName: name [required]</span>
+<a id="L577"></a><span class="ln">   577</span>			<span class="comment">//	AttrType: type definition [required]</span>
+<a id="L578"></a><span class="ln">   578</span>			t := new(TypedefType)
+<a id="L579"></a><span class="ln">   579</span>			typ = t
+<a id="L580"></a><span class="ln">   580</span>			d.typeCache[off] = t
+<a id="L581"></a><span class="ln">   581</span>			t.Name, _ = e.Val(AttrName).(string)
+<a id="L582"></a><span class="ln">   582</span>			t.Type = typeOf(e)
+<a id="L583"></a><span class="ln">   583</span>		}
+<a id="L584"></a><span class="ln">   584</span>	
+<a id="L585"></a><span class="ln">   585</span>		if err != nil {
+<a id="L586"></a><span class="ln">   586</span>			goto Error
+<a id="L587"></a><span class="ln">   587</span>		}
+<a id="L588"></a><span class="ln">   588</span>	
+<a id="L589"></a><span class="ln">   589</span>		{
+<a id="L590"></a><span class="ln">   590</span>			b, ok := e.Val(AttrByteSize).(int64)
+<a id="L591"></a><span class="ln">   591</span>			if !ok {
+<a id="L592"></a><span class="ln">   592</span>				b = -1
+<a id="L593"></a><span class="ln">   593</span>			}
+<a id="L594"></a><span class="ln">   594</span>			typ.Common().ByteSize = b
+<a id="L595"></a><span class="ln">   595</span>		}
+<a id="L596"></a><span class="ln">   596</span>		return typ, nil
+<a id="L597"></a><span class="ln">   597</span>	
+<a id="L598"></a><span class="ln">   598</span>	Error:
+<a id="L599"></a><span class="ln">   599</span>		<span class="comment">// If the parse fails, take the type out of the cache</span>
+<a id="L600"></a><span class="ln">   600</span>		<span class="comment">// so that the next call with this offset doesn&#39;t hit</span>
+<a id="L601"></a><span class="ln">   601</span>		<span class="comment">// the cache and return success.</span>
+<a id="L602"></a><span class="ln">   602</span>		delete(d.typeCache, off)
+<a id="L603"></a><span class="ln">   603</span>		return nil, err
+<a id="L604"></a><span class="ln">   604</span>	}
+<a id="L605"></a><span class="ln">   605</span>	
+<a id="L606"></a><span class="ln">   606</span>	func zeroArray(t Type) {
+<a id="L607"></a><span class="ln">   607</span>		for {
+<a id="L608"></a><span class="ln">   608</span>			at, ok := t.(*ArrayType)
+<a id="L609"></a><span class="ln">   609</span>			if !ok {
+<a id="L610"></a><span class="ln">   610</span>				break
+<a id="L611"></a><span class="ln">   611</span>			}
+<a id="L612"></a><span class="ln">   612</span>			at.Count = 0
+<a id="L613"></a><span class="ln">   613</span>			t = at.Type
+<a id="L614"></a><span class="ln">   614</span>		}
+<a id="L615"></a><span class="ln">   615</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

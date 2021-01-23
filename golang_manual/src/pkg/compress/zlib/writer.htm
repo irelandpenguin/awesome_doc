@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/compress/zlib/writer.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/compress/zlib/writer.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package zlib
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;compress/flate&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;fmt&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;hash&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;hash/adler32&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// These constants are copied from the flate package, so that code that imports</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// &#34;compress/zlib&#34; does not also have to import &#34;compress/flate&#34;.</span>
+<a id="L17"></a><span class="ln">    17</span>	const (
+<a id="L18"></a><span class="ln">    18</span>		NoCompression      = flate.NoCompression
+<a id="L19"></a><span class="ln">    19</span>		BestSpeed          = flate.BestSpeed
+<a id="L20"></a><span class="ln">    20</span>		BestCompression    = flate.BestCompression
+<a id="L21"></a><span class="ln">    21</span>		DefaultCompression = flate.DefaultCompression
+<a id="L22"></a><span class="ln">    22</span>	)
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// A Writer takes data written to it and writes the compressed</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// form of that data to an underlying writer (see NewWriter).</span>
+<a id="L26"></a><span class="ln">    26</span>	type Writer struct {
+<a id="L27"></a><span class="ln">    27</span>		w           io.Writer
+<a id="L28"></a><span class="ln">    28</span>		level       int
+<a id="L29"></a><span class="ln">    29</span>		dict        []byte
+<a id="L30"></a><span class="ln">    30</span>		compressor  *flate.Writer
+<a id="L31"></a><span class="ln">    31</span>		digest      hash.Hash32
+<a id="L32"></a><span class="ln">    32</span>		err         error
+<a id="L33"></a><span class="ln">    33</span>		scratch     [4]byte
+<a id="L34"></a><span class="ln">    34</span>		wroteHeader bool
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// NewWriter creates a new Writer that satisfies writes by compressing data</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// written to w.</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// It is the caller&#39;s responsibility to call Close on the WriteCloser when done.</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// Writes may be buffered and not flushed until Close.</span>
+<a id="L42"></a><span class="ln">    42</span>	func NewWriter(w io.Writer) *Writer {
+<a id="L43"></a><span class="ln">    43</span>		z, _ := NewWriterLevelDict(w, DefaultCompression, nil)
+<a id="L44"></a><span class="ln">    44</span>		return z
+<a id="L45"></a><span class="ln">    45</span>	}
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// NewWriterLevel is like NewWriter but specifies the compression level instead</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// of assuming DefaultCompression.</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// The compression level can be DefaultCompression, NoCompression, or any</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// integer value between BestSpeed and BestCompression inclusive. The error</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// returned will be nil if the level is valid.</span>
+<a id="L53"></a><span class="ln">    53</span>	func NewWriterLevel(w io.Writer, level int) (*Writer, error) {
+<a id="L54"></a><span class="ln">    54</span>		return NewWriterLevelDict(w, level, nil)
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// NewWriterLevelDict is like NewWriterLevel but specifies a dictionary to</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// compress with.</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">//</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// The dictionary may be nil. If not, its contents should not be modified until</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// the Writer is closed.</span>
+<a id="L62"></a><span class="ln">    62</span>	func NewWriterLevelDict(w io.Writer, level int, dict []byte) (*Writer, error) {
+<a id="L63"></a><span class="ln">    63</span>		if level &lt; DefaultCompression || level &gt; BestCompression {
+<a id="L64"></a><span class="ln">    64</span>			return nil, fmt.Errorf(&#34;zlib: invalid compression level: %d&#34;, level)
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		return &amp;Writer{
+<a id="L67"></a><span class="ln">    67</span>			w:     w,
+<a id="L68"></a><span class="ln">    68</span>			level: level,
+<a id="L69"></a><span class="ln">    69</span>			dict:  dict,
+<a id="L70"></a><span class="ln">    70</span>		}, nil
+<a id="L71"></a><span class="ln">    71</span>	}
+<a id="L72"></a><span class="ln">    72</span>	
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// writeHeader writes the ZLIB header.</span>
+<a id="L74"></a><span class="ln">    74</span>	func (z *Writer) writeHeader() (err error) {
+<a id="L75"></a><span class="ln">    75</span>		z.wroteHeader = true
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">// ZLIB has a two-byte header (as documented in RFC 1950).</span>
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">// The first four bits is the CINFO (compression info), which is 7 for the default deflate window size.</span>
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// The next four bits is the CM (compression method), which is 8 for deflate.</span>
+<a id="L79"></a><span class="ln">    79</span>		z.scratch[0] = 0x78
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// The next two bits is the FLEVEL (compression level). The four values are:</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// 0=fastest, 1=fast, 2=default, 3=best.</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">// The next bit, FDICT, is set if a dictionary is given.</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// The final five FCHECK bits form a mod-31 checksum.</span>
+<a id="L84"></a><span class="ln">    84</span>		switch z.level {
+<a id="L85"></a><span class="ln">    85</span>		case 0, 1:
+<a id="L86"></a><span class="ln">    86</span>			z.scratch[1] = 0 &lt;&lt; 6
+<a id="L87"></a><span class="ln">    87</span>		case 2, 3, 4, 5:
+<a id="L88"></a><span class="ln">    88</span>			z.scratch[1] = 1 &lt;&lt; 6
+<a id="L89"></a><span class="ln">    89</span>		case 6, -1:
+<a id="L90"></a><span class="ln">    90</span>			z.scratch[1] = 2 &lt;&lt; 6
+<a id="L91"></a><span class="ln">    91</span>		case 7, 8, 9:
+<a id="L92"></a><span class="ln">    92</span>			z.scratch[1] = 3 &lt;&lt; 6
+<a id="L93"></a><span class="ln">    93</span>		default:
+<a id="L94"></a><span class="ln">    94</span>			panic(&#34;unreachable&#34;)
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>		if z.dict != nil {
+<a id="L97"></a><span class="ln">    97</span>			z.scratch[1] |= 1 &lt;&lt; 5
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		z.scratch[1] += uint8(31 - (uint16(z.scratch[0])&lt;&lt;8+uint16(z.scratch[1]))%31)
+<a id="L100"></a><span class="ln">   100</span>		if _, err = z.w.Write(z.scratch[0:2]); err != nil {
+<a id="L101"></a><span class="ln">   101</span>			return err
+<a id="L102"></a><span class="ln">   102</span>		}
+<a id="L103"></a><span class="ln">   103</span>		if z.dict != nil {
+<a id="L104"></a><span class="ln">   104</span>			<span class="comment">// The next four bytes are the Adler-32 checksum of the dictionary.</span>
+<a id="L105"></a><span class="ln">   105</span>			checksum := adler32.Checksum(z.dict)
+<a id="L106"></a><span class="ln">   106</span>			z.scratch[0] = uint8(checksum &gt;&gt; 24)
+<a id="L107"></a><span class="ln">   107</span>			z.scratch[1] = uint8(checksum &gt;&gt; 16)
+<a id="L108"></a><span class="ln">   108</span>			z.scratch[2] = uint8(checksum &gt;&gt; 8)
+<a id="L109"></a><span class="ln">   109</span>			z.scratch[3] = uint8(checksum &gt;&gt; 0)
+<a id="L110"></a><span class="ln">   110</span>			if _, err = z.w.Write(z.scratch[0:4]); err != nil {
+<a id="L111"></a><span class="ln">   111</span>				return err
+<a id="L112"></a><span class="ln">   112</span>			}
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>		z.compressor, err = flate.NewWriterDict(z.w, z.level, z.dict)
+<a id="L115"></a><span class="ln">   115</span>		if err != nil {
+<a id="L116"></a><span class="ln">   116</span>			return err
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>		z.digest = adler32.New()
+<a id="L119"></a><span class="ln">   119</span>		return nil
+<a id="L120"></a><span class="ln">   120</span>	}
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// Write writes a compressed form of p to the underlying io.Writer. The</span>
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// compressed bytes are not necessarily flushed until the Writer is closed or</span>
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// explicitly flushed.</span>
+<a id="L125"></a><span class="ln">   125</span>	func (z *Writer) Write(p []byte) (n int, err error) {
+<a id="L126"></a><span class="ln">   126</span>		if !z.wroteHeader {
+<a id="L127"></a><span class="ln">   127</span>			z.err = z.writeHeader()
+<a id="L128"></a><span class="ln">   128</span>		}
+<a id="L129"></a><span class="ln">   129</span>		if z.err != nil {
+<a id="L130"></a><span class="ln">   130</span>			return 0, z.err
+<a id="L131"></a><span class="ln">   131</span>		}
+<a id="L132"></a><span class="ln">   132</span>		if len(p) == 0 {
+<a id="L133"></a><span class="ln">   133</span>			return 0, nil
+<a id="L134"></a><span class="ln">   134</span>		}
+<a id="L135"></a><span class="ln">   135</span>		n, err = z.compressor.Write(p)
+<a id="L136"></a><span class="ln">   136</span>		if err != nil {
+<a id="L137"></a><span class="ln">   137</span>			z.err = err
+<a id="L138"></a><span class="ln">   138</span>			return
+<a id="L139"></a><span class="ln">   139</span>		}
+<a id="L140"></a><span class="ln">   140</span>		z.digest.Write(p)
+<a id="L141"></a><span class="ln">   141</span>		return
+<a id="L142"></a><span class="ln">   142</span>	}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// Flush flushes the Writer to its underlying io.Writer.</span>
+<a id="L145"></a><span class="ln">   145</span>	func (z *Writer) Flush() error {
+<a id="L146"></a><span class="ln">   146</span>		if !z.wroteHeader {
+<a id="L147"></a><span class="ln">   147</span>			z.err = z.writeHeader()
+<a id="L148"></a><span class="ln">   148</span>		}
+<a id="L149"></a><span class="ln">   149</span>		if z.err != nil {
+<a id="L150"></a><span class="ln">   150</span>			return z.err
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>		z.err = z.compressor.Flush()
+<a id="L153"></a><span class="ln">   153</span>		return z.err
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// Calling Close does not close the wrapped io.Writer originally passed to NewWriter.</span>
+<a id="L157"></a><span class="ln">   157</span>	func (z *Writer) Close() error {
+<a id="L158"></a><span class="ln">   158</span>		if !z.wroteHeader {
+<a id="L159"></a><span class="ln">   159</span>			z.err = z.writeHeader()
+<a id="L160"></a><span class="ln">   160</span>		}
+<a id="L161"></a><span class="ln">   161</span>		if z.err != nil {
+<a id="L162"></a><span class="ln">   162</span>			return z.err
+<a id="L163"></a><span class="ln">   163</span>		}
+<a id="L164"></a><span class="ln">   164</span>		z.err = z.compressor.Close()
+<a id="L165"></a><span class="ln">   165</span>		if z.err != nil {
+<a id="L166"></a><span class="ln">   166</span>			return z.err
+<a id="L167"></a><span class="ln">   167</span>		}
+<a id="L168"></a><span class="ln">   168</span>		checksum := z.digest.Sum32()
+<a id="L169"></a><span class="ln">   169</span>		<span class="comment">// ZLIB (RFC 1950) is big-endian, unlike GZIP (RFC 1952).</span>
+<a id="L170"></a><span class="ln">   170</span>		z.scratch[0] = uint8(checksum &gt;&gt; 24)
+<a id="L171"></a><span class="ln">   171</span>		z.scratch[1] = uint8(checksum &gt;&gt; 16)
+<a id="L172"></a><span class="ln">   172</span>		z.scratch[2] = uint8(checksum &gt;&gt; 8)
+<a id="L173"></a><span class="ln">   173</span>		z.scratch[3] = uint8(checksum &gt;&gt; 0)
+<a id="L174"></a><span class="ln">   174</span>		_, z.err = z.w.Write(z.scratch[0:4])
+<a id="L175"></a><span class="ln">   175</span>		return z.err
+<a id="L176"></a><span class="ln">   176</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

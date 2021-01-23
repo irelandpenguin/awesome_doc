@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/html/template/css.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/html/template/css.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package template
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bytes&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;fmt&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;unicode&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unicode/utf8&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// endsWithCSSKeyword returns whether b ends with an ident that</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// case-insensitively matches the lower-case kw.</span>
+<a id="L16"></a><span class="ln">    16</span>	func endsWithCSSKeyword(b []byte, kw string) bool {
+<a id="L17"></a><span class="ln">    17</span>		i := len(b) - len(kw)
+<a id="L18"></a><span class="ln">    18</span>		if i &lt; 0 {
+<a id="L19"></a><span class="ln">    19</span>			<span class="comment">// Too short.</span>
+<a id="L20"></a><span class="ln">    20</span>			return false
+<a id="L21"></a><span class="ln">    21</span>		}
+<a id="L22"></a><span class="ln">    22</span>		if i != 0 {
+<a id="L23"></a><span class="ln">    23</span>			r, _ := utf8.DecodeLastRune(b[:i])
+<a id="L24"></a><span class="ln">    24</span>			if isCSSNmchar(r) {
+<a id="L25"></a><span class="ln">    25</span>				<span class="comment">// Too long.</span>
+<a id="L26"></a><span class="ln">    26</span>				return false
+<a id="L27"></a><span class="ln">    27</span>			}
+<a id="L28"></a><span class="ln">    28</span>		}
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// Many CSS keywords, such as &#34;!important&#34; can have characters encoded,</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// but the URI production does not allow that according to</span>
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// http://www.w3.org/TR/css3-syntax/#TOK-URI</span>
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// This does not attempt to recognize encoded keywords. For example,</span>
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">// given &#34;\75\72\6c&#34; and &#34;url&#34; this return false.</span>
+<a id="L34"></a><span class="ln">    34</span>		return string(bytes.ToLower(b[i:])) == kw
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// isCSSNmchar returns whether rune is allowed anywhere in a CSS identifier.</span>
+<a id="L38"></a><span class="ln">    38</span>	func isCSSNmchar(r rune) bool {
+<a id="L39"></a><span class="ln">    39</span>		<span class="comment">// Based on the CSS3 nmchar production but ignores multi-rune escape</span>
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// sequences.</span>
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">// http://www.w3.org/TR/css3-syntax/#SUBTOK-nmchar</span>
+<a id="L42"></a><span class="ln">    42</span>		return &#39;a&#39; &lt;= r &amp;&amp; r &lt;= &#39;z&#39; ||
+<a id="L43"></a><span class="ln">    43</span>			&#39;A&#39; &lt;= r &amp;&amp; r &lt;= &#39;Z&#39; ||
+<a id="L44"></a><span class="ln">    44</span>			&#39;0&#39; &lt;= r &amp;&amp; r &lt;= &#39;9&#39; ||
+<a id="L45"></a><span class="ln">    45</span>			r == &#39;-&#39; ||
+<a id="L46"></a><span class="ln">    46</span>			r == &#39;_&#39; ||
+<a id="L47"></a><span class="ln">    47</span>			<span class="comment">// Non-ASCII cases below.</span>
+<a id="L48"></a><span class="ln">    48</span>			0x80 &lt;= r &amp;&amp; r &lt;= 0xd7ff ||
+<a id="L49"></a><span class="ln">    49</span>			0xe000 &lt;= r &amp;&amp; r &lt;= 0xfffd ||
+<a id="L50"></a><span class="ln">    50</span>			0x10000 &lt;= r &amp;&amp; r &lt;= 0x10ffff
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// decodeCSS decodes CSS3 escapes given a sequence of stringchars.</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// If there is no change, it returns the input, otherwise it returns a slice</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// backed by a new array.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// http://www.w3.org/TR/css3-syntax/#SUBTOK-stringchar defines stringchar.</span>
+<a id="L57"></a><span class="ln">    57</span>	func decodeCSS(s []byte) []byte {
+<a id="L58"></a><span class="ln">    58</span>		i := bytes.IndexByte(s, &#39;\\&#39;)
+<a id="L59"></a><span class="ln">    59</span>		if i == -1 {
+<a id="L60"></a><span class="ln">    60</span>			return s
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// The UTF-8 sequence for a codepoint is never longer than 1 + the</span>
+<a id="L63"></a><span class="ln">    63</span>		<span class="comment">// number hex digits need to represent that codepoint, so len(s) is an</span>
+<a id="L64"></a><span class="ln">    64</span>		<span class="comment">// upper bound on the output length.</span>
+<a id="L65"></a><span class="ln">    65</span>		b := make([]byte, 0, len(s))
+<a id="L66"></a><span class="ln">    66</span>		for len(s) != 0 {
+<a id="L67"></a><span class="ln">    67</span>			i := bytes.IndexByte(s, &#39;\\&#39;)
+<a id="L68"></a><span class="ln">    68</span>			if i == -1 {
+<a id="L69"></a><span class="ln">    69</span>				i = len(s)
+<a id="L70"></a><span class="ln">    70</span>			}
+<a id="L71"></a><span class="ln">    71</span>			b, s = append(b, s[:i]...), s[i:]
+<a id="L72"></a><span class="ln">    72</span>			if len(s) &lt; 2 {
+<a id="L73"></a><span class="ln">    73</span>				break
+<a id="L74"></a><span class="ln">    74</span>			}
+<a id="L75"></a><span class="ln">    75</span>			<span class="comment">// http://www.w3.org/TR/css3-syntax/#SUBTOK-escape</span>
+<a id="L76"></a><span class="ln">    76</span>			<span class="comment">// escape ::= unicode | &#39;\&#39; [#x20-#x7E#x80-#xD7FF#xE000-#xFFFD#x10000-#x10FFFF]</span>
+<a id="L77"></a><span class="ln">    77</span>			if isHex(s[1]) {
+<a id="L78"></a><span class="ln">    78</span>				<span class="comment">// http://www.w3.org/TR/css3-syntax/#SUBTOK-unicode</span>
+<a id="L79"></a><span class="ln">    79</span>				<span class="comment">//   unicode ::= &#39;\&#39; [0-9a-fA-F]{1,6} wc?</span>
+<a id="L80"></a><span class="ln">    80</span>				j := 2
+<a id="L81"></a><span class="ln">    81</span>				for j &lt; len(s) &amp;&amp; j &lt; 7 &amp;&amp; isHex(s[j]) {
+<a id="L82"></a><span class="ln">    82</span>					j++
+<a id="L83"></a><span class="ln">    83</span>				}
+<a id="L84"></a><span class="ln">    84</span>				r := hexDecode(s[1:j])
+<a id="L85"></a><span class="ln">    85</span>				if r &gt; unicode.MaxRune {
+<a id="L86"></a><span class="ln">    86</span>					r, j = r/16, j-1
+<a id="L87"></a><span class="ln">    87</span>				}
+<a id="L88"></a><span class="ln">    88</span>				n := utf8.EncodeRune(b[len(b):cap(b)], r)
+<a id="L89"></a><span class="ln">    89</span>				<span class="comment">// The optional space at the end allows a hex</span>
+<a id="L90"></a><span class="ln">    90</span>				<span class="comment">// sequence to be followed by a literal hex.</span>
+<a id="L91"></a><span class="ln">    91</span>				<span class="comment">// string(decodeCSS([]byte(`\A B`))) == &#34;\nB&#34;</span>
+<a id="L92"></a><span class="ln">    92</span>				b, s = b[:len(b)+n], skipCSSSpace(s[j:])
+<a id="L93"></a><span class="ln">    93</span>			} else {
+<a id="L94"></a><span class="ln">    94</span>				<span class="comment">// `\\` decodes to `\` and `\&#34;` to `&#34;`.</span>
+<a id="L95"></a><span class="ln">    95</span>				_, n := utf8.DecodeRune(s[1:])
+<a id="L96"></a><span class="ln">    96</span>				b, s = append(b, s[1:1+n]...), s[1+n:]
+<a id="L97"></a><span class="ln">    97</span>			}
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		return b
+<a id="L100"></a><span class="ln">   100</span>	}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// isHex returns whether the given character is a hex digit.</span>
+<a id="L103"></a><span class="ln">   103</span>	func isHex(c byte) bool {
+<a id="L104"></a><span class="ln">   104</span>		return &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; || &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;
+<a id="L105"></a><span class="ln">   105</span>	}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// hexDecode decodes a short hex digit sequence: &#34;10&#34; -&gt; 16.</span>
+<a id="L108"></a><span class="ln">   108</span>	func hexDecode(s []byte) rune {
+<a id="L109"></a><span class="ln">   109</span>		n := &#39;\x00&#39;
+<a id="L110"></a><span class="ln">   110</span>		for _, c := range s {
+<a id="L111"></a><span class="ln">   111</span>			n &lt;&lt;= 4
+<a id="L112"></a><span class="ln">   112</span>			switch {
+<a id="L113"></a><span class="ln">   113</span>			case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L114"></a><span class="ln">   114</span>				n |= rune(c - &#39;0&#39;)
+<a id="L115"></a><span class="ln">   115</span>			case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L116"></a><span class="ln">   116</span>				n |= rune(c-&#39;a&#39;) + 10
+<a id="L117"></a><span class="ln">   117</span>			case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L118"></a><span class="ln">   118</span>				n |= rune(c-&#39;A&#39;) + 10
+<a id="L119"></a><span class="ln">   119</span>			default:
+<a id="L120"></a><span class="ln">   120</span>				panic(fmt.Sprintf(&#34;Bad hex digit in %q&#34;, s))
+<a id="L121"></a><span class="ln">   121</span>			}
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>		return n
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// skipCSSSpace returns a suffix of c, skipping over a single space.</span>
+<a id="L127"></a><span class="ln">   127</span>	func skipCSSSpace(c []byte) []byte {
+<a id="L128"></a><span class="ln">   128</span>		if len(c) == 0 {
+<a id="L129"></a><span class="ln">   129</span>			return c
+<a id="L130"></a><span class="ln">   130</span>		}
+<a id="L131"></a><span class="ln">   131</span>		<span class="comment">// wc ::= #x9 | #xA | #xC | #xD | #x20</span>
+<a id="L132"></a><span class="ln">   132</span>		switch c[0] {
+<a id="L133"></a><span class="ln">   133</span>		case &#39;\t&#39;, &#39;\n&#39;, &#39;\f&#39;, &#39; &#39;:
+<a id="L134"></a><span class="ln">   134</span>			return c[1:]
+<a id="L135"></a><span class="ln">   135</span>		case &#39;\r&#39;:
+<a id="L136"></a><span class="ln">   136</span>			<span class="comment">// This differs from CSS3&#39;s wc production because it contains a</span>
+<a id="L137"></a><span class="ln">   137</span>			<span class="comment">// probable spec error whereby wc contains all the single byte</span>
+<a id="L138"></a><span class="ln">   138</span>			<span class="comment">// sequences in nl (newline) but not CRLF.</span>
+<a id="L139"></a><span class="ln">   139</span>			if len(c) &gt;= 2 &amp;&amp; c[1] == &#39;\n&#39; {
+<a id="L140"></a><span class="ln">   140</span>				return c[2:]
+<a id="L141"></a><span class="ln">   141</span>			}
+<a id="L142"></a><span class="ln">   142</span>			return c[1:]
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>		return c
+<a id="L145"></a><span class="ln">   145</span>	}
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// isCSSSpace returns whether b is a CSS space char as defined in wc.</span>
+<a id="L148"></a><span class="ln">   148</span>	func isCSSSpace(b byte) bool {
+<a id="L149"></a><span class="ln">   149</span>		switch b {
+<a id="L150"></a><span class="ln">   150</span>		case &#39;\t&#39;, &#39;\n&#39;, &#39;\f&#39;, &#39;\r&#39;, &#39; &#39;:
+<a id="L151"></a><span class="ln">   151</span>			return true
+<a id="L152"></a><span class="ln">   152</span>		}
+<a id="L153"></a><span class="ln">   153</span>		return false
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// cssEscaper escapes HTML and CSS special characters using \&lt;hex&gt;+ escapes.</span>
+<a id="L157"></a><span class="ln">   157</span>	func cssEscaper(args ...interface{}) string {
+<a id="L158"></a><span class="ln">   158</span>		s, _ := stringify(args...)
+<a id="L159"></a><span class="ln">   159</span>		var b bytes.Buffer
+<a id="L160"></a><span class="ln">   160</span>		written := 0
+<a id="L161"></a><span class="ln">   161</span>		for i, r := range s {
+<a id="L162"></a><span class="ln">   162</span>			var repl string
+<a id="L163"></a><span class="ln">   163</span>			switch r {
+<a id="L164"></a><span class="ln">   164</span>			case 0:
+<a id="L165"></a><span class="ln">   165</span>				repl = `\0`
+<a id="L166"></a><span class="ln">   166</span>			case &#39;\t&#39;:
+<a id="L167"></a><span class="ln">   167</span>				repl = `\9`
+<a id="L168"></a><span class="ln">   168</span>			case &#39;\n&#39;:
+<a id="L169"></a><span class="ln">   169</span>				repl = `\a`
+<a id="L170"></a><span class="ln">   170</span>			case &#39;\f&#39;:
+<a id="L171"></a><span class="ln">   171</span>				repl = `\c`
+<a id="L172"></a><span class="ln">   172</span>			case &#39;\r&#39;:
+<a id="L173"></a><span class="ln">   173</span>				repl = `\d`
+<a id="L174"></a><span class="ln">   174</span>			<span class="comment">// Encode HTML specials as hex so the output can be embedded</span>
+<a id="L175"></a><span class="ln">   175</span>			<span class="comment">// in HTML attributes without further encoding.</span>
+<a id="L176"></a><span class="ln">   176</span>			case &#39;&#34;&#39;:
+<a id="L177"></a><span class="ln">   177</span>				repl = `\22`
+<a id="L178"></a><span class="ln">   178</span>			case &#39;&amp;&#39;:
+<a id="L179"></a><span class="ln">   179</span>				repl = `\26`
+<a id="L180"></a><span class="ln">   180</span>			case &#39;\&#39;&#39;:
+<a id="L181"></a><span class="ln">   181</span>				repl = `\27`
+<a id="L182"></a><span class="ln">   182</span>			case &#39;(&#39;:
+<a id="L183"></a><span class="ln">   183</span>				repl = `\28`
+<a id="L184"></a><span class="ln">   184</span>			case &#39;)&#39;:
+<a id="L185"></a><span class="ln">   185</span>				repl = `\29`
+<a id="L186"></a><span class="ln">   186</span>			case &#39;+&#39;:
+<a id="L187"></a><span class="ln">   187</span>				repl = `\2b`
+<a id="L188"></a><span class="ln">   188</span>			case &#39;/&#39;:
+<a id="L189"></a><span class="ln">   189</span>				repl = `\2f`
+<a id="L190"></a><span class="ln">   190</span>			case &#39;:&#39;:
+<a id="L191"></a><span class="ln">   191</span>				repl = `\3a`
+<a id="L192"></a><span class="ln">   192</span>			case &#39;;&#39;:
+<a id="L193"></a><span class="ln">   193</span>				repl = `\3b`
+<a id="L194"></a><span class="ln">   194</span>			case &#39;&lt;&#39;:
+<a id="L195"></a><span class="ln">   195</span>				repl = `\3c`
+<a id="L196"></a><span class="ln">   196</span>			case &#39;&gt;&#39;:
+<a id="L197"></a><span class="ln">   197</span>				repl = `\3e`
+<a id="L198"></a><span class="ln">   198</span>			case &#39;\\&#39;:
+<a id="L199"></a><span class="ln">   199</span>				repl = `\\`
+<a id="L200"></a><span class="ln">   200</span>			case &#39;{&#39;:
+<a id="L201"></a><span class="ln">   201</span>				repl = `\7b`
+<a id="L202"></a><span class="ln">   202</span>			case &#39;}&#39;:
+<a id="L203"></a><span class="ln">   203</span>				repl = `\7d`
+<a id="L204"></a><span class="ln">   204</span>			default:
+<a id="L205"></a><span class="ln">   205</span>				continue
+<a id="L206"></a><span class="ln">   206</span>			}
+<a id="L207"></a><span class="ln">   207</span>			b.WriteString(s[written:i])
+<a id="L208"></a><span class="ln">   208</span>			b.WriteString(repl)
+<a id="L209"></a><span class="ln">   209</span>			written = i + utf8.RuneLen(r)
+<a id="L210"></a><span class="ln">   210</span>			if repl != `\\` &amp;&amp; (written == len(s) || isHex(s[written]) || isCSSSpace(s[written])) {
+<a id="L211"></a><span class="ln">   211</span>				b.WriteByte(&#39; &#39;)
+<a id="L212"></a><span class="ln">   212</span>			}
+<a id="L213"></a><span class="ln">   213</span>		}
+<a id="L214"></a><span class="ln">   214</span>		if written == 0 {
+<a id="L215"></a><span class="ln">   215</span>			return s
+<a id="L216"></a><span class="ln">   216</span>		}
+<a id="L217"></a><span class="ln">   217</span>		b.WriteString(s[written:])
+<a id="L218"></a><span class="ln">   218</span>		return b.String()
+<a id="L219"></a><span class="ln">   219</span>	}
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>	var expressionBytes = []byte(&#34;expression&#34;)
+<a id="L222"></a><span class="ln">   222</span>	var mozBindingBytes = []byte(&#34;mozbinding&#34;)
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// cssValueFilter allows innocuous CSS values in the output including CSS</span>
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">// quantities (10px or 25%), ID or class literals (#foo, .bar), keyword values</span>
+<a id="L226"></a><span class="ln">   226</span>	<span class="comment">// (inherit, blue), and colors (#888).</span>
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">// It filters out unsafe values, such as those that affect token boundaries,</span>
+<a id="L228"></a><span class="ln">   228</span>	<span class="comment">// and anything that might execute scripts.</span>
+<a id="L229"></a><span class="ln">   229</span>	func cssValueFilter(args ...interface{}) string {
+<a id="L230"></a><span class="ln">   230</span>		s, t := stringify(args...)
+<a id="L231"></a><span class="ln">   231</span>		if t == contentTypeCSS {
+<a id="L232"></a><span class="ln">   232</span>			return s
+<a id="L233"></a><span class="ln">   233</span>		}
+<a id="L234"></a><span class="ln">   234</span>		b, id := decodeCSS([]byte(s)), make([]byte, 0, 64)
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>		<span class="comment">// CSS3 error handling is specified as honoring string boundaries per</span>
+<a id="L237"></a><span class="ln">   237</span>		<span class="comment">// http://www.w3.org/TR/css3-syntax/#error-handling :</span>
+<a id="L238"></a><span class="ln">   238</span>		<span class="comment">//     Malformed declarations. User agents must handle unexpected</span>
+<a id="L239"></a><span class="ln">   239</span>		<span class="comment">//     tokens encountered while parsing a declaration by reading until</span>
+<a id="L240"></a><span class="ln">   240</span>		<span class="comment">//     the end of the declaration, while observing the rules for</span>
+<a id="L241"></a><span class="ln">   241</span>		<span class="comment">//     matching pairs of (), [], {}, &#34;&#34;, and &#39;&#39;, and correctly handling</span>
+<a id="L242"></a><span class="ln">   242</span>		<span class="comment">//     escapes. For example, a malformed declaration may be missing a</span>
+<a id="L243"></a><span class="ln">   243</span>		<span class="comment">//     property, colon (:) or value.</span>
+<a id="L244"></a><span class="ln">   244</span>		<span class="comment">// So we need to make sure that values do not have mismatched bracket</span>
+<a id="L245"></a><span class="ln">   245</span>		<span class="comment">// or quote characters to prevent the browser from restarting parsing</span>
+<a id="L246"></a><span class="ln">   246</span>		<span class="comment">// inside a string that might embed JavaScript source.</span>
+<a id="L247"></a><span class="ln">   247</span>		for i, c := range b {
+<a id="L248"></a><span class="ln">   248</span>			switch c {
+<a id="L249"></a><span class="ln">   249</span>			case 0, &#39;&#34;&#39;, &#39;\&#39;&#39;, &#39;(&#39;, &#39;)&#39;, &#39;/&#39;, &#39;;&#39;, &#39;@&#39;, &#39;[&#39;, &#39;\\&#39;, &#39;]&#39;, &#39;`&#39;, &#39;{&#39;, &#39;}&#39;:
+<a id="L250"></a><span class="ln">   250</span>				return filterFailsafe
+<a id="L251"></a><span class="ln">   251</span>			case &#39;-&#39;:
+<a id="L252"></a><span class="ln">   252</span>				<span class="comment">// Disallow &lt;!-- or --&gt;.</span>
+<a id="L253"></a><span class="ln">   253</span>				<span class="comment">// -- should not appear in valid identifiers.</span>
+<a id="L254"></a><span class="ln">   254</span>				if i != 0 &amp;&amp; b[i-1] == &#39;-&#39; {
+<a id="L255"></a><span class="ln">   255</span>					return filterFailsafe
+<a id="L256"></a><span class="ln">   256</span>				}
+<a id="L257"></a><span class="ln">   257</span>			default:
+<a id="L258"></a><span class="ln">   258</span>				if c &lt; 0x80 &amp;&amp; isCSSNmchar(rune(c)) {
+<a id="L259"></a><span class="ln">   259</span>					id = append(id, c)
+<a id="L260"></a><span class="ln">   260</span>				}
+<a id="L261"></a><span class="ln">   261</span>			}
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>		id = bytes.ToLower(id)
+<a id="L264"></a><span class="ln">   264</span>		if bytes.Index(id, expressionBytes) != -1 || bytes.Index(id, mozBindingBytes) != -1 {
+<a id="L265"></a><span class="ln">   265</span>			return filterFailsafe
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>		return string(b)
+<a id="L268"></a><span class="ln">   268</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

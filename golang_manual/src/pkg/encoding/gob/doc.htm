@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/gob/doc.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/gob/doc.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">/*
+</span><a id="L6"></a><span class="ln">     6</span>	<span class="comment">Package gob manages streams of gobs - binary values exchanged between an
+</span><a id="L7"></a><span class="ln">     7</span>	<span class="comment">Encoder (transmitter) and a Decoder (receiver).  A typical use is transporting
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">arguments and results of remote procedure calls (RPCs) such as those provided by
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">package &#34;rpc&#34;.
+</span><a id="L10"></a><span class="ln">    10</span>	<span class="comment">
+</span><a id="L11"></a><span class="ln">    11</span>	<span class="comment">A stream of gobs is self-describing.  Each data item in the stream is preceded by
+</span><a id="L12"></a><span class="ln">    12</span>	<span class="comment">a specification of its type, expressed in terms of a small set of predefined
+</span><a id="L13"></a><span class="ln">    13</span>	<span class="comment">types.  Pointers are not transmitted, but the things they point to are
+</span><a id="L14"></a><span class="ln">    14</span>	<span class="comment">transmitted; that is, the values are flattened.  Recursive types work fine, but
+</span><a id="L15"></a><span class="ln">    15</span>	<span class="comment">recursive values (data with cycles) are problematic.  This may change.
+</span><a id="L16"></a><span class="ln">    16</span>	<span class="comment">
+</span><a id="L17"></a><span class="ln">    17</span>	<span class="comment">To use gobs, create an Encoder and present it with a series of data items as
+</span><a id="L18"></a><span class="ln">    18</span>	<span class="comment">values or addresses that can be dereferenced to values.  The Encoder makes sure
+</span><a id="L19"></a><span class="ln">    19</span>	<span class="comment">all type information is sent before it is needed.  At the receive side, a
+</span><a id="L20"></a><span class="ln">    20</span>	<span class="comment">Decoder retrieves values from the encoded stream and unpacks them into local
+</span><a id="L21"></a><span class="ln">    21</span>	<span class="comment">variables.
+</span><a id="L22"></a><span class="ln">    22</span>	<span class="comment">
+</span><a id="L23"></a><span class="ln">    23</span>	<span class="comment">The source and destination values/types need not correspond exactly.  For structs,
+</span><a id="L24"></a><span class="ln">    24</span>	<span class="comment">fields (identified by name) that are in the source but absent from the receiving
+</span><a id="L25"></a><span class="ln">    25</span>	<span class="comment">variable will be ignored.  Fields that are in the receiving variable but missing
+</span><a id="L26"></a><span class="ln">    26</span>	<span class="comment">from the transmitted type or value will be ignored in the destination.  If a field
+</span><a id="L27"></a><span class="ln">    27</span>	<span class="comment">with the same name is present in both, their types must be compatible. Both the
+</span><a id="L28"></a><span class="ln">    28</span>	<span class="comment">receiver and transmitter will do all necessary indirection and dereferencing to
+</span><a id="L29"></a><span class="ln">    29</span>	<span class="comment">convert between gobs and actual Go values.  For instance, a gob type that is
+</span><a id="L30"></a><span class="ln">    30</span>	<span class="comment">schematically,
+</span><a id="L31"></a><span class="ln">    31</span>	<span class="comment">
+</span><a id="L32"></a><span class="ln">    32</span>	<span class="comment">	struct { A, B int }
+</span><a id="L33"></a><span class="ln">    33</span>	<span class="comment">
+</span><a id="L34"></a><span class="ln">    34</span>	<span class="comment">can be sent from or received into any of these Go types:
+</span><a id="L35"></a><span class="ln">    35</span>	<span class="comment">
+</span><a id="L36"></a><span class="ln">    36</span>	<span class="comment">	struct { A, B int }	// the same
+</span><a id="L37"></a><span class="ln">    37</span>	<span class="comment">	*struct { A, B int }	// extra indirection of the struct
+</span><a id="L38"></a><span class="ln">    38</span>	<span class="comment">	struct { *A, **B int }	// extra indirection of the fields
+</span><a id="L39"></a><span class="ln">    39</span>	<span class="comment">	struct { A, B int64 }	// different concrete value type; see below
+</span><a id="L40"></a><span class="ln">    40</span>	<span class="comment">
+</span><a id="L41"></a><span class="ln">    41</span>	<span class="comment">It may also be received into any of these:
+</span><a id="L42"></a><span class="ln">    42</span>	<span class="comment">
+</span><a id="L43"></a><span class="ln">    43</span>	<span class="comment">	struct { A, B int }	// the same
+</span><a id="L44"></a><span class="ln">    44</span>	<span class="comment">	struct { B, A int }	// ordering doesn&#39;t matter; matching is by name
+</span><a id="L45"></a><span class="ln">    45</span>	<span class="comment">	struct { A, B, C int }	// extra field (C) ignored
+</span><a id="L46"></a><span class="ln">    46</span>	<span class="comment">	struct { B int }	// missing field (A) ignored; data will be dropped
+</span><a id="L47"></a><span class="ln">    47</span>	<span class="comment">	struct { B, C int }	// missing field (A) ignored; extra field (C) ignored.
+</span><a id="L48"></a><span class="ln">    48</span>	<span class="comment">
+</span><a id="L49"></a><span class="ln">    49</span>	<span class="comment">Attempting to receive into these types will draw a decode error:
+</span><a id="L50"></a><span class="ln">    50</span>	<span class="comment">
+</span><a id="L51"></a><span class="ln">    51</span>	<span class="comment">	struct { A int; B uint }	// change of signedness for B
+</span><a id="L52"></a><span class="ln">    52</span>	<span class="comment">	struct { A int; B float }	// change of type for B
+</span><a id="L53"></a><span class="ln">    53</span>	<span class="comment">	struct { }			// no field names in common
+</span><a id="L54"></a><span class="ln">    54</span>	<span class="comment">	struct { C, D int }		// no field names in common
+</span><a id="L55"></a><span class="ln">    55</span>	<span class="comment">
+</span><a id="L56"></a><span class="ln">    56</span>	<span class="comment">Integers are transmitted two ways: arbitrary precision signed integers or
+</span><a id="L57"></a><span class="ln">    57</span>	<span class="comment">arbitrary precision unsigned integers.  There is no int8, int16 etc.
+</span><a id="L58"></a><span class="ln">    58</span>	<span class="comment">discrimination in the gob format; there are only signed and unsigned integers.  As
+</span><a id="L59"></a><span class="ln">    59</span>	<span class="comment">described below, the transmitter sends the value in a variable-length encoding;
+</span><a id="L60"></a><span class="ln">    60</span>	<span class="comment">the receiver accepts the value and stores it in the destination variable.
+</span><a id="L61"></a><span class="ln">    61</span>	<span class="comment">Floating-point numbers are always sent using IEEE-754 64-bit precision (see
+</span><a id="L62"></a><span class="ln">    62</span>	<span class="comment">below).
+</span><a id="L63"></a><span class="ln">    63</span>	<span class="comment">
+</span><a id="L64"></a><span class="ln">    64</span>	<span class="comment">Signed integers may be received into any signed integer variable: int, int16, etc.;
+</span><a id="L65"></a><span class="ln">    65</span>	<span class="comment">unsigned integers may be received into any unsigned integer variable; and floating
+</span><a id="L66"></a><span class="ln">    66</span>	<span class="comment">point values may be received into any floating point variable.  However,
+</span><a id="L67"></a><span class="ln">    67</span>	<span class="comment">the destination variable must be able to represent the value or the decode
+</span><a id="L68"></a><span class="ln">    68</span>	<span class="comment">operation will fail.
+</span><a id="L69"></a><span class="ln">    69</span>	<span class="comment">
+</span><a id="L70"></a><span class="ln">    70</span>	<span class="comment">Structs, arrays and slices are also supported.  Strings and arrays of bytes are
+</span><a id="L71"></a><span class="ln">    71</span>	<span class="comment">supported with a special, efficient representation (see below).  When a slice is
+</span><a id="L72"></a><span class="ln">    72</span>	<span class="comment">decoded, if the existing slice has capacity the slice will be extended in place;
+</span><a id="L73"></a><span class="ln">    73</span>	<span class="comment">if not, a new array is allocated.  Regardless, the length of the resulting slice
+</span><a id="L74"></a><span class="ln">    74</span>	<span class="comment">reports the number of elements decoded.
+</span><a id="L75"></a><span class="ln">    75</span>	<span class="comment">
+</span><a id="L76"></a><span class="ln">    76</span>	<span class="comment">Functions and channels cannot be sent in a gob.  Attempting
+</span><a id="L77"></a><span class="ln">    77</span>	<span class="comment">to encode a value that contains one will fail.
+</span><a id="L78"></a><span class="ln">    78</span>	<span class="comment">
+</span><a id="L79"></a><span class="ln">    79</span>	<span class="comment">The rest of this comment documents the encoding, details that are not important
+</span><a id="L80"></a><span class="ln">    80</span>	<span class="comment">for most users.  Details are presented bottom-up.
+</span><a id="L81"></a><span class="ln">    81</span>	<span class="comment">
+</span><a id="L82"></a><span class="ln">    82</span>	<span class="comment">An unsigned integer is sent one of two ways.  If it is less than 128, it is sent
+</span><a id="L83"></a><span class="ln">    83</span>	<span class="comment">as a byte with that value.  Otherwise it is sent as a minimal-length big-endian
+</span><a id="L84"></a><span class="ln">    84</span>	<span class="comment">(high byte first) byte stream holding the value, preceded by one byte holding the
+</span><a id="L85"></a><span class="ln">    85</span>	<span class="comment">byte count, negated.  Thus 0 is transmitted as (00), 7 is transmitted as (07) and
+</span><a id="L86"></a><span class="ln">    86</span>	<span class="comment">256 is transmitted as (FE 01 00).
+</span><a id="L87"></a><span class="ln">    87</span>	<span class="comment">
+</span><a id="L88"></a><span class="ln">    88</span>	<span class="comment">A boolean is encoded within an unsigned integer: 0 for false, 1 for true.
+</span><a id="L89"></a><span class="ln">    89</span>	<span class="comment">
+</span><a id="L90"></a><span class="ln">    90</span>	<span class="comment">A signed integer, i, is encoded within an unsigned integer, u.  Within u, bits 1
+</span><a id="L91"></a><span class="ln">    91</span>	<span class="comment">upward contain the value; bit 0 says whether they should be complemented upon
+</span><a id="L92"></a><span class="ln">    92</span>	<span class="comment">receipt.  The encode algorithm looks like this:
+</span><a id="L93"></a><span class="ln">    93</span>	<span class="comment">
+</span><a id="L94"></a><span class="ln">    94</span>	<span class="comment">	uint u;
+</span><a id="L95"></a><span class="ln">    95</span>	<span class="comment">	if i &lt; 0 {
+</span><a id="L96"></a><span class="ln">    96</span>	<span class="comment">		u = (^i &lt;&lt; 1) | 1	// complement i, bit 0 is 1
+</span><a id="L97"></a><span class="ln">    97</span>	<span class="comment">	} else {
+</span><a id="L98"></a><span class="ln">    98</span>	<span class="comment">		u = (i &lt;&lt; 1)	// do not complement i, bit 0 is 0
+</span><a id="L99"></a><span class="ln">    99</span>	<span class="comment">	}
+</span><a id="L100"></a><span class="ln">   100</span>	<span class="comment">	encodeUnsigned(u)
+</span><a id="L101"></a><span class="ln">   101</span>	<span class="comment">
+</span><a id="L102"></a><span class="ln">   102</span>	<span class="comment">The low bit is therefore analogous to a sign bit, but making it the complement bit
+</span><a id="L103"></a><span class="ln">   103</span>	<span class="comment">instead guarantees that the largest negative integer is not a special case.  For
+</span><a id="L104"></a><span class="ln">   104</span>	<span class="comment">example, -129=^128=(^256&gt;&gt;1) encodes as (FE 01 01).
+</span><a id="L105"></a><span class="ln">   105</span>	<span class="comment">
+</span><a id="L106"></a><span class="ln">   106</span>	<span class="comment">Floating-point numbers are always sent as a representation of a float64 value.
+</span><a id="L107"></a><span class="ln">   107</span>	<span class="comment">That value is converted to a uint64 using math.Float64bits.  The uint64 is then
+</span><a id="L108"></a><span class="ln">   108</span>	<span class="comment">byte-reversed and sent as a regular unsigned integer.  The byte-reversal means the
+</span><a id="L109"></a><span class="ln">   109</span>	<span class="comment">exponent and high-precision part of the mantissa go first.  Since the low bits are
+</span><a id="L110"></a><span class="ln">   110</span>	<span class="comment">often zero, this can save encoding bytes.  For instance, 17.0 is encoded in only
+</span><a id="L111"></a><span class="ln">   111</span>	<span class="comment">three bytes (FE 31 40).
+</span><a id="L112"></a><span class="ln">   112</span>	<span class="comment">
+</span><a id="L113"></a><span class="ln">   113</span>	<span class="comment">Strings and slices of bytes are sent as an unsigned count followed by that many
+</span><a id="L114"></a><span class="ln">   114</span>	<span class="comment">uninterpreted bytes of the value.
+</span><a id="L115"></a><span class="ln">   115</span>	<span class="comment">
+</span><a id="L116"></a><span class="ln">   116</span>	<span class="comment">All other slices and arrays are sent as an unsigned count followed by that many
+</span><a id="L117"></a><span class="ln">   117</span>	<span class="comment">elements using the standard gob encoding for their type, recursively.
+</span><a id="L118"></a><span class="ln">   118</span>	<span class="comment">
+</span><a id="L119"></a><span class="ln">   119</span>	<span class="comment">Maps are sent as an unsigned count followed by that man key, element
+</span><a id="L120"></a><span class="ln">   120</span>	<span class="comment">pairs. Empty but non-nil maps are sent, so if the sender has allocated
+</span><a id="L121"></a><span class="ln">   121</span>	<span class="comment">a map, the receiver will allocate a map even no elements are
+</span><a id="L122"></a><span class="ln">   122</span>	<span class="comment">transmitted.
+</span><a id="L123"></a><span class="ln">   123</span>	<span class="comment">
+</span><a id="L124"></a><span class="ln">   124</span>	<span class="comment">Structs are sent as a sequence of (field number, field value) pairs.  The field
+</span><a id="L125"></a><span class="ln">   125</span>	<span class="comment">value is sent using the standard gob encoding for its type, recursively.  If a
+</span><a id="L126"></a><span class="ln">   126</span>	<span class="comment">field has the zero value for its type, it is omitted from the transmission.  The
+</span><a id="L127"></a><span class="ln">   127</span>	<span class="comment">field number is defined by the type of the encoded struct: the first field of the
+</span><a id="L128"></a><span class="ln">   128</span>	<span class="comment">encoded type is field 0, the second is field 1, etc.  When encoding a value, the
+</span><a id="L129"></a><span class="ln">   129</span>	<span class="comment">field numbers are delta encoded for efficiency and the fields are always sent in
+</span><a id="L130"></a><span class="ln">   130</span>	<span class="comment">order of increasing field number; the deltas are therefore unsigned.  The
+</span><a id="L131"></a><span class="ln">   131</span>	<span class="comment">initialization for the delta encoding sets the field number to -1, so an unsigned
+</span><a id="L132"></a><span class="ln">   132</span>	<span class="comment">integer field 0 with value 7 is transmitted as unsigned delta = 1, unsigned value
+</span><a id="L133"></a><span class="ln">   133</span>	<span class="comment">= 7 or (01 07).  Finally, after all the fields have been sent a terminating mark
+</span><a id="L134"></a><span class="ln">   134</span>	<span class="comment">denotes the end of the struct.  That mark is a delta=0 value, which has
+</span><a id="L135"></a><span class="ln">   135</span>	<span class="comment">representation (00).
+</span><a id="L136"></a><span class="ln">   136</span>	<span class="comment">
+</span><a id="L137"></a><span class="ln">   137</span>	<span class="comment">Interface types are not checked for compatibility; all interface types are
+</span><a id="L138"></a><span class="ln">   138</span>	<span class="comment">treated, for transmission, as members of a single &#34;interface&#34; type, analogous to
+</span><a id="L139"></a><span class="ln">   139</span>	<span class="comment">int or []byte - in effect they&#39;re all treated as interface{}.  Interface values
+</span><a id="L140"></a><span class="ln">   140</span>	<span class="comment">are transmitted as a string identifying the concrete type being sent (a name
+</span><a id="L141"></a><span class="ln">   141</span>	<span class="comment">that must be pre-defined by calling Register), followed by a byte count of the
+</span><a id="L142"></a><span class="ln">   142</span>	<span class="comment">length of the following data (so the value can be skipped if it cannot be
+</span><a id="L143"></a><span class="ln">   143</span>	<span class="comment">stored), followed by the usual encoding of concrete (dynamic) value stored in
+</span><a id="L144"></a><span class="ln">   144</span>	<span class="comment">the interface value.  (A nil interface value is identified by the empty string
+</span><a id="L145"></a><span class="ln">   145</span>	<span class="comment">and transmits no value.) Upon receipt, the decoder verifies that the unpacked
+</span><a id="L146"></a><span class="ln">   146</span>	<span class="comment">concrete item satisfies the interface of the receiving variable.
+</span><a id="L147"></a><span class="ln">   147</span>	<span class="comment">
+</span><a id="L148"></a><span class="ln">   148</span>	<span class="comment">The representation of types is described below.  When a type is defined on a given
+</span><a id="L149"></a><span class="ln">   149</span>	<span class="comment">connection between an Encoder and Decoder, it is assigned a signed integer type
+</span><a id="L150"></a><span class="ln">   150</span>	<span class="comment">id.  When Encoder.Encode(v) is called, it makes sure there is an id assigned for
+</span><a id="L151"></a><span class="ln">   151</span>	<span class="comment">the type of v and all its elements and then it sends the pair (typeid, encoded-v)
+</span><a id="L152"></a><span class="ln">   152</span>	<span class="comment">where typeid is the type id of the encoded type of v and encoded-v is the gob
+</span><a id="L153"></a><span class="ln">   153</span>	<span class="comment">encoding of the value v.
+</span><a id="L154"></a><span class="ln">   154</span>	<span class="comment">
+</span><a id="L155"></a><span class="ln">   155</span>	<span class="comment">To define a type, the encoder chooses an unused, positive type id and sends the
+</span><a id="L156"></a><span class="ln">   156</span>	<span class="comment">pair (-type id, encoded-type) where encoded-type is the gob encoding of a wireType
+</span><a id="L157"></a><span class="ln">   157</span>	<span class="comment">description, constructed from these types:
+</span><a id="L158"></a><span class="ln">   158</span>	<span class="comment">
+</span><a id="L159"></a><span class="ln">   159</span>	<span class="comment">	type wireType struct {
+</span><a id="L160"></a><span class="ln">   160</span>	<span class="comment">		ArrayT  *ArrayType
+</span><a id="L161"></a><span class="ln">   161</span>	<span class="comment">		SliceT  *SliceType
+</span><a id="L162"></a><span class="ln">   162</span>	<span class="comment">		StructT *StructType
+</span><a id="L163"></a><span class="ln">   163</span>	<span class="comment">		MapT    *MapType
+</span><a id="L164"></a><span class="ln">   164</span>	<span class="comment">	}
+</span><a id="L165"></a><span class="ln">   165</span>	<span class="comment">	type arrayType struct {
+</span><a id="L166"></a><span class="ln">   166</span>	<span class="comment">		CommonType
+</span><a id="L167"></a><span class="ln">   167</span>	<span class="comment">		Elem typeId
+</span><a id="L168"></a><span class="ln">   168</span>	<span class="comment">		Len  int
+</span><a id="L169"></a><span class="ln">   169</span>	<span class="comment">	}
+</span><a id="L170"></a><span class="ln">   170</span>	<span class="comment">	type CommonType struct {
+</span><a id="L171"></a><span class="ln">   171</span>	<span class="comment">		Name string // the name of the struct type
+</span><a id="L172"></a><span class="ln">   172</span>	<span class="comment">		Id  int    // the id of the type, repeated so it&#39;s inside the type
+</span><a id="L173"></a><span class="ln">   173</span>	<span class="comment">	}
+</span><a id="L174"></a><span class="ln">   174</span>	<span class="comment">	type sliceType struct {
+</span><a id="L175"></a><span class="ln">   175</span>	<span class="comment">		CommonType
+</span><a id="L176"></a><span class="ln">   176</span>	<span class="comment">		Elem typeId
+</span><a id="L177"></a><span class="ln">   177</span>	<span class="comment">	}
+</span><a id="L178"></a><span class="ln">   178</span>	<span class="comment">	type structType struct {
+</span><a id="L179"></a><span class="ln">   179</span>	<span class="comment">		CommonType
+</span><a id="L180"></a><span class="ln">   180</span>	<span class="comment">		Field []*fieldType // the fields of the struct.
+</span><a id="L181"></a><span class="ln">   181</span>	<span class="comment">	}
+</span><a id="L182"></a><span class="ln">   182</span>	<span class="comment">	type fieldType struct {
+</span><a id="L183"></a><span class="ln">   183</span>	<span class="comment">		Name string // the name of the field.
+</span><a id="L184"></a><span class="ln">   184</span>	<span class="comment">		Id   int    // the type id of the field, which must be already defined
+</span><a id="L185"></a><span class="ln">   185</span>	<span class="comment">	}
+</span><a id="L186"></a><span class="ln">   186</span>	<span class="comment">	type mapType struct {
+</span><a id="L187"></a><span class="ln">   187</span>	<span class="comment">		CommonType
+</span><a id="L188"></a><span class="ln">   188</span>	<span class="comment">		Key  typeId
+</span><a id="L189"></a><span class="ln">   189</span>	<span class="comment">		Elem typeId
+</span><a id="L190"></a><span class="ln">   190</span>	<span class="comment">	}
+</span><a id="L191"></a><span class="ln">   191</span>	<span class="comment">
+</span><a id="L192"></a><span class="ln">   192</span>	<span class="comment">If there are nested type ids, the types for all inner type ids must be defined
+</span><a id="L193"></a><span class="ln">   193</span>	<span class="comment">before the top-level type id is used to describe an encoded-v.
+</span><a id="L194"></a><span class="ln">   194</span>	<span class="comment">
+</span><a id="L195"></a><span class="ln">   195</span>	<span class="comment">For simplicity in setup, the connection is defined to understand these types a
+</span><a id="L196"></a><span class="ln">   196</span>	<span class="comment">priori, as well as the basic gob types int, uint, etc.  Their ids are:
+</span><a id="L197"></a><span class="ln">   197</span>	<span class="comment">
+</span><a id="L198"></a><span class="ln">   198</span>	<span class="comment">	bool        1
+</span><a id="L199"></a><span class="ln">   199</span>	<span class="comment">	int         2
+</span><a id="L200"></a><span class="ln">   200</span>	<span class="comment">	uint        3
+</span><a id="L201"></a><span class="ln">   201</span>	<span class="comment">	float       4
+</span><a id="L202"></a><span class="ln">   202</span>	<span class="comment">	[]byte      5
+</span><a id="L203"></a><span class="ln">   203</span>	<span class="comment">	string      6
+</span><a id="L204"></a><span class="ln">   204</span>	<span class="comment">	complex     7
+</span><a id="L205"></a><span class="ln">   205</span>	<span class="comment">	interface   8
+</span><a id="L206"></a><span class="ln">   206</span>	<span class="comment">	// gap for reserved ids.
+</span><a id="L207"></a><span class="ln">   207</span>	<span class="comment">	WireType    16
+</span><a id="L208"></a><span class="ln">   208</span>	<span class="comment">	ArrayType   17
+</span><a id="L209"></a><span class="ln">   209</span>	<span class="comment">	CommonType  18
+</span><a id="L210"></a><span class="ln">   210</span>	<span class="comment">	SliceType   19
+</span><a id="L211"></a><span class="ln">   211</span>	<span class="comment">	StructType  20
+</span><a id="L212"></a><span class="ln">   212</span>	<span class="comment">	FieldType   21
+</span><a id="L213"></a><span class="ln">   213</span>	<span class="comment">	// 22 is slice of fieldType.
+</span><a id="L214"></a><span class="ln">   214</span>	<span class="comment">	MapType     23
+</span><a id="L215"></a><span class="ln">   215</span>	<span class="comment">
+</span><a id="L216"></a><span class="ln">   216</span>	<span class="comment">Finally, each message created by a call to Encode is preceded by an encoded
+</span><a id="L217"></a><span class="ln">   217</span>	<span class="comment">unsigned integer count of the number of bytes remaining in the message.  After
+</span><a id="L218"></a><span class="ln">   218</span>	<span class="comment">the initial type name, interface values are wrapped the same way; in effect, the
+</span><a id="L219"></a><span class="ln">   219</span>	<span class="comment">interface value acts like a recursive invocation of Encode.
+</span><a id="L220"></a><span class="ln">   220</span>	<span class="comment">
+</span><a id="L221"></a><span class="ln">   221</span>	<span class="comment">In summary, a gob stream looks like
+</span><a id="L222"></a><span class="ln">   222</span>	<span class="comment">
+</span><a id="L223"></a><span class="ln">   223</span>	<span class="comment">	(byteCount (-type id, encoding of a wireType)* (type id, encoding of a value))*
+</span><a id="L224"></a><span class="ln">   224</span>	<span class="comment">
+</span><a id="L225"></a><span class="ln">   225</span>	<span class="comment">where * signifies zero or more repetitions and the type id of a value must
+</span><a id="L226"></a><span class="ln">   226</span>	<span class="comment">be predefined or be defined before the value in the stream.
+</span><a id="L227"></a><span class="ln">   227</span>	<span class="comment">
+</span><a id="L228"></a><span class="ln">   228</span>	<span class="comment">See &#34;Gobs of data&#34; for a design discussion of the gob wire format:
+</span><a id="L229"></a><span class="ln">   229</span>	<span class="comment">http://golang.org/doc/articles/gobs_of_data.html
+</span><a id="L230"></a><span class="ln">   230</span>	<span class="comment">*/</span>
+<a id="L231"></a><span class="ln">   231</span>	package gob
+<a id="L232"></a><span class="ln">   232</span>	
+<a id="L233"></a><span class="ln">   233</span>	<span class="comment">/*
+</span><a id="L234"></a><span class="ln">   234</span>	<span class="comment">Grammar:
+</span><a id="L235"></a><span class="ln">   235</span>	<span class="comment">
+</span><a id="L236"></a><span class="ln">   236</span>	<span class="comment">Tokens starting with a lower case letter are terminals; int(n)
+</span><a id="L237"></a><span class="ln">   237</span>	<span class="comment">and uint(n) represent the signed/unsigned encodings of the value n.
+</span><a id="L238"></a><span class="ln">   238</span>	<span class="comment">
+</span><a id="L239"></a><span class="ln">   239</span>	<span class="comment">GobStream:
+</span><a id="L240"></a><span class="ln">   240</span>	<span class="comment">	DelimitedMessage*
+</span><a id="L241"></a><span class="ln">   241</span>	<span class="comment">DelimitedMessage:
+</span><a id="L242"></a><span class="ln">   242</span>	<span class="comment">	uint(lengthOfMessage) Message
+</span><a id="L243"></a><span class="ln">   243</span>	<span class="comment">Message:
+</span><a id="L244"></a><span class="ln">   244</span>	<span class="comment">	TypeSequence TypedValue
+</span><a id="L245"></a><span class="ln">   245</span>	<span class="comment">TypeSequence
+</span><a id="L246"></a><span class="ln">   246</span>	<span class="comment">	(TypeDefinition DelimitedTypeDefinition*)?
+</span><a id="L247"></a><span class="ln">   247</span>	<span class="comment">DelimitedTypeDefinition:
+</span><a id="L248"></a><span class="ln">   248</span>	<span class="comment">	uint(lengthOfTypeDefinition) TypeDefinition
+</span><a id="L249"></a><span class="ln">   249</span>	<span class="comment">TypedValue:
+</span><a id="L250"></a><span class="ln">   250</span>	<span class="comment">	int(typeId) Value
+</span><a id="L251"></a><span class="ln">   251</span>	<span class="comment">TypeDefinition:
+</span><a id="L252"></a><span class="ln">   252</span>	<span class="comment">	int(-typeId) encodingOfWireType
+</span><a id="L253"></a><span class="ln">   253</span>	<span class="comment">Value:
+</span><a id="L254"></a><span class="ln">   254</span>	<span class="comment">	SingletonValue | StructValue
+</span><a id="L255"></a><span class="ln">   255</span>	<span class="comment">SingletonValue:
+</span><a id="L256"></a><span class="ln">   256</span>	<span class="comment">	uint(0) FieldValue
+</span><a id="L257"></a><span class="ln">   257</span>	<span class="comment">FieldValue:
+</span><a id="L258"></a><span class="ln">   258</span>	<span class="comment">	builtinValue | ArrayValue | MapValue | SliceValue | StructValue | InterfaceValue
+</span><a id="L259"></a><span class="ln">   259</span>	<span class="comment">InterfaceValue:
+</span><a id="L260"></a><span class="ln">   260</span>	<span class="comment">	NilInterfaceValue | NonNilInterfaceValue
+</span><a id="L261"></a><span class="ln">   261</span>	<span class="comment">NilInterfaceValue:
+</span><a id="L262"></a><span class="ln">   262</span>	<span class="comment">	uint(0)
+</span><a id="L263"></a><span class="ln">   263</span>	<span class="comment">NonNilInterfaceValue:
+</span><a id="L264"></a><span class="ln">   264</span>	<span class="comment">	ConcreteTypeName TypeSequence InterfaceContents
+</span><a id="L265"></a><span class="ln">   265</span>	<span class="comment">ConcreteTypeName:
+</span><a id="L266"></a><span class="ln">   266</span>	<span class="comment">	uint(lengthOfName) [already read=n] name
+</span><a id="L267"></a><span class="ln">   267</span>	<span class="comment">InterfaceContents:
+</span><a id="L268"></a><span class="ln">   268</span>	<span class="comment">	int(concreteTypeId) DelimitedValue
+</span><a id="L269"></a><span class="ln">   269</span>	<span class="comment">DelimitedValue:
+</span><a id="L270"></a><span class="ln">   270</span>	<span class="comment">	uint(length) Value
+</span><a id="L271"></a><span class="ln">   271</span>	<span class="comment">ArrayValue:
+</span><a id="L272"></a><span class="ln">   272</span>	<span class="comment">	uint(n) FieldValue*n [n elements]
+</span><a id="L273"></a><span class="ln">   273</span>	<span class="comment">MapValue:
+</span><a id="L274"></a><span class="ln">   274</span>	<span class="comment">	uint(n) (FieldValue FieldValue)*n  [n (key, value) pairs]
+</span><a id="L275"></a><span class="ln">   275</span>	<span class="comment">SliceValue:
+</span><a id="L276"></a><span class="ln">   276</span>	<span class="comment">	uint(n) FieldValue*n [n elements]
+</span><a id="L277"></a><span class="ln">   277</span>	<span class="comment">StructValue:
+</span><a id="L278"></a><span class="ln">   278</span>	<span class="comment">	(uint(fieldDelta) FieldValue)*
+</span><a id="L279"></a><span class="ln">   279</span>	<span class="comment">*/</span>
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">/*
+</span><a id="L282"></a><span class="ln">   282</span>	<span class="comment">For implementers and the curious, here is an encoded example.  Given
+</span><a id="L283"></a><span class="ln">   283</span>	<span class="comment">	type Point struct {X, Y int}
+</span><a id="L284"></a><span class="ln">   284</span>	<span class="comment">and the value
+</span><a id="L285"></a><span class="ln">   285</span>	<span class="comment">	p := Point{22, 33}
+</span><a id="L286"></a><span class="ln">   286</span>	<span class="comment">the bytes transmitted that encode p will be:
+</span><a id="L287"></a><span class="ln">   287</span>	<span class="comment">	1f ff 81 03 01 01 05 50 6f 69 6e 74 01 ff 82 00
+</span><a id="L288"></a><span class="ln">   288</span>	<span class="comment">	01 02 01 01 58 01 04 00 01 01 59 01 04 00 00 00
+</span><a id="L289"></a><span class="ln">   289</span>	<span class="comment">	07 ff 82 01 2c 01 42 00
+</span><a id="L290"></a><span class="ln">   290</span>	<span class="comment">They are determined as follows.
+</span><a id="L291"></a><span class="ln">   291</span>	<span class="comment">
+</span><a id="L292"></a><span class="ln">   292</span>	<span class="comment">Since this is the first transmission of type Point, the type descriptor
+</span><a id="L293"></a><span class="ln">   293</span>	<span class="comment">for Point itself must be sent before the value.  This is the first type
+</span><a id="L294"></a><span class="ln">   294</span>	<span class="comment">we&#39;ve sent on this Encoder, so it has type id 65 (0 through 64 are
+</span><a id="L295"></a><span class="ln">   295</span>	<span class="comment">reserved).
+</span><a id="L296"></a><span class="ln">   296</span>	<span class="comment">
+</span><a id="L297"></a><span class="ln">   297</span>	<span class="comment">	1f	// This item (a type descriptor) is 31 bytes long.
+</span><a id="L298"></a><span class="ln">   298</span>	<span class="comment">	ff 81	// The negative of the id for the type we&#39;re defining, -65.
+</span><a id="L299"></a><span class="ln">   299</span>	<span class="comment">		// This is one byte (indicated by FF = -1) followed by
+</span><a id="L300"></a><span class="ln">   300</span>	<span class="comment">		// ^-65&lt;&lt;1 | 1.  The low 1 bit signals to complement the
+</span><a id="L301"></a><span class="ln">   301</span>	<span class="comment">		// rest upon receipt.
+</span><a id="L302"></a><span class="ln">   302</span>	<span class="comment">
+</span><a id="L303"></a><span class="ln">   303</span>	<span class="comment">	// Now we send a type descriptor, which is itself a struct (wireType).
+</span><a id="L304"></a><span class="ln">   304</span>	<span class="comment">	// The type of wireType itself is known (it&#39;s built in, as is the type of
+</span><a id="L305"></a><span class="ln">   305</span>	<span class="comment">	// all its components), so we just need to send a *value* of type wireType
+</span><a id="L306"></a><span class="ln">   306</span>	<span class="comment">	// that represents type &#34;Point&#34;.
+</span><a id="L307"></a><span class="ln">   307</span>	<span class="comment">	// Here starts the encoding of that value.
+</span><a id="L308"></a><span class="ln">   308</span>	<span class="comment">	// Set the field number implicitly to -1; this is done at the beginning
+</span><a id="L309"></a><span class="ln">   309</span>	<span class="comment">	// of every struct, including nested structs.
+</span><a id="L310"></a><span class="ln">   310</span>	<span class="comment">	03	// Add 3 to field number; now 2 (wireType.structType; this is a struct).
+</span><a id="L311"></a><span class="ln">   311</span>	<span class="comment">		// structType starts with an embedded CommonType, which appears
+</span><a id="L312"></a><span class="ln">   312</span>	<span class="comment">		// as a regular structure here too.
+</span><a id="L313"></a><span class="ln">   313</span>	<span class="comment">	01	// add 1 to field number (now 0); start of embedded CommonType.
+</span><a id="L314"></a><span class="ln">   314</span>	<span class="comment">	01	// add 1 to field number (now 0, the name of the type)
+</span><a id="L315"></a><span class="ln">   315</span>	<span class="comment">	05	// string is (unsigned) 5 bytes long
+</span><a id="L316"></a><span class="ln">   316</span>	<span class="comment">	50 6f 69 6e 74	// wireType.structType.CommonType.name = &#34;Point&#34;
+</span><a id="L317"></a><span class="ln">   317</span>	<span class="comment">	01	// add 1 to field number (now 1, the id of the type)
+</span><a id="L318"></a><span class="ln">   318</span>	<span class="comment">	ff 82	// wireType.structType.CommonType._id = 65
+</span><a id="L319"></a><span class="ln">   319</span>	<span class="comment">	00	// end of embedded wiretype.structType.CommonType struct
+</span><a id="L320"></a><span class="ln">   320</span>	<span class="comment">	01	// add 1 to field number (now 1, the field array in wireType.structType)
+</span><a id="L321"></a><span class="ln">   321</span>	<span class="comment">	02	// There are two fields in the type (len(structType.field))
+</span><a id="L322"></a><span class="ln">   322</span>	<span class="comment">	01	// Start of first field structure; add 1 to get field number 0: field[0].name
+</span><a id="L323"></a><span class="ln">   323</span>	<span class="comment">	01	// 1 byte
+</span><a id="L324"></a><span class="ln">   324</span>	<span class="comment">	58	// structType.field[0].name = &#34;X&#34;
+</span><a id="L325"></a><span class="ln">   325</span>	<span class="comment">	01	// Add 1 to get field number 1: field[0].id
+</span><a id="L326"></a><span class="ln">   326</span>	<span class="comment">	04	// structType.field[0].typeId is 2 (signed int).
+</span><a id="L327"></a><span class="ln">   327</span>	<span class="comment">	00	// End of structType.field[0]; start structType.field[1]; set field number to -1.
+</span><a id="L328"></a><span class="ln">   328</span>	<span class="comment">	01	// Add 1 to get field number 0: field[1].name
+</span><a id="L329"></a><span class="ln">   329</span>	<span class="comment">	01	// 1 byte
+</span><a id="L330"></a><span class="ln">   330</span>	<span class="comment">	59	// structType.field[1].name = &#34;Y&#34;
+</span><a id="L331"></a><span class="ln">   331</span>	<span class="comment">	01	// Add 1 to get field number 1: field[0].id
+</span><a id="L332"></a><span class="ln">   332</span>	<span class="comment">	04	// struct.Type.field[1].typeId is 2 (signed int).
+</span><a id="L333"></a><span class="ln">   333</span>	<span class="comment">	00	// End of structType.field[1]; end of structType.field.
+</span><a id="L334"></a><span class="ln">   334</span>	<span class="comment">	00	// end of wireType.structType structure
+</span><a id="L335"></a><span class="ln">   335</span>	<span class="comment">	00	// end of wireType structure
+</span><a id="L336"></a><span class="ln">   336</span>	<span class="comment">
+</span><a id="L337"></a><span class="ln">   337</span>	<span class="comment">Now we can send the Point value.  Again the field number resets to -1:
+</span><a id="L338"></a><span class="ln">   338</span>	<span class="comment">
+</span><a id="L339"></a><span class="ln">   339</span>	<span class="comment">	07	// this value is 7 bytes long
+</span><a id="L340"></a><span class="ln">   340</span>	<span class="comment">	ff 82	// the type number, 65 (1 byte (-FF) followed by 65&lt;&lt;1)
+</span><a id="L341"></a><span class="ln">   341</span>	<span class="comment">	01	// add one to field number, yielding field 0
+</span><a id="L342"></a><span class="ln">   342</span>	<span class="comment">	2c	// encoding of signed &#34;22&#34; (0x22 = 44 = 22&lt;&lt;1); Point.x = 22
+</span><a id="L343"></a><span class="ln">   343</span>	<span class="comment">	01	// add one to field number, yielding field 1
+</span><a id="L344"></a><span class="ln">   344</span>	<span class="comment">	42	// encoding of signed &#34;33&#34; (0x42 = 66 = 33&lt;&lt;1); Point.y = 33
+</span><a id="L345"></a><span class="ln">   345</span>	<span class="comment">	00	// end of structure
+</span><a id="L346"></a><span class="ln">   346</span>	<span class="comment">
+</span><a id="L347"></a><span class="ln">   347</span>	<span class="comment">The type encoding is long and fairly intricate but we send it only once.
+</span><a id="L348"></a><span class="ln">   348</span>	<span class="comment">If p is transmitted a second time, the type is already known so the
+</span><a id="L349"></a><span class="ln">   349</span>	<span class="comment">output will be just:
+</span><a id="L350"></a><span class="ln">   350</span>	<span class="comment">
+</span><a id="L351"></a><span class="ln">   351</span>	<span class="comment">	07 ff 82 01 2c 01 42 00
+</span><a id="L352"></a><span class="ln">   352</span>	<span class="comment">
+</span><a id="L353"></a><span class="ln">   353</span>	<span class="comment">A single non-struct value at top level is transmitted like a field with
+</span><a id="L354"></a><span class="ln">   354</span>	<span class="comment">delta tag 0.  For instance, a signed integer with value 3 presented as
+</span><a id="L355"></a><span class="ln">   355</span>	<span class="comment">the argument to Encode will emit:
+</span><a id="L356"></a><span class="ln">   356</span>	<span class="comment">
+</span><a id="L357"></a><span class="ln">   357</span>	<span class="comment">	03 04 00 06
+</span><a id="L358"></a><span class="ln">   358</span>	<span class="comment">
+</span><a id="L359"></a><span class="ln">   359</span>	<span class="comment">Which represents:
+</span><a id="L360"></a><span class="ln">   360</span>	<span class="comment">
+</span><a id="L361"></a><span class="ln">   361</span>	<span class="comment">	03	// this value is 3 bytes long
+</span><a id="L362"></a><span class="ln">   362</span>	<span class="comment">	04	// the type number, 2, represents an integer
+</span><a id="L363"></a><span class="ln">   363</span>	<span class="comment">	00	// tag delta 0
+</span><a id="L364"></a><span class="ln">   364</span>	<span class="comment">	06	// value 3
+</span><a id="L365"></a><span class="ln">   365</span>	<span class="comment">
+</span><a id="L366"></a><span class="ln">   366</span>	<span class="comment">*/</span>
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

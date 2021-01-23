@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/path/path.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/path/path.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package path implements utility routines for manipulating slash-separated</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// paths.</span>
+<a id="L7"></a><span class="ln">     7</span>	package path
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;strings&#34;
+<a id="L11"></a><span class="ln">    11</span>	)
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Clean returns the shortest path name equivalent to path</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// by purely lexical processing.  It applies the following rules</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// iteratively until no further processing can be done:</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">//</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">//	1. Replace multiple slashes with a single slash.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//	2. Eliminate each . path name element (the current directory).</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//	3. Eliminate each inner .. path name element (the parent directory)</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//	   along with the non-.. element that precedes it.</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//	4. Eliminate .. elements that begin a rooted path:</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//	   that is, replace &#34;/..&#34; by &#34;/&#34; at the beginning of a path.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// The returned path ends in a slash only if it is the root &#34;/&#34;.</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// If the result of this process is an empty string, Clean</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// returns the string &#34;.&#34;.</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">//</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// See also Rob Pike, ``Lexical File Names in Plan 9 or</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// Getting Dot-Dot Right,&#39;&#39;</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// http://plan9.bell-labs.com/sys/doc/lexnames.html</span>
+<a id="L32"></a><span class="ln">    32</span>	func Clean(path string) string {
+<a id="L33"></a><span class="ln">    33</span>		if path == &#34;&#34; {
+<a id="L34"></a><span class="ln">    34</span>			return &#34;.&#34;
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>		rooted := path[0] == &#39;/&#39;
+<a id="L38"></a><span class="ln">    38</span>		n := len(path)
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// Invariants:</span>
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">//	reading from path; r is index of next byte to process.</span>
+<a id="L42"></a><span class="ln">    42</span>		<span class="comment">//	writing to buf; w is index of next byte to write.</span>
+<a id="L43"></a><span class="ln">    43</span>		<span class="comment">//	dotdot is index in buf where .. must stop, either because</span>
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">//		it is the leading slash or it is a leading ../../.. prefix.</span>
+<a id="L45"></a><span class="ln">    45</span>		buf := []byte(path)
+<a id="L46"></a><span class="ln">    46</span>		r, w, dotdot := 0, 0, 0
+<a id="L47"></a><span class="ln">    47</span>		if rooted {
+<a id="L48"></a><span class="ln">    48</span>			r, w, dotdot = 1, 1, 1
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>		for r &lt; n {
+<a id="L52"></a><span class="ln">    52</span>			switch {
+<a id="L53"></a><span class="ln">    53</span>			case path[r] == &#39;/&#39;:
+<a id="L54"></a><span class="ln">    54</span>				<span class="comment">// empty path element</span>
+<a id="L55"></a><span class="ln">    55</span>				r++
+<a id="L56"></a><span class="ln">    56</span>			case path[r] == &#39;.&#39; &amp;&amp; (r+1 == n || path[r+1] == &#39;/&#39;):
+<a id="L57"></a><span class="ln">    57</span>				<span class="comment">// . element</span>
+<a id="L58"></a><span class="ln">    58</span>				r++
+<a id="L59"></a><span class="ln">    59</span>			case path[r] == &#39;.&#39; &amp;&amp; path[r+1] == &#39;.&#39; &amp;&amp; (r+2 == n || path[r+2] == &#39;/&#39;):
+<a id="L60"></a><span class="ln">    60</span>				<span class="comment">// .. element: remove to last /</span>
+<a id="L61"></a><span class="ln">    61</span>				r += 2
+<a id="L62"></a><span class="ln">    62</span>				switch {
+<a id="L63"></a><span class="ln">    63</span>				case w &gt; dotdot:
+<a id="L64"></a><span class="ln">    64</span>					<span class="comment">// can backtrack</span>
+<a id="L65"></a><span class="ln">    65</span>					w--
+<a id="L66"></a><span class="ln">    66</span>					for w &gt; dotdot &amp;&amp; buf[w] != &#39;/&#39; {
+<a id="L67"></a><span class="ln">    67</span>						w--
+<a id="L68"></a><span class="ln">    68</span>					}
+<a id="L69"></a><span class="ln">    69</span>				case !rooted:
+<a id="L70"></a><span class="ln">    70</span>					<span class="comment">// cannot backtrack, but not rooted, so append .. element.</span>
+<a id="L71"></a><span class="ln">    71</span>					if w &gt; 0 {
+<a id="L72"></a><span class="ln">    72</span>						buf[w] = &#39;/&#39;
+<a id="L73"></a><span class="ln">    73</span>						w++
+<a id="L74"></a><span class="ln">    74</span>					}
+<a id="L75"></a><span class="ln">    75</span>					buf[w] = &#39;.&#39;
+<a id="L76"></a><span class="ln">    76</span>					w++
+<a id="L77"></a><span class="ln">    77</span>					buf[w] = &#39;.&#39;
+<a id="L78"></a><span class="ln">    78</span>					w++
+<a id="L79"></a><span class="ln">    79</span>					dotdot = w
+<a id="L80"></a><span class="ln">    80</span>				}
+<a id="L81"></a><span class="ln">    81</span>			default:
+<a id="L82"></a><span class="ln">    82</span>				<span class="comment">// real path element.</span>
+<a id="L83"></a><span class="ln">    83</span>				<span class="comment">// add slash if needed</span>
+<a id="L84"></a><span class="ln">    84</span>				if rooted &amp;&amp; w != 1 || !rooted &amp;&amp; w != 0 {
+<a id="L85"></a><span class="ln">    85</span>					buf[w] = &#39;/&#39;
+<a id="L86"></a><span class="ln">    86</span>					w++
+<a id="L87"></a><span class="ln">    87</span>				}
+<a id="L88"></a><span class="ln">    88</span>				<span class="comment">// copy element</span>
+<a id="L89"></a><span class="ln">    89</span>				for ; r &lt; n &amp;&amp; path[r] != &#39;/&#39;; r++ {
+<a id="L90"></a><span class="ln">    90</span>					buf[w] = path[r]
+<a id="L91"></a><span class="ln">    91</span>					w++
+<a id="L92"></a><span class="ln">    92</span>				}
+<a id="L93"></a><span class="ln">    93</span>			}
+<a id="L94"></a><span class="ln">    94</span>		}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// Turn empty string into &#34;.&#34;</span>
+<a id="L97"></a><span class="ln">    97</span>		if w == 0 {
+<a id="L98"></a><span class="ln">    98</span>			buf[w] = &#39;.&#39;
+<a id="L99"></a><span class="ln">    99</span>			w++
+<a id="L100"></a><span class="ln">   100</span>		}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>		return string(buf[0:w])
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// Split splits path immediately following the final slash.</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// separating it into a directory and file name component.</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// If there is no slash path, Split returns an empty dir and</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// file set to path.</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// The returned values have the property that path = dir+file.</span>
+<a id="L110"></a><span class="ln">   110</span>	func Split(path string) (dir, file string) {
+<a id="L111"></a><span class="ln">   111</span>		i := strings.LastIndex(path, &#34;/&#34;)
+<a id="L112"></a><span class="ln">   112</span>		return path[:i+1], path[i+1:]
+<a id="L113"></a><span class="ln">   113</span>	}
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// Join joins any number of path elements into a single path, adding a</span>
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// separating slash if necessary. The result is Cleaned; in particular,</span>
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">// all empty strings are ignored.</span>
+<a id="L118"></a><span class="ln">   118</span>	func Join(elem ...string) string {
+<a id="L119"></a><span class="ln">   119</span>		for i, e := range elem {
+<a id="L120"></a><span class="ln">   120</span>			if e != &#34;&#34; {
+<a id="L121"></a><span class="ln">   121</span>				return Clean(strings.Join(elem[i:], &#34;/&#34;))
+<a id="L122"></a><span class="ln">   122</span>			}
+<a id="L123"></a><span class="ln">   123</span>		}
+<a id="L124"></a><span class="ln">   124</span>		return &#34;&#34;
+<a id="L125"></a><span class="ln">   125</span>	}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// Ext returns the file name extension used by path.</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// The extension is the suffix beginning at the final dot</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// in the final slash-separated element of path;</span>
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// it is empty if there is no dot.</span>
+<a id="L131"></a><span class="ln">   131</span>	func Ext(path string) string {
+<a id="L132"></a><span class="ln">   132</span>		for i := len(path) - 1; i &gt;= 0 &amp;&amp; path[i] != &#39;/&#39;; i-- {
+<a id="L133"></a><span class="ln">   133</span>			if path[i] == &#39;.&#39; {
+<a id="L134"></a><span class="ln">   134</span>				return path[i:]
+<a id="L135"></a><span class="ln">   135</span>			}
+<a id="L136"></a><span class="ln">   136</span>		}
+<a id="L137"></a><span class="ln">   137</span>		return &#34;&#34;
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// Base returns the last element of path.</span>
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// Trailing slashes are removed before extracting the last element.</span>
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// If the path is empty, Base returns &#34;.&#34;.</span>
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">// If the path consists entirely of slashes, Base returns &#34;/&#34;.</span>
+<a id="L144"></a><span class="ln">   144</span>	func Base(path string) string {
+<a id="L145"></a><span class="ln">   145</span>		if path == &#34;&#34; {
+<a id="L146"></a><span class="ln">   146</span>			return &#34;.&#34;
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		<span class="comment">// Strip trailing slashes.</span>
+<a id="L149"></a><span class="ln">   149</span>		for len(path) &gt; 0 &amp;&amp; path[len(path)-1] == &#39;/&#39; {
+<a id="L150"></a><span class="ln">   150</span>			path = path[0 : len(path)-1]
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">// Find the last element</span>
+<a id="L153"></a><span class="ln">   153</span>		if i := strings.LastIndex(path, &#34;/&#34;); i &gt;= 0 {
+<a id="L154"></a><span class="ln">   154</span>			path = path[i+1:]
+<a id="L155"></a><span class="ln">   155</span>		}
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// If empty now, it had only slashes.</span>
+<a id="L157"></a><span class="ln">   157</span>		if path == &#34;&#34; {
+<a id="L158"></a><span class="ln">   158</span>			return &#34;/&#34;
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>		return path
+<a id="L161"></a><span class="ln">   161</span>	}
+<a id="L162"></a><span class="ln">   162</span>	
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// IsAbs returns true if the path is absolute.</span>
+<a id="L164"></a><span class="ln">   164</span>	func IsAbs(path string) bool {
+<a id="L165"></a><span class="ln">   165</span>		return len(path) &gt; 0 &amp;&amp; path[0] == &#39;/&#39;
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// Dir returns all but the last element of path, typically the path&#39;s directory.</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// The path is Cleaned and trailing slashes are removed before processing.</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// If the path is empty, Dir returns &#34;.&#34;.</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">// If the path consists entirely of slashes followed by non-slash bytes, Dir</span>
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// returns a single slash. In any other case, the returned path does not end in a</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">// slash.</span>
+<a id="L174"></a><span class="ln">   174</span>	func Dir(path string) string {
+<a id="L175"></a><span class="ln">   175</span>		dir, _ := Split(path)
+<a id="L176"></a><span class="ln">   176</span>		dir = Clean(dir)
+<a id="L177"></a><span class="ln">   177</span>		last := len(dir) - 1
+<a id="L178"></a><span class="ln">   178</span>		if last &gt; 0 &amp;&amp; dir[last] == &#39;/&#39; {
+<a id="L179"></a><span class="ln">   179</span>			dir = dir[:last]
+<a id="L180"></a><span class="ln">   180</span>		}
+<a id="L181"></a><span class="ln">   181</span>		if dir == &#34;&#34; {
+<a id="L182"></a><span class="ln">   182</span>			dir = &#34;.&#34;
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>		return dir
+<a id="L185"></a><span class="ln">   185</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

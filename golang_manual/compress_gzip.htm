@@ -1,0 +1,375 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>gzip - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="../../doc/style.css">
+<script type="text/javascript" src="../../doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Package gzip</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<!--
+	Copyright 2009 The Go Authors. All rights reserved.
+	Use of this source code is governed by a BSD-style
+	license that can be found in the LICENSE file.
+-->
+
+	
+		<div id="short-nav">
+			<dl>
+			<dd><code>import "compress/gzip"</code></dd>
+			</dl>
+			<dl>
+			<dd><a href="#overview" class="overviewLink">Overview</a></dd>
+			<dd><a href="#index">Index</a></dd>
+			
+			
+			</dl>
+		</div>
+		<!-- The package's Name is printed as title by the top-level template -->
+		<div id="overview" class="toggleVisible">
+			<div class="collapsed">
+				<h2 class="toggleButton" title="Click to show Overview section">Overview ?</h2>
+			</div>
+			<div class="expanded">
+				<h2 class="toggleButton" title="Click to hide Overview section">Overview ?</h2>
+				<p>
+Package gzip implements reading and writing of gzip format compressed files,
+as specified in RFC 1952.
+</p>
+
+			</div>
+		</div>
+		
+	
+		<h2 id="index">Index</h2>
+		<!-- Table of contents for API; must be named manual-nav to turn off auto nav. -->
+		<div id="manual-nav">
+			<dl>
+			
+				<dd><a href="#constants">Constants</a></dd>
+			
+			
+				<dd><a href="#variables">Variables</a></dd>
+			
+			
+			
+				
+				<dd><a href="#Header">type Header</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Reader">type Reader</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewReader">func NewReader(r io.Reader) (*Reader, error)</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Reader.Close">func (z *Reader) Close() error</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Reader.Read">func (z *Reader) Read(p []byte) (n int, err error)</a></dd>
+				
+			
+				
+				<dd><a href="#Writer">type Writer</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewWriter">func NewWriter(w io.Writer) *Writer</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewWriterLevel">func NewWriterLevel(w io.Writer, level int) (*Writer, error)</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Writer.Close">func (z *Writer) Close() error</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Writer.Write">func (z *Writer) Write(p []byte) (int, error)</a></dd>
+				
+			
+			
+		</dl>
+
+		
+
+		
+			<h4>Package files</h4>
+			<p>
+			<span style="font-size:90%">
+			
+				<a href="src/pkg/compress/gzip/gunzip.htm">gunzip.go</a>
+			
+				<a href="src/pkg/compress/gzip/gzip.htm">gzip.go</a>
+			
+			</span>
+			</p>
+		
+	
+		
+			<h2 id="constants">Constants</h2>
+			
+				<pre>const (
+    NoCompression      = flate.NoCompression
+    BestSpeed          = flate.BestSpeed
+    BestCompression    = flate.BestCompression
+    DefaultCompression = flate.DefaultCompression
+)</pre>
+				<p>
+These constants are copied from the flate package, so that code that imports
+&#34;compress/gzip&#34; does not also have to import &#34;compress/flate&#34;.
+</p>
+
+			
+		
+		
+			<h2 id="variables">Variables</h2>
+			
+				<pre>var (
+    <span class="comment">// ErrChecksum is returned when reading GZIP data that has an invalid checksum.</span>
+    ErrChecksum = errors.New(&#34;gzip: invalid checksum&#34;)
+    <span class="comment">// ErrHeader is returned when reading GZIP data that has an invalid header.</span>
+    ErrHeader = errors.New(&#34;gzip: invalid header&#34;)
+)</pre>
+				
+			
+		
+		
+		
+			
+			
+			<h2 id="Header">type <a href="src/pkg/compress/gzip/gunzip.htm#L36">Header</a></h2>
+			<pre>type Header struct {
+    Comment string    <span class="comment">// comment</span>
+    Extra   []byte    <span class="comment">// &#34;extra data&#34;</span>
+    ModTime time.Time <span class="comment">// modification time</span>
+    Name    string    <span class="comment">// file name</span>
+    OS      byte      <span class="comment">// operating system type</span>
+}</pre>
+			<p>
+The gzip file stores a header giving metadata about the compressed file.
+That header is exposed as the fields of the Writer and Reader structs.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Reader">type <a href="src/pkg/compress/gzip/gunzip.htm#L58">Reader</a></h2>
+			<pre>type Reader struct {
+    Header
+    <span class="comment">// contains filtered or unexported fields</span>
+}</pre>
+			<p>
+A Reader is an io.Reader that can be read to retrieve
+uncompressed data from a gzip-format compressed file.
+</p>
+<p>
+In general, a gzip file can be a concatenation of gzip files,
+each with its own header.  Reads from the Reader
+return the concatenation of the uncompressed data of each.
+Only the first header is recorded in the Reader fields.
+</p>
+<p>
+Gzip files store a length and checksum of the uncompressed data.
+The Reader will return a ErrChecksum when Read
+reaches the end of the uncompressed data if it does not
+have the expected length or checksum.  Clients should treat data
+returned by Read as tentative until they receive the io.EOF
+marking the end of the data.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewReader">func <a href="src/pkg/compress/gzip/gunzip.htm#L72">NewReader</a></h3>
+				<pre>func NewReader(r io.Reader) (*Reader, error)</pre>
+				<p>
+NewReader creates a new Reader reading the given reader.
+The implementation buffers input and may read more data than necessary from r.
+It is the caller&#39;s responsibility to call Close on the Reader when done.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Reader.Close">func (*Reader) <a href="src/pkg/compress/gzip/gunzip.htm#L231">Close</a></h3>
+				<pre>func (z *Reader) Close() error</pre>
+				<p>
+Close closes the Reader. It does not close the underlying io.Reader.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Reader.Read">func (*Reader) <a href="src/pkg/compress/gzip/gunzip.htm#L190">Read</a></h3>
+				<pre>func (z *Reader) Read(p []byte) (n int, err error)</pre>
+				
+				
+				
+			
+		
+			
+			
+			<h2 id="Writer">type <a href="src/pkg/compress/gzip/gzip.htm#L17">Writer</a></h2>
+			<pre>type Writer struct {
+    Header
+    <span class="comment">// contains filtered or unexported fields</span>
+}</pre>
+			<p>
+A Writer is an io.WriteCloser that satisfies writes by compressing data written
+to its wrapped io.Writer.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewWriter">func <a href="src/pkg/compress/gzip/gzip.htm#L40">NewWriter</a></h3>
+				<pre>func NewWriter(w io.Writer) *Writer</pre>
+				<p>
+NewWriter creates a new Writer that satisfies writes by compressing data
+written to w.
+</p>
+<p>
+It is the caller&#39;s responsibility to call Close on the WriteCloser when done.
+Writes may be buffered and not flushed until Close.
+</p>
+<p>
+Callers that wish to set the fields in Writer.Header must do so before
+the first call to Write or Close. The Comment and Name header fields are
+UTF-8 strings in Go, but the underlying format requires NUL-terminated ISO
+8859-1 (Latin-1). NUL or non-Latin-1 runes in those strings will lead to an
+error on Write.
+</p>
+
+				
+			
+				
+				<h3 id="NewWriterLevel">func <a href="src/pkg/compress/gzip/gzip.htm#L51">NewWriterLevel</a></h3>
+				<pre>func NewWriterLevel(w io.Writer, level int) (*Writer, error)</pre>
+				<p>
+NewWriterLevel is like NewWriter but specifies the compression level instead
+of assuming DefaultCompression.
+</p>
+<p>
+The compression level can be DefaultCompression, NoCompression, or any
+integer value between BestSpeed and BestCompression inclusive. The error
+returned will be nil if the level is valid.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Writer.Close">func (*Writer) <a href="src/pkg/compress/gzip/gzip.htm#L185">Close</a></h3>
+				<pre>func (z *Writer) Close() error</pre>
+				<p>
+Close closes the Writer. It does not close the underlying io.Writer.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Writer.Write">func (*Writer) <a href="src/pkg/compress/gzip/gzip.htm#L125">Write</a></h3>
+				<pre>func (z *Writer) Write(p []byte) (int, error)</pre>
+				<p>
+Write writes a compressed form of p to the underlying io.Writer. The
+compressed bytes are not necessarily flushed until the Writer is closed.
+</p>
+
+				
+				
+			
+		
+		</div>
+	
+
+	
+
+
+
+
+
+
+
+
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>

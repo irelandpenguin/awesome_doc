@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/unicode/letter.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/unicode/letter.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package unicode provides data and functions to test some properties of</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// Unicode code points.</span>
+<a id="L7"></a><span class="ln">     7</span>	package unicode
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	const (
+<a id="L10"></a><span class="ln">    10</span>		MaxRune         = &#39;\U0010FFFF&#39; <span class="comment">// Maximum valid Unicode code point.</span>
+<a id="L11"></a><span class="ln">    11</span>		ReplacementChar = &#39;\uFFFD&#39;     <span class="comment">// Represents invalid code points.</span>
+<a id="L12"></a><span class="ln">    12</span>		MaxASCII        = &#39;\u007F&#39;     <span class="comment">// maximum ASCII value.</span>
+<a id="L13"></a><span class="ln">    13</span>		MaxLatin1       = &#39;\u00FF&#39;     <span class="comment">// maximum Latin-1 value.</span>
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// RangeTable defines a set of Unicode code points by listing the ranges of</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// code points within the set. The ranges are listed in two slices</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// to save space: a slice of 16-bit ranges and a slice of 32-bit ranges.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// The two slices must be in sorted order and non-overlapping.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// Also, R32 should contain only values &gt;= 0x10000 (1&lt;&lt;16).</span>
+<a id="L21"></a><span class="ln">    21</span>	type RangeTable struct {
+<a id="L22"></a><span class="ln">    22</span>		R16 []Range16
+<a id="L23"></a><span class="ln">    23</span>		R32 []Range32
+<a id="L24"></a><span class="ln">    24</span>	}
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Range16 represents of a range of 16-bit Unicode code points.  The range runs from Lo to Hi</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// inclusive and has the specified stride.</span>
+<a id="L28"></a><span class="ln">    28</span>	type Range16 struct {
+<a id="L29"></a><span class="ln">    29</span>		Lo     uint16
+<a id="L30"></a><span class="ln">    30</span>		Hi     uint16
+<a id="L31"></a><span class="ln">    31</span>		Stride uint16
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// Range32 represents of a range of Unicode code points and is used when one or</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// more of the values will not fit in 16 bits.  The range runs from Lo to Hi</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// inclusive and has the specified stride. Lo and Hi must always be &gt;= 1&lt;&lt;16.</span>
+<a id="L37"></a><span class="ln">    37</span>	type Range32 struct {
+<a id="L38"></a><span class="ln">    38</span>		Lo     uint32
+<a id="L39"></a><span class="ln">    39</span>		Hi     uint32
+<a id="L40"></a><span class="ln">    40</span>		Stride uint32
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// CaseRange represents a range of Unicode code points for simple (one</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// code point to one code point) case conversion.</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// The range runs from Lo to Hi inclusive, with a fixed stride of 1.  Deltas</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// are the number to add to the code point to reach the code point for a</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// different case for that character.  They may be negative.  If zero, it</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// means the character is in the corresponding case. There is a special</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// case representing sequences of alternating corresponding Upper and Lower</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// pairs.  It appears with a fixed Delta of</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//	{UpperLower, UpperLower, UpperLower}</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// The constant UpperLower has an otherwise impossible delta value.</span>
+<a id="L53"></a><span class="ln">    53</span>	type CaseRange struct {
+<a id="L54"></a><span class="ln">    54</span>		Lo    uint32
+<a id="L55"></a><span class="ln">    55</span>		Hi    uint32
+<a id="L56"></a><span class="ln">    56</span>		Delta d
+<a id="L57"></a><span class="ln">    57</span>	}
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// SpecialCase represents language-specific case mappings such as Turkish.</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// Methods of SpecialCase customize (by overriding) the standard mappings.</span>
+<a id="L61"></a><span class="ln">    61</span>	type SpecialCase []CaseRange
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// BUG(r): There is no mechanism for full case folding, that is, for</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// characters that involve multiple runes in the input or output.</span>
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// Indices into the Delta arrays inside CaseRanges for case mapping.</span>
+<a id="L67"></a><span class="ln">    67</span>	const (
+<a id="L68"></a><span class="ln">    68</span>		UpperCase = iota
+<a id="L69"></a><span class="ln">    69</span>		LowerCase
+<a id="L70"></a><span class="ln">    70</span>		TitleCase
+<a id="L71"></a><span class="ln">    71</span>		MaxCase
+<a id="L72"></a><span class="ln">    72</span>	)
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	type d [MaxCase]rune <span class="comment">// to make the CaseRanges text shorter</span>
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// If the Delta field of a CaseRange is UpperLower or LowerUpper, it means</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// this CaseRange represents a sequence of the form (say)</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// Upper Lower Upper Lower.</span>
+<a id="L79"></a><span class="ln">    79</span>	const (
+<a id="L80"></a><span class="ln">    80</span>		UpperLower = MaxRune + 1 <span class="comment">// (Cannot be a valid delta.)</span>
+<a id="L81"></a><span class="ln">    81</span>	)
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// is16 uses binary search to test whether rune is in the specified slice of 16-bit ranges.</span>
+<a id="L84"></a><span class="ln">    84</span>	func is16(ranges []Range16, r uint16) bool {
+<a id="L85"></a><span class="ln">    85</span>		<span class="comment">// binary search over ranges</span>
+<a id="L86"></a><span class="ln">    86</span>		lo := 0
+<a id="L87"></a><span class="ln">    87</span>		hi := len(ranges)
+<a id="L88"></a><span class="ln">    88</span>		for lo &lt; hi {
+<a id="L89"></a><span class="ln">    89</span>			m := lo + (hi-lo)/2
+<a id="L90"></a><span class="ln">    90</span>			range_ := ranges[m]
+<a id="L91"></a><span class="ln">    91</span>			if range_.Lo &lt;= r &amp;&amp; r &lt;= range_.Hi {
+<a id="L92"></a><span class="ln">    92</span>				return (r-range_.Lo)%range_.Stride == 0
+<a id="L93"></a><span class="ln">    93</span>			}
+<a id="L94"></a><span class="ln">    94</span>			if r &lt; range_.Lo {
+<a id="L95"></a><span class="ln">    95</span>				hi = m
+<a id="L96"></a><span class="ln">    96</span>			} else {
+<a id="L97"></a><span class="ln">    97</span>				lo = m + 1
+<a id="L98"></a><span class="ln">    98</span>			}
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>		return false
+<a id="L101"></a><span class="ln">   101</span>	}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// is32 uses binary search to test whether rune is in the specified slice of 32-bit ranges.</span>
+<a id="L104"></a><span class="ln">   104</span>	func is32(ranges []Range32, r uint32) bool {
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// binary search over ranges</span>
+<a id="L106"></a><span class="ln">   106</span>		lo := 0
+<a id="L107"></a><span class="ln">   107</span>		hi := len(ranges)
+<a id="L108"></a><span class="ln">   108</span>		for lo &lt; hi {
+<a id="L109"></a><span class="ln">   109</span>			m := lo + (hi-lo)/2
+<a id="L110"></a><span class="ln">   110</span>			range_ := ranges[m]
+<a id="L111"></a><span class="ln">   111</span>			if range_.Lo &lt;= r &amp;&amp; r &lt;= range_.Hi {
+<a id="L112"></a><span class="ln">   112</span>				return (r-range_.Lo)%range_.Stride == 0
+<a id="L113"></a><span class="ln">   113</span>			}
+<a id="L114"></a><span class="ln">   114</span>			if r &lt; range_.Lo {
+<a id="L115"></a><span class="ln">   115</span>				hi = m
+<a id="L116"></a><span class="ln">   116</span>			} else {
+<a id="L117"></a><span class="ln">   117</span>				lo = m + 1
+<a id="L118"></a><span class="ln">   118</span>			}
+<a id="L119"></a><span class="ln">   119</span>		}
+<a id="L120"></a><span class="ln">   120</span>		return false
+<a id="L121"></a><span class="ln">   121</span>	}
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// Is tests whether rune is in the specified table of ranges.</span>
+<a id="L124"></a><span class="ln">   124</span>	func Is(rangeTab *RangeTable, r rune) bool {
+<a id="L125"></a><span class="ln">   125</span>		<span class="comment">// common case: rune is ASCII or Latin-1.</span>
+<a id="L126"></a><span class="ln">   126</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L127"></a><span class="ln">   127</span>			<span class="comment">// Only need to check R16, since R32 is always &gt;= 1&lt;&lt;16.</span>
+<a id="L128"></a><span class="ln">   128</span>			r16 := uint16(r)
+<a id="L129"></a><span class="ln">   129</span>			for _, r := range rangeTab.R16 {
+<a id="L130"></a><span class="ln">   130</span>				if r16 &gt; r.Hi {
+<a id="L131"></a><span class="ln">   131</span>					continue
+<a id="L132"></a><span class="ln">   132</span>				}
+<a id="L133"></a><span class="ln">   133</span>				if r16 &lt; r.Lo {
+<a id="L134"></a><span class="ln">   134</span>					return false
+<a id="L135"></a><span class="ln">   135</span>				}
+<a id="L136"></a><span class="ln">   136</span>				return (r16-r.Lo)%r.Stride == 0
+<a id="L137"></a><span class="ln">   137</span>			}
+<a id="L138"></a><span class="ln">   138</span>			return false
+<a id="L139"></a><span class="ln">   139</span>		}
+<a id="L140"></a><span class="ln">   140</span>		r16 := rangeTab.R16
+<a id="L141"></a><span class="ln">   141</span>		if len(r16) &gt; 0 &amp;&amp; r &lt;= rune(r16[len(r16)-1].Hi) {
+<a id="L142"></a><span class="ln">   142</span>			return is16(r16, uint16(r))
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>		r32 := rangeTab.R32
+<a id="L145"></a><span class="ln">   145</span>		if len(r32) &gt; 0 &amp;&amp; r &gt;= rune(r32[0].Lo) {
+<a id="L146"></a><span class="ln">   146</span>			return is32(r32, uint32(r))
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		return false
+<a id="L149"></a><span class="ln">   149</span>	}
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// IsUpper reports whether the rune is an upper case letter.</span>
+<a id="L152"></a><span class="ln">   152</span>	func IsUpper(r rune) bool {
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">// See comment in IsGraphic.</span>
+<a id="L154"></a><span class="ln">   154</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L155"></a><span class="ln">   155</span>			return properties[uint8(r)]&amp;pLu != 0
+<a id="L156"></a><span class="ln">   156</span>		}
+<a id="L157"></a><span class="ln">   157</span>		return Is(Upper, r)
+<a id="L158"></a><span class="ln">   158</span>	}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">// IsLower reports whether the rune is a lower case letter.</span>
+<a id="L161"></a><span class="ln">   161</span>	func IsLower(r rune) bool {
+<a id="L162"></a><span class="ln">   162</span>		<span class="comment">// See comment in IsGraphic.</span>
+<a id="L163"></a><span class="ln">   163</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L164"></a><span class="ln">   164</span>			return properties[uint8(r)]&amp;pLl != 0
+<a id="L165"></a><span class="ln">   165</span>		}
+<a id="L166"></a><span class="ln">   166</span>		return Is(Lower, r)
+<a id="L167"></a><span class="ln">   167</span>	}
+<a id="L168"></a><span class="ln">   168</span>	
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// IsTitle reports whether the rune is a title case letter.</span>
+<a id="L170"></a><span class="ln">   170</span>	func IsTitle(r rune) bool {
+<a id="L171"></a><span class="ln">   171</span>		if r &lt;= MaxLatin1 {
+<a id="L172"></a><span class="ln">   172</span>			return false
+<a id="L173"></a><span class="ln">   173</span>		}
+<a id="L174"></a><span class="ln">   174</span>		return Is(Title, r)
+<a id="L175"></a><span class="ln">   175</span>	}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// to maps the rune using the specified case mapping.</span>
+<a id="L178"></a><span class="ln">   178</span>	func to(_case int, r rune, caseRange []CaseRange) rune {
+<a id="L179"></a><span class="ln">   179</span>		if _case &lt; 0 || MaxCase &lt;= _case {
+<a id="L180"></a><span class="ln">   180</span>			return ReplacementChar <span class="comment">// as reasonable an error as any</span>
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>		<span class="comment">// binary search over ranges</span>
+<a id="L183"></a><span class="ln">   183</span>		lo := 0
+<a id="L184"></a><span class="ln">   184</span>		hi := len(caseRange)
+<a id="L185"></a><span class="ln">   185</span>		for lo &lt; hi {
+<a id="L186"></a><span class="ln">   186</span>			m := lo + (hi-lo)/2
+<a id="L187"></a><span class="ln">   187</span>			cr := caseRange[m]
+<a id="L188"></a><span class="ln">   188</span>			if rune(cr.Lo) &lt;= r &amp;&amp; r &lt;= rune(cr.Hi) {
+<a id="L189"></a><span class="ln">   189</span>				delta := rune(cr.Delta[_case])
+<a id="L190"></a><span class="ln">   190</span>				if delta &gt; MaxRune {
+<a id="L191"></a><span class="ln">   191</span>					<span class="comment">// In an Upper-Lower sequence, which always starts with</span>
+<a id="L192"></a><span class="ln">   192</span>					<span class="comment">// an UpperCase letter, the real deltas always look like:</span>
+<a id="L193"></a><span class="ln">   193</span>					<span class="comment">//	{0, 1, 0}    UpperCase (Lower is next)</span>
+<a id="L194"></a><span class="ln">   194</span>					<span class="comment">//	{-1, 0, -1}  LowerCase (Upper, Title are previous)</span>
+<a id="L195"></a><span class="ln">   195</span>					<span class="comment">// The characters at even offsets from the beginning of the</span>
+<a id="L196"></a><span class="ln">   196</span>					<span class="comment">// sequence are upper case; the ones at odd offsets are lower.</span>
+<a id="L197"></a><span class="ln">   197</span>					<span class="comment">// The correct mapping can be done by clearing or setting the low</span>
+<a id="L198"></a><span class="ln">   198</span>					<span class="comment">// bit in the sequence offset.</span>
+<a id="L199"></a><span class="ln">   199</span>					<span class="comment">// The constants UpperCase and TitleCase are even while LowerCase</span>
+<a id="L200"></a><span class="ln">   200</span>					<span class="comment">// is odd so we take the low bit from _case.</span>
+<a id="L201"></a><span class="ln">   201</span>					return rune(cr.Lo) + ((r-rune(cr.Lo))&amp;^1 | rune(_case&amp;1))
+<a id="L202"></a><span class="ln">   202</span>				}
+<a id="L203"></a><span class="ln">   203</span>				return r + delta
+<a id="L204"></a><span class="ln">   204</span>			}
+<a id="L205"></a><span class="ln">   205</span>			if r &lt; rune(cr.Lo) {
+<a id="L206"></a><span class="ln">   206</span>				hi = m
+<a id="L207"></a><span class="ln">   207</span>			} else {
+<a id="L208"></a><span class="ln">   208</span>				lo = m + 1
+<a id="L209"></a><span class="ln">   209</span>			}
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>		return r
+<a id="L212"></a><span class="ln">   212</span>	}
+<a id="L213"></a><span class="ln">   213</span>	
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// To maps the rune to the specified case: UpperCase, LowerCase, or TitleCase.</span>
+<a id="L215"></a><span class="ln">   215</span>	func To(_case int, r rune) rune {
+<a id="L216"></a><span class="ln">   216</span>		return to(_case, r, CaseRanges)
+<a id="L217"></a><span class="ln">   217</span>	}
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// ToUpper maps the rune to upper case.</span>
+<a id="L220"></a><span class="ln">   220</span>	func ToUpper(r rune) rune {
+<a id="L221"></a><span class="ln">   221</span>		if r &lt;= MaxASCII {
+<a id="L222"></a><span class="ln">   222</span>			if &#39;a&#39; &lt;= r &amp;&amp; r &lt;= &#39;z&#39; {
+<a id="L223"></a><span class="ln">   223</span>				r -= &#39;a&#39; - &#39;A&#39;
+<a id="L224"></a><span class="ln">   224</span>			}
+<a id="L225"></a><span class="ln">   225</span>			return r
+<a id="L226"></a><span class="ln">   226</span>		}
+<a id="L227"></a><span class="ln">   227</span>		return To(UpperCase, r)
+<a id="L228"></a><span class="ln">   228</span>	}
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// ToLower maps the rune to lower case.</span>
+<a id="L231"></a><span class="ln">   231</span>	func ToLower(r rune) rune {
+<a id="L232"></a><span class="ln">   232</span>		if r &lt;= MaxASCII {
+<a id="L233"></a><span class="ln">   233</span>			if &#39;A&#39; &lt;= r &amp;&amp; r &lt;= &#39;Z&#39; {
+<a id="L234"></a><span class="ln">   234</span>				r += &#39;a&#39; - &#39;A&#39;
+<a id="L235"></a><span class="ln">   235</span>			}
+<a id="L236"></a><span class="ln">   236</span>			return r
+<a id="L237"></a><span class="ln">   237</span>		}
+<a id="L238"></a><span class="ln">   238</span>		return To(LowerCase, r)
+<a id="L239"></a><span class="ln">   239</span>	}
+<a id="L240"></a><span class="ln">   240</span>	
+<a id="L241"></a><span class="ln">   241</span>	<span class="comment">// ToTitle maps the rune to title case.</span>
+<a id="L242"></a><span class="ln">   242</span>	func ToTitle(r rune) rune {
+<a id="L243"></a><span class="ln">   243</span>		if r &lt;= MaxASCII {
+<a id="L244"></a><span class="ln">   244</span>			if &#39;a&#39; &lt;= r &amp;&amp; r &lt;= &#39;z&#39; { <span class="comment">// title case is upper case for ASCII</span>
+<a id="L245"></a><span class="ln">   245</span>				r -= &#39;a&#39; - &#39;A&#39;
+<a id="L246"></a><span class="ln">   246</span>			}
+<a id="L247"></a><span class="ln">   247</span>			return r
+<a id="L248"></a><span class="ln">   248</span>		}
+<a id="L249"></a><span class="ln">   249</span>		return To(TitleCase, r)
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	<span class="comment">// ToUpper maps the rune to upper case giving priority to the special mapping.</span>
+<a id="L253"></a><span class="ln">   253</span>	func (special SpecialCase) ToUpper(r rune) rune {
+<a id="L254"></a><span class="ln">   254</span>		r1 := to(UpperCase, r, []CaseRange(special))
+<a id="L255"></a><span class="ln">   255</span>		if r1 == r {
+<a id="L256"></a><span class="ln">   256</span>			r1 = ToUpper(r)
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>		return r1
+<a id="L259"></a><span class="ln">   259</span>	}
+<a id="L260"></a><span class="ln">   260</span>	
+<a id="L261"></a><span class="ln">   261</span>	<span class="comment">// ToTitle maps the rune to title case giving priority to the special mapping.</span>
+<a id="L262"></a><span class="ln">   262</span>	func (special SpecialCase) ToTitle(r rune) rune {
+<a id="L263"></a><span class="ln">   263</span>		r1 := to(TitleCase, r, []CaseRange(special))
+<a id="L264"></a><span class="ln">   264</span>		if r1 == r {
+<a id="L265"></a><span class="ln">   265</span>			r1 = ToTitle(r)
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>		return r1
+<a id="L268"></a><span class="ln">   268</span>	}
+<a id="L269"></a><span class="ln">   269</span>	
+<a id="L270"></a><span class="ln">   270</span>	<span class="comment">// ToLower maps the rune to lower case giving priority to the special mapping.</span>
+<a id="L271"></a><span class="ln">   271</span>	func (special SpecialCase) ToLower(r rune) rune {
+<a id="L272"></a><span class="ln">   272</span>		r1 := to(LowerCase, r, []CaseRange(special))
+<a id="L273"></a><span class="ln">   273</span>		if r1 == r {
+<a id="L274"></a><span class="ln">   274</span>			r1 = ToLower(r)
+<a id="L275"></a><span class="ln">   275</span>		}
+<a id="L276"></a><span class="ln">   276</span>		return r1
+<a id="L277"></a><span class="ln">   277</span>	}
+<a id="L278"></a><span class="ln">   278</span>	
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// caseOrbit is defined in tables.go as []foldPair.  Right now all the</span>
+<a id="L280"></a><span class="ln">   280</span>	<span class="comment">// entries fit in uint16, so use uint16.  If that changes, compilation</span>
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// will fail (the constants in the composite literal will not fit in uint16)</span>
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// and the types here can change to uint32.</span>
+<a id="L283"></a><span class="ln">   283</span>	type foldPair struct {
+<a id="L284"></a><span class="ln">   284</span>		From uint16
+<a id="L285"></a><span class="ln">   285</span>		To   uint16
+<a id="L286"></a><span class="ln">   286</span>	}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// SimpleFold iterates over Unicode code points equivalent under</span>
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// the Unicode-defined simple case folding.  Among the code points</span>
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">// equivalent to rune (including rune itself), SimpleFold returns the</span>
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// smallest rune &gt;= r if one exists, or else the smallest rune &gt;= 0. </span>
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">//</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// For example:</span>
+<a id="L294"></a><span class="ln">   294</span>	<span class="comment">//	SimpleFold(&#39;A&#39;) = &#39;a&#39;</span>
+<a id="L295"></a><span class="ln">   295</span>	<span class="comment">//	SimpleFold(&#39;a&#39;) = &#39;A&#39;</span>
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">//</span>
+<a id="L297"></a><span class="ln">   297</span>	<span class="comment">//	SimpleFold(&#39;K&#39;) = &#39;k&#39;</span>
+<a id="L298"></a><span class="ln">   298</span>	<span class="comment">//	SimpleFold(&#39;k&#39;) = &#39;\u212A&#39; (Kelvin symbol, K)</span>
+<a id="L299"></a><span class="ln">   299</span>	<span class="comment">//	SimpleFold(&#39;\u212A&#39;) = &#39;K&#39;</span>
+<a id="L300"></a><span class="ln">   300</span>	<span class="comment">//</span>
+<a id="L301"></a><span class="ln">   301</span>	<span class="comment">//	SimpleFold(&#39;1&#39;) = &#39;1&#39;</span>
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">//</span>
+<a id="L303"></a><span class="ln">   303</span>	func SimpleFold(r rune) rune {
+<a id="L304"></a><span class="ln">   304</span>		<span class="comment">// Consult caseOrbit table for special cases.</span>
+<a id="L305"></a><span class="ln">   305</span>		lo := 0
+<a id="L306"></a><span class="ln">   306</span>		hi := len(caseOrbit)
+<a id="L307"></a><span class="ln">   307</span>		for lo &lt; hi {
+<a id="L308"></a><span class="ln">   308</span>			m := lo + (hi-lo)/2
+<a id="L309"></a><span class="ln">   309</span>			if rune(caseOrbit[m].From) &lt; r {
+<a id="L310"></a><span class="ln">   310</span>				lo = m + 1
+<a id="L311"></a><span class="ln">   311</span>			} else {
+<a id="L312"></a><span class="ln">   312</span>				hi = m
+<a id="L313"></a><span class="ln">   313</span>			}
+<a id="L314"></a><span class="ln">   314</span>		}
+<a id="L315"></a><span class="ln">   315</span>		if lo &lt; len(caseOrbit) &amp;&amp; rune(caseOrbit[lo].From) == r {
+<a id="L316"></a><span class="ln">   316</span>			return rune(caseOrbit[lo].To)
+<a id="L317"></a><span class="ln">   317</span>		}
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>		<span class="comment">// No folding specified.  This is a one- or two-element</span>
+<a id="L320"></a><span class="ln">   320</span>		<span class="comment">// equivalence class containing rune and ToLower(rune)</span>
+<a id="L321"></a><span class="ln">   321</span>		<span class="comment">// and ToUpper(rune) if they are different from rune.</span>
+<a id="L322"></a><span class="ln">   322</span>		if l := ToLower(r); l != r {
+<a id="L323"></a><span class="ln">   323</span>			return l
+<a id="L324"></a><span class="ln">   324</span>		}
+<a id="L325"></a><span class="ln">   325</span>		return ToUpper(r)
+<a id="L326"></a><span class="ln">   326</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

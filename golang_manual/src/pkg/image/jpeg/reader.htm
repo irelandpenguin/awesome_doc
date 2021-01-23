@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/image/jpeg/reader.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/image/jpeg/reader.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package jpeg implements a JPEG image decoder and encoder.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">//</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// JPEG is defined in ITU-T T.81: http://www.w3.org/Graphics/JPEG/itu-t81.pdf.</span>
+<a id="L8"></a><span class="ln">     8</span>	package jpeg
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;bufio&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;image&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;image/color&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;io&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// TODO(nigeltao): fix up the doc comment style so that sentences start with</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// the name of the type or function that they annotate.</span>
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// A FormatError reports that the input is not a valid JPEG.</span>
+<a id="L21"></a><span class="ln">    21</span>	type FormatError string
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	func (e FormatError) Error() string { return &#34;invalid JPEG format: &#34; + string(e) }
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// An UnsupportedError reports that the input uses a valid but unimplemented JPEG feature.</span>
+<a id="L26"></a><span class="ln">    26</span>	type UnsupportedError string
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	func (e UnsupportedError) Error() string { return &#34;unsupported JPEG feature: &#34; + string(e) }
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// Component specification, specified in section B.2.2.</span>
+<a id="L31"></a><span class="ln">    31</span>	type component struct {
+<a id="L32"></a><span class="ln">    32</span>		h  int   <span class="comment">// Horizontal sampling factor.</span>
+<a id="L33"></a><span class="ln">    33</span>		v  int   <span class="comment">// Vertical sampling factor.</span>
+<a id="L34"></a><span class="ln">    34</span>		c  uint8 <span class="comment">// Component identifier.</span>
+<a id="L35"></a><span class="ln">    35</span>		tq uint8 <span class="comment">// Quantization table destination selector.</span>
+<a id="L36"></a><span class="ln">    36</span>	}
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>	type block [blockSize]int
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	const (
+<a id="L41"></a><span class="ln">    41</span>		blockSize = 64 <span class="comment">// A DCT block is 8x8.</span>
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>		dcTable = 0
+<a id="L44"></a><span class="ln">    44</span>		acTable = 1
+<a id="L45"></a><span class="ln">    45</span>		maxTc   = 1
+<a id="L46"></a><span class="ln">    46</span>		maxTh   = 3
+<a id="L47"></a><span class="ln">    47</span>		maxTq   = 3
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>		<span class="comment">// A grayscale JPEG image has only a Y component.</span>
+<a id="L50"></a><span class="ln">    50</span>		nGrayComponent = 1
+<a id="L51"></a><span class="ln">    51</span>		<span class="comment">// A color JPEG image has Y, Cb and Cr components.</span>
+<a id="L52"></a><span class="ln">    52</span>		nColorComponent = 3
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>		<span class="comment">// We only support 4:4:4, 4:2:2 and 4:2:0 downsampling, and therefore the</span>
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// number of luma samples per chroma sample is at most 2 in the horizontal</span>
+<a id="L56"></a><span class="ln">    56</span>		<span class="comment">// and 2 in the vertical direction.</span>
+<a id="L57"></a><span class="ln">    57</span>		maxH = 2
+<a id="L58"></a><span class="ln">    58</span>		maxV = 2
+<a id="L59"></a><span class="ln">    59</span>	)
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	const (
+<a id="L62"></a><span class="ln">    62</span>		soiMarker   = 0xd8 <span class="comment">// Start Of Image.</span>
+<a id="L63"></a><span class="ln">    63</span>		eoiMarker   = 0xd9 <span class="comment">// End Of Image.</span>
+<a id="L64"></a><span class="ln">    64</span>		sof0Marker  = 0xc0 <span class="comment">// Start Of Frame (Baseline).</span>
+<a id="L65"></a><span class="ln">    65</span>		sof2Marker  = 0xc2 <span class="comment">// Start Of Frame (Progressive).</span>
+<a id="L66"></a><span class="ln">    66</span>		dhtMarker   = 0xc4 <span class="comment">// Define Huffman Table.</span>
+<a id="L67"></a><span class="ln">    67</span>		dqtMarker   = 0xdb <span class="comment">// Define Quantization Table.</span>
+<a id="L68"></a><span class="ln">    68</span>		sosMarker   = 0xda <span class="comment">// Start Of Scan.</span>
+<a id="L69"></a><span class="ln">    69</span>		driMarker   = 0xdd <span class="comment">// Define Restart Interval.</span>
+<a id="L70"></a><span class="ln">    70</span>		rst0Marker  = 0xd0 <span class="comment">// ReSTart (0).</span>
+<a id="L71"></a><span class="ln">    71</span>		rst7Marker  = 0xd7 <span class="comment">// ReSTart (7).</span>
+<a id="L72"></a><span class="ln">    72</span>		app0Marker  = 0xe0 <span class="comment">// APPlication specific (0).</span>
+<a id="L73"></a><span class="ln">    73</span>		app15Marker = 0xef <span class="comment">// APPlication specific (15).</span>
+<a id="L74"></a><span class="ln">    74</span>		comMarker   = 0xfe <span class="comment">// COMment.</span>
+<a id="L75"></a><span class="ln">    75</span>	)
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// Maps from the zig-zag ordering to the natural ordering.</span>
+<a id="L78"></a><span class="ln">    78</span>	var unzig = [blockSize]int{
+<a id="L79"></a><span class="ln">    79</span>		0, 1, 8, 16, 9, 2, 3, 10,
+<a id="L80"></a><span class="ln">    80</span>		17, 24, 32, 25, 18, 11, 4, 5,
+<a id="L81"></a><span class="ln">    81</span>		12, 19, 26, 33, 40, 48, 41, 34,
+<a id="L82"></a><span class="ln">    82</span>		27, 20, 13, 6, 7, 14, 21, 28,
+<a id="L83"></a><span class="ln">    83</span>		35, 42, 49, 56, 57, 50, 43, 36,
+<a id="L84"></a><span class="ln">    84</span>		29, 22, 15, 23, 30, 37, 44, 51,
+<a id="L85"></a><span class="ln">    85</span>		58, 59, 52, 45, 38, 31, 39, 46,
+<a id="L86"></a><span class="ln">    86</span>		53, 60, 61, 54, 47, 55, 62, 63,
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// If the passed in io.Reader does not also have ReadByte, then Decode will introduce its own buffering.</span>
+<a id="L90"></a><span class="ln">    90</span>	type Reader interface {
+<a id="L91"></a><span class="ln">    91</span>		io.Reader
+<a id="L92"></a><span class="ln">    92</span>		ReadByte() (c byte, err error)
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	type decoder struct {
+<a id="L96"></a><span class="ln">    96</span>		r             Reader
+<a id="L97"></a><span class="ln">    97</span>		width, height int
+<a id="L98"></a><span class="ln">    98</span>		img1          *image.Gray
+<a id="L99"></a><span class="ln">    99</span>		img3          *image.YCbCr
+<a id="L100"></a><span class="ln">   100</span>		ri            int <span class="comment">// Restart Interval.</span>
+<a id="L101"></a><span class="ln">   101</span>		nComp         int
+<a id="L102"></a><span class="ln">   102</span>		comp          [nColorComponent]component
+<a id="L103"></a><span class="ln">   103</span>		huff          [maxTc + 1][maxTh + 1]huffman
+<a id="L104"></a><span class="ln">   104</span>		quant         [maxTq + 1]block
+<a id="L105"></a><span class="ln">   105</span>		b             bits
+<a id="L106"></a><span class="ln">   106</span>		tmp           [1024]byte
+<a id="L107"></a><span class="ln">   107</span>	}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// Reads and ignores the next n bytes.</span>
+<a id="L110"></a><span class="ln">   110</span>	func (d *decoder) ignore(n int) error {
+<a id="L111"></a><span class="ln">   111</span>		for n &gt; 0 {
+<a id="L112"></a><span class="ln">   112</span>			m := len(d.tmp)
+<a id="L113"></a><span class="ln">   113</span>			if m &gt; n {
+<a id="L114"></a><span class="ln">   114</span>				m = n
+<a id="L115"></a><span class="ln">   115</span>			}
+<a id="L116"></a><span class="ln">   116</span>			_, err := io.ReadFull(d.r, d.tmp[0:m])
+<a id="L117"></a><span class="ln">   117</span>			if err != nil {
+<a id="L118"></a><span class="ln">   118</span>				return err
+<a id="L119"></a><span class="ln">   119</span>			}
+<a id="L120"></a><span class="ln">   120</span>			n -= m
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		return nil
+<a id="L123"></a><span class="ln">   123</span>	}
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// Specified in section B.2.2.</span>
+<a id="L126"></a><span class="ln">   126</span>	func (d *decoder) processSOF(n int) error {
+<a id="L127"></a><span class="ln">   127</span>		switch n {
+<a id="L128"></a><span class="ln">   128</span>		case 6 + 3*nGrayComponent:
+<a id="L129"></a><span class="ln">   129</span>			d.nComp = nGrayComponent
+<a id="L130"></a><span class="ln">   130</span>		case 6 + 3*nColorComponent:
+<a id="L131"></a><span class="ln">   131</span>			d.nComp = nColorComponent
+<a id="L132"></a><span class="ln">   132</span>		default:
+<a id="L133"></a><span class="ln">   133</span>			return UnsupportedError(&#34;SOF has wrong length&#34;)
+<a id="L134"></a><span class="ln">   134</span>		}
+<a id="L135"></a><span class="ln">   135</span>		_, err := io.ReadFull(d.r, d.tmp[:n])
+<a id="L136"></a><span class="ln">   136</span>		if err != nil {
+<a id="L137"></a><span class="ln">   137</span>			return err
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>		<span class="comment">// We only support 8-bit precision.</span>
+<a id="L140"></a><span class="ln">   140</span>		if d.tmp[0] != 8 {
+<a id="L141"></a><span class="ln">   141</span>			return UnsupportedError(&#34;precision&#34;)
+<a id="L142"></a><span class="ln">   142</span>		}
+<a id="L143"></a><span class="ln">   143</span>		d.height = int(d.tmp[1])&lt;&lt;8 + int(d.tmp[2])
+<a id="L144"></a><span class="ln">   144</span>		d.width = int(d.tmp[3])&lt;&lt;8 + int(d.tmp[4])
+<a id="L145"></a><span class="ln">   145</span>		if int(d.tmp[5]) != d.nComp {
+<a id="L146"></a><span class="ln">   146</span>			return UnsupportedError(&#34;SOF has wrong number of image components&#34;)
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		for i := 0; i &lt; d.nComp; i++ {
+<a id="L149"></a><span class="ln">   149</span>			hv := d.tmp[7+3*i]
+<a id="L150"></a><span class="ln">   150</span>			d.comp[i].h = int(hv &gt;&gt; 4)
+<a id="L151"></a><span class="ln">   151</span>			d.comp[i].v = int(hv &amp; 0x0f)
+<a id="L152"></a><span class="ln">   152</span>			d.comp[i].c = d.tmp[6+3*i]
+<a id="L153"></a><span class="ln">   153</span>			d.comp[i].tq = d.tmp[8+3*i]
+<a id="L154"></a><span class="ln">   154</span>			if d.nComp == nGrayComponent {
+<a id="L155"></a><span class="ln">   155</span>				continue
+<a id="L156"></a><span class="ln">   156</span>			}
+<a id="L157"></a><span class="ln">   157</span>			<span class="comment">// For color images, we only support 4:4:4, 4:2:2 or 4:2:0 chroma</span>
+<a id="L158"></a><span class="ln">   158</span>			<span class="comment">// downsampling ratios. This implies that the (h, v) values for the Y</span>
+<a id="L159"></a><span class="ln">   159</span>			<span class="comment">// component are either (1, 1), (2, 1) or (2, 2), and the (h, v)</span>
+<a id="L160"></a><span class="ln">   160</span>			<span class="comment">// values for the Cr and Cb components must be (1, 1).</span>
+<a id="L161"></a><span class="ln">   161</span>			if i == 0 {
+<a id="L162"></a><span class="ln">   162</span>				if hv != 0x11 &amp;&amp; hv != 0x21 &amp;&amp; hv != 0x22 {
+<a id="L163"></a><span class="ln">   163</span>					return UnsupportedError(&#34;luma downsample ratio&#34;)
+<a id="L164"></a><span class="ln">   164</span>				}
+<a id="L165"></a><span class="ln">   165</span>			} else if hv != 0x11 {
+<a id="L166"></a><span class="ln">   166</span>				return UnsupportedError(&#34;chroma downsample ratio&#34;)
+<a id="L167"></a><span class="ln">   167</span>			}
+<a id="L168"></a><span class="ln">   168</span>		}
+<a id="L169"></a><span class="ln">   169</span>		return nil
+<a id="L170"></a><span class="ln">   170</span>	}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// Specified in section B.2.4.1.</span>
+<a id="L173"></a><span class="ln">   173</span>	func (d *decoder) processDQT(n int) error {
+<a id="L174"></a><span class="ln">   174</span>		const qtLength = 1 + blockSize
+<a id="L175"></a><span class="ln">   175</span>		for ; n &gt;= qtLength; n -= qtLength {
+<a id="L176"></a><span class="ln">   176</span>			_, err := io.ReadFull(d.r, d.tmp[0:qtLength])
+<a id="L177"></a><span class="ln">   177</span>			if err != nil {
+<a id="L178"></a><span class="ln">   178</span>				return err
+<a id="L179"></a><span class="ln">   179</span>			}
+<a id="L180"></a><span class="ln">   180</span>			pq := d.tmp[0] &gt;&gt; 4
+<a id="L181"></a><span class="ln">   181</span>			if pq != 0 {
+<a id="L182"></a><span class="ln">   182</span>				return UnsupportedError(&#34;bad Pq value&#34;)
+<a id="L183"></a><span class="ln">   183</span>			}
+<a id="L184"></a><span class="ln">   184</span>			tq := d.tmp[0] &amp; 0x0f
+<a id="L185"></a><span class="ln">   185</span>			if tq &gt; maxTq {
+<a id="L186"></a><span class="ln">   186</span>				return FormatError(&#34;bad Tq value&#34;)
+<a id="L187"></a><span class="ln">   187</span>			}
+<a id="L188"></a><span class="ln">   188</span>			for i := range d.quant[tq] {
+<a id="L189"></a><span class="ln">   189</span>				d.quant[tq][i] = int(d.tmp[i+1])
+<a id="L190"></a><span class="ln">   190</span>			}
+<a id="L191"></a><span class="ln">   191</span>		}
+<a id="L192"></a><span class="ln">   192</span>		if n != 0 {
+<a id="L193"></a><span class="ln">   193</span>			return FormatError(&#34;DQT has wrong length&#34;)
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>		return nil
+<a id="L196"></a><span class="ln">   196</span>	}
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>	<span class="comment">// makeImg allocates and initializes the destination image.</span>
+<a id="L199"></a><span class="ln">   199</span>	func (d *decoder) makeImg(h0, v0, mxx, myy int) {
+<a id="L200"></a><span class="ln">   200</span>		if d.nComp == nGrayComponent {
+<a id="L201"></a><span class="ln">   201</span>			m := image.NewGray(image.Rect(0, 0, 8*mxx, 8*myy))
+<a id="L202"></a><span class="ln">   202</span>			d.img1 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.Gray)
+<a id="L203"></a><span class="ln">   203</span>			return
+<a id="L204"></a><span class="ln">   204</span>		}
+<a id="L205"></a><span class="ln">   205</span>		var subsampleRatio image.YCbCrSubsampleRatio
+<a id="L206"></a><span class="ln">   206</span>		switch h0 * v0 {
+<a id="L207"></a><span class="ln">   207</span>		case 1:
+<a id="L208"></a><span class="ln">   208</span>			subsampleRatio = image.YCbCrSubsampleRatio444
+<a id="L209"></a><span class="ln">   209</span>		case 2:
+<a id="L210"></a><span class="ln">   210</span>			subsampleRatio = image.YCbCrSubsampleRatio422
+<a id="L211"></a><span class="ln">   211</span>		case 4:
+<a id="L212"></a><span class="ln">   212</span>			subsampleRatio = image.YCbCrSubsampleRatio420
+<a id="L213"></a><span class="ln">   213</span>		default:
+<a id="L214"></a><span class="ln">   214</span>			panic(&#34;unreachable&#34;)
+<a id="L215"></a><span class="ln">   215</span>		}
+<a id="L216"></a><span class="ln">   216</span>		m := image.NewYCbCr(image.Rect(0, 0, 8*h0*mxx, 8*v0*myy), subsampleRatio)
+<a id="L217"></a><span class="ln">   217</span>		d.img3 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.YCbCr)
+<a id="L218"></a><span class="ln">   218</span>	}
+<a id="L219"></a><span class="ln">   219</span>	
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">// Specified in section B.2.3.</span>
+<a id="L221"></a><span class="ln">   221</span>	func (d *decoder) processSOS(n int) error {
+<a id="L222"></a><span class="ln">   222</span>		if d.nComp == 0 {
+<a id="L223"></a><span class="ln">   223</span>			return FormatError(&#34;missing SOF marker&#34;)
+<a id="L224"></a><span class="ln">   224</span>		}
+<a id="L225"></a><span class="ln">   225</span>		if n != 4+2*d.nComp {
+<a id="L226"></a><span class="ln">   226</span>			return UnsupportedError(&#34;SOS has wrong length&#34;)
+<a id="L227"></a><span class="ln">   227</span>		}
+<a id="L228"></a><span class="ln">   228</span>		_, err := io.ReadFull(d.r, d.tmp[0:4+2*d.nComp])
+<a id="L229"></a><span class="ln">   229</span>		if err != nil {
+<a id="L230"></a><span class="ln">   230</span>			return err
+<a id="L231"></a><span class="ln">   231</span>		}
+<a id="L232"></a><span class="ln">   232</span>		if int(d.tmp[0]) != d.nComp {
+<a id="L233"></a><span class="ln">   233</span>			return UnsupportedError(&#34;SOS has wrong number of image components&#34;)
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>		var scan [nColorComponent]struct {
+<a id="L236"></a><span class="ln">   236</span>			td uint8 <span class="comment">// DC table selector.</span>
+<a id="L237"></a><span class="ln">   237</span>			ta uint8 <span class="comment">// AC table selector.</span>
+<a id="L238"></a><span class="ln">   238</span>		}
+<a id="L239"></a><span class="ln">   239</span>		for i := 0; i &lt; d.nComp; i++ {
+<a id="L240"></a><span class="ln">   240</span>			cs := d.tmp[1+2*i] <span class="comment">// Component selector.</span>
+<a id="L241"></a><span class="ln">   241</span>			if cs != d.comp[i].c {
+<a id="L242"></a><span class="ln">   242</span>				return UnsupportedError(&#34;scan components out of order&#34;)
+<a id="L243"></a><span class="ln">   243</span>			}
+<a id="L244"></a><span class="ln">   244</span>			scan[i].td = d.tmp[2+2*i] &gt;&gt; 4
+<a id="L245"></a><span class="ln">   245</span>			scan[i].ta = d.tmp[2+2*i] &amp; 0x0f
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		<span class="comment">// mxx and myy are the number of MCUs (Minimum Coded Units) in the image.</span>
+<a id="L248"></a><span class="ln">   248</span>		h0, v0 := d.comp[0].h, d.comp[0].v <span class="comment">// The h and v values from the Y components.</span>
+<a id="L249"></a><span class="ln">   249</span>		mxx := (d.width + 8*h0 - 1) / (8 * h0)
+<a id="L250"></a><span class="ln">   250</span>		myy := (d.height + 8*v0 - 1) / (8 * v0)
+<a id="L251"></a><span class="ln">   251</span>		if d.img1 == nil &amp;&amp; d.img3 == nil {
+<a id="L252"></a><span class="ln">   252</span>			d.makeImg(h0, v0, mxx, myy)
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>	
+<a id="L255"></a><span class="ln">   255</span>		mcu, expectedRST := 0, uint8(rst0Marker)
+<a id="L256"></a><span class="ln">   256</span>		var (
+<a id="L257"></a><span class="ln">   257</span>			b  block
+<a id="L258"></a><span class="ln">   258</span>			dc [nColorComponent]int
+<a id="L259"></a><span class="ln">   259</span>		)
+<a id="L260"></a><span class="ln">   260</span>		for my := 0; my &lt; myy; my++ {
+<a id="L261"></a><span class="ln">   261</span>			for mx := 0; mx &lt; mxx; mx++ {
+<a id="L262"></a><span class="ln">   262</span>				for i := 0; i &lt; d.nComp; i++ {
+<a id="L263"></a><span class="ln">   263</span>					qt := &amp;d.quant[d.comp[i].tq]
+<a id="L264"></a><span class="ln">   264</span>					for j := 0; j &lt; d.comp[i].h*d.comp[i].v; j++ {
+<a id="L265"></a><span class="ln">   265</span>						<span class="comment">// TODO(nigeltao): make this a &#34;var b block&#34; once the compiler&#39;s escape</span>
+<a id="L266"></a><span class="ln">   266</span>						<span class="comment">// analysis is good enough to allocate it on the stack, not the heap.</span>
+<a id="L267"></a><span class="ln">   267</span>						b = block{}
+<a id="L268"></a><span class="ln">   268</span>	
+<a id="L269"></a><span class="ln">   269</span>						<span class="comment">// Decode the DC coefficient, as specified in section F.2.2.1.</span>
+<a id="L270"></a><span class="ln">   270</span>						value, err := d.decodeHuffman(&amp;d.huff[dcTable][scan[i].td])
+<a id="L271"></a><span class="ln">   271</span>						if err != nil {
+<a id="L272"></a><span class="ln">   272</span>							return err
+<a id="L273"></a><span class="ln">   273</span>						}
+<a id="L274"></a><span class="ln">   274</span>						if value &gt; 16 {
+<a id="L275"></a><span class="ln">   275</span>							return UnsupportedError(&#34;excessive DC component&#34;)
+<a id="L276"></a><span class="ln">   276</span>						}
+<a id="L277"></a><span class="ln">   277</span>						dcDelta, err := d.receiveExtend(value)
+<a id="L278"></a><span class="ln">   278</span>						if err != nil {
+<a id="L279"></a><span class="ln">   279</span>							return err
+<a id="L280"></a><span class="ln">   280</span>						}
+<a id="L281"></a><span class="ln">   281</span>						dc[i] += dcDelta
+<a id="L282"></a><span class="ln">   282</span>						b[0] = dc[i] * qt[0]
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>						<span class="comment">// Decode the AC coefficients, as specified in section F.2.2.2.</span>
+<a id="L285"></a><span class="ln">   285</span>						for k := 1; k &lt; blockSize; k++ {
+<a id="L286"></a><span class="ln">   286</span>							value, err := d.decodeHuffman(&amp;d.huff[acTable][scan[i].ta])
+<a id="L287"></a><span class="ln">   287</span>							if err != nil {
+<a id="L288"></a><span class="ln">   288</span>								return err
+<a id="L289"></a><span class="ln">   289</span>							}
+<a id="L290"></a><span class="ln">   290</span>							val0 := value &gt;&gt; 4
+<a id="L291"></a><span class="ln">   291</span>							val1 := value &amp; 0x0f
+<a id="L292"></a><span class="ln">   292</span>							if val1 != 0 {
+<a id="L293"></a><span class="ln">   293</span>								k += int(val0)
+<a id="L294"></a><span class="ln">   294</span>								if k &gt; blockSize {
+<a id="L295"></a><span class="ln">   295</span>									return FormatError(&#34;bad DCT index&#34;)
+<a id="L296"></a><span class="ln">   296</span>								}
+<a id="L297"></a><span class="ln">   297</span>								ac, err := d.receiveExtend(val1)
+<a id="L298"></a><span class="ln">   298</span>								if err != nil {
+<a id="L299"></a><span class="ln">   299</span>									return err
+<a id="L300"></a><span class="ln">   300</span>								}
+<a id="L301"></a><span class="ln">   301</span>								b[unzig[k]] = ac * qt[k]
+<a id="L302"></a><span class="ln">   302</span>							} else {
+<a id="L303"></a><span class="ln">   303</span>								if val0 != 0x0f {
+<a id="L304"></a><span class="ln">   304</span>									break
+<a id="L305"></a><span class="ln">   305</span>								}
+<a id="L306"></a><span class="ln">   306</span>								k += 0x0f
+<a id="L307"></a><span class="ln">   307</span>							}
+<a id="L308"></a><span class="ln">   308</span>						}
+<a id="L309"></a><span class="ln">   309</span>	
+<a id="L310"></a><span class="ln">   310</span>						<span class="comment">// Perform the inverse DCT and store the MCU component to the image.</span>
+<a id="L311"></a><span class="ln">   311</span>						if d.nComp == nGrayComponent {
+<a id="L312"></a><span class="ln">   312</span>							idct(d.img1.Pix[8*(my*d.img1.Stride+mx):], d.img1.Stride, &amp;b)
+<a id="L313"></a><span class="ln">   313</span>						} else {
+<a id="L314"></a><span class="ln">   314</span>							switch i {
+<a id="L315"></a><span class="ln">   315</span>							case 0:
+<a id="L316"></a><span class="ln">   316</span>								mx0 := h0*mx + (j % 2)
+<a id="L317"></a><span class="ln">   317</span>								my0 := v0*my + (j / 2)
+<a id="L318"></a><span class="ln">   318</span>								idct(d.img3.Y[8*(my0*d.img3.YStride+mx0):], d.img3.YStride, &amp;b)
+<a id="L319"></a><span class="ln">   319</span>							case 1:
+<a id="L320"></a><span class="ln">   320</span>								idct(d.img3.Cb[8*(my*d.img3.CStride+mx):], d.img3.CStride, &amp;b)
+<a id="L321"></a><span class="ln">   321</span>							case 2:
+<a id="L322"></a><span class="ln">   322</span>								idct(d.img3.Cr[8*(my*d.img3.CStride+mx):], d.img3.CStride, &amp;b)
+<a id="L323"></a><span class="ln">   323</span>							}
+<a id="L324"></a><span class="ln">   324</span>						}
+<a id="L325"></a><span class="ln">   325</span>					} <span class="comment">// for j</span>
+<a id="L326"></a><span class="ln">   326</span>				} <span class="comment">// for i</span>
+<a id="L327"></a><span class="ln">   327</span>				mcu++
+<a id="L328"></a><span class="ln">   328</span>				if d.ri &gt; 0 &amp;&amp; mcu%d.ri == 0 &amp;&amp; mcu &lt; mxx*myy {
+<a id="L329"></a><span class="ln">   329</span>					<span class="comment">// A more sophisticated decoder could use RST[0-7] markers to resynchronize from corrupt input,</span>
+<a id="L330"></a><span class="ln">   330</span>					<span class="comment">// but this one assumes well-formed input, and hence the restart marker follows immediately.</span>
+<a id="L331"></a><span class="ln">   331</span>					_, err := io.ReadFull(d.r, d.tmp[0:2])
+<a id="L332"></a><span class="ln">   332</span>					if err != nil {
+<a id="L333"></a><span class="ln">   333</span>						return err
+<a id="L334"></a><span class="ln">   334</span>					}
+<a id="L335"></a><span class="ln">   335</span>					if d.tmp[0] != 0xff || d.tmp[1] != expectedRST {
+<a id="L336"></a><span class="ln">   336</span>						return FormatError(&#34;bad RST marker&#34;)
+<a id="L337"></a><span class="ln">   337</span>					}
+<a id="L338"></a><span class="ln">   338</span>					expectedRST++
+<a id="L339"></a><span class="ln">   339</span>					if expectedRST == rst7Marker+1 {
+<a id="L340"></a><span class="ln">   340</span>						expectedRST = rst0Marker
+<a id="L341"></a><span class="ln">   341</span>					}
+<a id="L342"></a><span class="ln">   342</span>					<span class="comment">// Reset the Huffman decoder.</span>
+<a id="L343"></a><span class="ln">   343</span>					d.b = bits{}
+<a id="L344"></a><span class="ln">   344</span>					<span class="comment">// Reset the DC components, as per section F.2.1.3.1.</span>
+<a id="L345"></a><span class="ln">   345</span>					dc = [nColorComponent]int{}
+<a id="L346"></a><span class="ln">   346</span>				}
+<a id="L347"></a><span class="ln">   347</span>			} <span class="comment">// for mx</span>
+<a id="L348"></a><span class="ln">   348</span>		} <span class="comment">// for my</span>
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>		return nil
+<a id="L351"></a><span class="ln">   351</span>	}
+<a id="L352"></a><span class="ln">   352</span>	
+<a id="L353"></a><span class="ln">   353</span>	<span class="comment">// Specified in section B.2.4.4.</span>
+<a id="L354"></a><span class="ln">   354</span>	func (d *decoder) processDRI(n int) error {
+<a id="L355"></a><span class="ln">   355</span>		if n != 2 {
+<a id="L356"></a><span class="ln">   356</span>			return FormatError(&#34;DRI has wrong length&#34;)
+<a id="L357"></a><span class="ln">   357</span>		}
+<a id="L358"></a><span class="ln">   358</span>		_, err := io.ReadFull(d.r, d.tmp[0:2])
+<a id="L359"></a><span class="ln">   359</span>		if err != nil {
+<a id="L360"></a><span class="ln">   360</span>			return err
+<a id="L361"></a><span class="ln">   361</span>		}
+<a id="L362"></a><span class="ln">   362</span>		d.ri = int(d.tmp[0])&lt;&lt;8 + int(d.tmp[1])
+<a id="L363"></a><span class="ln">   363</span>		return nil
+<a id="L364"></a><span class="ln">   364</span>	}
+<a id="L365"></a><span class="ln">   365</span>	
+<a id="L366"></a><span class="ln">   366</span>	<span class="comment">// decode reads a JPEG image from r and returns it as an image.Image.</span>
+<a id="L367"></a><span class="ln">   367</span>	func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
+<a id="L368"></a><span class="ln">   368</span>		if rr, ok := r.(Reader); ok {
+<a id="L369"></a><span class="ln">   369</span>			d.r = rr
+<a id="L370"></a><span class="ln">   370</span>		} else {
+<a id="L371"></a><span class="ln">   371</span>			d.r = bufio.NewReader(r)
+<a id="L372"></a><span class="ln">   372</span>		}
+<a id="L373"></a><span class="ln">   373</span>	
+<a id="L374"></a><span class="ln">   374</span>		<span class="comment">// Check for the Start Of Image marker.</span>
+<a id="L375"></a><span class="ln">   375</span>		_, err := io.ReadFull(d.r, d.tmp[0:2])
+<a id="L376"></a><span class="ln">   376</span>		if err != nil {
+<a id="L377"></a><span class="ln">   377</span>			return nil, err
+<a id="L378"></a><span class="ln">   378</span>		}
+<a id="L379"></a><span class="ln">   379</span>		if d.tmp[0] != 0xff || d.tmp[1] != soiMarker {
+<a id="L380"></a><span class="ln">   380</span>			return nil, FormatError(&#34;missing SOI marker&#34;)
+<a id="L381"></a><span class="ln">   381</span>		}
+<a id="L382"></a><span class="ln">   382</span>	
+<a id="L383"></a><span class="ln">   383</span>		<span class="comment">// Process the remaining segments until the End Of Image marker.</span>
+<a id="L384"></a><span class="ln">   384</span>		for {
+<a id="L385"></a><span class="ln">   385</span>			_, err := io.ReadFull(d.r, d.tmp[0:2])
+<a id="L386"></a><span class="ln">   386</span>			if err != nil {
+<a id="L387"></a><span class="ln">   387</span>				return nil, err
+<a id="L388"></a><span class="ln">   388</span>			}
+<a id="L389"></a><span class="ln">   389</span>			if d.tmp[0] != 0xff {
+<a id="L390"></a><span class="ln">   390</span>				return nil, FormatError(&#34;missing 0xff marker start&#34;)
+<a id="L391"></a><span class="ln">   391</span>			}
+<a id="L392"></a><span class="ln">   392</span>			marker := d.tmp[1]
+<a id="L393"></a><span class="ln">   393</span>			if marker == eoiMarker { <span class="comment">// End Of Image.</span>
+<a id="L394"></a><span class="ln">   394</span>				break
+<a id="L395"></a><span class="ln">   395</span>			}
+<a id="L396"></a><span class="ln">   396</span>	
+<a id="L397"></a><span class="ln">   397</span>			<span class="comment">// Read the 16-bit length of the segment. The value includes the 2 bytes for the</span>
+<a id="L398"></a><span class="ln">   398</span>			<span class="comment">// length itself, so we subtract 2 to get the number of remaining bytes.</span>
+<a id="L399"></a><span class="ln">   399</span>			_, err = io.ReadFull(d.r, d.tmp[0:2])
+<a id="L400"></a><span class="ln">   400</span>			if err != nil {
+<a id="L401"></a><span class="ln">   401</span>				return nil, err
+<a id="L402"></a><span class="ln">   402</span>			}
+<a id="L403"></a><span class="ln">   403</span>			n := int(d.tmp[0])&lt;&lt;8 + int(d.tmp[1]) - 2
+<a id="L404"></a><span class="ln">   404</span>			if n &lt; 0 {
+<a id="L405"></a><span class="ln">   405</span>				return nil, FormatError(&#34;short segment length&#34;)
+<a id="L406"></a><span class="ln">   406</span>			}
+<a id="L407"></a><span class="ln">   407</span>	
+<a id="L408"></a><span class="ln">   408</span>			switch {
+<a id="L409"></a><span class="ln">   409</span>			case marker == sof0Marker: <span class="comment">// Start Of Frame (Baseline).</span>
+<a id="L410"></a><span class="ln">   410</span>				err = d.processSOF(n)
+<a id="L411"></a><span class="ln">   411</span>				if configOnly {
+<a id="L412"></a><span class="ln">   412</span>					return nil, err
+<a id="L413"></a><span class="ln">   413</span>				}
+<a id="L414"></a><span class="ln">   414</span>			case marker == sof2Marker: <span class="comment">// Start Of Frame (Progressive).</span>
+<a id="L415"></a><span class="ln">   415</span>				err = UnsupportedError(&#34;progressive mode&#34;)
+<a id="L416"></a><span class="ln">   416</span>			case marker == dhtMarker: <span class="comment">// Define Huffman Table.</span>
+<a id="L417"></a><span class="ln">   417</span>				err = d.processDHT(n)
+<a id="L418"></a><span class="ln">   418</span>			case marker == dqtMarker: <span class="comment">// Define Quantization Table.</span>
+<a id="L419"></a><span class="ln">   419</span>				err = d.processDQT(n)
+<a id="L420"></a><span class="ln">   420</span>			case marker == sosMarker: <span class="comment">// Start Of Scan.</span>
+<a id="L421"></a><span class="ln">   421</span>				err = d.processSOS(n)
+<a id="L422"></a><span class="ln">   422</span>			case marker == driMarker: <span class="comment">// Define Restart Interval.</span>
+<a id="L423"></a><span class="ln">   423</span>				err = d.processDRI(n)
+<a id="L424"></a><span class="ln">   424</span>			case marker &gt;= app0Marker &amp;&amp; marker &lt;= app15Marker || marker == comMarker: <span class="comment">// APPlication specific, or COMment.</span>
+<a id="L425"></a><span class="ln">   425</span>				err = d.ignore(n)
+<a id="L426"></a><span class="ln">   426</span>			default:
+<a id="L427"></a><span class="ln">   427</span>				err = UnsupportedError(&#34;unknown marker&#34;)
+<a id="L428"></a><span class="ln">   428</span>			}
+<a id="L429"></a><span class="ln">   429</span>			if err != nil {
+<a id="L430"></a><span class="ln">   430</span>				return nil, err
+<a id="L431"></a><span class="ln">   431</span>			}
+<a id="L432"></a><span class="ln">   432</span>		}
+<a id="L433"></a><span class="ln">   433</span>		if d.img1 != nil {
+<a id="L434"></a><span class="ln">   434</span>			return d.img1, nil
+<a id="L435"></a><span class="ln">   435</span>		}
+<a id="L436"></a><span class="ln">   436</span>		if d.img3 != nil {
+<a id="L437"></a><span class="ln">   437</span>			return d.img3, nil
+<a id="L438"></a><span class="ln">   438</span>		}
+<a id="L439"></a><span class="ln">   439</span>		return nil, FormatError(&#34;missing SOS marker&#34;)
+<a id="L440"></a><span class="ln">   440</span>	}
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>	<span class="comment">// Decode reads a JPEG image from r and returns it as an image.Image.</span>
+<a id="L443"></a><span class="ln">   443</span>	func Decode(r io.Reader) (image.Image, error) {
+<a id="L444"></a><span class="ln">   444</span>		var d decoder
+<a id="L445"></a><span class="ln">   445</span>		return d.decode(r, false)
+<a id="L446"></a><span class="ln">   446</span>	}
+<a id="L447"></a><span class="ln">   447</span>	
+<a id="L448"></a><span class="ln">   448</span>	<span class="comment">// DecodeConfig returns the color model and dimensions of a JPEG image without</span>
+<a id="L449"></a><span class="ln">   449</span>	<span class="comment">// decoding the entire image.</span>
+<a id="L450"></a><span class="ln">   450</span>	func DecodeConfig(r io.Reader) (image.Config, error) {
+<a id="L451"></a><span class="ln">   451</span>		var d decoder
+<a id="L452"></a><span class="ln">   452</span>		if _, err := d.decode(r, true); err != nil {
+<a id="L453"></a><span class="ln">   453</span>			return image.Config{}, err
+<a id="L454"></a><span class="ln">   454</span>		}
+<a id="L455"></a><span class="ln">   455</span>		switch d.nComp {
+<a id="L456"></a><span class="ln">   456</span>		case nGrayComponent:
+<a id="L457"></a><span class="ln">   457</span>			return image.Config{
+<a id="L458"></a><span class="ln">   458</span>				ColorModel: color.GrayModel,
+<a id="L459"></a><span class="ln">   459</span>				Width:      d.width,
+<a id="L460"></a><span class="ln">   460</span>				Height:     d.height,
+<a id="L461"></a><span class="ln">   461</span>			}, nil
+<a id="L462"></a><span class="ln">   462</span>		case nColorComponent:
+<a id="L463"></a><span class="ln">   463</span>			return image.Config{
+<a id="L464"></a><span class="ln">   464</span>				ColorModel: color.YCbCrModel,
+<a id="L465"></a><span class="ln">   465</span>				Width:      d.width,
+<a id="L466"></a><span class="ln">   466</span>				Height:     d.height,
+<a id="L467"></a><span class="ln">   467</span>			}, nil
+<a id="L468"></a><span class="ln">   468</span>		}
+<a id="L469"></a><span class="ln">   469</span>		return image.Config{}, FormatError(&#34;missing SOF marker&#34;)
+<a id="L470"></a><span class="ln">   470</span>	}
+<a id="L471"></a><span class="ln">   471</span>	
+<a id="L472"></a><span class="ln">   472</span>	func init() {
+<a id="L473"></a><span class="ln">   473</span>		image.RegisterFormat(&#34;jpeg&#34;, &#34;\xff\xd8&#34;, Decode, DecodeConfig)
+<a id="L474"></a><span class="ln">   474</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

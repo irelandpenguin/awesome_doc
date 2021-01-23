@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/container/ring/ring.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/container/ring/ring.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package ring implements operations on circular lists.</span>
+<a id="L6"></a><span class="ln">     6</span>	package ring
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// A Ring is an element of a circular list, or ring.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// Rings do not have a beginning or end; a pointer to any ring element</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// serves as reference to the entire ring. Empty rings are represented</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// as nil Ring pointers. The zero value for a Ring is a one-element</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// ring with a nil Value.</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//</span>
+<a id="L14"></a><span class="ln">    14</span>	type Ring struct {
+<a id="L15"></a><span class="ln">    15</span>		next, prev *Ring
+<a id="L16"></a><span class="ln">    16</span>		Value      interface{} <span class="comment">// for use by client; untouched by this library</span>
+<a id="L17"></a><span class="ln">    17</span>	}
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	func (r *Ring) init() *Ring {
+<a id="L20"></a><span class="ln">    20</span>		r.next = r
+<a id="L21"></a><span class="ln">    21</span>		r.prev = r
+<a id="L22"></a><span class="ln">    22</span>		return r
+<a id="L23"></a><span class="ln">    23</span>	}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// Next returns the next ring element. r must not be empty.</span>
+<a id="L26"></a><span class="ln">    26</span>	func (r *Ring) Next() *Ring {
+<a id="L27"></a><span class="ln">    27</span>		if r.next == nil {
+<a id="L28"></a><span class="ln">    28</span>			return r.init()
+<a id="L29"></a><span class="ln">    29</span>		}
+<a id="L30"></a><span class="ln">    30</span>		return r.next
+<a id="L31"></a><span class="ln">    31</span>	}
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// Prev returns the previous ring element. r must not be empty.</span>
+<a id="L34"></a><span class="ln">    34</span>	func (r *Ring) Prev() *Ring {
+<a id="L35"></a><span class="ln">    35</span>		if r.next == nil {
+<a id="L36"></a><span class="ln">    36</span>			return r.init()
+<a id="L37"></a><span class="ln">    37</span>		}
+<a id="L38"></a><span class="ln">    38</span>		return r.prev
+<a id="L39"></a><span class="ln">    39</span>	}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// Move moves n % r.Len() elements backward (n &lt; 0) or forward (n &gt;= 0)</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// in the ring and returns that ring element. r must not be empty.</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//</span>
+<a id="L44"></a><span class="ln">    44</span>	func (r *Ring) Move(n int) *Ring {
+<a id="L45"></a><span class="ln">    45</span>		if r.next == nil {
+<a id="L46"></a><span class="ln">    46</span>			return r.init()
+<a id="L47"></a><span class="ln">    47</span>		}
+<a id="L48"></a><span class="ln">    48</span>		switch {
+<a id="L49"></a><span class="ln">    49</span>		case n &lt; 0:
+<a id="L50"></a><span class="ln">    50</span>			for ; n &lt; 0; n++ {
+<a id="L51"></a><span class="ln">    51</span>				r = r.prev
+<a id="L52"></a><span class="ln">    52</span>			}
+<a id="L53"></a><span class="ln">    53</span>		case n &gt; 0:
+<a id="L54"></a><span class="ln">    54</span>			for ; n &gt; 0; n-- {
+<a id="L55"></a><span class="ln">    55</span>				r = r.next
+<a id="L56"></a><span class="ln">    56</span>			}
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>		return r
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// New creates a ring of n elements.</span>
+<a id="L62"></a><span class="ln">    62</span>	func New(n int) *Ring {
+<a id="L63"></a><span class="ln">    63</span>		if n &lt;= 0 {
+<a id="L64"></a><span class="ln">    64</span>			return nil
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		r := new(Ring)
+<a id="L67"></a><span class="ln">    67</span>		p := r
+<a id="L68"></a><span class="ln">    68</span>		for i := 1; i &lt; n; i++ {
+<a id="L69"></a><span class="ln">    69</span>			p.next = &amp;Ring{prev: p}
+<a id="L70"></a><span class="ln">    70</span>			p = p.next
+<a id="L71"></a><span class="ln">    71</span>		}
+<a id="L72"></a><span class="ln">    72</span>		p.next = r
+<a id="L73"></a><span class="ln">    73</span>		r.prev = p
+<a id="L74"></a><span class="ln">    74</span>		return r
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// Link connects ring r with with ring s such that r.Next()</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// becomes s and returns the original value for r.Next().</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// r must not be empty.</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">//</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// If r and s point to the same ring, linking</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// them removes the elements between r and s from the ring.</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// The removed elements form a subring and the result is a</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// reference to that subring (if no elements were removed,</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// the result is still the original value for r.Next(),</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// and not nil).</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">//</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// If r and s point to different rings, linking</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// them creates a single ring with the elements of s inserted</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// after r. The result points to the element following the</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// last element of s after insertion.</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">//</span>
+<a id="L93"></a><span class="ln">    93</span>	func (r *Ring) Link(s *Ring) *Ring {
+<a id="L94"></a><span class="ln">    94</span>		n := r.Next()
+<a id="L95"></a><span class="ln">    95</span>		if s != nil {
+<a id="L96"></a><span class="ln">    96</span>			p := s.Prev()
+<a id="L97"></a><span class="ln">    97</span>			<span class="comment">// Note: Cannot use multiple assignment because</span>
+<a id="L98"></a><span class="ln">    98</span>			<span class="comment">// evaluation order of LHS is not specified.</span>
+<a id="L99"></a><span class="ln">    99</span>			r.next = s
+<a id="L100"></a><span class="ln">   100</span>			s.prev = r
+<a id="L101"></a><span class="ln">   101</span>			n.prev = p
+<a id="L102"></a><span class="ln">   102</span>			p.next = n
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>		return n
+<a id="L105"></a><span class="ln">   105</span>	}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// Unlink removes n % r.Len() elements from the ring r, starting</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// at r.Next(). If n % r.Len() == 0, r remains unchanged.</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// The result is the removed subring. r must not be empty.</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">//</span>
+<a id="L111"></a><span class="ln">   111</span>	func (r *Ring) Unlink(n int) *Ring {
+<a id="L112"></a><span class="ln">   112</span>		if n &lt;= 0 {
+<a id="L113"></a><span class="ln">   113</span>			return nil
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		return r.Link(r.Move(n + 1))
+<a id="L116"></a><span class="ln">   116</span>	}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">// Len computes the number of elements in ring r.</span>
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// It executes in time proportional to the number of elements.</span>
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">//</span>
+<a id="L121"></a><span class="ln">   121</span>	func (r *Ring) Len() int {
+<a id="L122"></a><span class="ln">   122</span>		n := 0
+<a id="L123"></a><span class="ln">   123</span>		if r != nil {
+<a id="L124"></a><span class="ln">   124</span>			n = 1
+<a id="L125"></a><span class="ln">   125</span>			for p := r.Next(); p != r; p = p.next {
+<a id="L126"></a><span class="ln">   126</span>				n++
+<a id="L127"></a><span class="ln">   127</span>			}
+<a id="L128"></a><span class="ln">   128</span>		}
+<a id="L129"></a><span class="ln">   129</span>		return n
+<a id="L130"></a><span class="ln">   130</span>	}
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>	<span class="comment">// Do calls function f on each element of the ring, in forward order.</span>
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// The behavior of Do is undefined if f changes *r.</span>
+<a id="L134"></a><span class="ln">   134</span>	func (r *Ring) Do(f func(interface{})) {
+<a id="L135"></a><span class="ln">   135</span>		if r != nil {
+<a id="L136"></a><span class="ln">   136</span>			f(r.Value)
+<a id="L137"></a><span class="ln">   137</span>			for p := r.Next(); p != r; p = p.next {
+<a id="L138"></a><span class="ln">   138</span>				f(p.Value)
+<a id="L139"></a><span class="ln">   139</span>			}
+<a id="L140"></a><span class="ln">   140</span>		}
+<a id="L141"></a><span class="ln">   141</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

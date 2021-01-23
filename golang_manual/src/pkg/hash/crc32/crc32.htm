@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/hash/crc32/crc32.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/hash/crc32/crc32.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package crc32 implements the 32-bit cyclic redundancy check, or CRC-32,</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// checksum. See http://en.wikipedia.org/wiki/Cyclic_redundancy_check for</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// information.</span>
+<a id="L8"></a><span class="ln">     8</span>	package crc32
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;hash&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;sync&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// The size of a CRC-32 checksum in bytes.</span>
+<a id="L16"></a><span class="ln">    16</span>	const Size = 4
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// Predefined polynomials.</span>
+<a id="L19"></a><span class="ln">    19</span>	const (
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// Far and away the most common CRC-32 polynomial.</span>
+<a id="L21"></a><span class="ln">    21</span>		<span class="comment">// Used by ethernet (IEEE 802.3), v.42, fddi, gzip, zip, png, mpeg-2, ...</span>
+<a id="L22"></a><span class="ln">    22</span>		IEEE = 0xedb88320
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>		<span class="comment">// Castagnoli&#39;s polynomial, used in iSCSI.</span>
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// Has better error detection characteristics than IEEE.</span>
+<a id="L26"></a><span class="ln">    26</span>		<span class="comment">// http://dx.doi.org/10.1109/26.231911</span>
+<a id="L27"></a><span class="ln">    27</span>		Castagnoli = 0x82f63b78
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// Koopman&#39;s polynomial.</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// Also has better error detection characteristics than IEEE.</span>
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// http://dx.doi.org/10.1109/DSN.2002.1028931</span>
+<a id="L32"></a><span class="ln">    32</span>		Koopman = 0xeb31d82e
+<a id="L33"></a><span class="ln">    33</span>	)
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// Table is a 256-word table representing the polynomial for efficient processing.</span>
+<a id="L36"></a><span class="ln">    36</span>	type Table [256]uint32
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// castagnoliTable points to a lazily initialized Table for the Castagnoli</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// polynomial. MakeTable will always return this value when asked to make a</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// Castagnoli table so we can compare against it to find when the caller is</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// using this polynomial.</span>
+<a id="L42"></a><span class="ln">    42</span>	var castagnoliTable *Table
+<a id="L43"></a><span class="ln">    43</span>	var castagnoliOnce sync.Once
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	func castagnoliInit() {
+<a id="L46"></a><span class="ln">    46</span>		castagnoliTable = makeTable(Castagnoli)
+<a id="L47"></a><span class="ln">    47</span>	}
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// IEEETable is the table for the IEEE polynomial.</span>
+<a id="L50"></a><span class="ln">    50</span>	var IEEETable = makeTable(IEEE)
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// MakeTable returns the Table constructed from the specified polynomial.</span>
+<a id="L53"></a><span class="ln">    53</span>	func MakeTable(poly uint32) *Table {
+<a id="L54"></a><span class="ln">    54</span>		switch poly {
+<a id="L55"></a><span class="ln">    55</span>		case IEEE:
+<a id="L56"></a><span class="ln">    56</span>			return IEEETable
+<a id="L57"></a><span class="ln">    57</span>		case Castagnoli:
+<a id="L58"></a><span class="ln">    58</span>			castagnoliOnce.Do(castagnoliInit)
+<a id="L59"></a><span class="ln">    59</span>			return castagnoliTable
+<a id="L60"></a><span class="ln">    60</span>		}
+<a id="L61"></a><span class="ln">    61</span>		return makeTable(poly)
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// makeTable returns the Table constructed from the specified polynomial.</span>
+<a id="L65"></a><span class="ln">    65</span>	func makeTable(poly uint32) *Table {
+<a id="L66"></a><span class="ln">    66</span>		t := new(Table)
+<a id="L67"></a><span class="ln">    67</span>		for i := 0; i &lt; 256; i++ {
+<a id="L68"></a><span class="ln">    68</span>			crc := uint32(i)
+<a id="L69"></a><span class="ln">    69</span>			for j := 0; j &lt; 8; j++ {
+<a id="L70"></a><span class="ln">    70</span>				if crc&amp;1 == 1 {
+<a id="L71"></a><span class="ln">    71</span>					crc = (crc &gt;&gt; 1) ^ poly
+<a id="L72"></a><span class="ln">    72</span>				} else {
+<a id="L73"></a><span class="ln">    73</span>					crc &gt;&gt;= 1
+<a id="L74"></a><span class="ln">    74</span>				}
+<a id="L75"></a><span class="ln">    75</span>			}
+<a id="L76"></a><span class="ln">    76</span>			t[i] = crc
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		return t
+<a id="L79"></a><span class="ln">    79</span>	}
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// digest represents the partial evaluation of a checksum.</span>
+<a id="L82"></a><span class="ln">    82</span>	type digest struct {
+<a id="L83"></a><span class="ln">    83</span>		crc uint32
+<a id="L84"></a><span class="ln">    84</span>		tab *Table
+<a id="L85"></a><span class="ln">    85</span>	}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// New creates a new hash.Hash32 computing the CRC-32 checksum</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// using the polynomial represented by the Table.</span>
+<a id="L89"></a><span class="ln">    89</span>	func New(tab *Table) hash.Hash32 { return &amp;digest{0, tab} }
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// NewIEEE creates a new hash.Hash32 computing the CRC-32 checksum</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// using the IEEE polynomial.</span>
+<a id="L93"></a><span class="ln">    93</span>	func NewIEEE() hash.Hash32 { return New(IEEETable) }
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	func (d *digest) Size() int { return Size }
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	func (d *digest) BlockSize() int { return 1 }
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	func (d *digest) Reset() { d.crc = 0 }
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	func update(crc uint32, tab *Table, p []byte) uint32 {
+<a id="L102"></a><span class="ln">   102</span>		crc = ^crc
+<a id="L103"></a><span class="ln">   103</span>		for _, v := range p {
+<a id="L104"></a><span class="ln">   104</span>			crc = tab[byte(crc)^v] ^ (crc &gt;&gt; 8)
+<a id="L105"></a><span class="ln">   105</span>		}
+<a id="L106"></a><span class="ln">   106</span>		return ^crc
+<a id="L107"></a><span class="ln">   107</span>	}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// Update returns the result of adding the bytes in p to the crc.</span>
+<a id="L110"></a><span class="ln">   110</span>	func Update(crc uint32, tab *Table, p []byte) uint32 {
+<a id="L111"></a><span class="ln">   111</span>		if tab == castagnoliTable {
+<a id="L112"></a><span class="ln">   112</span>			return updateCastagnoli(crc, p)
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>		return update(crc, tab, p)
+<a id="L115"></a><span class="ln">   115</span>	}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	func (d *digest) Write(p []byte) (n int, err error) {
+<a id="L118"></a><span class="ln">   118</span>		d.crc = Update(d.crc, d.tab, p)
+<a id="L119"></a><span class="ln">   119</span>		return len(p), nil
+<a id="L120"></a><span class="ln">   120</span>	}
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>	func (d *digest) Sum32() uint32 { return d.crc }
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>	func (d *digest) Sum(in []byte) []byte {
+<a id="L125"></a><span class="ln">   125</span>		s := d.Sum32()
+<a id="L126"></a><span class="ln">   126</span>		in = append(in, byte(s&gt;&gt;24))
+<a id="L127"></a><span class="ln">   127</span>		in = append(in, byte(s&gt;&gt;16))
+<a id="L128"></a><span class="ln">   128</span>		in = append(in, byte(s&gt;&gt;8))
+<a id="L129"></a><span class="ln">   129</span>		in = append(in, byte(s))
+<a id="L130"></a><span class="ln">   130</span>		return in
+<a id="L131"></a><span class="ln">   131</span>	}
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// Checksum returns the CRC-32 checksum of data</span>
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// using the polynomial represented by the Table.</span>
+<a id="L135"></a><span class="ln">   135</span>	func Checksum(data []byte, tab *Table) uint32 { return Update(0, tab, data) }
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// ChecksumIEEE returns the CRC-32 checksum of data</span>
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// using the IEEE polynomial.</span>
+<a id="L139"></a><span class="ln">   139</span>	func ChecksumIEEE(data []byte) uint32 { return update(0, IEEETable, data) }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

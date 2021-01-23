@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/database/sql/driver/driver.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/database/sql/driver/driver.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package driver defines interfaces to be implemented by database</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// drivers as used by package sql.</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// Most code should use package sql.</span>
+<a id="L9"></a><span class="ln">     9</span>	package driver
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import &#34;errors&#34;
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// A driver Value is a value that drivers must be able to handle.</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// A Value is either nil or an instance of one of these types:</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">//</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">//   int64</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">//   float64</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//   bool</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//   []byte</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//   string   [*] everywhere except from Rows.Next.</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//   time.Time</span>
+<a id="L22"></a><span class="ln">    22</span>	type Value interface{}
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// Driver is the interface that must be implemented by a database</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// driver.</span>
+<a id="L26"></a><span class="ln">    26</span>	type Driver interface {
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// Open returns a new connection to the database.</span>
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// The name is a string in a driver-specific format.</span>
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">//</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// Open may return a cached connection (one previously</span>
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// closed), but doing so is unnecessary; the sql package</span>
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// maintains a pool of idle connections for efficient re-use.</span>
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">//</span>
+<a id="L34"></a><span class="ln">    34</span>		<span class="comment">// The returned connection is only used by one goroutine at a</span>
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// time.</span>
+<a id="L36"></a><span class="ln">    36</span>		Open(name string) (Conn, error)
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// ErrSkip may be returned by some optional interfaces&#39; methods to</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// indicate at runtime that the fast path is unavailable and the sql</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// package should continue as if the optional interface was not</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// implemented. ErrSkip is only supported where explicitly</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// documented.</span>
+<a id="L44"></a><span class="ln">    44</span>	var ErrSkip = errors.New(&#34;driver: skip fast-path; continue as if unimplemented&#34;)
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// ErrBadConn should be returned by a driver to signal to the sql</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// package that a driver.Conn is in a bad state (such as the server</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// having earlier closed the connection) and the sql package should</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// retry on a new connection.</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// To prevent duplicate operations, ErrBadConn should NOT be returned</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// if there&#39;s a possibility that the database server might have</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// performed the operation. Even if the server sends back an error,</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// you shouldn&#39;t return ErrBadConn.</span>
+<a id="L55"></a><span class="ln">    55</span>	var ErrBadConn = errors.New(&#34;driver: bad connection&#34;)
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// Execer is an optional interface that may be implemented by a Conn.</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">//</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// If a Conn does not implement Execer, the db package&#39;s DB.Exec will</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// first prepare a query, execute the statement, and then close the</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// statement.</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">//</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// Exec may return ErrSkip.</span>
+<a id="L64"></a><span class="ln">    64</span>	type Execer interface {
+<a id="L65"></a><span class="ln">    65</span>		Exec(query string, args []Value) (Result, error)
+<a id="L66"></a><span class="ln">    66</span>	}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// Conn is a connection to a database. It is not used concurrently</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// by multiple goroutines.</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">//</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// Conn is assumed to be stateful.</span>
+<a id="L72"></a><span class="ln">    72</span>	type Conn interface {
+<a id="L73"></a><span class="ln">    73</span>		<span class="comment">// Prepare returns a prepared statement, bound to this connection.</span>
+<a id="L74"></a><span class="ln">    74</span>		Prepare(query string) (Stmt, error)
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">// Close invalidates and potentially stops any current</span>
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">// prepared statements and transactions, marking this</span>
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// connection as no longer in use.</span>
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">//</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// Because the sql package maintains a free pool of</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// connections and only calls Close when there&#39;s a surplus of</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">// idle connections, it shouldn&#39;t be necessary for drivers to</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// do their own connection caching.</span>
+<a id="L84"></a><span class="ln">    84</span>		Close() error
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// Begin starts and returns a new transaction.</span>
+<a id="L87"></a><span class="ln">    87</span>		Begin() (Tx, error)
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// Result is the result of a query execution.</span>
+<a id="L91"></a><span class="ln">    91</span>	type Result interface {
+<a id="L92"></a><span class="ln">    92</span>		<span class="comment">// LastInsertId returns the database&#39;s auto-generated ID</span>
+<a id="L93"></a><span class="ln">    93</span>		<span class="comment">// after, for example, an INSERT into a table with primary</span>
+<a id="L94"></a><span class="ln">    94</span>		<span class="comment">// key.</span>
+<a id="L95"></a><span class="ln">    95</span>		LastInsertId() (int64, error)
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>		<span class="comment">// RowsAffected returns the number of rows affected by the</span>
+<a id="L98"></a><span class="ln">    98</span>		<span class="comment">// query.</span>
+<a id="L99"></a><span class="ln">    99</span>		RowsAffected() (int64, error)
+<a id="L100"></a><span class="ln">   100</span>	}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// Stmt is a prepared statement. It is bound to a Conn and not</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// used by multiple goroutines concurrently.</span>
+<a id="L104"></a><span class="ln">   104</span>	type Stmt interface {
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// Close closes the statement.</span>
+<a id="L106"></a><span class="ln">   106</span>		<span class="comment">//</span>
+<a id="L107"></a><span class="ln">   107</span>		<span class="comment">// Closing a statement should not interrupt any outstanding</span>
+<a id="L108"></a><span class="ln">   108</span>		<span class="comment">// query created from that statement. That is, the following</span>
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// order of operations is valid:</span>
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">//</span>
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">//  * create a driver statement</span>
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">//  * call Query on statement, returning Rows</span>
+<a id="L113"></a><span class="ln">   113</span>		<span class="comment">//  * close the statement</span>
+<a id="L114"></a><span class="ln">   114</span>		<span class="comment">//  * read from Rows</span>
+<a id="L115"></a><span class="ln">   115</span>		<span class="comment">//</span>
+<a id="L116"></a><span class="ln">   116</span>		<span class="comment">// If closing a statement invalidates currently-running</span>
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// queries, the final step above will incorrectly fail.</span>
+<a id="L118"></a><span class="ln">   118</span>		<span class="comment">//</span>
+<a id="L119"></a><span class="ln">   119</span>		<span class="comment">// TODO(bradfitz): possibly remove the restriction above, if</span>
+<a id="L120"></a><span class="ln">   120</span>		<span class="comment">// enough driver authors object and find it complicates their</span>
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">// code too much. The sql package could be smarter about</span>
+<a id="L122"></a><span class="ln">   122</span>		<span class="comment">// refcounting the statement and closing it at the appropriate</span>
+<a id="L123"></a><span class="ln">   123</span>		<span class="comment">// time.</span>
+<a id="L124"></a><span class="ln">   124</span>		Close() error
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>		<span class="comment">// NumInput returns the number of placeholder parameters.</span>
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">//</span>
+<a id="L128"></a><span class="ln">   128</span>		<span class="comment">// If NumInput returns &gt;= 0, the sql package will sanity check</span>
+<a id="L129"></a><span class="ln">   129</span>		<span class="comment">// argument counts from callers and return errors to the caller</span>
+<a id="L130"></a><span class="ln">   130</span>		<span class="comment">// before the statement&#39;s Exec or Query methods are called.</span>
+<a id="L131"></a><span class="ln">   131</span>		<span class="comment">//</span>
+<a id="L132"></a><span class="ln">   132</span>		<span class="comment">// NumInput may also return -1, if the driver doesn&#39;t know</span>
+<a id="L133"></a><span class="ln">   133</span>		<span class="comment">// its number of placeholders. In that case, the sql package</span>
+<a id="L134"></a><span class="ln">   134</span>		<span class="comment">// will not sanity check Exec or Query argument counts.</span>
+<a id="L135"></a><span class="ln">   135</span>		NumInput() int
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>		<span class="comment">// Exec executes a query that doesn&#39;t return rows, such</span>
+<a id="L138"></a><span class="ln">   138</span>		<span class="comment">// as an INSERT or UPDATE.</span>
+<a id="L139"></a><span class="ln">   139</span>		Exec(args []Value) (Result, error)
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>		<span class="comment">// Exec executes a query that may return rows, such as a</span>
+<a id="L142"></a><span class="ln">   142</span>		<span class="comment">// SELECT.</span>
+<a id="L143"></a><span class="ln">   143</span>		Query(args []Value) (Rows, error)
+<a id="L144"></a><span class="ln">   144</span>	}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">// ColumnConverter may be optionally implemented by Stmt if the</span>
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// the statement is aware of its own columns&#39; types and can</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// convert from any type to a driver Value.</span>
+<a id="L149"></a><span class="ln">   149</span>	type ColumnConverter interface {
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// ColumnConverter returns a ValueConverter for the provided</span>
+<a id="L151"></a><span class="ln">   151</span>		<span class="comment">// column index.  If the type of a specific column isn&#39;t known</span>
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">// or shouldn&#39;t be handled specially, DefaultValueConverter</span>
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">// can be returned.</span>
+<a id="L154"></a><span class="ln">   154</span>		ColumnConverter(idx int) ValueConverter
+<a id="L155"></a><span class="ln">   155</span>	}
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// Rows is an iterator over an executed query&#39;s results.</span>
+<a id="L158"></a><span class="ln">   158</span>	type Rows interface {
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// Columns returns the names of the columns. The number of</span>
+<a id="L160"></a><span class="ln">   160</span>		<span class="comment">// columns of the result is inferred from the length of the</span>
+<a id="L161"></a><span class="ln">   161</span>		<span class="comment">// slice.  If a particular column name isn&#39;t known, an empty</span>
+<a id="L162"></a><span class="ln">   162</span>		<span class="comment">// string should be returned for that entry.</span>
+<a id="L163"></a><span class="ln">   163</span>		Columns() []string
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>		<span class="comment">// Close closes the rows iterator.</span>
+<a id="L166"></a><span class="ln">   166</span>		Close() error
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>		<span class="comment">// Next is called to populate the next row of data into</span>
+<a id="L169"></a><span class="ln">   169</span>		<span class="comment">// the provided slice. The provided slice will be the same</span>
+<a id="L170"></a><span class="ln">   170</span>		<span class="comment">// size as the Columns() are wide.</span>
+<a id="L171"></a><span class="ln">   171</span>		<span class="comment">//</span>
+<a id="L172"></a><span class="ln">   172</span>		<span class="comment">// The dest slice may be populated only with</span>
+<a id="L173"></a><span class="ln">   173</span>		<span class="comment">// a driver Value type, but excluding string.</span>
+<a id="L174"></a><span class="ln">   174</span>		<span class="comment">// All string values must be converted to []byte.</span>
+<a id="L175"></a><span class="ln">   175</span>		<span class="comment">//</span>
+<a id="L176"></a><span class="ln">   176</span>		<span class="comment">// Next should return io.EOF when there are no more rows.</span>
+<a id="L177"></a><span class="ln">   177</span>		Next(dest []Value) error
+<a id="L178"></a><span class="ln">   178</span>	}
+<a id="L179"></a><span class="ln">   179</span>	
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">// Tx is a transaction.</span>
+<a id="L181"></a><span class="ln">   181</span>	type Tx interface {
+<a id="L182"></a><span class="ln">   182</span>		Commit() error
+<a id="L183"></a><span class="ln">   183</span>		Rollback() error
+<a id="L184"></a><span class="ln">   184</span>	}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>	<span class="comment">// RowsAffected implements Result for an INSERT or UPDATE operation</span>
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// which mutates a number of rows.</span>
+<a id="L188"></a><span class="ln">   188</span>	type RowsAffected int64
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	var _ Result = RowsAffected(0)
+<a id="L191"></a><span class="ln">   191</span>	
+<a id="L192"></a><span class="ln">   192</span>	func (RowsAffected) LastInsertId() (int64, error) {
+<a id="L193"></a><span class="ln">   193</span>		return 0, errors.New(&#34;no LastInsertId available&#34;)
+<a id="L194"></a><span class="ln">   194</span>	}
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>	func (v RowsAffected) RowsAffected() (int64, error) {
+<a id="L197"></a><span class="ln">   197</span>		return int64(v), nil
+<a id="L198"></a><span class="ln">   198</span>	}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>	<span class="comment">// ResultNoRows is a pre-defined Result for drivers to return when a DDL</span>
+<a id="L201"></a><span class="ln">   201</span>	<span class="comment">// command (such as a CREATE TABLE) succeeds. It returns an error for both</span>
+<a id="L202"></a><span class="ln">   202</span>	<span class="comment">// LastInsertId and RowsAffected.</span>
+<a id="L203"></a><span class="ln">   203</span>	var ResultNoRows noRows
+<a id="L204"></a><span class="ln">   204</span>	
+<a id="L205"></a><span class="ln">   205</span>	type noRows struct{}
+<a id="L206"></a><span class="ln">   206</span>	
+<a id="L207"></a><span class="ln">   207</span>	var _ Result = noRows{}
+<a id="L208"></a><span class="ln">   208</span>	
+<a id="L209"></a><span class="ln">   209</span>	func (noRows) LastInsertId() (int64, error) {
+<a id="L210"></a><span class="ln">   210</span>		return 0, errors.New(&#34;no LastInsertId available after DDL statement&#34;)
+<a id="L211"></a><span class="ln">   211</span>	}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	func (noRows) RowsAffected() (int64, error) {
+<a id="L214"></a><span class="ln">   214</span>		return 0, errors.New(&#34;no RowsAffected available after DDL statement&#34;)
+<a id="L215"></a><span class="ln">   215</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

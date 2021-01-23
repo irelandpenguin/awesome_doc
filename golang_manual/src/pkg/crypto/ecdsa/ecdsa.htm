@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/ecdsa/ecdsa.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/ecdsa/ecdsa.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package ecdsa implements the Elliptic Curve Digital Signature Algorithm, as</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// defined in FIPS 186-3.</span>
+<a id="L7"></a><span class="ln">     7</span>	package ecdsa
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// References:</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">//   [NSA]: Suite B implementer&#39;s guide to FIPS 186-3,</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//     http://www.nsa.gov/ia/_files/ecdsa.pdf</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//   [SECG]: SECG, SEC1</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//     http://www.secg.org/download/aid-780/sec1-v2.pdf</span>
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	import (
+<a id="L16"></a><span class="ln">    16</span>		&#34;crypto/elliptic&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;io&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;math/big&#34;
+<a id="L19"></a><span class="ln">    19</span>	)
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// PublicKey represents an ECDSA public key.</span>
+<a id="L22"></a><span class="ln">    22</span>	type PublicKey struct {
+<a id="L23"></a><span class="ln">    23</span>		elliptic.Curve
+<a id="L24"></a><span class="ln">    24</span>		X, Y *big.Int
+<a id="L25"></a><span class="ln">    25</span>	}
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// PrivateKey represents a ECDSA private key.</span>
+<a id="L28"></a><span class="ln">    28</span>	type PrivateKey struct {
+<a id="L29"></a><span class="ln">    29</span>		PublicKey
+<a id="L30"></a><span class="ln">    30</span>		D *big.Int
+<a id="L31"></a><span class="ln">    31</span>	}
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	var one = new(big.Int).SetInt64(1)
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// randFieldElement returns a random element of the field underlying the given</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// curve using the procedure given in [NSA] A.2.1.</span>
+<a id="L37"></a><span class="ln">    37</span>	func randFieldElement(c elliptic.Curve, rand io.Reader) (k *big.Int, err error) {
+<a id="L38"></a><span class="ln">    38</span>		params := c.Params()
+<a id="L39"></a><span class="ln">    39</span>		b := make([]byte, params.BitSize/8+8)
+<a id="L40"></a><span class="ln">    40</span>		_, err = io.ReadFull(rand, b)
+<a id="L41"></a><span class="ln">    41</span>		if err != nil {
+<a id="L42"></a><span class="ln">    42</span>			return
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>		k = new(big.Int).SetBytes(b)
+<a id="L46"></a><span class="ln">    46</span>		n := new(big.Int).Sub(params.N, one)
+<a id="L47"></a><span class="ln">    47</span>		k.Mod(k, n)
+<a id="L48"></a><span class="ln">    48</span>		k.Add(k, one)
+<a id="L49"></a><span class="ln">    49</span>		return
+<a id="L50"></a><span class="ln">    50</span>	}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// GenerateKey generates a public&amp;private key pair.</span>
+<a id="L53"></a><span class="ln">    53</span>	func GenerateKey(c elliptic.Curve, rand io.Reader) (priv *PrivateKey, err error) {
+<a id="L54"></a><span class="ln">    54</span>		k, err := randFieldElement(c, rand)
+<a id="L55"></a><span class="ln">    55</span>		if err != nil {
+<a id="L56"></a><span class="ln">    56</span>			return
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>		priv = new(PrivateKey)
+<a id="L60"></a><span class="ln">    60</span>		priv.PublicKey.Curve = c
+<a id="L61"></a><span class="ln">    61</span>		priv.D = k
+<a id="L62"></a><span class="ln">    62</span>		priv.PublicKey.X, priv.PublicKey.Y = c.ScalarBaseMult(k.Bytes())
+<a id="L63"></a><span class="ln">    63</span>		return
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// hashToInt converts a hash value to an integer. There is some disagreement</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// about how this is done. [NSA] suggests that this is done in the obvious</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// manner, but [SECG] truncates the hash to the bit-length of the curve order</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// first. We follow [SECG] because that&#39;s what OpenSSL does.</span>
+<a id="L70"></a><span class="ln">    70</span>	func hashToInt(hash []byte, c elliptic.Curve) *big.Int {
+<a id="L71"></a><span class="ln">    71</span>		orderBits := c.Params().N.BitLen()
+<a id="L72"></a><span class="ln">    72</span>		orderBytes := (orderBits + 7) / 8
+<a id="L73"></a><span class="ln">    73</span>		if len(hash) &gt; orderBytes {
+<a id="L74"></a><span class="ln">    74</span>			hash = hash[:orderBytes]
+<a id="L75"></a><span class="ln">    75</span>		}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>		ret := new(big.Int).SetBytes(hash)
+<a id="L78"></a><span class="ln">    78</span>		excess := orderBytes*8 - orderBits
+<a id="L79"></a><span class="ln">    79</span>		if excess &gt; 0 {
+<a id="L80"></a><span class="ln">    80</span>			ret.Rsh(ret, uint(excess))
+<a id="L81"></a><span class="ln">    81</span>		}
+<a id="L82"></a><span class="ln">    82</span>		return ret
+<a id="L83"></a><span class="ln">    83</span>	}
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// Sign signs an arbitrary length hash (which should be the result of hashing a</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// larger message) using the private key, priv. It returns the signature as a</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// pair of integers. The security of the private key depends on the entropy of</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// rand.</span>
+<a id="L89"></a><span class="ln">    89</span>	func Sign(rand io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err error) {
+<a id="L90"></a><span class="ln">    90</span>		<span class="comment">// See [NSA] 3.4.1</span>
+<a id="L91"></a><span class="ln">    91</span>		c := priv.PublicKey.Curve
+<a id="L92"></a><span class="ln">    92</span>		N := c.Params().N
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>		var k, kInv *big.Int
+<a id="L95"></a><span class="ln">    95</span>		for {
+<a id="L96"></a><span class="ln">    96</span>			for {
+<a id="L97"></a><span class="ln">    97</span>				k, err = randFieldElement(c, rand)
+<a id="L98"></a><span class="ln">    98</span>				if err != nil {
+<a id="L99"></a><span class="ln">    99</span>					r = nil
+<a id="L100"></a><span class="ln">   100</span>					return
+<a id="L101"></a><span class="ln">   101</span>				}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>				kInv = new(big.Int).ModInverse(k, N)
+<a id="L104"></a><span class="ln">   104</span>				r, _ = priv.Curve.ScalarBaseMult(k.Bytes())
+<a id="L105"></a><span class="ln">   105</span>				r.Mod(r, N)
+<a id="L106"></a><span class="ln">   106</span>				if r.Sign() != 0 {
+<a id="L107"></a><span class="ln">   107</span>					break
+<a id="L108"></a><span class="ln">   108</span>				}
+<a id="L109"></a><span class="ln">   109</span>			}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>			e := hashToInt(hash, c)
+<a id="L112"></a><span class="ln">   112</span>			s = new(big.Int).Mul(priv.D, r)
+<a id="L113"></a><span class="ln">   113</span>			s.Add(s, e)
+<a id="L114"></a><span class="ln">   114</span>			s.Mul(s, kInv)
+<a id="L115"></a><span class="ln">   115</span>			s.Mod(s, N)
+<a id="L116"></a><span class="ln">   116</span>			if s.Sign() != 0 {
+<a id="L117"></a><span class="ln">   117</span>				break
+<a id="L118"></a><span class="ln">   118</span>			}
+<a id="L119"></a><span class="ln">   119</span>		}
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>		return
+<a id="L122"></a><span class="ln">   122</span>	}
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// Verify verifies the signature in r, s of hash using the public key, pub. It</span>
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// returns true iff the signature is valid.</span>
+<a id="L126"></a><span class="ln">   126</span>	func Verify(pub *PublicKey, hash []byte, r, s *big.Int) bool {
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// See [NSA] 3.4.2</span>
+<a id="L128"></a><span class="ln">   128</span>		c := pub.Curve
+<a id="L129"></a><span class="ln">   129</span>		N := c.Params().N
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>		if r.Sign() == 0 || s.Sign() == 0 {
+<a id="L132"></a><span class="ln">   132</span>			return false
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>		if r.Cmp(N) &gt;= 0 || s.Cmp(N) &gt;= 0 {
+<a id="L135"></a><span class="ln">   135</span>			return false
+<a id="L136"></a><span class="ln">   136</span>		}
+<a id="L137"></a><span class="ln">   137</span>		e := hashToInt(hash, c)
+<a id="L138"></a><span class="ln">   138</span>		w := new(big.Int).ModInverse(s, N)
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		u1 := e.Mul(e, w)
+<a id="L141"></a><span class="ln">   141</span>		u2 := w.Mul(r, w)
+<a id="L142"></a><span class="ln">   142</span>	
+<a id="L143"></a><span class="ln">   143</span>		x1, y1 := c.ScalarBaseMult(u1.Bytes())
+<a id="L144"></a><span class="ln">   144</span>		x2, y2 := c.ScalarMult(pub.X, pub.Y, u2.Bytes())
+<a id="L145"></a><span class="ln">   145</span>		if x1.Cmp(x2) == 0 {
+<a id="L146"></a><span class="ln">   146</span>			return false
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		x, _ := c.Add(x1, y1, x2, y2)
+<a id="L149"></a><span class="ln">   149</span>		x.Mod(x, N)
+<a id="L150"></a><span class="ln">   150</span>		return x.Cmp(r) == 0
+<a id="L151"></a><span class="ln">   151</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/dnsmsg.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/dnsmsg.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// DNS packet assembly.  See RFC 1035.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">//</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// This is intended to support name resolution during Dial.</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// It doesn&#39;t have to be blazing fast.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Each message structure has a Walk method that is used by</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// a generic pack/unpack routine. Thus, if in the future we need</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// to define new message structs, no new pack/unpack/printing code</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// needs to be written.</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">//</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// The first half of this file defines the DNS message formats.</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// The second half implements the conversion to and from wire format.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// A few of the structure elements have string tags to aid the</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// generic pack/unpack routines.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// TODO(rsc):  There are enough names defined in this file that they&#39;re all</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// prefixed with dns.  Perhaps put this in its own package later.</span>
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	package net
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// Packet formats</span>
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Wire constants.</span>
+<a id="L28"></a><span class="ln">    28</span>	const (
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// valid dnsRR_Header.Rrtype and dnsQuestion.qtype</span>
+<a id="L30"></a><span class="ln">    30</span>		dnsTypeA     = 1
+<a id="L31"></a><span class="ln">    31</span>		dnsTypeNS    = 2
+<a id="L32"></a><span class="ln">    32</span>		dnsTypeMD    = 3
+<a id="L33"></a><span class="ln">    33</span>		dnsTypeMF    = 4
+<a id="L34"></a><span class="ln">    34</span>		dnsTypeCNAME = 5
+<a id="L35"></a><span class="ln">    35</span>		dnsTypeSOA   = 6
+<a id="L36"></a><span class="ln">    36</span>		dnsTypeMB    = 7
+<a id="L37"></a><span class="ln">    37</span>		dnsTypeMG    = 8
+<a id="L38"></a><span class="ln">    38</span>		dnsTypeMR    = 9
+<a id="L39"></a><span class="ln">    39</span>		dnsTypeNULL  = 10
+<a id="L40"></a><span class="ln">    40</span>		dnsTypeWKS   = 11
+<a id="L41"></a><span class="ln">    41</span>		dnsTypePTR   = 12
+<a id="L42"></a><span class="ln">    42</span>		dnsTypeHINFO = 13
+<a id="L43"></a><span class="ln">    43</span>		dnsTypeMINFO = 14
+<a id="L44"></a><span class="ln">    44</span>		dnsTypeMX    = 15
+<a id="L45"></a><span class="ln">    45</span>		dnsTypeTXT   = 16
+<a id="L46"></a><span class="ln">    46</span>		dnsTypeAAAA  = 28
+<a id="L47"></a><span class="ln">    47</span>		dnsTypeSRV   = 33
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>		<span class="comment">// valid dnsQuestion.qtype only</span>
+<a id="L50"></a><span class="ln">    50</span>		dnsTypeAXFR  = 252
+<a id="L51"></a><span class="ln">    51</span>		dnsTypeMAILB = 253
+<a id="L52"></a><span class="ln">    52</span>		dnsTypeMAILA = 254
+<a id="L53"></a><span class="ln">    53</span>		dnsTypeALL   = 255
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// valid dnsQuestion.qclass</span>
+<a id="L56"></a><span class="ln">    56</span>		dnsClassINET   = 1
+<a id="L57"></a><span class="ln">    57</span>		dnsClassCSNET  = 2
+<a id="L58"></a><span class="ln">    58</span>		dnsClassCHAOS  = 3
+<a id="L59"></a><span class="ln">    59</span>		dnsClassHESIOD = 4
+<a id="L60"></a><span class="ln">    60</span>		dnsClassANY    = 255
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// dnsMsg.rcode</span>
+<a id="L63"></a><span class="ln">    63</span>		dnsRcodeSuccess        = 0
+<a id="L64"></a><span class="ln">    64</span>		dnsRcodeFormatError    = 1
+<a id="L65"></a><span class="ln">    65</span>		dnsRcodeServerFailure  = 2
+<a id="L66"></a><span class="ln">    66</span>		dnsRcodeNameError      = 3
+<a id="L67"></a><span class="ln">    67</span>		dnsRcodeNotImplemented = 4
+<a id="L68"></a><span class="ln">    68</span>		dnsRcodeRefused        = 5
+<a id="L69"></a><span class="ln">    69</span>	)
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// A dnsStruct describes how to iterate over its fields to emulate</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// reflective marshalling.</span>
+<a id="L73"></a><span class="ln">    73</span>	type dnsStruct interface {
+<a id="L74"></a><span class="ln">    74</span>		<span class="comment">// Walk iterates over fields of a structure and calls f</span>
+<a id="L75"></a><span class="ln">    75</span>		<span class="comment">// with a reference to that field, the name of the field</span>
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">// and a tag (&#34;&#34;, &#34;domain&#34;, &#34;ipv4&#34;, &#34;ipv6&#34;) specifying</span>
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">// particular encodings. Possible concrete types</span>
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// for v are *uint16, *uint32, *string, or []byte, and</span>
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// *int, *bool in the case of dnsMsgHdr.</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// Whenever f returns false, Walk must stop and return</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// false, and otherwise return true.</span>
+<a id="L82"></a><span class="ln">    82</span>		Walk(f func(v interface{}, name, tag string) (ok bool)) (ok bool)
+<a id="L83"></a><span class="ln">    83</span>	}
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// The wire format for the DNS packet header.</span>
+<a id="L86"></a><span class="ln">    86</span>	type dnsHeader struct {
+<a id="L87"></a><span class="ln">    87</span>		Id                                 uint16
+<a id="L88"></a><span class="ln">    88</span>		Bits                               uint16
+<a id="L89"></a><span class="ln">    89</span>		Qdcount, Ancount, Nscount, Arcount uint16
+<a id="L90"></a><span class="ln">    90</span>	}
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>	func (h *dnsHeader) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L93"></a><span class="ln">    93</span>		return f(&amp;h.Id, &#34;Id&#34;, &#34;&#34;) &amp;&amp;
+<a id="L94"></a><span class="ln">    94</span>			f(&amp;h.Bits, &#34;Bits&#34;, &#34;&#34;) &amp;&amp;
+<a id="L95"></a><span class="ln">    95</span>			f(&amp;h.Qdcount, &#34;Qdcount&#34;, &#34;&#34;) &amp;&amp;
+<a id="L96"></a><span class="ln">    96</span>			f(&amp;h.Ancount, &#34;Ancount&#34;, &#34;&#34;) &amp;&amp;
+<a id="L97"></a><span class="ln">    97</span>			f(&amp;h.Nscount, &#34;Nscount&#34;, &#34;&#34;) &amp;&amp;
+<a id="L98"></a><span class="ln">    98</span>			f(&amp;h.Arcount, &#34;Arcount&#34;, &#34;&#34;)
+<a id="L99"></a><span class="ln">    99</span>	}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	const (
+<a id="L102"></a><span class="ln">   102</span>		<span class="comment">// dnsHeader.Bits</span>
+<a id="L103"></a><span class="ln">   103</span>		_QR = 1 &lt;&lt; 15 <span class="comment">// query/response (response=1)</span>
+<a id="L104"></a><span class="ln">   104</span>		_AA = 1 &lt;&lt; 10 <span class="comment">// authoritative</span>
+<a id="L105"></a><span class="ln">   105</span>		_TC = 1 &lt;&lt; 9  <span class="comment">// truncated</span>
+<a id="L106"></a><span class="ln">   106</span>		_RD = 1 &lt;&lt; 8  <span class="comment">// recursion desired</span>
+<a id="L107"></a><span class="ln">   107</span>		_RA = 1 &lt;&lt; 7  <span class="comment">// recursion available</span>
+<a id="L108"></a><span class="ln">   108</span>	)
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// DNS queries.</span>
+<a id="L111"></a><span class="ln">   111</span>	type dnsQuestion struct {
+<a id="L112"></a><span class="ln">   112</span>		Name   string `net:&#34;domain-name&#34;` <span class="comment">// `net:&#34;domain-name&#34;` specifies encoding; see packers below</span>
+<a id="L113"></a><span class="ln">   113</span>		Qtype  uint16
+<a id="L114"></a><span class="ln">   114</span>		Qclass uint16
+<a id="L115"></a><span class="ln">   115</span>	}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	func (q *dnsQuestion) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L118"></a><span class="ln">   118</span>		return f(&amp;q.Name, &#34;Name&#34;, &#34;domain&#34;) &amp;&amp;
+<a id="L119"></a><span class="ln">   119</span>			f(&amp;q.Qtype, &#34;Qtype&#34;, &#34;&#34;) &amp;&amp;
+<a id="L120"></a><span class="ln">   120</span>			f(&amp;q.Qclass, &#34;Qclass&#34;, &#34;&#34;)
+<a id="L121"></a><span class="ln">   121</span>	}
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// DNS responses (resource records).</span>
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// There are many types of messages,</span>
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// but they all share the same header.</span>
+<a id="L126"></a><span class="ln">   126</span>	type dnsRR_Header struct {
+<a id="L127"></a><span class="ln">   127</span>		Name     string `net:&#34;domain-name&#34;`
+<a id="L128"></a><span class="ln">   128</span>		Rrtype   uint16
+<a id="L129"></a><span class="ln">   129</span>		Class    uint16
+<a id="L130"></a><span class="ln">   130</span>		Ttl      uint32
+<a id="L131"></a><span class="ln">   131</span>		Rdlength uint16 <span class="comment">// length of data after header</span>
+<a id="L132"></a><span class="ln">   132</span>	}
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	func (h *dnsRR_Header) Header() *dnsRR_Header {
+<a id="L135"></a><span class="ln">   135</span>		return h
+<a id="L136"></a><span class="ln">   136</span>	}
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>	func (h *dnsRR_Header) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L139"></a><span class="ln">   139</span>		return f(&amp;h.Name, &#34;Name&#34;, &#34;domain&#34;) &amp;&amp;
+<a id="L140"></a><span class="ln">   140</span>			f(&amp;h.Rrtype, &#34;Rrtype&#34;, &#34;&#34;) &amp;&amp;
+<a id="L141"></a><span class="ln">   141</span>			f(&amp;h.Class, &#34;Class&#34;, &#34;&#34;) &amp;&amp;
+<a id="L142"></a><span class="ln">   142</span>			f(&amp;h.Ttl, &#34;Ttl&#34;, &#34;&#34;) &amp;&amp;
+<a id="L143"></a><span class="ln">   143</span>			f(&amp;h.Rdlength, &#34;Rdlength&#34;, &#34;&#34;)
+<a id="L144"></a><span class="ln">   144</span>	}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>	type dnsRR interface {
+<a id="L147"></a><span class="ln">   147</span>		dnsStruct
+<a id="L148"></a><span class="ln">   148</span>		Header() *dnsRR_Header
+<a id="L149"></a><span class="ln">   149</span>	}
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// Specific DNS RR formats for each query type.</span>
+<a id="L152"></a><span class="ln">   152</span>	
+<a id="L153"></a><span class="ln">   153</span>	type dnsRR_CNAME struct {
+<a id="L154"></a><span class="ln">   154</span>		Hdr   dnsRR_Header
+<a id="L155"></a><span class="ln">   155</span>		Cname string `net:&#34;domain-name&#34;`
+<a id="L156"></a><span class="ln">   156</span>	}
+<a id="L157"></a><span class="ln">   157</span>	
+<a id="L158"></a><span class="ln">   158</span>	func (rr *dnsRR_CNAME) Header() *dnsRR_Header {
+<a id="L159"></a><span class="ln">   159</span>		return &amp;rr.Hdr
+<a id="L160"></a><span class="ln">   160</span>	}
+<a id="L161"></a><span class="ln">   161</span>	
+<a id="L162"></a><span class="ln">   162</span>	func (rr *dnsRR_CNAME) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L163"></a><span class="ln">   163</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Cname, &#34;Cname&#34;, &#34;domain&#34;)
+<a id="L164"></a><span class="ln">   164</span>	}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>	type dnsRR_HINFO struct {
+<a id="L167"></a><span class="ln">   167</span>		Hdr dnsRR_Header
+<a id="L168"></a><span class="ln">   168</span>		Cpu string
+<a id="L169"></a><span class="ln">   169</span>		Os  string
+<a id="L170"></a><span class="ln">   170</span>	}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>	func (rr *dnsRR_HINFO) Header() *dnsRR_Header {
+<a id="L173"></a><span class="ln">   173</span>		return &amp;rr.Hdr
+<a id="L174"></a><span class="ln">   174</span>	}
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>	func (rr *dnsRR_HINFO) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L177"></a><span class="ln">   177</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Cpu, &#34;Cpu&#34;, &#34;&#34;) &amp;&amp; f(&amp;rr.Os, &#34;Os&#34;, &#34;&#34;)
+<a id="L178"></a><span class="ln">   178</span>	}
+<a id="L179"></a><span class="ln">   179</span>	
+<a id="L180"></a><span class="ln">   180</span>	type dnsRR_MB struct {
+<a id="L181"></a><span class="ln">   181</span>		Hdr dnsRR_Header
+<a id="L182"></a><span class="ln">   182</span>		Mb  string `net:&#34;domain-name&#34;`
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	func (rr *dnsRR_MB) Header() *dnsRR_Header {
+<a id="L186"></a><span class="ln">   186</span>		return &amp;rr.Hdr
+<a id="L187"></a><span class="ln">   187</span>	}
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>	func (rr *dnsRR_MB) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L190"></a><span class="ln">   190</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Mb, &#34;Mb&#34;, &#34;domain&#34;)
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	type dnsRR_MG struct {
+<a id="L194"></a><span class="ln">   194</span>		Hdr dnsRR_Header
+<a id="L195"></a><span class="ln">   195</span>		Mg  string `net:&#34;domain-name&#34;`
+<a id="L196"></a><span class="ln">   196</span>	}
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>	func (rr *dnsRR_MG) Header() *dnsRR_Header {
+<a id="L199"></a><span class="ln">   199</span>		return &amp;rr.Hdr
+<a id="L200"></a><span class="ln">   200</span>	}
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	func (rr *dnsRR_MG) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L203"></a><span class="ln">   203</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Mg, &#34;Mg&#34;, &#34;domain&#34;)
+<a id="L204"></a><span class="ln">   204</span>	}
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>	type dnsRR_MINFO struct {
+<a id="L207"></a><span class="ln">   207</span>		Hdr   dnsRR_Header
+<a id="L208"></a><span class="ln">   208</span>		Rmail string `net:&#34;domain-name&#34;`
+<a id="L209"></a><span class="ln">   209</span>		Email string `net:&#34;domain-name&#34;`
+<a id="L210"></a><span class="ln">   210</span>	}
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>	func (rr *dnsRR_MINFO) Header() *dnsRR_Header {
+<a id="L213"></a><span class="ln">   213</span>		return &amp;rr.Hdr
+<a id="L214"></a><span class="ln">   214</span>	}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>	func (rr *dnsRR_MINFO) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L217"></a><span class="ln">   217</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Rmail, &#34;Rmail&#34;, &#34;domain&#34;) &amp;&amp; f(&amp;rr.Email, &#34;Email&#34;, &#34;domain&#34;)
+<a id="L218"></a><span class="ln">   218</span>	}
+<a id="L219"></a><span class="ln">   219</span>	
+<a id="L220"></a><span class="ln">   220</span>	type dnsRR_MR struct {
+<a id="L221"></a><span class="ln">   221</span>		Hdr dnsRR_Header
+<a id="L222"></a><span class="ln">   222</span>		Mr  string `net:&#34;domain-name&#34;`
+<a id="L223"></a><span class="ln">   223</span>	}
+<a id="L224"></a><span class="ln">   224</span>	
+<a id="L225"></a><span class="ln">   225</span>	func (rr *dnsRR_MR) Header() *dnsRR_Header {
+<a id="L226"></a><span class="ln">   226</span>		return &amp;rr.Hdr
+<a id="L227"></a><span class="ln">   227</span>	}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>	func (rr *dnsRR_MR) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L230"></a><span class="ln">   230</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Mr, &#34;Mr&#34;, &#34;domain&#34;)
+<a id="L231"></a><span class="ln">   231</span>	}
+<a id="L232"></a><span class="ln">   232</span>	
+<a id="L233"></a><span class="ln">   233</span>	type dnsRR_MX struct {
+<a id="L234"></a><span class="ln">   234</span>		Hdr  dnsRR_Header
+<a id="L235"></a><span class="ln">   235</span>		Pref uint16
+<a id="L236"></a><span class="ln">   236</span>		Mx   string `net:&#34;domain-name&#34;`
+<a id="L237"></a><span class="ln">   237</span>	}
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	func (rr *dnsRR_MX) Header() *dnsRR_Header {
+<a id="L240"></a><span class="ln">   240</span>		return &amp;rr.Hdr
+<a id="L241"></a><span class="ln">   241</span>	}
+<a id="L242"></a><span class="ln">   242</span>	
+<a id="L243"></a><span class="ln">   243</span>	func (rr *dnsRR_MX) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L244"></a><span class="ln">   244</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Pref, &#34;Pref&#34;, &#34;&#34;) &amp;&amp; f(&amp;rr.Mx, &#34;Mx&#34;, &#34;domain&#34;)
+<a id="L245"></a><span class="ln">   245</span>	}
+<a id="L246"></a><span class="ln">   246</span>	
+<a id="L247"></a><span class="ln">   247</span>	type dnsRR_NS struct {
+<a id="L248"></a><span class="ln">   248</span>		Hdr dnsRR_Header
+<a id="L249"></a><span class="ln">   249</span>		Ns  string `net:&#34;domain-name&#34;`
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	func (rr *dnsRR_NS) Header() *dnsRR_Header {
+<a id="L253"></a><span class="ln">   253</span>		return &amp;rr.Hdr
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	func (rr *dnsRR_NS) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L257"></a><span class="ln">   257</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Ns, &#34;Ns&#34;, &#34;domain&#34;)
+<a id="L258"></a><span class="ln">   258</span>	}
+<a id="L259"></a><span class="ln">   259</span>	
+<a id="L260"></a><span class="ln">   260</span>	type dnsRR_PTR struct {
+<a id="L261"></a><span class="ln">   261</span>		Hdr dnsRR_Header
+<a id="L262"></a><span class="ln">   262</span>		Ptr string `net:&#34;domain-name&#34;`
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	func (rr *dnsRR_PTR) Header() *dnsRR_Header {
+<a id="L266"></a><span class="ln">   266</span>		return &amp;rr.Hdr
+<a id="L267"></a><span class="ln">   267</span>	}
+<a id="L268"></a><span class="ln">   268</span>	
+<a id="L269"></a><span class="ln">   269</span>	func (rr *dnsRR_PTR) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L270"></a><span class="ln">   270</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Ptr, &#34;Ptr&#34;, &#34;domain&#34;)
+<a id="L271"></a><span class="ln">   271</span>	}
+<a id="L272"></a><span class="ln">   272</span>	
+<a id="L273"></a><span class="ln">   273</span>	type dnsRR_SOA struct {
+<a id="L274"></a><span class="ln">   274</span>		Hdr     dnsRR_Header
+<a id="L275"></a><span class="ln">   275</span>		Ns      string `net:&#34;domain-name&#34;`
+<a id="L276"></a><span class="ln">   276</span>		Mbox    string `net:&#34;domain-name&#34;`
+<a id="L277"></a><span class="ln">   277</span>		Serial  uint32
+<a id="L278"></a><span class="ln">   278</span>		Refresh uint32
+<a id="L279"></a><span class="ln">   279</span>		Retry   uint32
+<a id="L280"></a><span class="ln">   280</span>		Expire  uint32
+<a id="L281"></a><span class="ln">   281</span>		Minttl  uint32
+<a id="L282"></a><span class="ln">   282</span>	}
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>	func (rr *dnsRR_SOA) Header() *dnsRR_Header {
+<a id="L285"></a><span class="ln">   285</span>		return &amp;rr.Hdr
+<a id="L286"></a><span class="ln">   286</span>	}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	func (rr *dnsRR_SOA) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L289"></a><span class="ln">   289</span>		return rr.Hdr.Walk(f) &amp;&amp;
+<a id="L290"></a><span class="ln">   290</span>			f(&amp;rr.Ns, &#34;Ns&#34;, &#34;domain&#34;) &amp;&amp;
+<a id="L291"></a><span class="ln">   291</span>			f(&amp;rr.Mbox, &#34;Mbox&#34;, &#34;domain&#34;) &amp;&amp;
+<a id="L292"></a><span class="ln">   292</span>			f(&amp;rr.Serial, &#34;Serial&#34;, &#34;&#34;) &amp;&amp;
+<a id="L293"></a><span class="ln">   293</span>			f(&amp;rr.Refresh, &#34;Refresh&#34;, &#34;&#34;) &amp;&amp;
+<a id="L294"></a><span class="ln">   294</span>			f(&amp;rr.Retry, &#34;Retry&#34;, &#34;&#34;) &amp;&amp;
+<a id="L295"></a><span class="ln">   295</span>			f(&amp;rr.Expire, &#34;Expire&#34;, &#34;&#34;) &amp;&amp;
+<a id="L296"></a><span class="ln">   296</span>			f(&amp;rr.Minttl, &#34;Minttl&#34;, &#34;&#34;)
+<a id="L297"></a><span class="ln">   297</span>	}
+<a id="L298"></a><span class="ln">   298</span>	
+<a id="L299"></a><span class="ln">   299</span>	type dnsRR_TXT struct {
+<a id="L300"></a><span class="ln">   300</span>		Hdr dnsRR_Header
+<a id="L301"></a><span class="ln">   301</span>		Txt string <span class="comment">// not domain name</span>
+<a id="L302"></a><span class="ln">   302</span>	}
+<a id="L303"></a><span class="ln">   303</span>	
+<a id="L304"></a><span class="ln">   304</span>	func (rr *dnsRR_TXT) Header() *dnsRR_Header {
+<a id="L305"></a><span class="ln">   305</span>		return &amp;rr.Hdr
+<a id="L306"></a><span class="ln">   306</span>	}
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>	func (rr *dnsRR_TXT) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L309"></a><span class="ln">   309</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.Txt, &#34;Txt&#34;, &#34;&#34;)
+<a id="L310"></a><span class="ln">   310</span>	}
+<a id="L311"></a><span class="ln">   311</span>	
+<a id="L312"></a><span class="ln">   312</span>	type dnsRR_SRV struct {
+<a id="L313"></a><span class="ln">   313</span>		Hdr      dnsRR_Header
+<a id="L314"></a><span class="ln">   314</span>		Priority uint16
+<a id="L315"></a><span class="ln">   315</span>		Weight   uint16
+<a id="L316"></a><span class="ln">   316</span>		Port     uint16
+<a id="L317"></a><span class="ln">   317</span>		Target   string `net:&#34;domain-name&#34;`
+<a id="L318"></a><span class="ln">   318</span>	}
+<a id="L319"></a><span class="ln">   319</span>	
+<a id="L320"></a><span class="ln">   320</span>	func (rr *dnsRR_SRV) Header() *dnsRR_Header {
+<a id="L321"></a><span class="ln">   321</span>		return &amp;rr.Hdr
+<a id="L322"></a><span class="ln">   322</span>	}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>	func (rr *dnsRR_SRV) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L325"></a><span class="ln">   325</span>		return rr.Hdr.Walk(f) &amp;&amp;
+<a id="L326"></a><span class="ln">   326</span>			f(&amp;rr.Priority, &#34;Priority&#34;, &#34;&#34;) &amp;&amp;
+<a id="L327"></a><span class="ln">   327</span>			f(&amp;rr.Weight, &#34;Weight&#34;, &#34;&#34;) &amp;&amp;
+<a id="L328"></a><span class="ln">   328</span>			f(&amp;rr.Port, &#34;Port&#34;, &#34;&#34;) &amp;&amp;
+<a id="L329"></a><span class="ln">   329</span>			f(&amp;rr.Target, &#34;Target&#34;, &#34;domain&#34;)
+<a id="L330"></a><span class="ln">   330</span>	}
+<a id="L331"></a><span class="ln">   331</span>	
+<a id="L332"></a><span class="ln">   332</span>	type dnsRR_A struct {
+<a id="L333"></a><span class="ln">   333</span>		Hdr dnsRR_Header
+<a id="L334"></a><span class="ln">   334</span>		A   uint32 `net:&#34;ipv4&#34;`
+<a id="L335"></a><span class="ln">   335</span>	}
+<a id="L336"></a><span class="ln">   336</span>	
+<a id="L337"></a><span class="ln">   337</span>	func (rr *dnsRR_A) Header() *dnsRR_Header {
+<a id="L338"></a><span class="ln">   338</span>		return &amp;rr.Hdr
+<a id="L339"></a><span class="ln">   339</span>	}
+<a id="L340"></a><span class="ln">   340</span>	
+<a id="L341"></a><span class="ln">   341</span>	func (rr *dnsRR_A) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L342"></a><span class="ln">   342</span>		return rr.Hdr.Walk(f) &amp;&amp; f(&amp;rr.A, &#34;A&#34;, &#34;ipv4&#34;)
+<a id="L343"></a><span class="ln">   343</span>	}
+<a id="L344"></a><span class="ln">   344</span>	
+<a id="L345"></a><span class="ln">   345</span>	type dnsRR_AAAA struct {
+<a id="L346"></a><span class="ln">   346</span>		Hdr  dnsRR_Header
+<a id="L347"></a><span class="ln">   347</span>		AAAA [16]byte `net:&#34;ipv6&#34;`
+<a id="L348"></a><span class="ln">   348</span>	}
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>	func (rr *dnsRR_AAAA) Header() *dnsRR_Header {
+<a id="L351"></a><span class="ln">   351</span>		return &amp;rr.Hdr
+<a id="L352"></a><span class="ln">   352</span>	}
+<a id="L353"></a><span class="ln">   353</span>	
+<a id="L354"></a><span class="ln">   354</span>	func (rr *dnsRR_AAAA) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L355"></a><span class="ln">   355</span>		return rr.Hdr.Walk(f) &amp;&amp; f(rr.AAAA[:], &#34;AAAA&#34;, &#34;ipv6&#34;)
+<a id="L356"></a><span class="ln">   356</span>	}
+<a id="L357"></a><span class="ln">   357</span>	
+<a id="L358"></a><span class="ln">   358</span>	<span class="comment">// Packing and unpacking.</span>
+<a id="L359"></a><span class="ln">   359</span>	<span class="comment">//</span>
+<a id="L360"></a><span class="ln">   360</span>	<span class="comment">// All the packers and unpackers take a (msg []byte, off int)</span>
+<a id="L361"></a><span class="ln">   361</span>	<span class="comment">// and return (off1 int, ok bool).  If they return ok==false, they</span>
+<a id="L362"></a><span class="ln">   362</span>	<span class="comment">// also return off1==len(msg), so that the next unpacker will</span>
+<a id="L363"></a><span class="ln">   363</span>	<span class="comment">// also fail.  This lets us avoid checks of ok until the end of a</span>
+<a id="L364"></a><span class="ln">   364</span>	<span class="comment">// packing sequence.</span>
+<a id="L365"></a><span class="ln">   365</span>	
+<a id="L366"></a><span class="ln">   366</span>	<span class="comment">// Map of constructors for each RR wire type.</span>
+<a id="L367"></a><span class="ln">   367</span>	var rr_mk = map[int]func() dnsRR{
+<a id="L368"></a><span class="ln">   368</span>		dnsTypeCNAME: func() dnsRR { return new(dnsRR_CNAME) },
+<a id="L369"></a><span class="ln">   369</span>		dnsTypeHINFO: func() dnsRR { return new(dnsRR_HINFO) },
+<a id="L370"></a><span class="ln">   370</span>		dnsTypeMB:    func() dnsRR { return new(dnsRR_MB) },
+<a id="L371"></a><span class="ln">   371</span>		dnsTypeMG:    func() dnsRR { return new(dnsRR_MG) },
+<a id="L372"></a><span class="ln">   372</span>		dnsTypeMINFO: func() dnsRR { return new(dnsRR_MINFO) },
+<a id="L373"></a><span class="ln">   373</span>		dnsTypeMR:    func() dnsRR { return new(dnsRR_MR) },
+<a id="L374"></a><span class="ln">   374</span>		dnsTypeMX:    func() dnsRR { return new(dnsRR_MX) },
+<a id="L375"></a><span class="ln">   375</span>		dnsTypeNS:    func() dnsRR { return new(dnsRR_NS) },
+<a id="L376"></a><span class="ln">   376</span>		dnsTypePTR:   func() dnsRR { return new(dnsRR_PTR) },
+<a id="L377"></a><span class="ln">   377</span>		dnsTypeSOA:   func() dnsRR { return new(dnsRR_SOA) },
+<a id="L378"></a><span class="ln">   378</span>		dnsTypeTXT:   func() dnsRR { return new(dnsRR_TXT) },
+<a id="L379"></a><span class="ln">   379</span>		dnsTypeSRV:   func() dnsRR { return new(dnsRR_SRV) },
+<a id="L380"></a><span class="ln">   380</span>		dnsTypeA:     func() dnsRR { return new(dnsRR_A) },
+<a id="L381"></a><span class="ln">   381</span>		dnsTypeAAAA:  func() dnsRR { return new(dnsRR_AAAA) },
+<a id="L382"></a><span class="ln">   382</span>	}
+<a id="L383"></a><span class="ln">   383</span>	
+<a id="L384"></a><span class="ln">   384</span>	<span class="comment">// Pack a domain name s into msg[off:].</span>
+<a id="L385"></a><span class="ln">   385</span>	<span class="comment">// Domain names are a sequence of counted strings</span>
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// split at the dots.  They end with a zero-length string.</span>
+<a id="L387"></a><span class="ln">   387</span>	func packDomainName(s string, msg []byte, off int) (off1 int, ok bool) {
+<a id="L388"></a><span class="ln">   388</span>		<span class="comment">// Add trailing dot to canonicalize name.</span>
+<a id="L389"></a><span class="ln">   389</span>		if n := len(s); n == 0 || s[n-1] != &#39;.&#39; {
+<a id="L390"></a><span class="ln">   390</span>			s += &#34;.&#34;
+<a id="L391"></a><span class="ln">   391</span>		}
+<a id="L392"></a><span class="ln">   392</span>	
+<a id="L393"></a><span class="ln">   393</span>		<span class="comment">// Each dot ends a segment of the name.</span>
+<a id="L394"></a><span class="ln">   394</span>		<span class="comment">// We trade each dot byte for a length byte.</span>
+<a id="L395"></a><span class="ln">   395</span>		<span class="comment">// There is also a trailing zero.</span>
+<a id="L396"></a><span class="ln">   396</span>		<span class="comment">// Check that we have all the space we need.</span>
+<a id="L397"></a><span class="ln">   397</span>		tot := len(s) + 1
+<a id="L398"></a><span class="ln">   398</span>		if off+tot &gt; len(msg) {
+<a id="L399"></a><span class="ln">   399</span>			return len(msg), false
+<a id="L400"></a><span class="ln">   400</span>		}
+<a id="L401"></a><span class="ln">   401</span>	
+<a id="L402"></a><span class="ln">   402</span>		<span class="comment">// Emit sequence of counted strings, chopping at dots.</span>
+<a id="L403"></a><span class="ln">   403</span>		begin := 0
+<a id="L404"></a><span class="ln">   404</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L405"></a><span class="ln">   405</span>			if s[i] == &#39;.&#39; {
+<a id="L406"></a><span class="ln">   406</span>				if i-begin &gt;= 1&lt;&lt;6 { <span class="comment">// top two bits of length must be clear</span>
+<a id="L407"></a><span class="ln">   407</span>					return len(msg), false
+<a id="L408"></a><span class="ln">   408</span>				}
+<a id="L409"></a><span class="ln">   409</span>				msg[off] = byte(i - begin)
+<a id="L410"></a><span class="ln">   410</span>				off++
+<a id="L411"></a><span class="ln">   411</span>				for j := begin; j &lt; i; j++ {
+<a id="L412"></a><span class="ln">   412</span>					msg[off] = s[j]
+<a id="L413"></a><span class="ln">   413</span>					off++
+<a id="L414"></a><span class="ln">   414</span>				}
+<a id="L415"></a><span class="ln">   415</span>				begin = i + 1
+<a id="L416"></a><span class="ln">   416</span>			}
+<a id="L417"></a><span class="ln">   417</span>		}
+<a id="L418"></a><span class="ln">   418</span>		msg[off] = 0
+<a id="L419"></a><span class="ln">   419</span>		off++
+<a id="L420"></a><span class="ln">   420</span>		return off, true
+<a id="L421"></a><span class="ln">   421</span>	}
+<a id="L422"></a><span class="ln">   422</span>	
+<a id="L423"></a><span class="ln">   423</span>	<span class="comment">// Unpack a domain name.</span>
+<a id="L424"></a><span class="ln">   424</span>	<span class="comment">// In addition to the simple sequences of counted strings above,</span>
+<a id="L425"></a><span class="ln">   425</span>	<span class="comment">// domain names are allowed to refer to strings elsewhere in the</span>
+<a id="L426"></a><span class="ln">   426</span>	<span class="comment">// packet, to avoid repeating common suffixes when returning</span>
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">// many entries in a single domain.  The pointers are marked</span>
+<a id="L428"></a><span class="ln">   428</span>	<span class="comment">// by a length byte with the top two bits set.  Ignoring those</span>
+<a id="L429"></a><span class="ln">   429</span>	<span class="comment">// two bits, that byte and the next give a 14 bit offset from msg[0]</span>
+<a id="L430"></a><span class="ln">   430</span>	<span class="comment">// where we should pick up the trail.</span>
+<a id="L431"></a><span class="ln">   431</span>	<span class="comment">// Note that if we jump elsewhere in the packet,</span>
+<a id="L432"></a><span class="ln">   432</span>	<span class="comment">// we return off1 == the offset after the first pointer we found,</span>
+<a id="L433"></a><span class="ln">   433</span>	<span class="comment">// which is where the next record will start.</span>
+<a id="L434"></a><span class="ln">   434</span>	<span class="comment">// In theory, the pointers are only allowed to jump backward.</span>
+<a id="L435"></a><span class="ln">   435</span>	<span class="comment">// We let them jump anywhere and stop jumping after a while.</span>
+<a id="L436"></a><span class="ln">   436</span>	func unpackDomainName(msg []byte, off int) (s string, off1 int, ok bool) {
+<a id="L437"></a><span class="ln">   437</span>		s = &#34;&#34;
+<a id="L438"></a><span class="ln">   438</span>		ptr := 0 <span class="comment">// number of pointers followed</span>
+<a id="L439"></a><span class="ln">   439</span>	Loop:
+<a id="L440"></a><span class="ln">   440</span>		for {
+<a id="L441"></a><span class="ln">   441</span>			if off &gt;= len(msg) {
+<a id="L442"></a><span class="ln">   442</span>				return &#34;&#34;, len(msg), false
+<a id="L443"></a><span class="ln">   443</span>			}
+<a id="L444"></a><span class="ln">   444</span>			c := int(msg[off])
+<a id="L445"></a><span class="ln">   445</span>			off++
+<a id="L446"></a><span class="ln">   446</span>			switch c &amp; 0xC0 {
+<a id="L447"></a><span class="ln">   447</span>			case 0x00:
+<a id="L448"></a><span class="ln">   448</span>				if c == 0x00 {
+<a id="L449"></a><span class="ln">   449</span>					<span class="comment">// end of name</span>
+<a id="L450"></a><span class="ln">   450</span>					break Loop
+<a id="L451"></a><span class="ln">   451</span>				}
+<a id="L452"></a><span class="ln">   452</span>				<span class="comment">// literal string</span>
+<a id="L453"></a><span class="ln">   453</span>				if off+c &gt; len(msg) {
+<a id="L454"></a><span class="ln">   454</span>					return &#34;&#34;, len(msg), false
+<a id="L455"></a><span class="ln">   455</span>				}
+<a id="L456"></a><span class="ln">   456</span>				s += string(msg[off:off+c]) + &#34;.&#34;
+<a id="L457"></a><span class="ln">   457</span>				off += c
+<a id="L458"></a><span class="ln">   458</span>			case 0xC0:
+<a id="L459"></a><span class="ln">   459</span>				<span class="comment">// pointer to somewhere else in msg.</span>
+<a id="L460"></a><span class="ln">   460</span>				<span class="comment">// remember location after first ptr,</span>
+<a id="L461"></a><span class="ln">   461</span>				<span class="comment">// since that&#39;s how many bytes we consumed.</span>
+<a id="L462"></a><span class="ln">   462</span>				<span class="comment">// also, don&#39;t follow too many pointers --</span>
+<a id="L463"></a><span class="ln">   463</span>				<span class="comment">// maybe there&#39;s a loop.</span>
+<a id="L464"></a><span class="ln">   464</span>				if off &gt;= len(msg) {
+<a id="L465"></a><span class="ln">   465</span>					return &#34;&#34;, len(msg), false
+<a id="L466"></a><span class="ln">   466</span>				}
+<a id="L467"></a><span class="ln">   467</span>				c1 := msg[off]
+<a id="L468"></a><span class="ln">   468</span>				off++
+<a id="L469"></a><span class="ln">   469</span>				if ptr == 0 {
+<a id="L470"></a><span class="ln">   470</span>					off1 = off
+<a id="L471"></a><span class="ln">   471</span>				}
+<a id="L472"></a><span class="ln">   472</span>				if ptr++; ptr &gt; 10 {
+<a id="L473"></a><span class="ln">   473</span>					return &#34;&#34;, len(msg), false
+<a id="L474"></a><span class="ln">   474</span>				}
+<a id="L475"></a><span class="ln">   475</span>				off = (c^0xC0)&lt;&lt;8 | int(c1)
+<a id="L476"></a><span class="ln">   476</span>			default:
+<a id="L477"></a><span class="ln">   477</span>				<span class="comment">// 0x80 and 0x40 are reserved</span>
+<a id="L478"></a><span class="ln">   478</span>				return &#34;&#34;, len(msg), false
+<a id="L479"></a><span class="ln">   479</span>			}
+<a id="L480"></a><span class="ln">   480</span>		}
+<a id="L481"></a><span class="ln">   481</span>		if ptr == 0 {
+<a id="L482"></a><span class="ln">   482</span>			off1 = off
+<a id="L483"></a><span class="ln">   483</span>		}
+<a id="L484"></a><span class="ln">   484</span>		return s, off1, true
+<a id="L485"></a><span class="ln">   485</span>	}
+<a id="L486"></a><span class="ln">   486</span>	
+<a id="L487"></a><span class="ln">   487</span>	<span class="comment">// packStruct packs a structure into msg at specified offset off, and</span>
+<a id="L488"></a><span class="ln">   488</span>	<span class="comment">// returns off1 such that msg[off:off1] is the encoded data.</span>
+<a id="L489"></a><span class="ln">   489</span>	func packStruct(any dnsStruct, msg []byte, off int) (off1 int, ok bool) {
+<a id="L490"></a><span class="ln">   490</span>		ok = any.Walk(func(field interface{}, name, tag string) bool {
+<a id="L491"></a><span class="ln">   491</span>			switch fv := field.(type) {
+<a id="L492"></a><span class="ln">   492</span>			default:
+<a id="L493"></a><span class="ln">   493</span>				println(&#34;net: dns: unknown packing type&#34;)
+<a id="L494"></a><span class="ln">   494</span>				return false
+<a id="L495"></a><span class="ln">   495</span>			case *uint16:
+<a id="L496"></a><span class="ln">   496</span>				i := *fv
+<a id="L497"></a><span class="ln">   497</span>				if off+2 &gt; len(msg) {
+<a id="L498"></a><span class="ln">   498</span>					return false
+<a id="L499"></a><span class="ln">   499</span>				}
+<a id="L500"></a><span class="ln">   500</span>				msg[off] = byte(i &gt;&gt; 8)
+<a id="L501"></a><span class="ln">   501</span>				msg[off+1] = byte(i)
+<a id="L502"></a><span class="ln">   502</span>				off += 2
+<a id="L503"></a><span class="ln">   503</span>			case *uint32:
+<a id="L504"></a><span class="ln">   504</span>				i := *fv
+<a id="L505"></a><span class="ln">   505</span>				msg[off] = byte(i &gt;&gt; 24)
+<a id="L506"></a><span class="ln">   506</span>				msg[off+1] = byte(i &gt;&gt; 16)
+<a id="L507"></a><span class="ln">   507</span>				msg[off+2] = byte(i &gt;&gt; 8)
+<a id="L508"></a><span class="ln">   508</span>				msg[off+3] = byte(i)
+<a id="L509"></a><span class="ln">   509</span>				off += 4
+<a id="L510"></a><span class="ln">   510</span>			case []byte:
+<a id="L511"></a><span class="ln">   511</span>				n := len(fv)
+<a id="L512"></a><span class="ln">   512</span>				if off+n &gt; len(msg) {
+<a id="L513"></a><span class="ln">   513</span>					return false
+<a id="L514"></a><span class="ln">   514</span>				}
+<a id="L515"></a><span class="ln">   515</span>				copy(msg[off:off+n], fv)
+<a id="L516"></a><span class="ln">   516</span>				off += n
+<a id="L517"></a><span class="ln">   517</span>			case *string:
+<a id="L518"></a><span class="ln">   518</span>				s := *fv
+<a id="L519"></a><span class="ln">   519</span>				switch tag {
+<a id="L520"></a><span class="ln">   520</span>				default:
+<a id="L521"></a><span class="ln">   521</span>					println(&#34;net: dns: unknown string tag&#34;, tag)
+<a id="L522"></a><span class="ln">   522</span>					return false
+<a id="L523"></a><span class="ln">   523</span>				case &#34;domain&#34;:
+<a id="L524"></a><span class="ln">   524</span>					off, ok = packDomainName(s, msg, off)
+<a id="L525"></a><span class="ln">   525</span>					if !ok {
+<a id="L526"></a><span class="ln">   526</span>						return false
+<a id="L527"></a><span class="ln">   527</span>					}
+<a id="L528"></a><span class="ln">   528</span>				case &#34;&#34;:
+<a id="L529"></a><span class="ln">   529</span>					<span class="comment">// Counted string: 1 byte length.</span>
+<a id="L530"></a><span class="ln">   530</span>					if len(s) &gt; 255 || off+1+len(s) &gt; len(msg) {
+<a id="L531"></a><span class="ln">   531</span>						return false
+<a id="L532"></a><span class="ln">   532</span>					}
+<a id="L533"></a><span class="ln">   533</span>					msg[off] = byte(len(s))
+<a id="L534"></a><span class="ln">   534</span>					off++
+<a id="L535"></a><span class="ln">   535</span>					off += copy(msg[off:], s)
+<a id="L536"></a><span class="ln">   536</span>				}
+<a id="L537"></a><span class="ln">   537</span>			}
+<a id="L538"></a><span class="ln">   538</span>			return true
+<a id="L539"></a><span class="ln">   539</span>		})
+<a id="L540"></a><span class="ln">   540</span>		if !ok {
+<a id="L541"></a><span class="ln">   541</span>			return len(msg), false
+<a id="L542"></a><span class="ln">   542</span>		}
+<a id="L543"></a><span class="ln">   543</span>		return off, true
+<a id="L544"></a><span class="ln">   544</span>	}
+<a id="L545"></a><span class="ln">   545</span>	
+<a id="L546"></a><span class="ln">   546</span>	<span class="comment">// unpackStruct decodes msg[off:] into the given structure, and</span>
+<a id="L547"></a><span class="ln">   547</span>	<span class="comment">// returns off1 such that msg[off:off1] is the encoded data.</span>
+<a id="L548"></a><span class="ln">   548</span>	func unpackStruct(any dnsStruct, msg []byte, off int) (off1 int, ok bool) {
+<a id="L549"></a><span class="ln">   549</span>		ok = any.Walk(func(field interface{}, name, tag string) bool {
+<a id="L550"></a><span class="ln">   550</span>			switch fv := field.(type) {
+<a id="L551"></a><span class="ln">   551</span>			default:
+<a id="L552"></a><span class="ln">   552</span>				println(&#34;net: dns: unknown packing type&#34;)
+<a id="L553"></a><span class="ln">   553</span>				return false
+<a id="L554"></a><span class="ln">   554</span>			case *uint16:
+<a id="L555"></a><span class="ln">   555</span>				if off+2 &gt; len(msg) {
+<a id="L556"></a><span class="ln">   556</span>					return false
+<a id="L557"></a><span class="ln">   557</span>				}
+<a id="L558"></a><span class="ln">   558</span>				*fv = uint16(msg[off])&lt;&lt;8 | uint16(msg[off+1])
+<a id="L559"></a><span class="ln">   559</span>				off += 2
+<a id="L560"></a><span class="ln">   560</span>			case *uint32:
+<a id="L561"></a><span class="ln">   561</span>				if off+4 &gt; len(msg) {
+<a id="L562"></a><span class="ln">   562</span>					return false
+<a id="L563"></a><span class="ln">   563</span>				}
+<a id="L564"></a><span class="ln">   564</span>				*fv = uint32(msg[off])&lt;&lt;24 | uint32(msg[off+1])&lt;&lt;16 |
+<a id="L565"></a><span class="ln">   565</span>					uint32(msg[off+2])&lt;&lt;8 | uint32(msg[off+3])
+<a id="L566"></a><span class="ln">   566</span>				off += 4
+<a id="L567"></a><span class="ln">   567</span>			case []byte:
+<a id="L568"></a><span class="ln">   568</span>				n := len(fv)
+<a id="L569"></a><span class="ln">   569</span>				if off+n &gt; len(msg) {
+<a id="L570"></a><span class="ln">   570</span>					return false
+<a id="L571"></a><span class="ln">   571</span>				}
+<a id="L572"></a><span class="ln">   572</span>				copy(fv, msg[off:off+n])
+<a id="L573"></a><span class="ln">   573</span>				off += n
+<a id="L574"></a><span class="ln">   574</span>			case *string:
+<a id="L575"></a><span class="ln">   575</span>				var s string
+<a id="L576"></a><span class="ln">   576</span>				switch tag {
+<a id="L577"></a><span class="ln">   577</span>				default:
+<a id="L578"></a><span class="ln">   578</span>					println(&#34;net: dns: unknown string tag&#34;, tag)
+<a id="L579"></a><span class="ln">   579</span>					return false
+<a id="L580"></a><span class="ln">   580</span>				case &#34;domain&#34;:
+<a id="L581"></a><span class="ln">   581</span>					s, off, ok = unpackDomainName(msg, off)
+<a id="L582"></a><span class="ln">   582</span>					if !ok {
+<a id="L583"></a><span class="ln">   583</span>						return false
+<a id="L584"></a><span class="ln">   584</span>					}
+<a id="L585"></a><span class="ln">   585</span>				case &#34;&#34;:
+<a id="L586"></a><span class="ln">   586</span>					if off &gt;= len(msg) || off+1+int(msg[off]) &gt; len(msg) {
+<a id="L587"></a><span class="ln">   587</span>						return false
+<a id="L588"></a><span class="ln">   588</span>					}
+<a id="L589"></a><span class="ln">   589</span>					n := int(msg[off])
+<a id="L590"></a><span class="ln">   590</span>					off++
+<a id="L591"></a><span class="ln">   591</span>					b := make([]byte, n)
+<a id="L592"></a><span class="ln">   592</span>					for i := 0; i &lt; n; i++ {
+<a id="L593"></a><span class="ln">   593</span>						b[i] = msg[off+i]
+<a id="L594"></a><span class="ln">   594</span>					}
+<a id="L595"></a><span class="ln">   595</span>					off += n
+<a id="L596"></a><span class="ln">   596</span>					s = string(b)
+<a id="L597"></a><span class="ln">   597</span>				}
+<a id="L598"></a><span class="ln">   598</span>				*fv = s
+<a id="L599"></a><span class="ln">   599</span>			}
+<a id="L600"></a><span class="ln">   600</span>			return true
+<a id="L601"></a><span class="ln">   601</span>		})
+<a id="L602"></a><span class="ln">   602</span>		if !ok {
+<a id="L603"></a><span class="ln">   603</span>			return len(msg), false
+<a id="L604"></a><span class="ln">   604</span>		}
+<a id="L605"></a><span class="ln">   605</span>		return off, true
+<a id="L606"></a><span class="ln">   606</span>	}
+<a id="L607"></a><span class="ln">   607</span>	
+<a id="L608"></a><span class="ln">   608</span>	<span class="comment">// Generic struct printer. Prints fields with tag &#34;ipv4&#34; or &#34;ipv6&#34;</span>
+<a id="L609"></a><span class="ln">   609</span>	<span class="comment">// as IP addresses.</span>
+<a id="L610"></a><span class="ln">   610</span>	func printStruct(any dnsStruct) string {
+<a id="L611"></a><span class="ln">   611</span>		s := &#34;{&#34;
+<a id="L612"></a><span class="ln">   612</span>		i := 0
+<a id="L613"></a><span class="ln">   613</span>		any.Walk(func(val interface{}, name, tag string) bool {
+<a id="L614"></a><span class="ln">   614</span>			i++
+<a id="L615"></a><span class="ln">   615</span>			if i &gt; 1 {
+<a id="L616"></a><span class="ln">   616</span>				s += &#34;, &#34;
+<a id="L617"></a><span class="ln">   617</span>			}
+<a id="L618"></a><span class="ln">   618</span>			s += name + &#34;=&#34;
+<a id="L619"></a><span class="ln">   619</span>			switch tag {
+<a id="L620"></a><span class="ln">   620</span>			case &#34;ipv4&#34;:
+<a id="L621"></a><span class="ln">   621</span>				i := val.(uint32)
+<a id="L622"></a><span class="ln">   622</span>				s += IPv4(byte(i&gt;&gt;24), byte(i&gt;&gt;16), byte(i&gt;&gt;8), byte(i)).String()
+<a id="L623"></a><span class="ln">   623</span>			case &#34;ipv6&#34;:
+<a id="L624"></a><span class="ln">   624</span>				i := val.([]byte)
+<a id="L625"></a><span class="ln">   625</span>				s += IP(i).String()
+<a id="L626"></a><span class="ln">   626</span>			default:
+<a id="L627"></a><span class="ln">   627</span>				var i int64
+<a id="L628"></a><span class="ln">   628</span>				switch v := val.(type) {
+<a id="L629"></a><span class="ln">   629</span>				default:
+<a id="L630"></a><span class="ln">   630</span>					<span class="comment">// can&#39;t really happen.</span>
+<a id="L631"></a><span class="ln">   631</span>					s += &#34;&lt;unknown type&gt;&#34;
+<a id="L632"></a><span class="ln">   632</span>					return true
+<a id="L633"></a><span class="ln">   633</span>				case *string:
+<a id="L634"></a><span class="ln">   634</span>					s += *v
+<a id="L635"></a><span class="ln">   635</span>					return true
+<a id="L636"></a><span class="ln">   636</span>				case []byte:
+<a id="L637"></a><span class="ln">   637</span>					s += string(v)
+<a id="L638"></a><span class="ln">   638</span>					return true
+<a id="L639"></a><span class="ln">   639</span>				case *bool:
+<a id="L640"></a><span class="ln">   640</span>					if *v {
+<a id="L641"></a><span class="ln">   641</span>						s += &#34;true&#34;
+<a id="L642"></a><span class="ln">   642</span>					} else {
+<a id="L643"></a><span class="ln">   643</span>						s += &#34;false&#34;
+<a id="L644"></a><span class="ln">   644</span>					}
+<a id="L645"></a><span class="ln">   645</span>					return true
+<a id="L646"></a><span class="ln">   646</span>				case *int:
+<a id="L647"></a><span class="ln">   647</span>					i = int64(*v)
+<a id="L648"></a><span class="ln">   648</span>				case *uint:
+<a id="L649"></a><span class="ln">   649</span>					i = int64(*v)
+<a id="L650"></a><span class="ln">   650</span>				case *uint8:
+<a id="L651"></a><span class="ln">   651</span>					i = int64(*v)
+<a id="L652"></a><span class="ln">   652</span>				case *uint16:
+<a id="L653"></a><span class="ln">   653</span>					i = int64(*v)
+<a id="L654"></a><span class="ln">   654</span>				case *uint32:
+<a id="L655"></a><span class="ln">   655</span>					i = int64(*v)
+<a id="L656"></a><span class="ln">   656</span>				case *uint64:
+<a id="L657"></a><span class="ln">   657</span>					i = int64(*v)
+<a id="L658"></a><span class="ln">   658</span>				case *uintptr:
+<a id="L659"></a><span class="ln">   659</span>					i = int64(*v)
+<a id="L660"></a><span class="ln">   660</span>				}
+<a id="L661"></a><span class="ln">   661</span>				s += itoa(int(i))
+<a id="L662"></a><span class="ln">   662</span>			}
+<a id="L663"></a><span class="ln">   663</span>			return true
+<a id="L664"></a><span class="ln">   664</span>		})
+<a id="L665"></a><span class="ln">   665</span>		s += &#34;}&#34;
+<a id="L666"></a><span class="ln">   666</span>		return s
+<a id="L667"></a><span class="ln">   667</span>	}
+<a id="L668"></a><span class="ln">   668</span>	
+<a id="L669"></a><span class="ln">   669</span>	<span class="comment">// Resource record packer.</span>
+<a id="L670"></a><span class="ln">   670</span>	func packRR(rr dnsRR, msg []byte, off int) (off2 int, ok bool) {
+<a id="L671"></a><span class="ln">   671</span>		var off1 int
+<a id="L672"></a><span class="ln">   672</span>		<span class="comment">// pack twice, once to find end of header</span>
+<a id="L673"></a><span class="ln">   673</span>		<span class="comment">// and again to find end of packet.</span>
+<a id="L674"></a><span class="ln">   674</span>		<span class="comment">// a bit inefficient but this doesn&#39;t need to be fast.</span>
+<a id="L675"></a><span class="ln">   675</span>		<span class="comment">// off1 is end of header</span>
+<a id="L676"></a><span class="ln">   676</span>		<span class="comment">// off2 is end of rr</span>
+<a id="L677"></a><span class="ln">   677</span>		off1, ok = packStruct(rr.Header(), msg, off)
+<a id="L678"></a><span class="ln">   678</span>		off2, ok = packStruct(rr, msg, off)
+<a id="L679"></a><span class="ln">   679</span>		if !ok {
+<a id="L680"></a><span class="ln">   680</span>			return len(msg), false
+<a id="L681"></a><span class="ln">   681</span>		}
+<a id="L682"></a><span class="ln">   682</span>		<span class="comment">// pack a third time; redo header with correct data length</span>
+<a id="L683"></a><span class="ln">   683</span>		rr.Header().Rdlength = uint16(off2 - off1)
+<a id="L684"></a><span class="ln">   684</span>		packStruct(rr.Header(), msg, off)
+<a id="L685"></a><span class="ln">   685</span>		return off2, true
+<a id="L686"></a><span class="ln">   686</span>	}
+<a id="L687"></a><span class="ln">   687</span>	
+<a id="L688"></a><span class="ln">   688</span>	<span class="comment">// Resource record unpacker.</span>
+<a id="L689"></a><span class="ln">   689</span>	func unpackRR(msg []byte, off int) (rr dnsRR, off1 int, ok bool) {
+<a id="L690"></a><span class="ln">   690</span>		<span class="comment">// unpack just the header, to find the rr type and length</span>
+<a id="L691"></a><span class="ln">   691</span>		var h dnsRR_Header
+<a id="L692"></a><span class="ln">   692</span>		off0 := off
+<a id="L693"></a><span class="ln">   693</span>		if off, ok = unpackStruct(&amp;h, msg, off); !ok {
+<a id="L694"></a><span class="ln">   694</span>			return nil, len(msg), false
+<a id="L695"></a><span class="ln">   695</span>		}
+<a id="L696"></a><span class="ln">   696</span>		end := off + int(h.Rdlength)
+<a id="L697"></a><span class="ln">   697</span>	
+<a id="L698"></a><span class="ln">   698</span>		<span class="comment">// make an rr of that type and re-unpack.</span>
+<a id="L699"></a><span class="ln">   699</span>		<span class="comment">// again inefficient but doesn&#39;t need to be fast.</span>
+<a id="L700"></a><span class="ln">   700</span>		mk, known := rr_mk[int(h.Rrtype)]
+<a id="L701"></a><span class="ln">   701</span>		if !known {
+<a id="L702"></a><span class="ln">   702</span>			return &amp;h, end, true
+<a id="L703"></a><span class="ln">   703</span>		}
+<a id="L704"></a><span class="ln">   704</span>		rr = mk()
+<a id="L705"></a><span class="ln">   705</span>		off, ok = unpackStruct(rr, msg, off0)
+<a id="L706"></a><span class="ln">   706</span>		if off != end {
+<a id="L707"></a><span class="ln">   707</span>			return &amp;h, end, true
+<a id="L708"></a><span class="ln">   708</span>		}
+<a id="L709"></a><span class="ln">   709</span>		return rr, off, ok
+<a id="L710"></a><span class="ln">   710</span>	}
+<a id="L711"></a><span class="ln">   711</span>	
+<a id="L712"></a><span class="ln">   712</span>	<span class="comment">// Usable representation of a DNS packet.</span>
+<a id="L713"></a><span class="ln">   713</span>	
+<a id="L714"></a><span class="ln">   714</span>	<span class="comment">// A manually-unpacked version of (id, bits).</span>
+<a id="L715"></a><span class="ln">   715</span>	<span class="comment">// This is in its own struct for easy printing.</span>
+<a id="L716"></a><span class="ln">   716</span>	type dnsMsgHdr struct {
+<a id="L717"></a><span class="ln">   717</span>		id                  uint16
+<a id="L718"></a><span class="ln">   718</span>		response            bool
+<a id="L719"></a><span class="ln">   719</span>		opcode              int
+<a id="L720"></a><span class="ln">   720</span>		authoritative       bool
+<a id="L721"></a><span class="ln">   721</span>		truncated           bool
+<a id="L722"></a><span class="ln">   722</span>		recursion_desired   bool
+<a id="L723"></a><span class="ln">   723</span>		recursion_available bool
+<a id="L724"></a><span class="ln">   724</span>		rcode               int
+<a id="L725"></a><span class="ln">   725</span>	}
+<a id="L726"></a><span class="ln">   726</span>	
+<a id="L727"></a><span class="ln">   727</span>	func (h *dnsMsgHdr) Walk(f func(v interface{}, name, tag string) bool) bool {
+<a id="L728"></a><span class="ln">   728</span>		return f(&amp;h.id, &#34;id&#34;, &#34;&#34;) &amp;&amp;
+<a id="L729"></a><span class="ln">   729</span>			f(&amp;h.response, &#34;response&#34;, &#34;&#34;) &amp;&amp;
+<a id="L730"></a><span class="ln">   730</span>			f(&amp;h.opcode, &#34;opcode&#34;, &#34;&#34;) &amp;&amp;
+<a id="L731"></a><span class="ln">   731</span>			f(&amp;h.authoritative, &#34;authoritative&#34;, &#34;&#34;) &amp;&amp;
+<a id="L732"></a><span class="ln">   732</span>			f(&amp;h.truncated, &#34;truncated&#34;, &#34;&#34;) &amp;&amp;
+<a id="L733"></a><span class="ln">   733</span>			f(&amp;h.recursion_desired, &#34;recursion_desired&#34;, &#34;&#34;) &amp;&amp;
+<a id="L734"></a><span class="ln">   734</span>			f(&amp;h.recursion_available, &#34;recursion_available&#34;, &#34;&#34;) &amp;&amp;
+<a id="L735"></a><span class="ln">   735</span>			f(&amp;h.rcode, &#34;rcode&#34;, &#34;&#34;)
+<a id="L736"></a><span class="ln">   736</span>	}
+<a id="L737"></a><span class="ln">   737</span>	
+<a id="L738"></a><span class="ln">   738</span>	type dnsMsg struct {
+<a id="L739"></a><span class="ln">   739</span>		dnsMsgHdr
+<a id="L740"></a><span class="ln">   740</span>		question []dnsQuestion
+<a id="L741"></a><span class="ln">   741</span>		answer   []dnsRR
+<a id="L742"></a><span class="ln">   742</span>		ns       []dnsRR
+<a id="L743"></a><span class="ln">   743</span>		extra    []dnsRR
+<a id="L744"></a><span class="ln">   744</span>	}
+<a id="L745"></a><span class="ln">   745</span>	
+<a id="L746"></a><span class="ln">   746</span>	func (dns *dnsMsg) Pack() (msg []byte, ok bool) {
+<a id="L747"></a><span class="ln">   747</span>		var dh dnsHeader
+<a id="L748"></a><span class="ln">   748</span>	
+<a id="L749"></a><span class="ln">   749</span>		<span class="comment">// Convert convenient dnsMsg into wire-like dnsHeader.</span>
+<a id="L750"></a><span class="ln">   750</span>		dh.Id = dns.id
+<a id="L751"></a><span class="ln">   751</span>		dh.Bits = uint16(dns.opcode)&lt;&lt;11 | uint16(dns.rcode)
+<a id="L752"></a><span class="ln">   752</span>		if dns.recursion_available {
+<a id="L753"></a><span class="ln">   753</span>			dh.Bits |= _RA
+<a id="L754"></a><span class="ln">   754</span>		}
+<a id="L755"></a><span class="ln">   755</span>		if dns.recursion_desired {
+<a id="L756"></a><span class="ln">   756</span>			dh.Bits |= _RD
+<a id="L757"></a><span class="ln">   757</span>		}
+<a id="L758"></a><span class="ln">   758</span>		if dns.truncated {
+<a id="L759"></a><span class="ln">   759</span>			dh.Bits |= _TC
+<a id="L760"></a><span class="ln">   760</span>		}
+<a id="L761"></a><span class="ln">   761</span>		if dns.authoritative {
+<a id="L762"></a><span class="ln">   762</span>			dh.Bits |= _AA
+<a id="L763"></a><span class="ln">   763</span>		}
+<a id="L764"></a><span class="ln">   764</span>		if dns.response {
+<a id="L765"></a><span class="ln">   765</span>			dh.Bits |= _QR
+<a id="L766"></a><span class="ln">   766</span>		}
+<a id="L767"></a><span class="ln">   767</span>	
+<a id="L768"></a><span class="ln">   768</span>		<span class="comment">// Prepare variable sized arrays.</span>
+<a id="L769"></a><span class="ln">   769</span>		question := dns.question
+<a id="L770"></a><span class="ln">   770</span>		answer := dns.answer
+<a id="L771"></a><span class="ln">   771</span>		ns := dns.ns
+<a id="L772"></a><span class="ln">   772</span>		extra := dns.extra
+<a id="L773"></a><span class="ln">   773</span>	
+<a id="L774"></a><span class="ln">   774</span>		dh.Qdcount = uint16(len(question))
+<a id="L775"></a><span class="ln">   775</span>		dh.Ancount = uint16(len(answer))
+<a id="L776"></a><span class="ln">   776</span>		dh.Nscount = uint16(len(ns))
+<a id="L777"></a><span class="ln">   777</span>		dh.Arcount = uint16(len(extra))
+<a id="L778"></a><span class="ln">   778</span>	
+<a id="L779"></a><span class="ln">   779</span>		<span class="comment">// Could work harder to calculate message size,</span>
+<a id="L780"></a><span class="ln">   780</span>		<span class="comment">// but this is far more than we need and not</span>
+<a id="L781"></a><span class="ln">   781</span>		<span class="comment">// big enough to hurt the allocator.</span>
+<a id="L782"></a><span class="ln">   782</span>		msg = make([]byte, 2000)
+<a id="L783"></a><span class="ln">   783</span>	
+<a id="L784"></a><span class="ln">   784</span>		<span class="comment">// Pack it in: header and then the pieces.</span>
+<a id="L785"></a><span class="ln">   785</span>		off := 0
+<a id="L786"></a><span class="ln">   786</span>		off, ok = packStruct(&amp;dh, msg, off)
+<a id="L787"></a><span class="ln">   787</span>		for i := 0; i &lt; len(question); i++ {
+<a id="L788"></a><span class="ln">   788</span>			off, ok = packStruct(&amp;question[i], msg, off)
+<a id="L789"></a><span class="ln">   789</span>		}
+<a id="L790"></a><span class="ln">   790</span>		for i := 0; i &lt; len(answer); i++ {
+<a id="L791"></a><span class="ln">   791</span>			off, ok = packRR(answer[i], msg, off)
+<a id="L792"></a><span class="ln">   792</span>		}
+<a id="L793"></a><span class="ln">   793</span>		for i := 0; i &lt; len(ns); i++ {
+<a id="L794"></a><span class="ln">   794</span>			off, ok = packRR(ns[i], msg, off)
+<a id="L795"></a><span class="ln">   795</span>		}
+<a id="L796"></a><span class="ln">   796</span>		for i := 0; i &lt; len(extra); i++ {
+<a id="L797"></a><span class="ln">   797</span>			off, ok = packRR(extra[i], msg, off)
+<a id="L798"></a><span class="ln">   798</span>		}
+<a id="L799"></a><span class="ln">   799</span>		if !ok {
+<a id="L800"></a><span class="ln">   800</span>			return nil, false
+<a id="L801"></a><span class="ln">   801</span>		}
+<a id="L802"></a><span class="ln">   802</span>		return msg[0:off], true
+<a id="L803"></a><span class="ln">   803</span>	}
+<a id="L804"></a><span class="ln">   804</span>	
+<a id="L805"></a><span class="ln">   805</span>	func (dns *dnsMsg) Unpack(msg []byte) bool {
+<a id="L806"></a><span class="ln">   806</span>		<span class="comment">// Header.</span>
+<a id="L807"></a><span class="ln">   807</span>		var dh dnsHeader
+<a id="L808"></a><span class="ln">   808</span>		off := 0
+<a id="L809"></a><span class="ln">   809</span>		var ok bool
+<a id="L810"></a><span class="ln">   810</span>		if off, ok = unpackStruct(&amp;dh, msg, off); !ok {
+<a id="L811"></a><span class="ln">   811</span>			return false
+<a id="L812"></a><span class="ln">   812</span>		}
+<a id="L813"></a><span class="ln">   813</span>		dns.id = dh.Id
+<a id="L814"></a><span class="ln">   814</span>		dns.response = (dh.Bits &amp; _QR) != 0
+<a id="L815"></a><span class="ln">   815</span>		dns.opcode = int(dh.Bits&gt;&gt;11) &amp; 0xF
+<a id="L816"></a><span class="ln">   816</span>		dns.authoritative = (dh.Bits &amp; _AA) != 0
+<a id="L817"></a><span class="ln">   817</span>		dns.truncated = (dh.Bits &amp; _TC) != 0
+<a id="L818"></a><span class="ln">   818</span>		dns.recursion_desired = (dh.Bits &amp; _RD) != 0
+<a id="L819"></a><span class="ln">   819</span>		dns.recursion_available = (dh.Bits &amp; _RA) != 0
+<a id="L820"></a><span class="ln">   820</span>		dns.rcode = int(dh.Bits &amp; 0xF)
+<a id="L821"></a><span class="ln">   821</span>	
+<a id="L822"></a><span class="ln">   822</span>		<span class="comment">// Arrays.</span>
+<a id="L823"></a><span class="ln">   823</span>		dns.question = make([]dnsQuestion, dh.Qdcount)
+<a id="L824"></a><span class="ln">   824</span>		dns.answer = make([]dnsRR, 0, dh.Ancount)
+<a id="L825"></a><span class="ln">   825</span>		dns.ns = make([]dnsRR, 0, dh.Nscount)
+<a id="L826"></a><span class="ln">   826</span>		dns.extra = make([]dnsRR, 0, dh.Arcount)
+<a id="L827"></a><span class="ln">   827</span>	
+<a id="L828"></a><span class="ln">   828</span>		var rec dnsRR
+<a id="L829"></a><span class="ln">   829</span>	
+<a id="L830"></a><span class="ln">   830</span>		for i := 0; i &lt; len(dns.question); i++ {
+<a id="L831"></a><span class="ln">   831</span>			off, ok = unpackStruct(&amp;dns.question[i], msg, off)
+<a id="L832"></a><span class="ln">   832</span>		}
+<a id="L833"></a><span class="ln">   833</span>		for i := 0; i &lt; int(dh.Ancount); i++ {
+<a id="L834"></a><span class="ln">   834</span>			rec, off, ok = unpackRR(msg, off)
+<a id="L835"></a><span class="ln">   835</span>			if !ok {
+<a id="L836"></a><span class="ln">   836</span>				return false
+<a id="L837"></a><span class="ln">   837</span>			}
+<a id="L838"></a><span class="ln">   838</span>			dns.answer = append(dns.answer, rec)
+<a id="L839"></a><span class="ln">   839</span>		}
+<a id="L840"></a><span class="ln">   840</span>		for i := 0; i &lt; int(dh.Nscount); i++ {
+<a id="L841"></a><span class="ln">   841</span>			rec, off, ok = unpackRR(msg, off)
+<a id="L842"></a><span class="ln">   842</span>			if !ok {
+<a id="L843"></a><span class="ln">   843</span>				return false
+<a id="L844"></a><span class="ln">   844</span>			}
+<a id="L845"></a><span class="ln">   845</span>			dns.ns = append(dns.ns, rec)
+<a id="L846"></a><span class="ln">   846</span>		}
+<a id="L847"></a><span class="ln">   847</span>		for i := 0; i &lt; int(dh.Arcount); i++ {
+<a id="L848"></a><span class="ln">   848</span>			rec, off, ok = unpackRR(msg, off)
+<a id="L849"></a><span class="ln">   849</span>			if !ok {
+<a id="L850"></a><span class="ln">   850</span>				return false
+<a id="L851"></a><span class="ln">   851</span>			}
+<a id="L852"></a><span class="ln">   852</span>			dns.extra = append(dns.extra, rec)
+<a id="L853"></a><span class="ln">   853</span>		}
+<a id="L854"></a><span class="ln">   854</span>		<span class="comment">//	if off != len(msg) {</span>
+<a id="L855"></a><span class="ln">   855</span>		<span class="comment">//		println(&#34;extra bytes in dns packet&#34;, off, &#34;&lt;&#34;, len(msg));</span>
+<a id="L856"></a><span class="ln">   856</span>		<span class="comment">//	}</span>
+<a id="L857"></a><span class="ln">   857</span>		return true
+<a id="L858"></a><span class="ln">   858</span>	}
+<a id="L859"></a><span class="ln">   859</span>	
+<a id="L860"></a><span class="ln">   860</span>	func (dns *dnsMsg) String() string {
+<a id="L861"></a><span class="ln">   861</span>		s := &#34;DNS: &#34; + printStruct(&amp;dns.dnsMsgHdr) + &#34;\n&#34;
+<a id="L862"></a><span class="ln">   862</span>		if len(dns.question) &gt; 0 {
+<a id="L863"></a><span class="ln">   863</span>			s += &#34;-- Questions\n&#34;
+<a id="L864"></a><span class="ln">   864</span>			for i := 0; i &lt; len(dns.question); i++ {
+<a id="L865"></a><span class="ln">   865</span>				s += printStruct(&amp;dns.question[i]) + &#34;\n&#34;
+<a id="L866"></a><span class="ln">   866</span>			}
+<a id="L867"></a><span class="ln">   867</span>		}
+<a id="L868"></a><span class="ln">   868</span>		if len(dns.answer) &gt; 0 {
+<a id="L869"></a><span class="ln">   869</span>			s += &#34;-- Answers\n&#34;
+<a id="L870"></a><span class="ln">   870</span>			for i := 0; i &lt; len(dns.answer); i++ {
+<a id="L871"></a><span class="ln">   871</span>				s += printStruct(dns.answer[i]) + &#34;\n&#34;
+<a id="L872"></a><span class="ln">   872</span>			}
+<a id="L873"></a><span class="ln">   873</span>		}
+<a id="L874"></a><span class="ln">   874</span>		if len(dns.ns) &gt; 0 {
+<a id="L875"></a><span class="ln">   875</span>			s += &#34;-- Name servers\n&#34;
+<a id="L876"></a><span class="ln">   876</span>			for i := 0; i &lt; len(dns.ns); i++ {
+<a id="L877"></a><span class="ln">   877</span>				s += printStruct(dns.ns[i]) + &#34;\n&#34;
+<a id="L878"></a><span class="ln">   878</span>			}
+<a id="L879"></a><span class="ln">   879</span>		}
+<a id="L880"></a><span class="ln">   880</span>		if len(dns.extra) &gt; 0 {
+<a id="L881"></a><span class="ln">   881</span>			s += &#34;-- Extra\n&#34;
+<a id="L882"></a><span class="ln">   882</span>			for i := 0; i &lt; len(dns.extra); i++ {
+<a id="L883"></a><span class="ln">   883</span>				s += printStruct(dns.extra[i]) + &#34;\n&#34;
+<a id="L884"></a><span class="ln">   884</span>			}
+<a id="L885"></a><span class="ln">   885</span>		}
+<a id="L886"></a><span class="ln">   886</span>		return s
+<a id="L887"></a><span class="ln">   887</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,364 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>heap - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="../../doc/style.css">
+<script type="text/javascript" src="../../doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Package heap</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<!--
+	Copyright 2009 The Go Authors. All rights reserved.
+	Use of this source code is governed by a BSD-style
+	license that can be found in the LICENSE file.
+-->
+
+	
+		<div id="short-nav">
+			<dl>
+			<dd><code>import "container/heap"</code></dd>
+			</dl>
+			<dl>
+			<dd><a href="#overview" class="overviewLink">Overview</a></dd>
+			<dd><a href="#index">Index</a></dd>
+			
+				<dd><a href="#examples">Examples</a></dd>
+			
+			
+			</dl>
+		</div>
+		<!-- The package's Name is printed as title by the top-level template -->
+		<div id="overview" class="toggleVisible">
+			<div class="collapsed">
+				<h2 class="toggleButton" title="Click to show Overview section">Overview ?</h2>
+			</div>
+			<div class="expanded">
+				<h2 class="toggleButton" title="Click to hide Overview section">Overview ?</h2>
+				<p>
+Package heap provides heap operations for any type that implements
+heap.Interface. A heap is a tree with the property that each node is the
+highest-valued node in its subtree.
+</p>
+<p>
+A heap is a common way to implement a priority queue. To build a priority
+queue, implement the Heap interface with the (negative) priority as the
+ordering for the Less method, so Push adds items while Pop removes the
+highest-priority item from the queue. The Examples include such an
+implementation; the file example_test.go has the complete source.
+</p>
+
+			</div>
+		</div>
+		<div id="example_" class="toggle">
+	<div class="collapsed">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+	</div>
+	<div class="expanded">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+		<p>This example pushes 10 items into a PriorityQueue and takes them out in
+order of priority.
+</p>
+		<p>Code:</p>
+		<pre class="code"><span class="comment">// This example demonstrates a priority queue built using the heap interface.</span>
+package heap_test
+
+import (
+    &#34;container/heap&#34;
+    &#34;fmt&#34;
+)
+
+<span class="comment">// An Item is something we manage in a priority queue.</span>
+type Item struct {
+    value    string <span class="comment">// The value of the item; arbitrary.</span>
+    priority int    <span class="comment">// The priority of the item in the queue.</span>
+    <span class="comment">// The index is needed by changePriority and is maintained by the heap.Interface methods.</span>
+    index int <span class="comment">// The index of the item in the heap.</span>
+}
+
+<span class="comment">// A PriorityQueue implements heap.Interface and holds Items.</span>
+type PriorityQueue []*Item
+
+func (pq PriorityQueue) Len() int { return len(pq) }
+
+func (pq PriorityQueue) Less(i, j int) bool {
+    <span class="comment">// We want Pop to give us the highest, not lowest, priority so we use greater than here.</span>
+    return pq[i].priority &gt; pq[j].priority
+}
+
+func (pq PriorityQueue) Swap(i, j int) {
+    pq[i], pq[j] = pq[j], pq[i]
+    pq[i].index = i
+    pq[j].index = j
+}
+
+func (pq *PriorityQueue) Push(x interface{}) {
+    <span class="comment">// Push and Pop use pointer receivers because they modify the slice&#39;s length,</span>
+    <span class="comment">// not just its contents.</span>
+    <span class="comment">// To simplify indexing expressions in these methods, we save a copy of the</span>
+    <span class="comment">// slice object. We could instead write (*pq)[i].</span>
+    a := *pq
+    n := len(a)
+    a = a[0 : n+1]
+    item := x.(*Item)
+    item.index = n
+    a[n] = item
+    *pq = a
+}
+
+func (pq *PriorityQueue) Pop() interface{} {
+    a := *pq
+    n := len(a)
+    item := a[n-1]
+    item.index = -1 <span class="comment">// for safety</span>
+    *pq = a[0 : n-1]
+    return item
+}
+
+<span class="comment">// update is not used by the example but shows how to take the top item from</span>
+<span class="comment">// the queue, update its priority and value, and put it back.</span>
+func (pq *PriorityQueue) update(value string, priority int) {
+    item := heap.Pop(pq).(*Item)
+    item.value = value
+    item.priority = priority
+    heap.Push(pq, item)
+}
+
+<span class="comment">// changePriority is not used by the example but shows how to change the</span>
+<span class="comment">// priority of an arbitrary item.</span>
+func (pq *PriorityQueue) changePriority(item *Item, priority int) {
+    heap.Remove(pq, item.index)
+    item.priority = priority
+    heap.Push(pq, item)
+}
+
+<span class="comment">// This example pushes 10 items into a PriorityQueue and takes them out in</span>
+<span class="comment">// order of priority.</span>
+func Example() {
+    const nItem = 10
+    <span class="comment">// Random priorities for the items (a permutation of 0..9, times 11)).</span>
+    priorities := [nItem]int{
+        77, 22, 44, 55, 11, 88, 33, 99, 00, 66,
+    }
+    values := [nItem]string{
+        &#34;zero&#34;, &#34;one&#34;, &#34;two&#34;, &#34;three&#34;, &#34;four&#34;, &#34;five&#34;, &#34;six&#34;, &#34;seven&#34;, &#34;eight&#34;, &#34;nine&#34;,
+    }
+    <span class="comment">// Create a priority queue and put some items in it.</span>
+    pq := make(PriorityQueue, 0, nItem)
+    for i := 0; i &lt; cap(pq); i++ {
+        item := &amp;Item{
+            value:    values[i],
+            priority: priorities[i],
+        }
+        heap.Push(&amp;pq, item)
+    }
+    <span class="comment">// Take the items out; should arrive in decreasing priority order.</span>
+    <span class="comment">// For example, the highest priority (99) is the seventh item, so output starts with 99:&#34;seven&#34;.</span>
+    for i := 0; i &lt; nItem; i++ {
+        item := heap.Pop(&amp;pq).(*Item)
+        fmt.Printf(&#34;%.2d:%s &#34;, item.priority, item.value)
+    }
+    <span class="comment">// Output:</span>
+    <span class="comment">// 99:seven 88:five 77:zero 66:nine 55:three 44:two 33:six 22:one 11:four 00:eight</span>
+}
+</pre>
+		
+	</div>
+</div>
+
+	
+		<h2 id="index">Index</h2>
+		<!-- Table of contents for API; must be named manual-nav to turn off auto nav. -->
+		<div id="manual-nav">
+			<dl>
+			
+			
+			
+				
+				<dd><a href="#Init">func Init(h Interface)</a></dd>
+			
+				
+				<dd><a href="#Pop">func Pop(h Interface) interface{}</a></dd>
+			
+				
+				<dd><a href="#Push">func Push(h Interface, x interface{})</a></dd>
+			
+				
+				<dd><a href="#Remove">func Remove(h Interface, i int) interface{}</a></dd>
+			
+			
+				
+				<dd><a href="#Interface">type Interface</a></dd>
+				
+				
+			
+			
+		</dl>
+
+		
+			<h4 id="examples">Examples</h4>
+			<dl>
+			
+			<dd><a class="exampleLink" href="#example_">Package</a></dd>
+			
+			</dl>
+		
+
+		
+			<h4>Package files</h4>
+			<p>
+			<span style="font-size:90%">
+			
+				<a href="src/pkg/container/heap/heap.htm">heap.go</a>
+			
+			</span>
+			</p>
+		
+	
+		
+		
+		
+			
+			
+			<h2 id="Init">func <a href="src/pkg/container/heap/heap.htm#L29">Init</a></h2>
+			<pre>func Init(h Interface)</pre>
+			<p>
+A heap must be initialized before any of the heap operations
+can be used. Init is idempotent with respect to the heap invariants
+and may be called whenever the heap invariants may have been invalidated.
+Its complexity is O(n) where n = h.Len().
+</p>
+
+			
+		
+			
+			
+			<h2 id="Pop">func <a href="src/pkg/container/heap/heap.htm#L49">Pop</a></h2>
+			<pre>func Pop(h Interface) interface{}</pre>
+			<p>
+Pop removes the minimum element (according to Less) from the heap
+and returns it. The complexity is O(log(n)) where n = h.Len().
+Same as Remove(h, 0).
+</p>
+
+			
+		
+			
+			
+			<h2 id="Push">func <a href="src/pkg/container/heap/heap.htm#L40">Push</a></h2>
+			<pre>func Push(h Interface, x interface{})</pre>
+			<p>
+Push pushes the element x onto the heap. The complexity is
+O(log(n)) where n = h.Len().
+</p>
+
+			
+		
+			
+			
+			<h2 id="Remove">func <a href="src/pkg/container/heap/heap.htm#L59">Remove</a></h2>
+			<pre>func Remove(h Interface, i int) interface{}</pre>
+			<p>
+Remove removes the element at index i from the heap.
+The complexity is O(log(n)) where n = h.Len().
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="Interface">type <a href="src/pkg/container/heap/heap.htm#L18">Interface</a></h2>
+			<pre>type Interface interface {
+    sort.Interface
+    Push(x interface{}) <span class="comment">// add x as element Len()</span>
+    Pop() interface{}   <span class="comment">// remove and return element Len() - 1.</span>
+}</pre>
+			<p>
+Any type that implements heap.Interface may be used as a
+min-heap with the following invariants (established after
+Init has been called or if the data is empty or sorted):
+</p>
+<pre>!h.Less(j, i) for 0 &lt;= i &lt; h.Len() and j = 2*i+1 or 2*i+2 and j &lt; h.Len()
+</pre>
+<p>
+Note that Push and Pop in this interface are for package heap&#39;s
+implementation to call.  To add and remove things from the heap,
+use heap.Push and heap.Pop.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+		</div>
+	
+
+	
+
+
+
+
+
+
+
+
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>

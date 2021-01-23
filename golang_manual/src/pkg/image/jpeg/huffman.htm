@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/image/jpeg/huffman.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/image/jpeg/huffman.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package jpeg
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;io&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// Each code is at most 16 bits long.</span>
+<a id="L10"></a><span class="ln">    10</span>	const maxCodeLength = 16
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// Each decoded value is a uint8, so there are at most 256 such values.</span>
+<a id="L13"></a><span class="ln">    13</span>	const maxNumValues = 256
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// Bit stream for the Huffman decoder.</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// The n least significant bits of a form the unread bits, to be read in MSB to LSB order.</span>
+<a id="L17"></a><span class="ln">    17</span>	type bits struct {
+<a id="L18"></a><span class="ln">    18</span>		a int <span class="comment">// accumulator.</span>
+<a id="L19"></a><span class="ln">    19</span>		n int <span class="comment">// the number of unread bits in a.</span>
+<a id="L20"></a><span class="ln">    20</span>		m int <span class="comment">// mask. m==1&lt;&lt;(n-1) when n&gt;0, with m==0 when n==0.</span>
+<a id="L21"></a><span class="ln">    21</span>	}
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// Huffman table decoder, specified in section C.</span>
+<a id="L24"></a><span class="ln">    24</span>	type huffman struct {
+<a id="L25"></a><span class="ln">    25</span>		l        [maxCodeLength]int
+<a id="L26"></a><span class="ln">    26</span>		length   int                 <span class="comment">// sum of l[i].</span>
+<a id="L27"></a><span class="ln">    27</span>		val      [maxNumValues]uint8 <span class="comment">// the decoded values, as sorted by their encoding.</span>
+<a id="L28"></a><span class="ln">    28</span>		size     [maxNumValues]int   <span class="comment">// size[i] is the number of bits to encode val[i].</span>
+<a id="L29"></a><span class="ln">    29</span>		code     [maxNumValues]int   <span class="comment">// code[i] is the encoding of val[i].</span>
+<a id="L30"></a><span class="ln">    30</span>		minCode  [maxCodeLength]int  <span class="comment">// min codes of length i, or -1 if no codes of that length.</span>
+<a id="L31"></a><span class="ln">    31</span>		maxCode  [maxCodeLength]int  <span class="comment">// max codes of length i, or -1 if no codes of that length.</span>
+<a id="L32"></a><span class="ln">    32</span>		valIndex [maxCodeLength]int  <span class="comment">// index into val of minCode[i].</span>
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// Reads bytes from the io.Reader to ensure that bits.n is at least n.</span>
+<a id="L36"></a><span class="ln">    36</span>	func (d *decoder) ensureNBits(n int) error {
+<a id="L37"></a><span class="ln">    37</span>		for d.b.n &lt; n {
+<a id="L38"></a><span class="ln">    38</span>			c, err := d.r.ReadByte()
+<a id="L39"></a><span class="ln">    39</span>			if err != nil {
+<a id="L40"></a><span class="ln">    40</span>				return err
+<a id="L41"></a><span class="ln">    41</span>			}
+<a id="L42"></a><span class="ln">    42</span>			d.b.a = d.b.a&lt;&lt;8 | int(c)
+<a id="L43"></a><span class="ln">    43</span>			d.b.n += 8
+<a id="L44"></a><span class="ln">    44</span>			if d.b.m == 0 {
+<a id="L45"></a><span class="ln">    45</span>				d.b.m = 1 &lt;&lt; 7
+<a id="L46"></a><span class="ln">    46</span>			} else {
+<a id="L47"></a><span class="ln">    47</span>				d.b.m &lt;&lt;= 8
+<a id="L48"></a><span class="ln">    48</span>			}
+<a id="L49"></a><span class="ln">    49</span>			<span class="comment">// Byte stuffing, specified in section F.1.2.3.</span>
+<a id="L50"></a><span class="ln">    50</span>			if c == 0xff {
+<a id="L51"></a><span class="ln">    51</span>				c, err = d.r.ReadByte()
+<a id="L52"></a><span class="ln">    52</span>				if err != nil {
+<a id="L53"></a><span class="ln">    53</span>					return err
+<a id="L54"></a><span class="ln">    54</span>				}
+<a id="L55"></a><span class="ln">    55</span>				if c != 0x00 {
+<a id="L56"></a><span class="ln">    56</span>					return FormatError(&#34;missing 0xff00 sequence&#34;)
+<a id="L57"></a><span class="ln">    57</span>				}
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		return nil
+<a id="L61"></a><span class="ln">    61</span>	}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// The composition of RECEIVE and EXTEND, specified in section F.2.2.1.</span>
+<a id="L64"></a><span class="ln">    64</span>	func (d *decoder) receiveExtend(t uint8) (int, error) {
+<a id="L65"></a><span class="ln">    65</span>		err := d.ensureNBits(int(t))
+<a id="L66"></a><span class="ln">    66</span>		if err != nil {
+<a id="L67"></a><span class="ln">    67</span>			return 0, err
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		d.b.n -= int(t)
+<a id="L70"></a><span class="ln">    70</span>		d.b.m &gt;&gt;= t
+<a id="L71"></a><span class="ln">    71</span>		s := 1 &lt;&lt; t
+<a id="L72"></a><span class="ln">    72</span>		x := (d.b.a &gt;&gt; uint8(d.b.n)) &amp; (s - 1)
+<a id="L73"></a><span class="ln">    73</span>		if x &lt; s&gt;&gt;1 {
+<a id="L74"></a><span class="ln">    74</span>			x += ((-1) &lt;&lt; t) + 1
+<a id="L75"></a><span class="ln">    75</span>		}
+<a id="L76"></a><span class="ln">    76</span>		return x, nil
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// Processes a Define Huffman Table marker, and initializes a huffman struct from its contents.</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// Specified in section B.2.4.2.</span>
+<a id="L81"></a><span class="ln">    81</span>	func (d *decoder) processDHT(n int) error {
+<a id="L82"></a><span class="ln">    82</span>		for n &gt; 0 {
+<a id="L83"></a><span class="ln">    83</span>			if n &lt; 17 {
+<a id="L84"></a><span class="ln">    84</span>				return FormatError(&#34;DHT has wrong length&#34;)
+<a id="L85"></a><span class="ln">    85</span>			}
+<a id="L86"></a><span class="ln">    86</span>			_, err := io.ReadFull(d.r, d.tmp[0:17])
+<a id="L87"></a><span class="ln">    87</span>			if err != nil {
+<a id="L88"></a><span class="ln">    88</span>				return err
+<a id="L89"></a><span class="ln">    89</span>			}
+<a id="L90"></a><span class="ln">    90</span>			tc := d.tmp[0] &gt;&gt; 4
+<a id="L91"></a><span class="ln">    91</span>			if tc &gt; maxTc {
+<a id="L92"></a><span class="ln">    92</span>				return FormatError(&#34;bad Tc value&#34;)
+<a id="L93"></a><span class="ln">    93</span>			}
+<a id="L94"></a><span class="ln">    94</span>			th := d.tmp[0] &amp; 0x0f
+<a id="L95"></a><span class="ln">    95</span>			const isBaseline = true <span class="comment">// Progressive mode is not yet supported.</span>
+<a id="L96"></a><span class="ln">    96</span>			if th &gt; maxTh || isBaseline &amp;&amp; th &gt; 1 {
+<a id="L97"></a><span class="ln">    97</span>				return FormatError(&#34;bad Th value&#34;)
+<a id="L98"></a><span class="ln">    98</span>			}
+<a id="L99"></a><span class="ln">    99</span>			h := &amp;d.huff[tc][th]
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>			<span class="comment">// Read l and val (and derive length).</span>
+<a id="L102"></a><span class="ln">   102</span>			h.length = 0
+<a id="L103"></a><span class="ln">   103</span>			for i := 0; i &lt; maxCodeLength; i++ {
+<a id="L104"></a><span class="ln">   104</span>				h.l[i] = int(d.tmp[i+1])
+<a id="L105"></a><span class="ln">   105</span>				h.length += h.l[i]
+<a id="L106"></a><span class="ln">   106</span>			}
+<a id="L107"></a><span class="ln">   107</span>			if h.length == 0 {
+<a id="L108"></a><span class="ln">   108</span>				return FormatError(&#34;Huffman table has zero length&#34;)
+<a id="L109"></a><span class="ln">   109</span>			}
+<a id="L110"></a><span class="ln">   110</span>			if h.length &gt; maxNumValues {
+<a id="L111"></a><span class="ln">   111</span>				return FormatError(&#34;Huffman table has excessive length&#34;)
+<a id="L112"></a><span class="ln">   112</span>			}
+<a id="L113"></a><span class="ln">   113</span>			n -= h.length + 17
+<a id="L114"></a><span class="ln">   114</span>			if n &lt; 0 {
+<a id="L115"></a><span class="ln">   115</span>				return FormatError(&#34;DHT has wrong length&#34;)
+<a id="L116"></a><span class="ln">   116</span>			}
+<a id="L117"></a><span class="ln">   117</span>			_, err = io.ReadFull(d.r, h.val[0:h.length])
+<a id="L118"></a><span class="ln">   118</span>			if err != nil {
+<a id="L119"></a><span class="ln">   119</span>				return err
+<a id="L120"></a><span class="ln">   120</span>			}
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>			<span class="comment">// Derive size.</span>
+<a id="L123"></a><span class="ln">   123</span>			k := 0
+<a id="L124"></a><span class="ln">   124</span>			for i := 0; i &lt; maxCodeLength; i++ {
+<a id="L125"></a><span class="ln">   125</span>				for j := 0; j &lt; h.l[i]; j++ {
+<a id="L126"></a><span class="ln">   126</span>					h.size[k] = i + 1
+<a id="L127"></a><span class="ln">   127</span>					k++
+<a id="L128"></a><span class="ln">   128</span>				}
+<a id="L129"></a><span class="ln">   129</span>			}
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>			<span class="comment">// Derive code.</span>
+<a id="L132"></a><span class="ln">   132</span>			code := 0
+<a id="L133"></a><span class="ln">   133</span>			size := h.size[0]
+<a id="L134"></a><span class="ln">   134</span>			for i := 0; i &lt; h.length; i++ {
+<a id="L135"></a><span class="ln">   135</span>				if size != h.size[i] {
+<a id="L136"></a><span class="ln">   136</span>					code &lt;&lt;= uint8(h.size[i] - size)
+<a id="L137"></a><span class="ln">   137</span>					size = h.size[i]
+<a id="L138"></a><span class="ln">   138</span>				}
+<a id="L139"></a><span class="ln">   139</span>				h.code[i] = code
+<a id="L140"></a><span class="ln">   140</span>				code++
+<a id="L141"></a><span class="ln">   141</span>			}
+<a id="L142"></a><span class="ln">   142</span>	
+<a id="L143"></a><span class="ln">   143</span>			<span class="comment">// Derive minCode, maxCode, and valIndex.</span>
+<a id="L144"></a><span class="ln">   144</span>			k = 0
+<a id="L145"></a><span class="ln">   145</span>			index := 0
+<a id="L146"></a><span class="ln">   146</span>			for i := 0; i &lt; maxCodeLength; i++ {
+<a id="L147"></a><span class="ln">   147</span>				if h.l[i] == 0 {
+<a id="L148"></a><span class="ln">   148</span>					h.minCode[i] = -1
+<a id="L149"></a><span class="ln">   149</span>					h.maxCode[i] = -1
+<a id="L150"></a><span class="ln">   150</span>					h.valIndex[i] = -1
+<a id="L151"></a><span class="ln">   151</span>				} else {
+<a id="L152"></a><span class="ln">   152</span>					h.minCode[i] = k
+<a id="L153"></a><span class="ln">   153</span>					h.maxCode[i] = k + h.l[i] - 1
+<a id="L154"></a><span class="ln">   154</span>					h.valIndex[i] = index
+<a id="L155"></a><span class="ln">   155</span>					k += h.l[i]
+<a id="L156"></a><span class="ln">   156</span>					index += h.l[i]
+<a id="L157"></a><span class="ln">   157</span>				}
+<a id="L158"></a><span class="ln">   158</span>				k &lt;&lt;= 1
+<a id="L159"></a><span class="ln">   159</span>			}
+<a id="L160"></a><span class="ln">   160</span>		}
+<a id="L161"></a><span class="ln">   161</span>		return nil
+<a id="L162"></a><span class="ln">   162</span>	}
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// Returns the next Huffman-coded value from the bit stream, decoded according to h.</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// TODO(nigeltao): This decoding algorithm is simple, but slow. A lookahead table, instead of always</span>
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// peeling off only 1 bit at at time, ought to be faster.</span>
+<a id="L167"></a><span class="ln">   167</span>	func (d *decoder) decodeHuffman(h *huffman) (uint8, error) {
+<a id="L168"></a><span class="ln">   168</span>		if h.length == 0 {
+<a id="L169"></a><span class="ln">   169</span>			return 0, FormatError(&#34;uninitialized Huffman table&#34;)
+<a id="L170"></a><span class="ln">   170</span>		}
+<a id="L171"></a><span class="ln">   171</span>		for i, code := 0, 0; i &lt; maxCodeLength; i++ {
+<a id="L172"></a><span class="ln">   172</span>			err := d.ensureNBits(1)
+<a id="L173"></a><span class="ln">   173</span>			if err != nil {
+<a id="L174"></a><span class="ln">   174</span>				return 0, err
+<a id="L175"></a><span class="ln">   175</span>			}
+<a id="L176"></a><span class="ln">   176</span>			if d.b.a&amp;d.b.m != 0 {
+<a id="L177"></a><span class="ln">   177</span>				code |= 1
+<a id="L178"></a><span class="ln">   178</span>			}
+<a id="L179"></a><span class="ln">   179</span>			d.b.n--
+<a id="L180"></a><span class="ln">   180</span>			d.b.m &gt;&gt;= 1
+<a id="L181"></a><span class="ln">   181</span>			if code &lt;= h.maxCode[i] {
+<a id="L182"></a><span class="ln">   182</span>				return h.val[h.valIndex[i]+code-h.minCode[i]], nil
+<a id="L183"></a><span class="ln">   183</span>			}
+<a id="L184"></a><span class="ln">   184</span>			code &lt;&lt;= 1
+<a id="L185"></a><span class="ln">   185</span>		}
+<a id="L186"></a><span class="ln">   186</span>		return 0, FormatError(&#34;bad Huffman code&#34;)
+<a id="L187"></a><span class="ln">   187</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/smtp/smtp.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/smtp/smtp.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package smtp implements the Simple Mail Transfer Protocol as defined in RFC 5321.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// It also implements the following extensions:</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//	8BITMIME  RFC 1652</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">//	AUTH      RFC 2554</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//	STARTTLS  RFC 3207</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Additional extensions may be handled by clients.</span>
+<a id="L11"></a><span class="ln">    11</span>	package smtp
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	import (
+<a id="L14"></a><span class="ln">    14</span>		&#34;crypto/tls&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;encoding/base64&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;io&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;net&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;net/textproto&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;strings&#34;
+<a id="L20"></a><span class="ln">    20</span>	)
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// A Client represents a client connection to an SMTP server.</span>
+<a id="L23"></a><span class="ln">    23</span>	type Client struct {
+<a id="L24"></a><span class="ln">    24</span>		<span class="comment">// Text is the textproto.Conn used by the Client. It is exported to allow for</span>
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// clients to add extensions.</span>
+<a id="L26"></a><span class="ln">    26</span>		Text *textproto.Conn
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// keep a reference to the connection so it can be used to create a TLS</span>
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// connection later</span>
+<a id="L29"></a><span class="ln">    29</span>		conn net.Conn
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// whether the Client is using TLS</span>
+<a id="L31"></a><span class="ln">    31</span>		tls        bool
+<a id="L32"></a><span class="ln">    32</span>		serverName string
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">// map of supported extensions</span>
+<a id="L34"></a><span class="ln">    34</span>		ext map[string]string
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// supported auth mechanisms</span>
+<a id="L36"></a><span class="ln">    36</span>		auth []string
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Dial returns a new Client connected to an SMTP server at addr.</span>
+<a id="L40"></a><span class="ln">    40</span>	func Dial(addr string) (*Client, error) {
+<a id="L41"></a><span class="ln">    41</span>		conn, err := net.Dial(&#34;tcp&#34;, addr)
+<a id="L42"></a><span class="ln">    42</span>		if err != nil {
+<a id="L43"></a><span class="ln">    43</span>			return nil, err
+<a id="L44"></a><span class="ln">    44</span>		}
+<a id="L45"></a><span class="ln">    45</span>		host := addr[:strings.Index(addr, &#34;:&#34;)]
+<a id="L46"></a><span class="ln">    46</span>		return NewClient(conn, host)
+<a id="L47"></a><span class="ln">    47</span>	}
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// NewClient returns a new Client using an existing connection and host as a</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// server name to be used when authenticating.</span>
+<a id="L51"></a><span class="ln">    51</span>	func NewClient(conn net.Conn, host string) (*Client, error) {
+<a id="L52"></a><span class="ln">    52</span>		text := textproto.NewConn(conn)
+<a id="L53"></a><span class="ln">    53</span>		_, _, err := text.ReadResponse(220)
+<a id="L54"></a><span class="ln">    54</span>		if err != nil {
+<a id="L55"></a><span class="ln">    55</span>			text.Close()
+<a id="L56"></a><span class="ln">    56</span>			return nil, err
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>		c := &amp;Client{Text: text, conn: conn, serverName: host}
+<a id="L59"></a><span class="ln">    59</span>		err = c.ehlo()
+<a id="L60"></a><span class="ln">    60</span>		if err != nil {
+<a id="L61"></a><span class="ln">    61</span>			err = c.helo()
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>		return c, err
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// cmd is a convenience function that sends a command and returns the response</span>
+<a id="L67"></a><span class="ln">    67</span>	func (c *Client) cmd(expectCode int, format string, args ...interface{}) (int, string, error) {
+<a id="L68"></a><span class="ln">    68</span>		id, err := c.Text.Cmd(format, args...)
+<a id="L69"></a><span class="ln">    69</span>		if err != nil {
+<a id="L70"></a><span class="ln">    70</span>			return 0, &#34;&#34;, err
+<a id="L71"></a><span class="ln">    71</span>		}
+<a id="L72"></a><span class="ln">    72</span>		c.Text.StartResponse(id)
+<a id="L73"></a><span class="ln">    73</span>		defer c.Text.EndResponse(id)
+<a id="L74"></a><span class="ln">    74</span>		code, msg, err := c.Text.ReadResponse(expectCode)
+<a id="L75"></a><span class="ln">    75</span>		return code, msg, err
+<a id="L76"></a><span class="ln">    76</span>	}
+<a id="L77"></a><span class="ln">    77</span>	
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// helo sends the HELO greeting to the server. It should be used only when the</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// server does not support ehlo.</span>
+<a id="L80"></a><span class="ln">    80</span>	func (c *Client) helo() error {
+<a id="L81"></a><span class="ln">    81</span>		c.ext = nil
+<a id="L82"></a><span class="ln">    82</span>		_, _, err := c.cmd(250, &#34;HELO localhost&#34;)
+<a id="L83"></a><span class="ln">    83</span>		return err
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// ehlo sends the EHLO (extended hello) greeting to the server. It</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// should be the preferred greeting for servers that support it.</span>
+<a id="L88"></a><span class="ln">    88</span>	func (c *Client) ehlo() error {
+<a id="L89"></a><span class="ln">    89</span>		_, msg, err := c.cmd(250, &#34;EHLO localhost&#34;)
+<a id="L90"></a><span class="ln">    90</span>		if err != nil {
+<a id="L91"></a><span class="ln">    91</span>			return err
+<a id="L92"></a><span class="ln">    92</span>		}
+<a id="L93"></a><span class="ln">    93</span>		ext := make(map[string]string)
+<a id="L94"></a><span class="ln">    94</span>		extList := strings.Split(msg, &#34;\n&#34;)
+<a id="L95"></a><span class="ln">    95</span>		if len(extList) &gt; 1 {
+<a id="L96"></a><span class="ln">    96</span>			extList = extList[1:]
+<a id="L97"></a><span class="ln">    97</span>			for _, line := range extList {
+<a id="L98"></a><span class="ln">    98</span>				args := strings.SplitN(line, &#34; &#34;, 2)
+<a id="L99"></a><span class="ln">    99</span>				if len(args) &gt; 1 {
+<a id="L100"></a><span class="ln">   100</span>					ext[args[0]] = args[1]
+<a id="L101"></a><span class="ln">   101</span>				} else {
+<a id="L102"></a><span class="ln">   102</span>					ext[args[0]] = &#34;&#34;
+<a id="L103"></a><span class="ln">   103</span>				}
+<a id="L104"></a><span class="ln">   104</span>			}
+<a id="L105"></a><span class="ln">   105</span>		}
+<a id="L106"></a><span class="ln">   106</span>		if mechs, ok := ext[&#34;AUTH&#34;]; ok {
+<a id="L107"></a><span class="ln">   107</span>			c.auth = strings.Split(mechs, &#34; &#34;)
+<a id="L108"></a><span class="ln">   108</span>		}
+<a id="L109"></a><span class="ln">   109</span>		c.ext = ext
+<a id="L110"></a><span class="ln">   110</span>		return err
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// StartTLS sends the STARTTLS command and encrypts all further communication.</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// Only servers that advertise the STARTTLS extension support this function.</span>
+<a id="L115"></a><span class="ln">   115</span>	func (c *Client) StartTLS(config *tls.Config) error {
+<a id="L116"></a><span class="ln">   116</span>		_, _, err := c.cmd(220, &#34;STARTTLS&#34;)
+<a id="L117"></a><span class="ln">   117</span>		if err != nil {
+<a id="L118"></a><span class="ln">   118</span>			return err
+<a id="L119"></a><span class="ln">   119</span>		}
+<a id="L120"></a><span class="ln">   120</span>		c.conn = tls.Client(c.conn, config)
+<a id="L121"></a><span class="ln">   121</span>		c.Text = textproto.NewConn(c.conn)
+<a id="L122"></a><span class="ln">   122</span>		c.tls = true
+<a id="L123"></a><span class="ln">   123</span>		return c.ehlo()
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// Verify checks the validity of an email address on the server.</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// If Verify returns nil, the address is valid. A non-nil return</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// does not necessarily indicate an invalid address. Many servers</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// will not verify addresses for security reasons.</span>
+<a id="L130"></a><span class="ln">   130</span>	func (c *Client) Verify(addr string) error {
+<a id="L131"></a><span class="ln">   131</span>		_, _, err := c.cmd(250, &#34;VRFY %s&#34;, addr)
+<a id="L132"></a><span class="ln">   132</span>		return err
+<a id="L133"></a><span class="ln">   133</span>	}
+<a id="L134"></a><span class="ln">   134</span>	
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// Auth authenticates a client using the provided authentication mechanism.</span>
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// A failed authentication closes the connection.</span>
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// Only servers that advertise the AUTH extension support this function.</span>
+<a id="L138"></a><span class="ln">   138</span>	func (c *Client) Auth(a Auth) error {
+<a id="L139"></a><span class="ln">   139</span>		encoding := base64.StdEncoding
+<a id="L140"></a><span class="ln">   140</span>		mech, resp, err := a.Start(&amp;ServerInfo{c.serverName, c.tls, c.auth})
+<a id="L141"></a><span class="ln">   141</span>		if err != nil {
+<a id="L142"></a><span class="ln">   142</span>			c.Quit()
+<a id="L143"></a><span class="ln">   143</span>			return err
+<a id="L144"></a><span class="ln">   144</span>		}
+<a id="L145"></a><span class="ln">   145</span>		resp64 := make([]byte, encoding.EncodedLen(len(resp)))
+<a id="L146"></a><span class="ln">   146</span>		encoding.Encode(resp64, resp)
+<a id="L147"></a><span class="ln">   147</span>		code, msg64, err := c.cmd(0, &#34;AUTH %s %s&#34;, mech, resp64)
+<a id="L148"></a><span class="ln">   148</span>		for err == nil {
+<a id="L149"></a><span class="ln">   149</span>			var msg []byte
+<a id="L150"></a><span class="ln">   150</span>			switch code {
+<a id="L151"></a><span class="ln">   151</span>			case 334:
+<a id="L152"></a><span class="ln">   152</span>				msg, err = encoding.DecodeString(msg64)
+<a id="L153"></a><span class="ln">   153</span>			case 235:
+<a id="L154"></a><span class="ln">   154</span>				<span class="comment">// the last message isn&#39;t base64 because it isn&#39;t a challenge</span>
+<a id="L155"></a><span class="ln">   155</span>				msg = []byte(msg64)
+<a id="L156"></a><span class="ln">   156</span>			default:
+<a id="L157"></a><span class="ln">   157</span>				err = &amp;textproto.Error{Code: code, Msg: msg64}
+<a id="L158"></a><span class="ln">   158</span>			}
+<a id="L159"></a><span class="ln">   159</span>			resp, err = a.Next(msg, code == 334)
+<a id="L160"></a><span class="ln">   160</span>			if err != nil {
+<a id="L161"></a><span class="ln">   161</span>				<span class="comment">// abort the AUTH</span>
+<a id="L162"></a><span class="ln">   162</span>				c.cmd(501, &#34;*&#34;)
+<a id="L163"></a><span class="ln">   163</span>				c.Quit()
+<a id="L164"></a><span class="ln">   164</span>				break
+<a id="L165"></a><span class="ln">   165</span>			}
+<a id="L166"></a><span class="ln">   166</span>			if resp == nil {
+<a id="L167"></a><span class="ln">   167</span>				break
+<a id="L168"></a><span class="ln">   168</span>			}
+<a id="L169"></a><span class="ln">   169</span>			resp64 = make([]byte, encoding.EncodedLen(len(resp)))
+<a id="L170"></a><span class="ln">   170</span>			encoding.Encode(resp64, resp)
+<a id="L171"></a><span class="ln">   171</span>			code, msg64, err = c.cmd(0, string(resp64))
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>		return err
+<a id="L174"></a><span class="ln">   174</span>	}
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// Mail issues a MAIL command to the server using the provided email address.</span>
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// If the server supports the 8BITMIME extension, Mail adds the BODY=8BITMIME</span>
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// parameter.</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// This initiates a mail transaction and is followed by one or more Rcpt calls.</span>
+<a id="L180"></a><span class="ln">   180</span>	func (c *Client) Mail(from string) error {
+<a id="L181"></a><span class="ln">   181</span>		cmdStr := &#34;MAIL FROM:&lt;%s&gt;&#34;
+<a id="L182"></a><span class="ln">   182</span>		if c.ext != nil {
+<a id="L183"></a><span class="ln">   183</span>			if _, ok := c.ext[&#34;8BITMIME&#34;]; ok {
+<a id="L184"></a><span class="ln">   184</span>				cmdStr += &#34; BODY=8BITMIME&#34;
+<a id="L185"></a><span class="ln">   185</span>			}
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		_, _, err := c.cmd(250, cmdStr, from)
+<a id="L188"></a><span class="ln">   188</span>		return err
+<a id="L189"></a><span class="ln">   189</span>	}
+<a id="L190"></a><span class="ln">   190</span>	
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// Rcpt issues a RCPT command to the server using the provided email address.</span>
+<a id="L192"></a><span class="ln">   192</span>	<span class="comment">// A call to Rcpt must be preceded by a call to Mail and may be followed by</span>
+<a id="L193"></a><span class="ln">   193</span>	<span class="comment">// a Data call or another Rcpt call.</span>
+<a id="L194"></a><span class="ln">   194</span>	func (c *Client) Rcpt(to string) error {
+<a id="L195"></a><span class="ln">   195</span>		_, _, err := c.cmd(25, &#34;RCPT TO:&lt;%s&gt;&#34;, to)
+<a id="L196"></a><span class="ln">   196</span>		return err
+<a id="L197"></a><span class="ln">   197</span>	}
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>	type dataCloser struct {
+<a id="L200"></a><span class="ln">   200</span>		c *Client
+<a id="L201"></a><span class="ln">   201</span>		io.WriteCloser
+<a id="L202"></a><span class="ln">   202</span>	}
+<a id="L203"></a><span class="ln">   203</span>	
+<a id="L204"></a><span class="ln">   204</span>	func (d *dataCloser) Close() error {
+<a id="L205"></a><span class="ln">   205</span>		d.WriteCloser.Close()
+<a id="L206"></a><span class="ln">   206</span>		_, _, err := d.c.Text.ReadResponse(250)
+<a id="L207"></a><span class="ln">   207</span>		return err
+<a id="L208"></a><span class="ln">   208</span>	}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// Data issues a DATA command to the server and returns a writer that</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// can be used to write the data. The caller should close the writer</span>
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// before calling any more methods on c.</span>
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// A call to Data must be preceded by one or more calls to Rcpt.</span>
+<a id="L214"></a><span class="ln">   214</span>	func (c *Client) Data() (io.WriteCloser, error) {
+<a id="L215"></a><span class="ln">   215</span>		_, _, err := c.cmd(354, &#34;DATA&#34;)
+<a id="L216"></a><span class="ln">   216</span>		if err != nil {
+<a id="L217"></a><span class="ln">   217</span>			return nil, err
+<a id="L218"></a><span class="ln">   218</span>		}
+<a id="L219"></a><span class="ln">   219</span>		return &amp;dataCloser{c, c.Text.DotWriter()}, nil
+<a id="L220"></a><span class="ln">   220</span>	}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// SendMail connects to the server at addr, switches to TLS if possible,</span>
+<a id="L223"></a><span class="ln">   223</span>	<span class="comment">// authenticates with mechanism a if possible, and then sends an email from</span>
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// address from, to addresses to, with message msg.</span>
+<a id="L225"></a><span class="ln">   225</span>	func SendMail(addr string, a Auth, from string, to []string, msg []byte) error {
+<a id="L226"></a><span class="ln">   226</span>		c, err := Dial(addr)
+<a id="L227"></a><span class="ln">   227</span>		if err != nil {
+<a id="L228"></a><span class="ln">   228</span>			return err
+<a id="L229"></a><span class="ln">   229</span>		}
+<a id="L230"></a><span class="ln">   230</span>		if ok, _ := c.Extension(&#34;STARTTLS&#34;); ok {
+<a id="L231"></a><span class="ln">   231</span>			if err = c.StartTLS(nil); err != nil {
+<a id="L232"></a><span class="ln">   232</span>				return err
+<a id="L233"></a><span class="ln">   233</span>			}
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>		if a != nil &amp;&amp; c.ext != nil {
+<a id="L236"></a><span class="ln">   236</span>			if _, ok := c.ext[&#34;AUTH&#34;]; ok {
+<a id="L237"></a><span class="ln">   237</span>				if err = c.Auth(a); err != nil {
+<a id="L238"></a><span class="ln">   238</span>					return err
+<a id="L239"></a><span class="ln">   239</span>				}
+<a id="L240"></a><span class="ln">   240</span>			}
+<a id="L241"></a><span class="ln">   241</span>		}
+<a id="L242"></a><span class="ln">   242</span>		if err = c.Mail(from); err != nil {
+<a id="L243"></a><span class="ln">   243</span>			return err
+<a id="L244"></a><span class="ln">   244</span>		}
+<a id="L245"></a><span class="ln">   245</span>		for _, addr := range to {
+<a id="L246"></a><span class="ln">   246</span>			if err = c.Rcpt(addr); err != nil {
+<a id="L247"></a><span class="ln">   247</span>				return err
+<a id="L248"></a><span class="ln">   248</span>			}
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		w, err := c.Data()
+<a id="L251"></a><span class="ln">   251</span>		if err != nil {
+<a id="L252"></a><span class="ln">   252</span>			return err
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>		_, err = w.Write(msg)
+<a id="L255"></a><span class="ln">   255</span>		if err != nil {
+<a id="L256"></a><span class="ln">   256</span>			return err
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>		err = w.Close()
+<a id="L259"></a><span class="ln">   259</span>		if err != nil {
+<a id="L260"></a><span class="ln">   260</span>			return err
+<a id="L261"></a><span class="ln">   261</span>		}
+<a id="L262"></a><span class="ln">   262</span>		return c.Quit()
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// Extension reports whether an extension is support by the server.</span>
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// The extension name is case-insensitive. If the extension is supported,</span>
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// Extension also returns a string that contains any parameters the</span>
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// server specifies for the extension.</span>
+<a id="L269"></a><span class="ln">   269</span>	func (c *Client) Extension(ext string) (bool, string) {
+<a id="L270"></a><span class="ln">   270</span>		if c.ext == nil {
+<a id="L271"></a><span class="ln">   271</span>			return false, &#34;&#34;
+<a id="L272"></a><span class="ln">   272</span>		}
+<a id="L273"></a><span class="ln">   273</span>		ext = strings.ToUpper(ext)
+<a id="L274"></a><span class="ln">   274</span>		param, ok := c.ext[ext]
+<a id="L275"></a><span class="ln">   275</span>		return ok, param
+<a id="L276"></a><span class="ln">   276</span>	}
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>	<span class="comment">// Reset sends the RSET command to the server, aborting the current mail</span>
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// transaction.</span>
+<a id="L280"></a><span class="ln">   280</span>	func (c *Client) Reset() error {
+<a id="L281"></a><span class="ln">   281</span>		_, _, err := c.cmd(250, &#34;RSET&#34;)
+<a id="L282"></a><span class="ln">   282</span>		return err
+<a id="L283"></a><span class="ln">   283</span>	}
+<a id="L284"></a><span class="ln">   284</span>	
+<a id="L285"></a><span class="ln">   285</span>	<span class="comment">// Quit sends the QUIT command and closes the connection to the server.</span>
+<a id="L286"></a><span class="ln">   286</span>	func (c *Client) Quit() error {
+<a id="L287"></a><span class="ln">   287</span>		_, _, err := c.cmd(221, &#34;QUIT&#34;)
+<a id="L288"></a><span class="ln">   288</span>		if err != nil {
+<a id="L289"></a><span class="ln">   289</span>			return err
+<a id="L290"></a><span class="ln">   290</span>		}
+<a id="L291"></a><span class="ln">   291</span>		return c.Text.Close()
+<a id="L292"></a><span class="ln">   292</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

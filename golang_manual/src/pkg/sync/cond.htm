@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/sync/cond.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/sync/cond.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package sync
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Cond implements a condition variable, a rendezvous point</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// for goroutines waiting for or announcing the occurrence</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// of an event.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">//</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// Each Cond has an associated Locker L (often a *Mutex or *RWMutex),</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// which must be held when changing the condition and</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// when calling the Wait method.</span>
+<a id="L14"></a><span class="ln">    14</span>	type Cond struct {
+<a id="L15"></a><span class="ln">    15</span>		L Locker <span class="comment">// held while observing or changing the condition</span>
+<a id="L16"></a><span class="ln">    16</span>		m Mutex  <span class="comment">// held to avoid internal races</span>
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>		<span class="comment">// We must be careful to make sure that when Signal</span>
+<a id="L19"></a><span class="ln">    19</span>		<span class="comment">// releases a semaphore, the corresponding acquire is</span>
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// executed by a goroutine that was already waiting at</span>
+<a id="L21"></a><span class="ln">    21</span>		<span class="comment">// the time of the call to Signal, not one that arrived later.</span>
+<a id="L22"></a><span class="ln">    22</span>		<span class="comment">// To ensure this, we segment waiting goroutines into</span>
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// generations punctuated by calls to Signal.  Each call to</span>
+<a id="L24"></a><span class="ln">    24</span>		<span class="comment">// Signal begins another generation if there are no goroutines</span>
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// left in older generations for it to wake.  Because of this</span>
+<a id="L26"></a><span class="ln">    26</span>		<span class="comment">// optimization (only begin another generation if there</span>
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// are no older goroutines left), we only need to keep track</span>
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// of the two most recent generations, which we call old</span>
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// and new.</span>
+<a id="L30"></a><span class="ln">    30</span>		oldWaiters int     <span class="comment">// number of waiters in old generation...</span>
+<a id="L31"></a><span class="ln">    31</span>		oldSema    *uint32 <span class="comment">// ... waiting on this semaphore</span>
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>		newWaiters int     <span class="comment">// number of waiters in new generation...</span>
+<a id="L34"></a><span class="ln">    34</span>		newSema    *uint32 <span class="comment">// ... waiting on this semaphore</span>
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// NewCond returns a new Cond with Locker l.</span>
+<a id="L38"></a><span class="ln">    38</span>	func NewCond(l Locker) *Cond {
+<a id="L39"></a><span class="ln">    39</span>		return &amp;Cond{L: l}
+<a id="L40"></a><span class="ln">    40</span>	}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// Wait atomically unlocks c.L and suspends execution</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// of the calling goroutine.  After later resuming execution,</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// Wait locks c.L before returning.  Unlike in other systems,</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Wait cannot return unless awoken by Broadcast or Signal.</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// Because c.L is not locked when Wait first resumes, the caller</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// typically cannot assume that the condition is true when</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// Wait returns.  Instead, the caller should Wait in a loop:</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//    c.L.Lock()</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//    for !condition() {</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//        c.Wait()</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">//    }</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//    ... make use of condition ...</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//    c.L.Unlock()</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	func (c *Cond) Wait() {
+<a id="L59"></a><span class="ln">    59</span>		c.m.Lock()
+<a id="L60"></a><span class="ln">    60</span>		if c.newSema == nil {
+<a id="L61"></a><span class="ln">    61</span>			c.newSema = new(uint32)
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>		s := c.newSema
+<a id="L64"></a><span class="ln">    64</span>		c.newWaiters++
+<a id="L65"></a><span class="ln">    65</span>		c.m.Unlock()
+<a id="L66"></a><span class="ln">    66</span>		c.L.Unlock()
+<a id="L67"></a><span class="ln">    67</span>		runtime_Semacquire(s)
+<a id="L68"></a><span class="ln">    68</span>		c.L.Lock()
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// Signal wakes one goroutine waiting on c, if there is any.</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// It is allowed but not required for the caller to hold c.L</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// during the call.</span>
+<a id="L75"></a><span class="ln">    75</span>	func (c *Cond) Signal() {
+<a id="L76"></a><span class="ln">    76</span>		c.m.Lock()
+<a id="L77"></a><span class="ln">    77</span>		if c.oldWaiters == 0 &amp;&amp; c.newWaiters &gt; 0 {
+<a id="L78"></a><span class="ln">    78</span>			<span class="comment">// Retire old generation; rename new to old.</span>
+<a id="L79"></a><span class="ln">    79</span>			c.oldWaiters = c.newWaiters
+<a id="L80"></a><span class="ln">    80</span>			c.oldSema = c.newSema
+<a id="L81"></a><span class="ln">    81</span>			c.newWaiters = 0
+<a id="L82"></a><span class="ln">    82</span>			c.newSema = nil
+<a id="L83"></a><span class="ln">    83</span>		}
+<a id="L84"></a><span class="ln">    84</span>		if c.oldWaiters &gt; 0 {
+<a id="L85"></a><span class="ln">    85</span>			c.oldWaiters--
+<a id="L86"></a><span class="ln">    86</span>			runtime_Semrelease(c.oldSema)
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>		c.m.Unlock()
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// Broadcast wakes all goroutines waiting on c.</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">//</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// It is allowed but not required for the caller to hold c.L</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// during the call.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (c *Cond) Broadcast() {
+<a id="L96"></a><span class="ln">    96</span>		c.m.Lock()
+<a id="L97"></a><span class="ln">    97</span>		<span class="comment">// Wake both generations.</span>
+<a id="L98"></a><span class="ln">    98</span>		if c.oldWaiters &gt; 0 {
+<a id="L99"></a><span class="ln">    99</span>			for i := 0; i &lt; c.oldWaiters; i++ {
+<a id="L100"></a><span class="ln">   100</span>				runtime_Semrelease(c.oldSema)
+<a id="L101"></a><span class="ln">   101</span>			}
+<a id="L102"></a><span class="ln">   102</span>			c.oldWaiters = 0
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>		if c.newWaiters &gt; 0 {
+<a id="L105"></a><span class="ln">   105</span>			for i := 0; i &lt; c.newWaiters; i++ {
+<a id="L106"></a><span class="ln">   106</span>				runtime_Semrelease(c.newSema)
+<a id="L107"></a><span class="ln">   107</span>			}
+<a id="L108"></a><span class="ln">   108</span>			c.newWaiters = 0
+<a id="L109"></a><span class="ln">   109</span>			c.newSema = nil
+<a id="L110"></a><span class="ln">   110</span>		}
+<a id="L111"></a><span class="ln">   111</span>		c.m.Unlock()
+<a id="L112"></a><span class="ln">   112</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

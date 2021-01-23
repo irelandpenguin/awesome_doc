@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/compress/flate/inflate.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/compress/flate/inflate.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package flate implements the DEFLATE compressed data format, described in</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// RFC 1951.  The gzip and zlib packages implement access to DEFLATE-based file</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// formats.</span>
+<a id="L8"></a><span class="ln">     8</span>	package flate
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;bufio&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strconv&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	const (
+<a id="L17"></a><span class="ln">    17</span>		maxCodeLen = 16    <span class="comment">// max length of Huffman code</span>
+<a id="L18"></a><span class="ln">    18</span>		maxHist    = 32768 <span class="comment">// max history required</span>
+<a id="L19"></a><span class="ln">    19</span>		maxLit     = 286
+<a id="L20"></a><span class="ln">    20</span>		maxDist    = 32
+<a id="L21"></a><span class="ln">    21</span>		numCodes   = 19 <span class="comment">// number of codes in Huffman meta-code</span>
+<a id="L22"></a><span class="ln">    22</span>	)
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// A CorruptInputError reports the presence of corrupt input at a given offset.</span>
+<a id="L25"></a><span class="ln">    25</span>	type CorruptInputError int64
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	func (e CorruptInputError) Error() string {
+<a id="L28"></a><span class="ln">    28</span>		return &#34;flate: corrupt input before offset &#34; + strconv.FormatInt(int64(e), 10)
+<a id="L29"></a><span class="ln">    29</span>	}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// An InternalError reports an error in the flate code itself.</span>
+<a id="L32"></a><span class="ln">    32</span>	type InternalError string
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	func (e InternalError) Error() string { return &#34;flate: internal error: &#34; + string(e) }
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// A ReadError reports an error encountered while reading input.</span>
+<a id="L37"></a><span class="ln">    37</span>	type ReadError struct {
+<a id="L38"></a><span class="ln">    38</span>		Offset int64 <span class="comment">// byte offset where error occurred</span>
+<a id="L39"></a><span class="ln">    39</span>		Err    error <span class="comment">// error returned by underlying Read</span>
+<a id="L40"></a><span class="ln">    40</span>	}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	func (e *ReadError) Error() string {
+<a id="L43"></a><span class="ln">    43</span>		return &#34;flate: read error at offset &#34; + strconv.FormatInt(e.Offset, 10) + &#34;: &#34; + e.Err.Error()
+<a id="L44"></a><span class="ln">    44</span>	}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// A WriteError reports an error encountered while writing output.</span>
+<a id="L47"></a><span class="ln">    47</span>	type WriteError struct {
+<a id="L48"></a><span class="ln">    48</span>		Offset int64 <span class="comment">// byte offset where error occurred</span>
+<a id="L49"></a><span class="ln">    49</span>		Err    error <span class="comment">// error returned by underlying Write</span>
+<a id="L50"></a><span class="ln">    50</span>	}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	func (e *WriteError) Error() string {
+<a id="L53"></a><span class="ln">    53</span>		return &#34;flate: write error at offset &#34; + strconv.FormatInt(e.Offset, 10) + &#34;: &#34; + e.Err.Error()
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// Huffman decoder is based on</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// J. Brian Connell, ``A Huffman-Shannon-Fano Code,&#39;&#39;</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// Proceedings of the IEEE, 61(7) (July 1973), pp 1046-1047.</span>
+<a id="L59"></a><span class="ln">    59</span>	type huffmanDecoder struct {
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// min, max code length</span>
+<a id="L61"></a><span class="ln">    61</span>		min, max int
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>		<span class="comment">// limit[i] = largest code word of length i</span>
+<a id="L64"></a><span class="ln">    64</span>		<span class="comment">// Given code v of length n,</span>
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// need more bits if v &gt; limit[n].</span>
+<a id="L66"></a><span class="ln">    66</span>		limit [maxCodeLen + 1]int
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>		<span class="comment">// base[i] = smallest code word of length i - seq number</span>
+<a id="L69"></a><span class="ln">    69</span>		base [maxCodeLen + 1]int
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>		<span class="comment">// codes[seq number] = output code.</span>
+<a id="L72"></a><span class="ln">    72</span>		<span class="comment">// Given code v of length n, value is</span>
+<a id="L73"></a><span class="ln">    73</span>		<span class="comment">// codes[v - base[n]].</span>
+<a id="L74"></a><span class="ln">    74</span>		codes []int
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// Initialize Huffman decoding tables from array of code lengths.</span>
+<a id="L78"></a><span class="ln">    78</span>	func (h *huffmanDecoder) init(bits []int) bool {
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// Count number of codes of each length,</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// compute min and max length.</span>
+<a id="L81"></a><span class="ln">    81</span>		var count [maxCodeLen + 1]int
+<a id="L82"></a><span class="ln">    82</span>		var min, max int
+<a id="L83"></a><span class="ln">    83</span>		for _, n := range bits {
+<a id="L84"></a><span class="ln">    84</span>			if n == 0 {
+<a id="L85"></a><span class="ln">    85</span>				continue
+<a id="L86"></a><span class="ln">    86</span>			}
+<a id="L87"></a><span class="ln">    87</span>			if min == 0 || n &lt; min {
+<a id="L88"></a><span class="ln">    88</span>				min = n
+<a id="L89"></a><span class="ln">    89</span>			}
+<a id="L90"></a><span class="ln">    90</span>			if n &gt; max {
+<a id="L91"></a><span class="ln">    91</span>				max = n
+<a id="L92"></a><span class="ln">    92</span>			}
+<a id="L93"></a><span class="ln">    93</span>			count[n]++
+<a id="L94"></a><span class="ln">    94</span>		}
+<a id="L95"></a><span class="ln">    95</span>		if max == 0 {
+<a id="L96"></a><span class="ln">    96</span>			return false
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>		h.min = min
+<a id="L100"></a><span class="ln">   100</span>		h.max = max
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>		<span class="comment">// For each code range, compute</span>
+<a id="L103"></a><span class="ln">   103</span>		<span class="comment">// nextcode (first code of that length),</span>
+<a id="L104"></a><span class="ln">   104</span>		<span class="comment">// limit (last code of that length), and</span>
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// base (offset from first code to sequence number).</span>
+<a id="L106"></a><span class="ln">   106</span>		code := 0
+<a id="L107"></a><span class="ln">   107</span>		seq := 0
+<a id="L108"></a><span class="ln">   108</span>		var nextcode [maxCodeLen]int
+<a id="L109"></a><span class="ln">   109</span>		for i := min; i &lt;= max; i++ {
+<a id="L110"></a><span class="ln">   110</span>			n := count[i]
+<a id="L111"></a><span class="ln">   111</span>			nextcode[i] = code
+<a id="L112"></a><span class="ln">   112</span>			h.base[i] = code - seq
+<a id="L113"></a><span class="ln">   113</span>			code += n
+<a id="L114"></a><span class="ln">   114</span>			seq += n
+<a id="L115"></a><span class="ln">   115</span>			h.limit[i] = code - 1
+<a id="L116"></a><span class="ln">   116</span>			code &lt;&lt;= 1
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>		<span class="comment">// Make array mapping sequence numbers to codes.</span>
+<a id="L120"></a><span class="ln">   120</span>		if len(h.codes) &lt; len(bits) {
+<a id="L121"></a><span class="ln">   121</span>			h.codes = make([]int, len(bits))
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>		for i, n := range bits {
+<a id="L124"></a><span class="ln">   124</span>			if n == 0 {
+<a id="L125"></a><span class="ln">   125</span>				continue
+<a id="L126"></a><span class="ln">   126</span>			}
+<a id="L127"></a><span class="ln">   127</span>			code := nextcode[n]
+<a id="L128"></a><span class="ln">   128</span>			nextcode[n]++
+<a id="L129"></a><span class="ln">   129</span>			seq := code - h.base[n]
+<a id="L130"></a><span class="ln">   130</span>			h.codes[seq] = i
+<a id="L131"></a><span class="ln">   131</span>		}
+<a id="L132"></a><span class="ln">   132</span>		return true
+<a id="L133"></a><span class="ln">   133</span>	}
+<a id="L134"></a><span class="ln">   134</span>	
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// Hard-coded Huffman tables for DEFLATE algorithm.</span>
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// See RFC 1951, section 3.2.6.</span>
+<a id="L137"></a><span class="ln">   137</span>	var fixedHuffmanDecoder = huffmanDecoder{
+<a id="L138"></a><span class="ln">   138</span>		7, 9,
+<a id="L139"></a><span class="ln">   139</span>		[maxCodeLen + 1]int{7: 23, 199, 511},
+<a id="L140"></a><span class="ln">   140</span>		[maxCodeLen + 1]int{7: 0, 24, 224},
+<a id="L141"></a><span class="ln">   141</span>		[]int{
+<a id="L142"></a><span class="ln">   142</span>			<span class="comment">// length 7: 256-279</span>
+<a id="L143"></a><span class="ln">   143</span>			256, 257, 258, 259, 260, 261, 262,
+<a id="L144"></a><span class="ln">   144</span>			263, 264, 265, 266, 267, 268, 269,
+<a id="L145"></a><span class="ln">   145</span>			270, 271, 272, 273, 274, 275, 276,
+<a id="L146"></a><span class="ln">   146</span>			277, 278, 279,
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>			<span class="comment">// length 8: 0-143</span>
+<a id="L149"></a><span class="ln">   149</span>			0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+<a id="L150"></a><span class="ln">   150</span>			12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+<a id="L151"></a><span class="ln">   151</span>			22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+<a id="L152"></a><span class="ln">   152</span>			32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
+<a id="L153"></a><span class="ln">   153</span>			42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+<a id="L154"></a><span class="ln">   154</span>			52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+<a id="L155"></a><span class="ln">   155</span>			62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
+<a id="L156"></a><span class="ln">   156</span>			72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
+<a id="L157"></a><span class="ln">   157</span>			82, 83, 84, 85, 86, 87, 88, 89, 90, 91,
+<a id="L158"></a><span class="ln">   158</span>			92, 93, 94, 95, 96, 97, 98, 99, 100,
+<a id="L159"></a><span class="ln">   159</span>			101, 102, 103, 104, 105, 106, 107, 108,
+<a id="L160"></a><span class="ln">   160</span>			109, 110, 111, 112, 113, 114, 115, 116,
+<a id="L161"></a><span class="ln">   161</span>			117, 118, 119, 120, 121, 122, 123, 124,
+<a id="L162"></a><span class="ln">   162</span>			125, 126, 127, 128, 129, 130, 131, 132,
+<a id="L163"></a><span class="ln">   163</span>			133, 134, 135, 136, 137, 138, 139, 140,
+<a id="L164"></a><span class="ln">   164</span>			141, 142, 143,
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>			<span class="comment">// length 8: 280-287</span>
+<a id="L167"></a><span class="ln">   167</span>			280, 281, 282, 283, 284, 285, 286, 287,
+<a id="L168"></a><span class="ln">   168</span>	
+<a id="L169"></a><span class="ln">   169</span>			<span class="comment">// length 9: 144-255</span>
+<a id="L170"></a><span class="ln">   170</span>			144, 145, 146, 147, 148, 149, 150, 151,
+<a id="L171"></a><span class="ln">   171</span>			152, 153, 154, 155, 156, 157, 158, 159,
+<a id="L172"></a><span class="ln">   172</span>			160, 161, 162, 163, 164, 165, 166, 167,
+<a id="L173"></a><span class="ln">   173</span>			168, 169, 170, 171, 172, 173, 174, 175,
+<a id="L174"></a><span class="ln">   174</span>			176, 177, 178, 179, 180, 181, 182, 183,
+<a id="L175"></a><span class="ln">   175</span>			184, 185, 186, 187, 188, 189, 190, 191,
+<a id="L176"></a><span class="ln">   176</span>			192, 193, 194, 195, 196, 197, 198, 199,
+<a id="L177"></a><span class="ln">   177</span>			200, 201, 202, 203, 204, 205, 206, 207,
+<a id="L178"></a><span class="ln">   178</span>			208, 209, 210, 211, 212, 213, 214, 215,
+<a id="L179"></a><span class="ln">   179</span>			216, 217, 218, 219, 220, 221, 222, 223,
+<a id="L180"></a><span class="ln">   180</span>			224, 225, 226, 227, 228, 229, 230, 231,
+<a id="L181"></a><span class="ln">   181</span>			232, 233, 234, 235, 236, 237, 238, 239,
+<a id="L182"></a><span class="ln">   182</span>			240, 241, 242, 243, 244, 245, 246, 247,
+<a id="L183"></a><span class="ln">   183</span>			248, 249, 250, 251, 252, 253, 254, 255,
+<a id="L184"></a><span class="ln">   184</span>		},
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// The actual read interface needed by NewReader.</span>
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">// If the passed in io.Reader does not also have ReadByte,</span>
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// the NewReader will introduce its own buffering.</span>
+<a id="L190"></a><span class="ln">   190</span>	type Reader interface {
+<a id="L191"></a><span class="ln">   191</span>		io.Reader
+<a id="L192"></a><span class="ln">   192</span>		ReadByte() (c byte, err error)
+<a id="L193"></a><span class="ln">   193</span>	}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>	<span class="comment">// Decompress state.</span>
+<a id="L196"></a><span class="ln">   196</span>	type decompressor struct {
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// Input source.</span>
+<a id="L198"></a><span class="ln">   198</span>		r       Reader
+<a id="L199"></a><span class="ln">   199</span>		roffset int64
+<a id="L200"></a><span class="ln">   200</span>		woffset int64
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>		<span class="comment">// Input bits, in top of b.</span>
+<a id="L203"></a><span class="ln">   203</span>		b  uint32
+<a id="L204"></a><span class="ln">   204</span>		nb uint
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>		<span class="comment">// Huffman decoders for literal/length, distance.</span>
+<a id="L207"></a><span class="ln">   207</span>		h1, h2 huffmanDecoder
+<a id="L208"></a><span class="ln">   208</span>	
+<a id="L209"></a><span class="ln">   209</span>		<span class="comment">// Length arrays used to define Huffman codes.</span>
+<a id="L210"></a><span class="ln">   210</span>		bits     [maxLit + maxDist]int
+<a id="L211"></a><span class="ln">   211</span>		codebits [numCodes]int
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>		<span class="comment">// Output history, buffer.</span>
+<a id="L214"></a><span class="ln">   214</span>		hist  [maxHist]byte
+<a id="L215"></a><span class="ln">   215</span>		hp    int  <span class="comment">// current output position in buffer</span>
+<a id="L216"></a><span class="ln">   216</span>		hw    int  <span class="comment">// have written hist[0:hw] already</span>
+<a id="L217"></a><span class="ln">   217</span>		hfull bool <span class="comment">// buffer has filled at least once</span>
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>		<span class="comment">// Temporary buffer (avoids repeated allocation).</span>
+<a id="L220"></a><span class="ln">   220</span>		buf [4]byte
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>		<span class="comment">// Next step in the decompression,</span>
+<a id="L223"></a><span class="ln">   223</span>		<span class="comment">// and decompression state.</span>
+<a id="L224"></a><span class="ln">   224</span>		step     func(*decompressor)
+<a id="L225"></a><span class="ln">   225</span>		final    bool
+<a id="L226"></a><span class="ln">   226</span>		err      error
+<a id="L227"></a><span class="ln">   227</span>		toRead   []byte
+<a id="L228"></a><span class="ln">   228</span>		hl, hd   *huffmanDecoder
+<a id="L229"></a><span class="ln">   229</span>		copyLen  int
+<a id="L230"></a><span class="ln">   230</span>		copyDist int
+<a id="L231"></a><span class="ln">   231</span>	}
+<a id="L232"></a><span class="ln">   232</span>	
+<a id="L233"></a><span class="ln">   233</span>	func (f *decompressor) nextBlock() {
+<a id="L234"></a><span class="ln">   234</span>		if f.final {
+<a id="L235"></a><span class="ln">   235</span>			if f.hw != f.hp {
+<a id="L236"></a><span class="ln">   236</span>				f.flush((*decompressor).nextBlock)
+<a id="L237"></a><span class="ln">   237</span>				return
+<a id="L238"></a><span class="ln">   238</span>			}
+<a id="L239"></a><span class="ln">   239</span>			f.err = io.EOF
+<a id="L240"></a><span class="ln">   240</span>			return
+<a id="L241"></a><span class="ln">   241</span>		}
+<a id="L242"></a><span class="ln">   242</span>		for f.nb &lt; 1+2 {
+<a id="L243"></a><span class="ln">   243</span>			if f.err = f.moreBits(); f.err != nil {
+<a id="L244"></a><span class="ln">   244</span>				return
+<a id="L245"></a><span class="ln">   245</span>			}
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		f.final = f.b&amp;1 == 1
+<a id="L248"></a><span class="ln">   248</span>		f.b &gt;&gt;= 1
+<a id="L249"></a><span class="ln">   249</span>		typ := f.b &amp; 3
+<a id="L250"></a><span class="ln">   250</span>		f.b &gt;&gt;= 2
+<a id="L251"></a><span class="ln">   251</span>		f.nb -= 1 + 2
+<a id="L252"></a><span class="ln">   252</span>		switch typ {
+<a id="L253"></a><span class="ln">   253</span>		case 0:
+<a id="L254"></a><span class="ln">   254</span>			f.dataBlock()
+<a id="L255"></a><span class="ln">   255</span>		case 1:
+<a id="L256"></a><span class="ln">   256</span>			<span class="comment">// compressed, fixed Huffman tables</span>
+<a id="L257"></a><span class="ln">   257</span>			f.hl = &amp;fixedHuffmanDecoder
+<a id="L258"></a><span class="ln">   258</span>			f.hd = nil
+<a id="L259"></a><span class="ln">   259</span>			f.huffmanBlock()
+<a id="L260"></a><span class="ln">   260</span>		case 2:
+<a id="L261"></a><span class="ln">   261</span>			<span class="comment">// compressed, dynamic Huffman tables</span>
+<a id="L262"></a><span class="ln">   262</span>			if f.err = f.readHuffman(); f.err != nil {
+<a id="L263"></a><span class="ln">   263</span>				break
+<a id="L264"></a><span class="ln">   264</span>			}
+<a id="L265"></a><span class="ln">   265</span>			f.hl = &amp;f.h1
+<a id="L266"></a><span class="ln">   266</span>			f.hd = &amp;f.h2
+<a id="L267"></a><span class="ln">   267</span>			f.huffmanBlock()
+<a id="L268"></a><span class="ln">   268</span>		default:
+<a id="L269"></a><span class="ln">   269</span>			<span class="comment">// 3 is reserved.</span>
+<a id="L270"></a><span class="ln">   270</span>			f.err = CorruptInputError(f.roffset)
+<a id="L271"></a><span class="ln">   271</span>		}
+<a id="L272"></a><span class="ln">   272</span>	}
+<a id="L273"></a><span class="ln">   273</span>	
+<a id="L274"></a><span class="ln">   274</span>	func (f *decompressor) Read(b []byte) (int, error) {
+<a id="L275"></a><span class="ln">   275</span>		for {
+<a id="L276"></a><span class="ln">   276</span>			if len(f.toRead) &gt; 0 {
+<a id="L277"></a><span class="ln">   277</span>				n := copy(b, f.toRead)
+<a id="L278"></a><span class="ln">   278</span>				f.toRead = f.toRead[n:]
+<a id="L279"></a><span class="ln">   279</span>				return n, nil
+<a id="L280"></a><span class="ln">   280</span>			}
+<a id="L281"></a><span class="ln">   281</span>			if f.err != nil {
+<a id="L282"></a><span class="ln">   282</span>				return 0, f.err
+<a id="L283"></a><span class="ln">   283</span>			}
+<a id="L284"></a><span class="ln">   284</span>			f.step(f)
+<a id="L285"></a><span class="ln">   285</span>		}
+<a id="L286"></a><span class="ln">   286</span>		panic(&#34;unreachable&#34;)
+<a id="L287"></a><span class="ln">   287</span>	}
+<a id="L288"></a><span class="ln">   288</span>	
+<a id="L289"></a><span class="ln">   289</span>	func (f *decompressor) Close() error {
+<a id="L290"></a><span class="ln">   290</span>		if f.err == io.EOF {
+<a id="L291"></a><span class="ln">   291</span>			return nil
+<a id="L292"></a><span class="ln">   292</span>		}
+<a id="L293"></a><span class="ln">   293</span>		return f.err
+<a id="L294"></a><span class="ln">   294</span>	}
+<a id="L295"></a><span class="ln">   295</span>	
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">// RFC 1951 section 3.2.7.</span>
+<a id="L297"></a><span class="ln">   297</span>	<span class="comment">// Compression with dynamic Huffman codes</span>
+<a id="L298"></a><span class="ln">   298</span>	
+<a id="L299"></a><span class="ln">   299</span>	var codeOrder = [...]int{16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15}
+<a id="L300"></a><span class="ln">   300</span>	
+<a id="L301"></a><span class="ln">   301</span>	func (f *decompressor) readHuffman() error {
+<a id="L302"></a><span class="ln">   302</span>		<span class="comment">// HLIT[5], HDIST[5], HCLEN[4].</span>
+<a id="L303"></a><span class="ln">   303</span>		for f.nb &lt; 5+5+4 {
+<a id="L304"></a><span class="ln">   304</span>			if err := f.moreBits(); err != nil {
+<a id="L305"></a><span class="ln">   305</span>				return err
+<a id="L306"></a><span class="ln">   306</span>			}
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>		nlit := int(f.b&amp;0x1F) + 257
+<a id="L309"></a><span class="ln">   309</span>		f.b &gt;&gt;= 5
+<a id="L310"></a><span class="ln">   310</span>		ndist := int(f.b&amp;0x1F) + 1
+<a id="L311"></a><span class="ln">   311</span>		f.b &gt;&gt;= 5
+<a id="L312"></a><span class="ln">   312</span>		nclen := int(f.b&amp;0xF) + 4
+<a id="L313"></a><span class="ln">   313</span>		f.b &gt;&gt;= 4
+<a id="L314"></a><span class="ln">   314</span>		f.nb -= 5 + 5 + 4
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>		<span class="comment">// (HCLEN+4)*3 bits: code lengths in the magic codeOrder order.</span>
+<a id="L317"></a><span class="ln">   317</span>		for i := 0; i &lt; nclen; i++ {
+<a id="L318"></a><span class="ln">   318</span>			for f.nb &lt; 3 {
+<a id="L319"></a><span class="ln">   319</span>				if err := f.moreBits(); err != nil {
+<a id="L320"></a><span class="ln">   320</span>					return err
+<a id="L321"></a><span class="ln">   321</span>				}
+<a id="L322"></a><span class="ln">   322</span>			}
+<a id="L323"></a><span class="ln">   323</span>			f.codebits[codeOrder[i]] = int(f.b &amp; 0x7)
+<a id="L324"></a><span class="ln">   324</span>			f.b &gt;&gt;= 3
+<a id="L325"></a><span class="ln">   325</span>			f.nb -= 3
+<a id="L326"></a><span class="ln">   326</span>		}
+<a id="L327"></a><span class="ln">   327</span>		for i := nclen; i &lt; len(codeOrder); i++ {
+<a id="L328"></a><span class="ln">   328</span>			f.codebits[codeOrder[i]] = 0
+<a id="L329"></a><span class="ln">   329</span>		}
+<a id="L330"></a><span class="ln">   330</span>		if !f.h1.init(f.codebits[0:]) {
+<a id="L331"></a><span class="ln">   331</span>			return CorruptInputError(f.roffset)
+<a id="L332"></a><span class="ln">   332</span>		}
+<a id="L333"></a><span class="ln">   333</span>	
+<a id="L334"></a><span class="ln">   334</span>		<span class="comment">// HLIT + 257 code lengths, HDIST + 1 code lengths,</span>
+<a id="L335"></a><span class="ln">   335</span>		<span class="comment">// using the code length Huffman code.</span>
+<a id="L336"></a><span class="ln">   336</span>		for i, n := 0, nlit+ndist; i &lt; n; {
+<a id="L337"></a><span class="ln">   337</span>			x, err := f.huffSym(&amp;f.h1)
+<a id="L338"></a><span class="ln">   338</span>			if err != nil {
+<a id="L339"></a><span class="ln">   339</span>				return err
+<a id="L340"></a><span class="ln">   340</span>			}
+<a id="L341"></a><span class="ln">   341</span>			if x &lt; 16 {
+<a id="L342"></a><span class="ln">   342</span>				<span class="comment">// Actual length.</span>
+<a id="L343"></a><span class="ln">   343</span>				f.bits[i] = x
+<a id="L344"></a><span class="ln">   344</span>				i++
+<a id="L345"></a><span class="ln">   345</span>				continue
+<a id="L346"></a><span class="ln">   346</span>			}
+<a id="L347"></a><span class="ln">   347</span>			<span class="comment">// Repeat previous length or zero.</span>
+<a id="L348"></a><span class="ln">   348</span>			var rep int
+<a id="L349"></a><span class="ln">   349</span>			var nb uint
+<a id="L350"></a><span class="ln">   350</span>			var b int
+<a id="L351"></a><span class="ln">   351</span>			switch x {
+<a id="L352"></a><span class="ln">   352</span>			default:
+<a id="L353"></a><span class="ln">   353</span>				return InternalError(&#34;unexpected length code&#34;)
+<a id="L354"></a><span class="ln">   354</span>			case 16:
+<a id="L355"></a><span class="ln">   355</span>				rep = 3
+<a id="L356"></a><span class="ln">   356</span>				nb = 2
+<a id="L357"></a><span class="ln">   357</span>				if i == 0 {
+<a id="L358"></a><span class="ln">   358</span>					return CorruptInputError(f.roffset)
+<a id="L359"></a><span class="ln">   359</span>				}
+<a id="L360"></a><span class="ln">   360</span>				b = f.bits[i-1]
+<a id="L361"></a><span class="ln">   361</span>			case 17:
+<a id="L362"></a><span class="ln">   362</span>				rep = 3
+<a id="L363"></a><span class="ln">   363</span>				nb = 3
+<a id="L364"></a><span class="ln">   364</span>				b = 0
+<a id="L365"></a><span class="ln">   365</span>			case 18:
+<a id="L366"></a><span class="ln">   366</span>				rep = 11
+<a id="L367"></a><span class="ln">   367</span>				nb = 7
+<a id="L368"></a><span class="ln">   368</span>				b = 0
+<a id="L369"></a><span class="ln">   369</span>			}
+<a id="L370"></a><span class="ln">   370</span>			for f.nb &lt; nb {
+<a id="L371"></a><span class="ln">   371</span>				if err := f.moreBits(); err != nil {
+<a id="L372"></a><span class="ln">   372</span>					return err
+<a id="L373"></a><span class="ln">   373</span>				}
+<a id="L374"></a><span class="ln">   374</span>			}
+<a id="L375"></a><span class="ln">   375</span>			rep += int(f.b &amp; uint32(1&lt;&lt;nb-1))
+<a id="L376"></a><span class="ln">   376</span>			f.b &gt;&gt;= nb
+<a id="L377"></a><span class="ln">   377</span>			f.nb -= nb
+<a id="L378"></a><span class="ln">   378</span>			if i+rep &gt; n {
+<a id="L379"></a><span class="ln">   379</span>				return CorruptInputError(f.roffset)
+<a id="L380"></a><span class="ln">   380</span>			}
+<a id="L381"></a><span class="ln">   381</span>			for j := 0; j &lt; rep; j++ {
+<a id="L382"></a><span class="ln">   382</span>				f.bits[i] = b
+<a id="L383"></a><span class="ln">   383</span>				i++
+<a id="L384"></a><span class="ln">   384</span>			}
+<a id="L385"></a><span class="ln">   385</span>		}
+<a id="L386"></a><span class="ln">   386</span>	
+<a id="L387"></a><span class="ln">   387</span>		if !f.h1.init(f.bits[0:nlit]) || !f.h2.init(f.bits[nlit:nlit+ndist]) {
+<a id="L388"></a><span class="ln">   388</span>			return CorruptInputError(f.roffset)
+<a id="L389"></a><span class="ln">   389</span>		}
+<a id="L390"></a><span class="ln">   390</span>	
+<a id="L391"></a><span class="ln">   391</span>		return nil
+<a id="L392"></a><span class="ln">   392</span>	}
+<a id="L393"></a><span class="ln">   393</span>	
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">// Decode a single Huffman block from f.</span>
+<a id="L395"></a><span class="ln">   395</span>	<span class="comment">// hl and hd are the Huffman states for the lit/length values</span>
+<a id="L396"></a><span class="ln">   396</span>	<span class="comment">// and the distance values, respectively.  If hd == nil, using the</span>
+<a id="L397"></a><span class="ln">   397</span>	<span class="comment">// fixed distance encoding associated with fixed Huffman blocks.</span>
+<a id="L398"></a><span class="ln">   398</span>	func (f *decompressor) huffmanBlock() {
+<a id="L399"></a><span class="ln">   399</span>		for {
+<a id="L400"></a><span class="ln">   400</span>			v, err := f.huffSym(f.hl)
+<a id="L401"></a><span class="ln">   401</span>			if err != nil {
+<a id="L402"></a><span class="ln">   402</span>				f.err = err
+<a id="L403"></a><span class="ln">   403</span>				return
+<a id="L404"></a><span class="ln">   404</span>			}
+<a id="L405"></a><span class="ln">   405</span>			var n uint <span class="comment">// number of bits extra</span>
+<a id="L406"></a><span class="ln">   406</span>			var length int
+<a id="L407"></a><span class="ln">   407</span>			switch {
+<a id="L408"></a><span class="ln">   408</span>			case v &lt; 256:
+<a id="L409"></a><span class="ln">   409</span>				f.hist[f.hp] = byte(v)
+<a id="L410"></a><span class="ln">   410</span>				f.hp++
+<a id="L411"></a><span class="ln">   411</span>				if f.hp == len(f.hist) {
+<a id="L412"></a><span class="ln">   412</span>					<span class="comment">// After the flush, continue this loop.</span>
+<a id="L413"></a><span class="ln">   413</span>					f.flush((*decompressor).huffmanBlock)
+<a id="L414"></a><span class="ln">   414</span>					return
+<a id="L415"></a><span class="ln">   415</span>				}
+<a id="L416"></a><span class="ln">   416</span>				continue
+<a id="L417"></a><span class="ln">   417</span>			case v == 256:
+<a id="L418"></a><span class="ln">   418</span>				<span class="comment">// Done with huffman block; read next block.</span>
+<a id="L419"></a><span class="ln">   419</span>				f.step = (*decompressor).nextBlock
+<a id="L420"></a><span class="ln">   420</span>				return
+<a id="L421"></a><span class="ln">   421</span>			<span class="comment">// otherwise, reference to older data</span>
+<a id="L422"></a><span class="ln">   422</span>			case v &lt; 265:
+<a id="L423"></a><span class="ln">   423</span>				length = v - (257 - 3)
+<a id="L424"></a><span class="ln">   424</span>				n = 0
+<a id="L425"></a><span class="ln">   425</span>			case v &lt; 269:
+<a id="L426"></a><span class="ln">   426</span>				length = v*2 - (265*2 - 11)
+<a id="L427"></a><span class="ln">   427</span>				n = 1
+<a id="L428"></a><span class="ln">   428</span>			case v &lt; 273:
+<a id="L429"></a><span class="ln">   429</span>				length = v*4 - (269*4 - 19)
+<a id="L430"></a><span class="ln">   430</span>				n = 2
+<a id="L431"></a><span class="ln">   431</span>			case v &lt; 277:
+<a id="L432"></a><span class="ln">   432</span>				length = v*8 - (273*8 - 35)
+<a id="L433"></a><span class="ln">   433</span>				n = 3
+<a id="L434"></a><span class="ln">   434</span>			case v &lt; 281:
+<a id="L435"></a><span class="ln">   435</span>				length = v*16 - (277*16 - 67)
+<a id="L436"></a><span class="ln">   436</span>				n = 4
+<a id="L437"></a><span class="ln">   437</span>			case v &lt; 285:
+<a id="L438"></a><span class="ln">   438</span>				length = v*32 - (281*32 - 131)
+<a id="L439"></a><span class="ln">   439</span>				n = 5
+<a id="L440"></a><span class="ln">   440</span>			default:
+<a id="L441"></a><span class="ln">   441</span>				length = 258
+<a id="L442"></a><span class="ln">   442</span>				n = 0
+<a id="L443"></a><span class="ln">   443</span>			}
+<a id="L444"></a><span class="ln">   444</span>			if n &gt; 0 {
+<a id="L445"></a><span class="ln">   445</span>				for f.nb &lt; n {
+<a id="L446"></a><span class="ln">   446</span>					if err = f.moreBits(); err != nil {
+<a id="L447"></a><span class="ln">   447</span>						f.err = err
+<a id="L448"></a><span class="ln">   448</span>						return
+<a id="L449"></a><span class="ln">   449</span>					}
+<a id="L450"></a><span class="ln">   450</span>				}
+<a id="L451"></a><span class="ln">   451</span>				length += int(f.b &amp; uint32(1&lt;&lt;n-1))
+<a id="L452"></a><span class="ln">   452</span>				f.b &gt;&gt;= n
+<a id="L453"></a><span class="ln">   453</span>				f.nb -= n
+<a id="L454"></a><span class="ln">   454</span>			}
+<a id="L455"></a><span class="ln">   455</span>	
+<a id="L456"></a><span class="ln">   456</span>			var dist int
+<a id="L457"></a><span class="ln">   457</span>			if f.hd == nil {
+<a id="L458"></a><span class="ln">   458</span>				for f.nb &lt; 5 {
+<a id="L459"></a><span class="ln">   459</span>					if err = f.moreBits(); err != nil {
+<a id="L460"></a><span class="ln">   460</span>						f.err = err
+<a id="L461"></a><span class="ln">   461</span>						return
+<a id="L462"></a><span class="ln">   462</span>					}
+<a id="L463"></a><span class="ln">   463</span>				}
+<a id="L464"></a><span class="ln">   464</span>				dist = int(reverseByte[(f.b&amp;0x1F)&lt;&lt;3])
+<a id="L465"></a><span class="ln">   465</span>				f.b &gt;&gt;= 5
+<a id="L466"></a><span class="ln">   466</span>				f.nb -= 5
+<a id="L467"></a><span class="ln">   467</span>			} else {
+<a id="L468"></a><span class="ln">   468</span>				if dist, err = f.huffSym(f.hd); err != nil {
+<a id="L469"></a><span class="ln">   469</span>					f.err = err
+<a id="L470"></a><span class="ln">   470</span>					return
+<a id="L471"></a><span class="ln">   471</span>				}
+<a id="L472"></a><span class="ln">   472</span>			}
+<a id="L473"></a><span class="ln">   473</span>	
+<a id="L474"></a><span class="ln">   474</span>			switch {
+<a id="L475"></a><span class="ln">   475</span>			case dist &lt; 4:
+<a id="L476"></a><span class="ln">   476</span>				dist++
+<a id="L477"></a><span class="ln">   477</span>			case dist &gt;= 30:
+<a id="L478"></a><span class="ln">   478</span>				f.err = CorruptInputError(f.roffset)
+<a id="L479"></a><span class="ln">   479</span>				return
+<a id="L480"></a><span class="ln">   480</span>			default:
+<a id="L481"></a><span class="ln">   481</span>				nb := uint(dist-2) &gt;&gt; 1
+<a id="L482"></a><span class="ln">   482</span>				<span class="comment">// have 1 bit in bottom of dist, need nb more.</span>
+<a id="L483"></a><span class="ln">   483</span>				extra := (dist &amp; 1) &lt;&lt; nb
+<a id="L484"></a><span class="ln">   484</span>				for f.nb &lt; nb {
+<a id="L485"></a><span class="ln">   485</span>					if err = f.moreBits(); err != nil {
+<a id="L486"></a><span class="ln">   486</span>						f.err = err
+<a id="L487"></a><span class="ln">   487</span>						return
+<a id="L488"></a><span class="ln">   488</span>					}
+<a id="L489"></a><span class="ln">   489</span>				}
+<a id="L490"></a><span class="ln">   490</span>				extra |= int(f.b &amp; uint32(1&lt;&lt;nb-1))
+<a id="L491"></a><span class="ln">   491</span>				f.b &gt;&gt;= nb
+<a id="L492"></a><span class="ln">   492</span>				f.nb -= nb
+<a id="L493"></a><span class="ln">   493</span>				dist = 1&lt;&lt;(nb+1) + 1 + extra
+<a id="L494"></a><span class="ln">   494</span>			}
+<a id="L495"></a><span class="ln">   495</span>	
+<a id="L496"></a><span class="ln">   496</span>			<span class="comment">// Copy history[-dist:-dist+length] into output.</span>
+<a id="L497"></a><span class="ln">   497</span>			if dist &gt; len(f.hist) {
+<a id="L498"></a><span class="ln">   498</span>				f.err = InternalError(&#34;bad history distance&#34;)
+<a id="L499"></a><span class="ln">   499</span>				return
+<a id="L500"></a><span class="ln">   500</span>			}
+<a id="L501"></a><span class="ln">   501</span>	
+<a id="L502"></a><span class="ln">   502</span>			<span class="comment">// No check on length; encoding can be prescient.</span>
+<a id="L503"></a><span class="ln">   503</span>			if !f.hfull &amp;&amp; dist &gt; f.hp {
+<a id="L504"></a><span class="ln">   504</span>				f.err = CorruptInputError(f.roffset)
+<a id="L505"></a><span class="ln">   505</span>				return
+<a id="L506"></a><span class="ln">   506</span>			}
+<a id="L507"></a><span class="ln">   507</span>	
+<a id="L508"></a><span class="ln">   508</span>			p := f.hp - dist
+<a id="L509"></a><span class="ln">   509</span>			if p &lt; 0 {
+<a id="L510"></a><span class="ln">   510</span>				p += len(f.hist)
+<a id="L511"></a><span class="ln">   511</span>			}
+<a id="L512"></a><span class="ln">   512</span>			for i := 0; i &lt; length; i++ {
+<a id="L513"></a><span class="ln">   513</span>				f.hist[f.hp] = f.hist[p]
+<a id="L514"></a><span class="ln">   514</span>				f.hp++
+<a id="L515"></a><span class="ln">   515</span>				p++
+<a id="L516"></a><span class="ln">   516</span>				if f.hp == len(f.hist) {
+<a id="L517"></a><span class="ln">   517</span>					<span class="comment">// After flush continue copying out of history.</span>
+<a id="L518"></a><span class="ln">   518</span>					f.copyLen = length - (i + 1)
+<a id="L519"></a><span class="ln">   519</span>					f.copyDist = dist
+<a id="L520"></a><span class="ln">   520</span>					f.flush((*decompressor).copyHuff)
+<a id="L521"></a><span class="ln">   521</span>					return
+<a id="L522"></a><span class="ln">   522</span>				}
+<a id="L523"></a><span class="ln">   523</span>				if p == len(f.hist) {
+<a id="L524"></a><span class="ln">   524</span>					p = 0
+<a id="L525"></a><span class="ln">   525</span>				}
+<a id="L526"></a><span class="ln">   526</span>			}
+<a id="L527"></a><span class="ln">   527</span>		}
+<a id="L528"></a><span class="ln">   528</span>		panic(&#34;unreached&#34;)
+<a id="L529"></a><span class="ln">   529</span>	}
+<a id="L530"></a><span class="ln">   530</span>	
+<a id="L531"></a><span class="ln">   531</span>	func (f *decompressor) copyHuff() {
+<a id="L532"></a><span class="ln">   532</span>		length := f.copyLen
+<a id="L533"></a><span class="ln">   533</span>		dist := f.copyDist
+<a id="L534"></a><span class="ln">   534</span>		p := f.hp - dist
+<a id="L535"></a><span class="ln">   535</span>		if p &lt; 0 {
+<a id="L536"></a><span class="ln">   536</span>			p += len(f.hist)
+<a id="L537"></a><span class="ln">   537</span>		}
+<a id="L538"></a><span class="ln">   538</span>		for i := 0; i &lt; length; i++ {
+<a id="L539"></a><span class="ln">   539</span>			f.hist[f.hp] = f.hist[p]
+<a id="L540"></a><span class="ln">   540</span>			f.hp++
+<a id="L541"></a><span class="ln">   541</span>			p++
+<a id="L542"></a><span class="ln">   542</span>			if f.hp == len(f.hist) {
+<a id="L543"></a><span class="ln">   543</span>				f.copyLen = length - (i + 1)
+<a id="L544"></a><span class="ln">   544</span>				f.flush((*decompressor).copyHuff)
+<a id="L545"></a><span class="ln">   545</span>				return
+<a id="L546"></a><span class="ln">   546</span>			}
+<a id="L547"></a><span class="ln">   547</span>			if p == len(f.hist) {
+<a id="L548"></a><span class="ln">   548</span>				p = 0
+<a id="L549"></a><span class="ln">   549</span>			}
+<a id="L550"></a><span class="ln">   550</span>		}
+<a id="L551"></a><span class="ln">   551</span>	
+<a id="L552"></a><span class="ln">   552</span>		<span class="comment">// Continue processing Huffman block.</span>
+<a id="L553"></a><span class="ln">   553</span>		f.huffmanBlock()
+<a id="L554"></a><span class="ln">   554</span>	}
+<a id="L555"></a><span class="ln">   555</span>	
+<a id="L556"></a><span class="ln">   556</span>	<span class="comment">// Copy a single uncompressed data block from input to output.</span>
+<a id="L557"></a><span class="ln">   557</span>	func (f *decompressor) dataBlock() {
+<a id="L558"></a><span class="ln">   558</span>		<span class="comment">// Uncompressed.</span>
+<a id="L559"></a><span class="ln">   559</span>		<span class="comment">// Discard current half-byte.</span>
+<a id="L560"></a><span class="ln">   560</span>		f.nb = 0
+<a id="L561"></a><span class="ln">   561</span>		f.b = 0
+<a id="L562"></a><span class="ln">   562</span>	
+<a id="L563"></a><span class="ln">   563</span>		<span class="comment">// Length then ones-complement of length.</span>
+<a id="L564"></a><span class="ln">   564</span>		nr, err := io.ReadFull(f.r, f.buf[0:4])
+<a id="L565"></a><span class="ln">   565</span>		f.roffset += int64(nr)
+<a id="L566"></a><span class="ln">   566</span>		if err != nil {
+<a id="L567"></a><span class="ln">   567</span>			f.err = &amp;ReadError{f.roffset, err}
+<a id="L568"></a><span class="ln">   568</span>			return
+<a id="L569"></a><span class="ln">   569</span>		}
+<a id="L570"></a><span class="ln">   570</span>		n := int(f.buf[0]) | int(f.buf[1])&lt;&lt;8
+<a id="L571"></a><span class="ln">   571</span>		nn := int(f.buf[2]) | int(f.buf[3])&lt;&lt;8
+<a id="L572"></a><span class="ln">   572</span>		if uint16(nn) != uint16(^n) {
+<a id="L573"></a><span class="ln">   573</span>			f.err = CorruptInputError(f.roffset)
+<a id="L574"></a><span class="ln">   574</span>			return
+<a id="L575"></a><span class="ln">   575</span>		}
+<a id="L576"></a><span class="ln">   576</span>	
+<a id="L577"></a><span class="ln">   577</span>		if n == 0 {
+<a id="L578"></a><span class="ln">   578</span>			<span class="comment">// 0-length block means sync</span>
+<a id="L579"></a><span class="ln">   579</span>			f.flush((*decompressor).nextBlock)
+<a id="L580"></a><span class="ln">   580</span>			return
+<a id="L581"></a><span class="ln">   581</span>		}
+<a id="L582"></a><span class="ln">   582</span>	
+<a id="L583"></a><span class="ln">   583</span>		f.copyLen = n
+<a id="L584"></a><span class="ln">   584</span>		f.copyData()
+<a id="L585"></a><span class="ln">   585</span>	}
+<a id="L586"></a><span class="ln">   586</span>	
+<a id="L587"></a><span class="ln">   587</span>	func (f *decompressor) copyData() {
+<a id="L588"></a><span class="ln">   588</span>		<span class="comment">// Read f.dataLen bytes into history,</span>
+<a id="L589"></a><span class="ln">   589</span>		<span class="comment">// pausing for reads as history fills.</span>
+<a id="L590"></a><span class="ln">   590</span>		n := f.copyLen
+<a id="L591"></a><span class="ln">   591</span>		for n &gt; 0 {
+<a id="L592"></a><span class="ln">   592</span>			m := len(f.hist) - f.hp
+<a id="L593"></a><span class="ln">   593</span>			if m &gt; n {
+<a id="L594"></a><span class="ln">   594</span>				m = n
+<a id="L595"></a><span class="ln">   595</span>			}
+<a id="L596"></a><span class="ln">   596</span>			m, err := io.ReadFull(f.r, f.hist[f.hp:f.hp+m])
+<a id="L597"></a><span class="ln">   597</span>			f.roffset += int64(m)
+<a id="L598"></a><span class="ln">   598</span>			if err != nil {
+<a id="L599"></a><span class="ln">   599</span>				f.err = &amp;ReadError{f.roffset, err}
+<a id="L600"></a><span class="ln">   600</span>				return
+<a id="L601"></a><span class="ln">   601</span>			}
+<a id="L602"></a><span class="ln">   602</span>			n -= m
+<a id="L603"></a><span class="ln">   603</span>			f.hp += m
+<a id="L604"></a><span class="ln">   604</span>			if f.hp == len(f.hist) {
+<a id="L605"></a><span class="ln">   605</span>				f.copyLen = n
+<a id="L606"></a><span class="ln">   606</span>				f.flush((*decompressor).copyData)
+<a id="L607"></a><span class="ln">   607</span>				return
+<a id="L608"></a><span class="ln">   608</span>			}
+<a id="L609"></a><span class="ln">   609</span>		}
+<a id="L610"></a><span class="ln">   610</span>		f.step = (*decompressor).nextBlock
+<a id="L611"></a><span class="ln">   611</span>	}
+<a id="L612"></a><span class="ln">   612</span>	
+<a id="L613"></a><span class="ln">   613</span>	func (f *decompressor) setDict(dict []byte) {
+<a id="L614"></a><span class="ln">   614</span>		if len(dict) &gt; len(f.hist) {
+<a id="L615"></a><span class="ln">   615</span>			<span class="comment">// Will only remember the tail.</span>
+<a id="L616"></a><span class="ln">   616</span>			dict = dict[len(dict)-len(f.hist):]
+<a id="L617"></a><span class="ln">   617</span>		}
+<a id="L618"></a><span class="ln">   618</span>	
+<a id="L619"></a><span class="ln">   619</span>		f.hp = copy(f.hist[:], dict)
+<a id="L620"></a><span class="ln">   620</span>		if f.hp == len(f.hist) {
+<a id="L621"></a><span class="ln">   621</span>			f.hp = 0
+<a id="L622"></a><span class="ln">   622</span>			f.hfull = true
+<a id="L623"></a><span class="ln">   623</span>		}
+<a id="L624"></a><span class="ln">   624</span>		f.hw = f.hp
+<a id="L625"></a><span class="ln">   625</span>	}
+<a id="L626"></a><span class="ln">   626</span>	
+<a id="L627"></a><span class="ln">   627</span>	func (f *decompressor) moreBits() error {
+<a id="L628"></a><span class="ln">   628</span>		c, err := f.r.ReadByte()
+<a id="L629"></a><span class="ln">   629</span>		if err != nil {
+<a id="L630"></a><span class="ln">   630</span>			if err == io.EOF {
+<a id="L631"></a><span class="ln">   631</span>				err = io.ErrUnexpectedEOF
+<a id="L632"></a><span class="ln">   632</span>			}
+<a id="L633"></a><span class="ln">   633</span>			return err
+<a id="L634"></a><span class="ln">   634</span>		}
+<a id="L635"></a><span class="ln">   635</span>		f.roffset++
+<a id="L636"></a><span class="ln">   636</span>		f.b |= uint32(c) &lt;&lt; f.nb
+<a id="L637"></a><span class="ln">   637</span>		f.nb += 8
+<a id="L638"></a><span class="ln">   638</span>		return nil
+<a id="L639"></a><span class="ln">   639</span>	}
+<a id="L640"></a><span class="ln">   640</span>	
+<a id="L641"></a><span class="ln">   641</span>	<span class="comment">// Read the next Huffman-encoded symbol from f according to h.</span>
+<a id="L642"></a><span class="ln">   642</span>	func (f *decompressor) huffSym(h *huffmanDecoder) (int, error) {
+<a id="L643"></a><span class="ln">   643</span>		for n := uint(h.min); n &lt;= uint(h.max); n++ {
+<a id="L644"></a><span class="ln">   644</span>			lim := h.limit[n]
+<a id="L645"></a><span class="ln">   645</span>			if lim == -1 {
+<a id="L646"></a><span class="ln">   646</span>				continue
+<a id="L647"></a><span class="ln">   647</span>			}
+<a id="L648"></a><span class="ln">   648</span>			for f.nb &lt; n {
+<a id="L649"></a><span class="ln">   649</span>				if err := f.moreBits(); err != nil {
+<a id="L650"></a><span class="ln">   650</span>					return 0, err
+<a id="L651"></a><span class="ln">   651</span>				}
+<a id="L652"></a><span class="ln">   652</span>			}
+<a id="L653"></a><span class="ln">   653</span>			v := int(f.b &amp; uint32(1&lt;&lt;n-1))
+<a id="L654"></a><span class="ln">   654</span>			v &lt;&lt;= 16 - n
+<a id="L655"></a><span class="ln">   655</span>			v = int(reverseByte[v&gt;&gt;8]) | int(reverseByte[v&amp;0xFF])&lt;&lt;8 <span class="comment">// reverse bits</span>
+<a id="L656"></a><span class="ln">   656</span>			if v &lt;= lim {
+<a id="L657"></a><span class="ln">   657</span>				f.b &gt;&gt;= n
+<a id="L658"></a><span class="ln">   658</span>				f.nb -= n
+<a id="L659"></a><span class="ln">   659</span>				return h.codes[v-h.base[n]], nil
+<a id="L660"></a><span class="ln">   660</span>			}
+<a id="L661"></a><span class="ln">   661</span>		}
+<a id="L662"></a><span class="ln">   662</span>		return 0, CorruptInputError(f.roffset)
+<a id="L663"></a><span class="ln">   663</span>	}
+<a id="L664"></a><span class="ln">   664</span>	
+<a id="L665"></a><span class="ln">   665</span>	<span class="comment">// Flush any buffered output to the underlying writer.</span>
+<a id="L666"></a><span class="ln">   666</span>	func (f *decompressor) flush(step func(*decompressor)) {
+<a id="L667"></a><span class="ln">   667</span>		f.toRead = f.hist[f.hw:f.hp]
+<a id="L668"></a><span class="ln">   668</span>		f.woffset += int64(f.hp - f.hw)
+<a id="L669"></a><span class="ln">   669</span>		f.hw = f.hp
+<a id="L670"></a><span class="ln">   670</span>		if f.hp == len(f.hist) {
+<a id="L671"></a><span class="ln">   671</span>			f.hp = 0
+<a id="L672"></a><span class="ln">   672</span>			f.hw = 0
+<a id="L673"></a><span class="ln">   673</span>			f.hfull = true
+<a id="L674"></a><span class="ln">   674</span>		}
+<a id="L675"></a><span class="ln">   675</span>		f.step = step
+<a id="L676"></a><span class="ln">   676</span>	}
+<a id="L677"></a><span class="ln">   677</span>	
+<a id="L678"></a><span class="ln">   678</span>	func makeReader(r io.Reader) Reader {
+<a id="L679"></a><span class="ln">   679</span>		if rr, ok := r.(Reader); ok {
+<a id="L680"></a><span class="ln">   680</span>			return rr
+<a id="L681"></a><span class="ln">   681</span>		}
+<a id="L682"></a><span class="ln">   682</span>		return bufio.NewReader(r)
+<a id="L683"></a><span class="ln">   683</span>	}
+<a id="L684"></a><span class="ln">   684</span>	
+<a id="L685"></a><span class="ln">   685</span>	<span class="comment">// NewReader returns a new ReadCloser that can be used</span>
+<a id="L686"></a><span class="ln">   686</span>	<span class="comment">// to read the uncompressed version of r.  It is the caller&#39;s</span>
+<a id="L687"></a><span class="ln">   687</span>	<span class="comment">// responsibility to call Close on the ReadCloser when</span>
+<a id="L688"></a><span class="ln">   688</span>	<span class="comment">// finished reading.</span>
+<a id="L689"></a><span class="ln">   689</span>	func NewReader(r io.Reader) io.ReadCloser {
+<a id="L690"></a><span class="ln">   690</span>		var f decompressor
+<a id="L691"></a><span class="ln">   691</span>		f.r = makeReader(r)
+<a id="L692"></a><span class="ln">   692</span>		f.step = (*decompressor).nextBlock
+<a id="L693"></a><span class="ln">   693</span>		return &amp;f
+<a id="L694"></a><span class="ln">   694</span>	}
+<a id="L695"></a><span class="ln">   695</span>	
+<a id="L696"></a><span class="ln">   696</span>	<span class="comment">// NewReaderDict is like NewReader but initializes the reader</span>
+<a id="L697"></a><span class="ln">   697</span>	<span class="comment">// with a preset dictionary.  The returned Reader behaves as if</span>
+<a id="L698"></a><span class="ln">   698</span>	<span class="comment">// the uncompressed data stream started with the given dictionary,</span>
+<a id="L699"></a><span class="ln">   699</span>	<span class="comment">// which has already been read.  NewReaderDict is typically used</span>
+<a id="L700"></a><span class="ln">   700</span>	<span class="comment">// to read data compressed by NewWriterDict.</span>
+<a id="L701"></a><span class="ln">   701</span>	func NewReaderDict(r io.Reader, dict []byte) io.ReadCloser {
+<a id="L702"></a><span class="ln">   702</span>		var f decompressor
+<a id="L703"></a><span class="ln">   703</span>		f.setDict(dict)
+<a id="L704"></a><span class="ln">   704</span>		f.r = makeReader(r)
+<a id="L705"></a><span class="ln">   705</span>		f.step = (*decompressor).nextBlock
+<a id="L706"></a><span class="ln">   706</span>		return &amp;f
+<a id="L707"></a><span class="ln">   707</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

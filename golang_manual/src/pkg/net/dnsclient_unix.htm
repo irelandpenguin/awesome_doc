@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/dnsclient_unix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/dnsclient_unix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// DNS client: see RFC 1035.</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// Has to be linked into package net for Dial.</span>
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// TODO(rsc):</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//	Check periodically whether /etc/resolv.conf has changed.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//	Could potentially handle many outstanding lookups faster.</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//	Could have a small cache.</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">//	Random UDP source port (net.Dial should do that for us).</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">//	Random request IDs.</span>
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	package net
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	import (
+<a id="L20"></a><span class="ln">    20</span>		&#34;math/rand&#34;
+<a id="L21"></a><span class="ln">    21</span>		&#34;sync&#34;
+<a id="L22"></a><span class="ln">    22</span>		&#34;time&#34;
+<a id="L23"></a><span class="ln">    23</span>	)
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// Send a request on the connection and hope for a reply.</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Up to cfg.attempts attempts.</span>
+<a id="L27"></a><span class="ln">    27</span>	func exchange(cfg *dnsConfig, c Conn, name string, qtype uint16) (*dnsMsg, error) {
+<a id="L28"></a><span class="ln">    28</span>		if len(name) &gt;= 256 {
+<a id="L29"></a><span class="ln">    29</span>			return nil, &amp;DNSError{Err: &#34;name too long&#34;, Name: name}
+<a id="L30"></a><span class="ln">    30</span>		}
+<a id="L31"></a><span class="ln">    31</span>		out := new(dnsMsg)
+<a id="L32"></a><span class="ln">    32</span>		out.id = uint16(rand.Int()) ^ uint16(time.Now().UnixNano())
+<a id="L33"></a><span class="ln">    33</span>		out.question = []dnsQuestion{
+<a id="L34"></a><span class="ln">    34</span>			{name, qtype, dnsClassINET},
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>		out.recursion_desired = true
+<a id="L37"></a><span class="ln">    37</span>		msg, ok := out.Pack()
+<a id="L38"></a><span class="ln">    38</span>		if !ok {
+<a id="L39"></a><span class="ln">    39</span>			return nil, &amp;DNSError{Err: &#34;internal error - cannot pack message&#34;, Name: name}
+<a id="L40"></a><span class="ln">    40</span>		}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>		for attempt := 0; attempt &lt; cfg.attempts; attempt++ {
+<a id="L43"></a><span class="ln">    43</span>			n, err := c.Write(msg)
+<a id="L44"></a><span class="ln">    44</span>			if err != nil {
+<a id="L45"></a><span class="ln">    45</span>				return nil, err
+<a id="L46"></a><span class="ln">    46</span>			}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>			if cfg.timeout == 0 {
+<a id="L49"></a><span class="ln">    49</span>				c.SetReadDeadline(time.Time{})
+<a id="L50"></a><span class="ln">    50</span>			} else {
+<a id="L51"></a><span class="ln">    51</span>				c.SetReadDeadline(time.Now().Add(time.Duration(cfg.timeout) * time.Second))
+<a id="L52"></a><span class="ln">    52</span>			}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>			buf := make([]byte, 2000) <span class="comment">// More than enough.</span>
+<a id="L55"></a><span class="ln">    55</span>			n, err = c.Read(buf)
+<a id="L56"></a><span class="ln">    56</span>			if err != nil {
+<a id="L57"></a><span class="ln">    57</span>				if e, ok := err.(Error); ok &amp;&amp; e.Timeout() {
+<a id="L58"></a><span class="ln">    58</span>					continue
+<a id="L59"></a><span class="ln">    59</span>				}
+<a id="L60"></a><span class="ln">    60</span>				return nil, err
+<a id="L61"></a><span class="ln">    61</span>			}
+<a id="L62"></a><span class="ln">    62</span>			buf = buf[0:n]
+<a id="L63"></a><span class="ln">    63</span>			in := new(dnsMsg)
+<a id="L64"></a><span class="ln">    64</span>			if !in.Unpack(buf) || in.id != out.id {
+<a id="L65"></a><span class="ln">    65</span>				continue
+<a id="L66"></a><span class="ln">    66</span>			}
+<a id="L67"></a><span class="ln">    67</span>			return in, nil
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		var server string
+<a id="L70"></a><span class="ln">    70</span>		if a := c.RemoteAddr(); a != nil {
+<a id="L71"></a><span class="ln">    71</span>			server = a.String()
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		return nil, &amp;DNSError{Err: &#34;no answer from server&#34;, Name: name, Server: server, IsTimeout: true}
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// Do a lookup for a single name, which must be rooted</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// (otherwise answer will not find the answers).</span>
+<a id="L78"></a><span class="ln">    78</span>	func tryOneName(cfg *dnsConfig, name string, qtype uint16) (cname string, addrs []dnsRR, err error) {
+<a id="L79"></a><span class="ln">    79</span>		if len(cfg.servers) == 0 {
+<a id="L80"></a><span class="ln">    80</span>			return &#34;&#34;, nil, &amp;DNSError{Err: &#34;no DNS servers&#34;, Name: name}
+<a id="L81"></a><span class="ln">    81</span>		}
+<a id="L82"></a><span class="ln">    82</span>		for i := 0; i &lt; len(cfg.servers); i++ {
+<a id="L83"></a><span class="ln">    83</span>			<span class="comment">// Calling Dial here is scary -- we have to be sure</span>
+<a id="L84"></a><span class="ln">    84</span>			<span class="comment">// not to dial a name that will require a DNS lookup,</span>
+<a id="L85"></a><span class="ln">    85</span>			<span class="comment">// or Dial will call back here to translate it.</span>
+<a id="L86"></a><span class="ln">    86</span>			<span class="comment">// The DNS config parser has already checked that</span>
+<a id="L87"></a><span class="ln">    87</span>			<span class="comment">// all the cfg.servers[i] are IP addresses, which</span>
+<a id="L88"></a><span class="ln">    88</span>			<span class="comment">// Dial will use without a DNS lookup.</span>
+<a id="L89"></a><span class="ln">    89</span>			server := cfg.servers[i] + &#34;:53&#34;
+<a id="L90"></a><span class="ln">    90</span>			c, cerr := Dial(&#34;udp&#34;, server)
+<a id="L91"></a><span class="ln">    91</span>			if cerr != nil {
+<a id="L92"></a><span class="ln">    92</span>				err = cerr
+<a id="L93"></a><span class="ln">    93</span>				continue
+<a id="L94"></a><span class="ln">    94</span>			}
+<a id="L95"></a><span class="ln">    95</span>			msg, merr := exchange(cfg, c, name, qtype)
+<a id="L96"></a><span class="ln">    96</span>			c.Close()
+<a id="L97"></a><span class="ln">    97</span>			if merr != nil {
+<a id="L98"></a><span class="ln">    98</span>				err = merr
+<a id="L99"></a><span class="ln">    99</span>				continue
+<a id="L100"></a><span class="ln">   100</span>			}
+<a id="L101"></a><span class="ln">   101</span>			cname, addrs, err = answer(name, server, msg, qtype)
+<a id="L102"></a><span class="ln">   102</span>			if err == nil || err.(*DNSError).Err == noSuchHost {
+<a id="L103"></a><span class="ln">   103</span>				break
+<a id="L104"></a><span class="ln">   104</span>			}
+<a id="L105"></a><span class="ln">   105</span>		}
+<a id="L106"></a><span class="ln">   106</span>		return
+<a id="L107"></a><span class="ln">   107</span>	}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	func convertRR_A(records []dnsRR) []IP {
+<a id="L110"></a><span class="ln">   110</span>		addrs := make([]IP, len(records))
+<a id="L111"></a><span class="ln">   111</span>		for i, rr := range records {
+<a id="L112"></a><span class="ln">   112</span>			a := rr.(*dnsRR_A).A
+<a id="L113"></a><span class="ln">   113</span>			addrs[i] = IPv4(byte(a&gt;&gt;24), byte(a&gt;&gt;16), byte(a&gt;&gt;8), byte(a))
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		return addrs
+<a id="L116"></a><span class="ln">   116</span>	}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	func convertRR_AAAA(records []dnsRR) []IP {
+<a id="L119"></a><span class="ln">   119</span>		addrs := make([]IP, len(records))
+<a id="L120"></a><span class="ln">   120</span>		for i, rr := range records {
+<a id="L121"></a><span class="ln">   121</span>			a := make(IP, IPv6len)
+<a id="L122"></a><span class="ln">   122</span>			copy(a, rr.(*dnsRR_AAAA).AAAA[:])
+<a id="L123"></a><span class="ln">   123</span>			addrs[i] = a
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>		return addrs
+<a id="L126"></a><span class="ln">   126</span>	}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>	var cfg *dnsConfig
+<a id="L129"></a><span class="ln">   129</span>	var dnserr error
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>	func loadConfig() { cfg, dnserr = dnsReadConfig() }
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	var onceLoadConfig sync.Once
+<a id="L134"></a><span class="ln">   134</span>	
+<a id="L135"></a><span class="ln">   135</span>	func lookup(name string, qtype uint16) (cname string, addrs []dnsRR, err error) {
+<a id="L136"></a><span class="ln">   136</span>		if !isDomainName(name) {
+<a id="L137"></a><span class="ln">   137</span>			return name, nil, &amp;DNSError{Err: &#34;invalid domain name&#34;, Name: name}
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>		onceLoadConfig.Do(loadConfig)
+<a id="L140"></a><span class="ln">   140</span>		if dnserr != nil || cfg == nil {
+<a id="L141"></a><span class="ln">   141</span>			err = dnserr
+<a id="L142"></a><span class="ln">   142</span>			return
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>		<span class="comment">// If name is rooted (trailing dot) or has enough dots,</span>
+<a id="L145"></a><span class="ln">   145</span>		<span class="comment">// try it by itself first.</span>
+<a id="L146"></a><span class="ln">   146</span>		rooted := len(name) &gt; 0 &amp;&amp; name[len(name)-1] == &#39;.&#39;
+<a id="L147"></a><span class="ln">   147</span>		if rooted || count(name, &#39;.&#39;) &gt;= cfg.ndots {
+<a id="L148"></a><span class="ln">   148</span>			rname := name
+<a id="L149"></a><span class="ln">   149</span>			if !rooted {
+<a id="L150"></a><span class="ln">   150</span>				rname += &#34;.&#34;
+<a id="L151"></a><span class="ln">   151</span>			}
+<a id="L152"></a><span class="ln">   152</span>			<span class="comment">// Can try as ordinary name.</span>
+<a id="L153"></a><span class="ln">   153</span>			cname, addrs, err = tryOneName(cfg, rname, qtype)
+<a id="L154"></a><span class="ln">   154</span>			if err == nil {
+<a id="L155"></a><span class="ln">   155</span>				return
+<a id="L156"></a><span class="ln">   156</span>			}
+<a id="L157"></a><span class="ln">   157</span>		}
+<a id="L158"></a><span class="ln">   158</span>		if rooted {
+<a id="L159"></a><span class="ln">   159</span>			return
+<a id="L160"></a><span class="ln">   160</span>		}
+<a id="L161"></a><span class="ln">   161</span>	
+<a id="L162"></a><span class="ln">   162</span>		<span class="comment">// Otherwise, try suffixes.</span>
+<a id="L163"></a><span class="ln">   163</span>		for i := 0; i &lt; len(cfg.search); i++ {
+<a id="L164"></a><span class="ln">   164</span>			rname := name + &#34;.&#34; + cfg.search[i]
+<a id="L165"></a><span class="ln">   165</span>			if rname[len(rname)-1] != &#39;.&#39; {
+<a id="L166"></a><span class="ln">   166</span>				rname += &#34;.&#34;
+<a id="L167"></a><span class="ln">   167</span>			}
+<a id="L168"></a><span class="ln">   168</span>			cname, addrs, err = tryOneName(cfg, rname, qtype)
+<a id="L169"></a><span class="ln">   169</span>			if err == nil {
+<a id="L170"></a><span class="ln">   170</span>				return
+<a id="L171"></a><span class="ln">   171</span>			}
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>		<span class="comment">// Last ditch effort: try unsuffixed.</span>
+<a id="L175"></a><span class="ln">   175</span>		rname := name
+<a id="L176"></a><span class="ln">   176</span>		if !rooted {
+<a id="L177"></a><span class="ln">   177</span>			rname += &#34;.&#34;
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>		cname, addrs, err = tryOneName(cfg, rname, qtype)
+<a id="L180"></a><span class="ln">   180</span>		if err == nil {
+<a id="L181"></a><span class="ln">   181</span>			return
+<a id="L182"></a><span class="ln">   182</span>		}
+<a id="L183"></a><span class="ln">   183</span>		return
+<a id="L184"></a><span class="ln">   184</span>	}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>	<span class="comment">// goLookupHost is the native Go implementation of LookupHost.</span>
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// Used only if cgoLookupHost refuses to handle the request</span>
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">// (that is, only if cgoLookupHost is the stub in cgo_stub.go).</span>
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// Normally we let cgo use the C library resolver instead of</span>
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// depending on our lookup code, so that Go and C get the same</span>
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// answers.</span>
+<a id="L192"></a><span class="ln">   192</span>	func goLookupHost(name string) (addrs []string, err error) {
+<a id="L193"></a><span class="ln">   193</span>		<span class="comment">// Use entries from /etc/hosts if they match.</span>
+<a id="L194"></a><span class="ln">   194</span>		addrs = lookupStaticHost(name)
+<a id="L195"></a><span class="ln">   195</span>		if len(addrs) &gt; 0 {
+<a id="L196"></a><span class="ln">   196</span>			return
+<a id="L197"></a><span class="ln">   197</span>		}
+<a id="L198"></a><span class="ln">   198</span>		onceLoadConfig.Do(loadConfig)
+<a id="L199"></a><span class="ln">   199</span>		if dnserr != nil || cfg == nil {
+<a id="L200"></a><span class="ln">   200</span>			err = dnserr
+<a id="L201"></a><span class="ln">   201</span>			return
+<a id="L202"></a><span class="ln">   202</span>		}
+<a id="L203"></a><span class="ln">   203</span>		ips, err := goLookupIP(name)
+<a id="L204"></a><span class="ln">   204</span>		if err != nil {
+<a id="L205"></a><span class="ln">   205</span>			return
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>		addrs = make([]string, 0, len(ips))
+<a id="L208"></a><span class="ln">   208</span>		for _, ip := range ips {
+<a id="L209"></a><span class="ln">   209</span>			addrs = append(addrs, ip.String())
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>		return
+<a id="L212"></a><span class="ln">   212</span>	}
+<a id="L213"></a><span class="ln">   213</span>	
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// goLookupIP is the native Go implementation of LookupIP.</span>
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// Used only if cgoLookupIP refuses to handle the request</span>
+<a id="L216"></a><span class="ln">   216</span>	<span class="comment">// (that is, only if cgoLookupIP is the stub in cgo_stub.go).</span>
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// Normally we let cgo use the C library resolver instead of</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// depending on our lookup code, so that Go and C get the same</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// answers.</span>
+<a id="L220"></a><span class="ln">   220</span>	func goLookupIP(name string) (addrs []IP, err error) {
+<a id="L221"></a><span class="ln">   221</span>		<span class="comment">// Use entries from /etc/hosts if possible.</span>
+<a id="L222"></a><span class="ln">   222</span>		haddrs := lookupStaticHost(name)
+<a id="L223"></a><span class="ln">   223</span>		if len(haddrs) &gt; 0 {
+<a id="L224"></a><span class="ln">   224</span>			for _, haddr := range haddrs {
+<a id="L225"></a><span class="ln">   225</span>				if ip := ParseIP(haddr); ip != nil {
+<a id="L226"></a><span class="ln">   226</span>					addrs = append(addrs, ip)
+<a id="L227"></a><span class="ln">   227</span>				}
+<a id="L228"></a><span class="ln">   228</span>			}
+<a id="L229"></a><span class="ln">   229</span>			if len(addrs) &gt; 0 {
+<a id="L230"></a><span class="ln">   230</span>				return
+<a id="L231"></a><span class="ln">   231</span>			}
+<a id="L232"></a><span class="ln">   232</span>		}
+<a id="L233"></a><span class="ln">   233</span>		onceLoadConfig.Do(loadConfig)
+<a id="L234"></a><span class="ln">   234</span>		if dnserr != nil || cfg == nil {
+<a id="L235"></a><span class="ln">   235</span>			err = dnserr
+<a id="L236"></a><span class="ln">   236</span>			return
+<a id="L237"></a><span class="ln">   237</span>		}
+<a id="L238"></a><span class="ln">   238</span>		var records []dnsRR
+<a id="L239"></a><span class="ln">   239</span>		var cname string
+<a id="L240"></a><span class="ln">   240</span>		cname, records, err = lookup(name, dnsTypeA)
+<a id="L241"></a><span class="ln">   241</span>		if err != nil {
+<a id="L242"></a><span class="ln">   242</span>			return
+<a id="L243"></a><span class="ln">   243</span>		}
+<a id="L244"></a><span class="ln">   244</span>		addrs = convertRR_A(records)
+<a id="L245"></a><span class="ln">   245</span>		if cname != &#34;&#34; {
+<a id="L246"></a><span class="ln">   246</span>			name = cname
+<a id="L247"></a><span class="ln">   247</span>		}
+<a id="L248"></a><span class="ln">   248</span>		_, records, err = lookup(name, dnsTypeAAAA)
+<a id="L249"></a><span class="ln">   249</span>		if err != nil &amp;&amp; len(addrs) &gt; 0 {
+<a id="L250"></a><span class="ln">   250</span>			<span class="comment">// Ignore error because A lookup succeeded.</span>
+<a id="L251"></a><span class="ln">   251</span>			err = nil
+<a id="L252"></a><span class="ln">   252</span>		}
+<a id="L253"></a><span class="ln">   253</span>		if err != nil {
+<a id="L254"></a><span class="ln">   254</span>			return
+<a id="L255"></a><span class="ln">   255</span>		}
+<a id="L256"></a><span class="ln">   256</span>		addrs = append(addrs, convertRR_AAAA(records)...)
+<a id="L257"></a><span class="ln">   257</span>		return
+<a id="L258"></a><span class="ln">   258</span>	}
+<a id="L259"></a><span class="ln">   259</span>	
+<a id="L260"></a><span class="ln">   260</span>	<span class="comment">// goLookupCNAME is the native Go implementation of LookupCNAME.</span>
+<a id="L261"></a><span class="ln">   261</span>	<span class="comment">// Used only if cgoLookupCNAME refuses to handle the request</span>
+<a id="L262"></a><span class="ln">   262</span>	<span class="comment">// (that is, only if cgoLookupCNAME is the stub in cgo_stub.go).</span>
+<a id="L263"></a><span class="ln">   263</span>	<span class="comment">// Normally we let cgo use the C library resolver instead of</span>
+<a id="L264"></a><span class="ln">   264</span>	<span class="comment">// depending on our lookup code, so that Go and C get the same</span>
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// answers.</span>
+<a id="L266"></a><span class="ln">   266</span>	func goLookupCNAME(name string) (cname string, err error) {
+<a id="L267"></a><span class="ln">   267</span>		onceLoadConfig.Do(loadConfig)
+<a id="L268"></a><span class="ln">   268</span>		if dnserr != nil || cfg == nil {
+<a id="L269"></a><span class="ln">   269</span>			err = dnserr
+<a id="L270"></a><span class="ln">   270</span>			return
+<a id="L271"></a><span class="ln">   271</span>		}
+<a id="L272"></a><span class="ln">   272</span>		_, rr, err := lookup(name, dnsTypeCNAME)
+<a id="L273"></a><span class="ln">   273</span>		if err != nil {
+<a id="L274"></a><span class="ln">   274</span>			return
+<a id="L275"></a><span class="ln">   275</span>		}
+<a id="L276"></a><span class="ln">   276</span>		cname = rr[0].(*dnsRR_CNAME).Cname
+<a id="L277"></a><span class="ln">   277</span>		return
+<a id="L278"></a><span class="ln">   278</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/hash/adler32/adler32.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/hash/adler32/adler32.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package adler32 implements the Adler-32 checksum.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// Defined in RFC 1950:</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//	Adler-32 is composed of two sums accumulated per byte: s1 is</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">//	the sum of all bytes, s2 is the sum of all s1 values. Both sums</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//	are done modulo 65521. s1 is initialized to 1, s2 to zero.  The</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">//	Adler-32 checksum is stored as s2*65536 + s1 in most-</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//	significant-byte first (network) order.</span>
+<a id="L12"></a><span class="ln">    12</span>	package adler32
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	import &#34;hash&#34;
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	const (
+<a id="L17"></a><span class="ln">    17</span>		mod = 65521
+<a id="L18"></a><span class="ln">    18</span>	)
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// The size of an Adler-32 checksum in bytes.</span>
+<a id="L21"></a><span class="ln">    21</span>	const Size = 4
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// digest represents the partial evaluation of a checksum.</span>
+<a id="L24"></a><span class="ln">    24</span>	type digest struct {
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// invariant: (a &lt; mod &amp;&amp; b &lt; mod) || a &lt;= b</span>
+<a id="L26"></a><span class="ln">    26</span>		<span class="comment">// invariant: a + b + 255 &lt;= 0xffffffff</span>
+<a id="L27"></a><span class="ln">    27</span>		a, b uint32
+<a id="L28"></a><span class="ln">    28</span>	}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	func (d *digest) Reset() { d.a, d.b = 1, 0 }
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// New returns a new hash.Hash32 computing the Adler-32 checksum.</span>
+<a id="L33"></a><span class="ln">    33</span>	func New() hash.Hash32 {
+<a id="L34"></a><span class="ln">    34</span>		d := new(digest)
+<a id="L35"></a><span class="ln">    35</span>		d.Reset()
+<a id="L36"></a><span class="ln">    36</span>		return d
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	func (d *digest) Size() int { return Size }
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	func (d *digest) BlockSize() int { return 1 }
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// Add p to the running checksum a, b.</span>
+<a id="L44"></a><span class="ln">    44</span>	func update(a, b uint32, p []byte) (aa, bb uint32) {
+<a id="L45"></a><span class="ln">    45</span>		for _, pi := range p {
+<a id="L46"></a><span class="ln">    46</span>			a += uint32(pi)
+<a id="L47"></a><span class="ln">    47</span>			b += a
+<a id="L48"></a><span class="ln">    48</span>			<span class="comment">// invariant: a &lt;= b</span>
+<a id="L49"></a><span class="ln">    49</span>			if b &gt; (0xffffffff-255)/2 {
+<a id="L50"></a><span class="ln">    50</span>				a %= mod
+<a id="L51"></a><span class="ln">    51</span>				b %= mod
+<a id="L52"></a><span class="ln">    52</span>				<span class="comment">// invariant: a &lt; mod &amp;&amp; b &lt; mod</span>
+<a id="L53"></a><span class="ln">    53</span>			} else {
+<a id="L54"></a><span class="ln">    54</span>				<span class="comment">// invariant: a + b + 255 &lt;= 2 * b + 255 &lt;= 0xffffffff</span>
+<a id="L55"></a><span class="ln">    55</span>			}
+<a id="L56"></a><span class="ln">    56</span>		}
+<a id="L57"></a><span class="ln">    57</span>		return a, b
+<a id="L58"></a><span class="ln">    58</span>	}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// Return the 32-bit checksum corresponding to a, b.</span>
+<a id="L61"></a><span class="ln">    61</span>	func finish(a, b uint32) uint32 {
+<a id="L62"></a><span class="ln">    62</span>		if b &gt;= mod {
+<a id="L63"></a><span class="ln">    63</span>			a %= mod
+<a id="L64"></a><span class="ln">    64</span>			b %= mod
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		return b&lt;&lt;16 | a
+<a id="L67"></a><span class="ln">    67</span>	}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	func (d *digest) Write(p []byte) (nn int, err error) {
+<a id="L70"></a><span class="ln">    70</span>		d.a, d.b = update(d.a, d.b, p)
+<a id="L71"></a><span class="ln">    71</span>		return len(p), nil
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	func (d *digest) Sum32() uint32 { return finish(d.a, d.b) }
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	func (d *digest) Sum(in []byte) []byte {
+<a id="L77"></a><span class="ln">    77</span>		s := d.Sum32()
+<a id="L78"></a><span class="ln">    78</span>		in = append(in, byte(s&gt;&gt;24))
+<a id="L79"></a><span class="ln">    79</span>		in = append(in, byte(s&gt;&gt;16))
+<a id="L80"></a><span class="ln">    80</span>		in = append(in, byte(s&gt;&gt;8))
+<a id="L81"></a><span class="ln">    81</span>		in = append(in, byte(s))
+<a id="L82"></a><span class="ln">    82</span>		return in
+<a id="L83"></a><span class="ln">    83</span>	}
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// Checksum returns the Adler-32 checksum of data.</span>
+<a id="L86"></a><span class="ln">    86</span>	func Checksum(data []byte) uint32 { return finish(update(1, 0, data)) }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

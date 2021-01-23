@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/scanner/errors.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/scanner/errors.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package scanner
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;fmt&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;go/token&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;io&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;sort&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// In an ErrorList, an error is represented by an *Error.</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// The position Pos, if valid, points to the beginning of</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// the offending token, and the error condition is described</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// by Msg.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//</span>
+<a id="L19"></a><span class="ln">    19</span>	type Error struct {
+<a id="L20"></a><span class="ln">    20</span>		Pos token.Position
+<a id="L21"></a><span class="ln">    21</span>		Msg string
+<a id="L22"></a><span class="ln">    22</span>	}
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// Error implements the error interface.</span>
+<a id="L25"></a><span class="ln">    25</span>	func (e Error) Error() string {
+<a id="L26"></a><span class="ln">    26</span>		if e.Pos.Filename != &#34;&#34; || e.Pos.IsValid() {
+<a id="L27"></a><span class="ln">    27</span>			<span class="comment">// don&#39;t print &#34;&lt;unknown position&gt;&#34;</span>
+<a id="L28"></a><span class="ln">    28</span>			<span class="comment">// TODO(gri) reconsider the semantics of Position.IsValid</span>
+<a id="L29"></a><span class="ln">    29</span>			return e.Pos.String() + &#34;: &#34; + e.Msg
+<a id="L30"></a><span class="ln">    30</span>		}
+<a id="L31"></a><span class="ln">    31</span>		return e.Msg
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// ErrorList is a list of *Errors.</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// The zero value for an ErrorList is an empty ErrorList ready to use.</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//</span>
+<a id="L37"></a><span class="ln">    37</span>	type ErrorList []*Error
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Add adds an Error with given position and error message to an ErrorList.</span>
+<a id="L40"></a><span class="ln">    40</span>	func (p *ErrorList) Add(pos token.Position, msg string) {
+<a id="L41"></a><span class="ln">    41</span>		*p = append(*p, &amp;Error{pos, msg})
+<a id="L42"></a><span class="ln">    42</span>	}
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// Reset resets an ErrorList to no errors.</span>
+<a id="L45"></a><span class="ln">    45</span>	func (p *ErrorList) Reset() { *p = (*p)[0:0] }
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// ErrorList implements the sort Interface.</span>
+<a id="L48"></a><span class="ln">    48</span>	func (p ErrorList) Len() int      { return len(p) }
+<a id="L49"></a><span class="ln">    49</span>	func (p ErrorList) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	func (p ErrorList) Less(i, j int) bool {
+<a id="L52"></a><span class="ln">    52</span>		e := &amp;p[i].Pos
+<a id="L53"></a><span class="ln">    53</span>		f := &amp;p[j].Pos
+<a id="L54"></a><span class="ln">    54</span>		<span class="comment">// Note that it is not sufficient to simply compare file offsets because</span>
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// the offsets do not reflect modified line information (through //line</span>
+<a id="L56"></a><span class="ln">    56</span>		<span class="comment">// comments).</span>
+<a id="L57"></a><span class="ln">    57</span>		if e.Filename &lt; f.Filename {
+<a id="L58"></a><span class="ln">    58</span>			return true
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		if e.Filename == f.Filename {
+<a id="L61"></a><span class="ln">    61</span>			if e.Line &lt; f.Line {
+<a id="L62"></a><span class="ln">    62</span>				return true
+<a id="L63"></a><span class="ln">    63</span>			}
+<a id="L64"></a><span class="ln">    64</span>			if e.Line == f.Line {
+<a id="L65"></a><span class="ln">    65</span>				return e.Column &lt; f.Column
+<a id="L66"></a><span class="ln">    66</span>			}
+<a id="L67"></a><span class="ln">    67</span>		}
+<a id="L68"></a><span class="ln">    68</span>		return false
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// Sort sorts an ErrorList. *Error entries are sorted by position,</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// other errors are sorted by error message, and before any *Error</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// entry.</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//</span>
+<a id="L75"></a><span class="ln">    75</span>	func (p ErrorList) Sort() {
+<a id="L76"></a><span class="ln">    76</span>		sort.Sort(p)
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// RemoveMultiples sorts an ErrorList and removes all but the first error per line.</span>
+<a id="L80"></a><span class="ln">    80</span>	func (p *ErrorList) RemoveMultiples() {
+<a id="L81"></a><span class="ln">    81</span>		sort.Sort(p)
+<a id="L82"></a><span class="ln">    82</span>		var last token.Position <span class="comment">// initial last.Line is != any legal error line</span>
+<a id="L83"></a><span class="ln">    83</span>		i := 0
+<a id="L84"></a><span class="ln">    84</span>		for _, e := range *p {
+<a id="L85"></a><span class="ln">    85</span>			if e.Pos.Filename != last.Filename || e.Pos.Line != last.Line {
+<a id="L86"></a><span class="ln">    86</span>				last = e.Pos
+<a id="L87"></a><span class="ln">    87</span>				(*p)[i] = e
+<a id="L88"></a><span class="ln">    88</span>				i++
+<a id="L89"></a><span class="ln">    89</span>			}
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>		(*p) = (*p)[0:i]
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// An ErrorList implements the error interface.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (p ErrorList) Error() string {
+<a id="L96"></a><span class="ln">    96</span>		switch len(p) {
+<a id="L97"></a><span class="ln">    97</span>		case 0:
+<a id="L98"></a><span class="ln">    98</span>			return &#34;no errors&#34;
+<a id="L99"></a><span class="ln">    99</span>		case 1:
+<a id="L100"></a><span class="ln">   100</span>			return p[0].Error()
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>		return fmt.Sprintf(&#34;%s (and %d more errors)&#34;, p[0], len(p)-1)
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// Err returns an error equivalent to this error list.</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// If the list is empty, Err returns nil.</span>
+<a id="L107"></a><span class="ln">   107</span>	func (p ErrorList) Err() error {
+<a id="L108"></a><span class="ln">   108</span>		if len(p) == 0 {
+<a id="L109"></a><span class="ln">   109</span>			return nil
+<a id="L110"></a><span class="ln">   110</span>		}
+<a id="L111"></a><span class="ln">   111</span>		return p
+<a id="L112"></a><span class="ln">   112</span>	}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// PrintError is a utility function that prints a list of errors to w,</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// one error per line, if the err parameter is an ErrorList. Otherwise</span>
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// it prints the err string.</span>
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">//</span>
+<a id="L118"></a><span class="ln">   118</span>	func PrintError(w io.Writer, err error) {
+<a id="L119"></a><span class="ln">   119</span>		if list, ok := err.(ErrorList); ok {
+<a id="L120"></a><span class="ln">   120</span>			for _, e := range list {
+<a id="L121"></a><span class="ln">   121</span>				fmt.Fprintf(w, &#34;%s\n&#34;, e)
+<a id="L122"></a><span class="ln">   122</span>			}
+<a id="L123"></a><span class="ln">   123</span>		} else {
+<a id="L124"></a><span class="ln">   124</span>			fmt.Fprintf(w, &#34;%s\n&#34;, err)
+<a id="L125"></a><span class="ln">   125</span>		}
+<a id="L126"></a><span class="ln">   126</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

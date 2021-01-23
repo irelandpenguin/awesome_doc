@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/testing/benchmark.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/testing/benchmark.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package testing
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;flag&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;fmt&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;os&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;runtime&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;time&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	var matchBenchmarks = flag.String(&#34;test.bench&#34;, &#34;&#34;, &#34;regular expression to select benchmarks to run&#34;)
+<a id="L16"></a><span class="ln">    16</span>	var benchTime = flag.Float64(&#34;test.benchtime&#34;, 1, &#34;approximate run time for each benchmark, in seconds&#34;)
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// An internal type but exported because it is cross-package; part of the implementation</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// of the &#34;go test&#34; command.</span>
+<a id="L20"></a><span class="ln">    20</span>	type InternalBenchmark struct {
+<a id="L21"></a><span class="ln">    21</span>		Name string
+<a id="L22"></a><span class="ln">    22</span>		F    func(b *B)
+<a id="L23"></a><span class="ln">    23</span>	}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// B is a type passed to Benchmark functions to manage benchmark</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// timing and to specify the number of iterations to run.</span>
+<a id="L27"></a><span class="ln">    27</span>	type B struct {
+<a id="L28"></a><span class="ln">    28</span>		common
+<a id="L29"></a><span class="ln">    29</span>		N         int
+<a id="L30"></a><span class="ln">    30</span>		benchmark InternalBenchmark
+<a id="L31"></a><span class="ln">    31</span>		bytes     int64
+<a id="L32"></a><span class="ln">    32</span>		timerOn   bool
+<a id="L33"></a><span class="ln">    33</span>		result    BenchmarkResult
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// StartTimer starts timing a test.  This function is called automatically</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// before a benchmark starts, but it can also used to resume timing after</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// a call to StopTimer.</span>
+<a id="L39"></a><span class="ln">    39</span>	func (b *B) StartTimer() {
+<a id="L40"></a><span class="ln">    40</span>		if !b.timerOn {
+<a id="L41"></a><span class="ln">    41</span>			b.start = time.Now()
+<a id="L42"></a><span class="ln">    42</span>			b.timerOn = true
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>	}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// StopTimer stops timing a test.  This can be used to pause the timer</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// while performing complex initialization that you don&#39;t</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// want to measure.</span>
+<a id="L49"></a><span class="ln">    49</span>	func (b *B) StopTimer() {
+<a id="L50"></a><span class="ln">    50</span>		if b.timerOn {
+<a id="L51"></a><span class="ln">    51</span>			b.duration += time.Now().Sub(b.start)
+<a id="L52"></a><span class="ln">    52</span>			b.timerOn = false
+<a id="L53"></a><span class="ln">    53</span>		}
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// ResetTimer sets the elapsed benchmark time to zero.</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// It does not affect whether the timer is running.</span>
+<a id="L58"></a><span class="ln">    58</span>	func (b *B) ResetTimer() {
+<a id="L59"></a><span class="ln">    59</span>		if b.timerOn {
+<a id="L60"></a><span class="ln">    60</span>			b.start = time.Now()
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		b.duration = 0
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// SetBytes records the number of bytes processed in a single operation.</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// If this is called, the benchmark will report ns/op and MB/s.</span>
+<a id="L67"></a><span class="ln">    67</span>	func (b *B) SetBytes(n int64) { b.bytes = n }
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	func (b *B) nsPerOp() int64 {
+<a id="L70"></a><span class="ln">    70</span>		if b.N &lt;= 0 {
+<a id="L71"></a><span class="ln">    71</span>			return 0
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		return b.duration.Nanoseconds() / int64(b.N)
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// runN runs a single benchmark for the specified number of iterations.</span>
+<a id="L77"></a><span class="ln">    77</span>	func (b *B) runN(n int) {
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// Try to get a comparable environment for each run</span>
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// by clearing garbage from previous runs.</span>
+<a id="L80"></a><span class="ln">    80</span>		runtime.GC()
+<a id="L81"></a><span class="ln">    81</span>		b.N = n
+<a id="L82"></a><span class="ln">    82</span>		b.ResetTimer()
+<a id="L83"></a><span class="ln">    83</span>		b.StartTimer()
+<a id="L84"></a><span class="ln">    84</span>		b.benchmark.F(b)
+<a id="L85"></a><span class="ln">    85</span>		b.StopTimer()
+<a id="L86"></a><span class="ln">    86</span>	}
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	func min(x, y int) int {
+<a id="L89"></a><span class="ln">    89</span>		if x &gt; y {
+<a id="L90"></a><span class="ln">    90</span>			return y
+<a id="L91"></a><span class="ln">    91</span>		}
+<a id="L92"></a><span class="ln">    92</span>		return x
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	func max(x, y int) int {
+<a id="L96"></a><span class="ln">    96</span>		if x &lt; y {
+<a id="L97"></a><span class="ln">    97</span>			return y
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		return x
+<a id="L100"></a><span class="ln">   100</span>	}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// roundDown10 rounds a number down to the nearest power of 10.</span>
+<a id="L103"></a><span class="ln">   103</span>	func roundDown10(n int) int {
+<a id="L104"></a><span class="ln">   104</span>		var tens = 0
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// tens = floor(log_10(n))</span>
+<a id="L106"></a><span class="ln">   106</span>		for n &gt; 10 {
+<a id="L107"></a><span class="ln">   107</span>			n = n / 10
+<a id="L108"></a><span class="ln">   108</span>			tens++
+<a id="L109"></a><span class="ln">   109</span>		}
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">// result = 10^tens</span>
+<a id="L111"></a><span class="ln">   111</span>		result := 1
+<a id="L112"></a><span class="ln">   112</span>		for i := 0; i &lt; tens; i++ {
+<a id="L113"></a><span class="ln">   113</span>			result *= 10
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		return result
+<a id="L116"></a><span class="ln">   116</span>	}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">// roundUp rounds x up to a number of the form [1eX, 2eX, 5eX].</span>
+<a id="L119"></a><span class="ln">   119</span>	func roundUp(n int) int {
+<a id="L120"></a><span class="ln">   120</span>		base := roundDown10(n)
+<a id="L121"></a><span class="ln">   121</span>		if n &lt; (2 * base) {
+<a id="L122"></a><span class="ln">   122</span>			return 2 * base
+<a id="L123"></a><span class="ln">   123</span>		}
+<a id="L124"></a><span class="ln">   124</span>		if n &lt; (5 * base) {
+<a id="L125"></a><span class="ln">   125</span>			return 5 * base
+<a id="L126"></a><span class="ln">   126</span>		}
+<a id="L127"></a><span class="ln">   127</span>		return 10 * base
+<a id="L128"></a><span class="ln">   128</span>	}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// run times the benchmark function in a separate goroutine.</span>
+<a id="L131"></a><span class="ln">   131</span>	func (b *B) run() BenchmarkResult {
+<a id="L132"></a><span class="ln">   132</span>		go b.launch()
+<a id="L133"></a><span class="ln">   133</span>		&lt;-b.signal
+<a id="L134"></a><span class="ln">   134</span>		return b.result
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// launch launches the benchmark function.  It gradually increases the number</span>
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// of benchmark iterations until the benchmark runs for a second in order</span>
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// to get a reasonable measurement.  It prints timing information in this form</span>
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">//		testing.BenchmarkHello	100000		19 ns/op</span>
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// launch is run by the fun function as a separate goroutine.</span>
+<a id="L142"></a><span class="ln">   142</span>	func (b *B) launch() {
+<a id="L143"></a><span class="ln">   143</span>		<span class="comment">// Run the benchmark for a single iteration in case it&#39;s expensive.</span>
+<a id="L144"></a><span class="ln">   144</span>		n := 1
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>		<span class="comment">// Signal that we&#39;re done whether we return normally</span>
+<a id="L147"></a><span class="ln">   147</span>		<span class="comment">// or by FailNow&#39;s runtime.Goexit.</span>
+<a id="L148"></a><span class="ln">   148</span>		defer func() {
+<a id="L149"></a><span class="ln">   149</span>			b.signal &lt;- b
+<a id="L150"></a><span class="ln">   150</span>		}()
+<a id="L151"></a><span class="ln">   151</span>	
+<a id="L152"></a><span class="ln">   152</span>		b.runN(n)
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">// Run the benchmark for at least the specified amount of time.</span>
+<a id="L154"></a><span class="ln">   154</span>		d := time.Duration(*benchTime * float64(time.Second))
+<a id="L155"></a><span class="ln">   155</span>		for !b.failed &amp;&amp; b.duration &lt; d &amp;&amp; n &lt; 1e9 {
+<a id="L156"></a><span class="ln">   156</span>			last := n
+<a id="L157"></a><span class="ln">   157</span>			<span class="comment">// Predict iterations/sec.</span>
+<a id="L158"></a><span class="ln">   158</span>			if b.nsPerOp() == 0 {
+<a id="L159"></a><span class="ln">   159</span>				n = 1e9
+<a id="L160"></a><span class="ln">   160</span>			} else {
+<a id="L161"></a><span class="ln">   161</span>				n = int(d.Nanoseconds() / b.nsPerOp())
+<a id="L162"></a><span class="ln">   162</span>			}
+<a id="L163"></a><span class="ln">   163</span>			<span class="comment">// Run more iterations than we think we&#39;ll need for a second (1.5x).</span>
+<a id="L164"></a><span class="ln">   164</span>			<span class="comment">// Don&#39;t grow too fast in case we had timing errors previously.</span>
+<a id="L165"></a><span class="ln">   165</span>			<span class="comment">// Be sure to run at least one more than last time.</span>
+<a id="L166"></a><span class="ln">   166</span>			n = max(min(n+n/2, 100*last), last+1)
+<a id="L167"></a><span class="ln">   167</span>			<span class="comment">// Round up to something easy to read.</span>
+<a id="L168"></a><span class="ln">   168</span>			n = roundUp(n)
+<a id="L169"></a><span class="ln">   169</span>			b.runN(n)
+<a id="L170"></a><span class="ln">   170</span>		}
+<a id="L171"></a><span class="ln">   171</span>		b.result = BenchmarkResult{b.N, b.duration, b.bytes}
+<a id="L172"></a><span class="ln">   172</span>	}
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">// The results of a benchmark run.</span>
+<a id="L175"></a><span class="ln">   175</span>	type BenchmarkResult struct {
+<a id="L176"></a><span class="ln">   176</span>		N     int           <span class="comment">// The number of iterations.</span>
+<a id="L177"></a><span class="ln">   177</span>		T     time.Duration <span class="comment">// The total time taken.</span>
+<a id="L178"></a><span class="ln">   178</span>		Bytes int64         <span class="comment">// Bytes processed in one iteration.</span>
+<a id="L179"></a><span class="ln">   179</span>	}
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>	func (r BenchmarkResult) NsPerOp() int64 {
+<a id="L182"></a><span class="ln">   182</span>		if r.N &lt;= 0 {
+<a id="L183"></a><span class="ln">   183</span>			return 0
+<a id="L184"></a><span class="ln">   184</span>		}
+<a id="L185"></a><span class="ln">   185</span>		return r.T.Nanoseconds() / int64(r.N)
+<a id="L186"></a><span class="ln">   186</span>	}
+<a id="L187"></a><span class="ln">   187</span>	
+<a id="L188"></a><span class="ln">   188</span>	func (r BenchmarkResult) mbPerSec() float64 {
+<a id="L189"></a><span class="ln">   189</span>		if r.Bytes &lt;= 0 || r.T &lt;= 0 || r.N &lt;= 0 {
+<a id="L190"></a><span class="ln">   190</span>			return 0
+<a id="L191"></a><span class="ln">   191</span>		}
+<a id="L192"></a><span class="ln">   192</span>		return (float64(r.Bytes) * float64(r.N) / 1e6) / r.T.Seconds()
+<a id="L193"></a><span class="ln">   193</span>	}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>	func (r BenchmarkResult) String() string {
+<a id="L196"></a><span class="ln">   196</span>		mbs := r.mbPerSec()
+<a id="L197"></a><span class="ln">   197</span>		mb := &#34;&#34;
+<a id="L198"></a><span class="ln">   198</span>		if mbs != 0 {
+<a id="L199"></a><span class="ln">   199</span>			mb = fmt.Sprintf(&#34;\t%7.2f MB/s&#34;, mbs)
+<a id="L200"></a><span class="ln">   200</span>		}
+<a id="L201"></a><span class="ln">   201</span>		nsop := r.NsPerOp()
+<a id="L202"></a><span class="ln">   202</span>		ns := fmt.Sprintf(&#34;%10d ns/op&#34;, nsop)
+<a id="L203"></a><span class="ln">   203</span>		if r.N &gt; 0 &amp;&amp; nsop &lt; 100 {
+<a id="L204"></a><span class="ln">   204</span>			<span class="comment">// The format specifiers here make sure that</span>
+<a id="L205"></a><span class="ln">   205</span>			<span class="comment">// the ones digits line up for all three possible formats.</span>
+<a id="L206"></a><span class="ln">   206</span>			if nsop &lt; 10 {
+<a id="L207"></a><span class="ln">   207</span>				ns = fmt.Sprintf(&#34;%13.2f ns/op&#34;, float64(r.T.Nanoseconds())/float64(r.N))
+<a id="L208"></a><span class="ln">   208</span>			} else {
+<a id="L209"></a><span class="ln">   209</span>				ns = fmt.Sprintf(&#34;%12.1f ns/op&#34;, float64(r.T.Nanoseconds())/float64(r.N))
+<a id="L210"></a><span class="ln">   210</span>			}
+<a id="L211"></a><span class="ln">   211</span>		}
+<a id="L212"></a><span class="ln">   212</span>		return fmt.Sprintf(&#34;%8d\t%s%s&#34;, r.N, ns, mb)
+<a id="L213"></a><span class="ln">   213</span>	}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// An internal function but exported because it is cross-package; part of the implementation</span>
+<a id="L216"></a><span class="ln">   216</span>	<span class="comment">// of the &#34;go test&#34; command.</span>
+<a id="L217"></a><span class="ln">   217</span>	func RunBenchmarks(matchString func(pat, str string) (bool, error), benchmarks []InternalBenchmark) {
+<a id="L218"></a><span class="ln">   218</span>		<span class="comment">// If no flag was specified, don&#39;t run benchmarks.</span>
+<a id="L219"></a><span class="ln">   219</span>		if len(*matchBenchmarks) == 0 {
+<a id="L220"></a><span class="ln">   220</span>			return
+<a id="L221"></a><span class="ln">   221</span>		}
+<a id="L222"></a><span class="ln">   222</span>		for _, Benchmark := range benchmarks {
+<a id="L223"></a><span class="ln">   223</span>			matched, err := matchString(*matchBenchmarks, Benchmark.Name)
+<a id="L224"></a><span class="ln">   224</span>			if err != nil {
+<a id="L225"></a><span class="ln">   225</span>				fmt.Fprintf(os.Stderr, &#34;testing: invalid regexp for -test.bench: %s\n&#34;, err)
+<a id="L226"></a><span class="ln">   226</span>				os.Exit(1)
+<a id="L227"></a><span class="ln">   227</span>			}
+<a id="L228"></a><span class="ln">   228</span>			if !matched {
+<a id="L229"></a><span class="ln">   229</span>				continue
+<a id="L230"></a><span class="ln">   230</span>			}
+<a id="L231"></a><span class="ln">   231</span>			for _, procs := range cpuList {
+<a id="L232"></a><span class="ln">   232</span>				runtime.GOMAXPROCS(procs)
+<a id="L233"></a><span class="ln">   233</span>				b := &amp;B{
+<a id="L234"></a><span class="ln">   234</span>					common: common{
+<a id="L235"></a><span class="ln">   235</span>						signal: make(chan interface{}),
+<a id="L236"></a><span class="ln">   236</span>					},
+<a id="L237"></a><span class="ln">   237</span>					benchmark: Benchmark,
+<a id="L238"></a><span class="ln">   238</span>				}
+<a id="L239"></a><span class="ln">   239</span>				benchName := Benchmark.Name
+<a id="L240"></a><span class="ln">   240</span>				if procs != 1 {
+<a id="L241"></a><span class="ln">   241</span>					benchName = fmt.Sprintf(&#34;%s-%d&#34;, Benchmark.Name, procs)
+<a id="L242"></a><span class="ln">   242</span>				}
+<a id="L243"></a><span class="ln">   243</span>				fmt.Printf(&#34;%s\t&#34;, benchName)
+<a id="L244"></a><span class="ln">   244</span>				r := b.run()
+<a id="L245"></a><span class="ln">   245</span>				if b.failed {
+<a id="L246"></a><span class="ln">   246</span>					<span class="comment">// The output could be very long here, but probably isn&#39;t.</span>
+<a id="L247"></a><span class="ln">   247</span>					<span class="comment">// We print it all, regardless, because we don&#39;t want to trim the reason</span>
+<a id="L248"></a><span class="ln">   248</span>					<span class="comment">// the benchmark failed.</span>
+<a id="L249"></a><span class="ln">   249</span>					fmt.Printf(&#34;--- FAIL: %s\n%s&#34;, benchName, b.output)
+<a id="L250"></a><span class="ln">   250</span>					continue
+<a id="L251"></a><span class="ln">   251</span>				}
+<a id="L252"></a><span class="ln">   252</span>				fmt.Printf(&#34;%v\n&#34;, r)
+<a id="L253"></a><span class="ln">   253</span>				<span class="comment">// Unlike with tests, we ignore the -chatty flag and always print output for</span>
+<a id="L254"></a><span class="ln">   254</span>				<span class="comment">// benchmarks since the output generation time will skew the results.</span>
+<a id="L255"></a><span class="ln">   255</span>				if len(b.output) &gt; 0 {
+<a id="L256"></a><span class="ln">   256</span>					b.trimOutput()
+<a id="L257"></a><span class="ln">   257</span>					fmt.Printf(&#34;--- BENCH: %s\n%s&#34;, benchName, b.output)
+<a id="L258"></a><span class="ln">   258</span>				}
+<a id="L259"></a><span class="ln">   259</span>				if p := runtime.GOMAXPROCS(-1); p != procs {
+<a id="L260"></a><span class="ln">   260</span>					fmt.Fprintf(os.Stderr, &#34;testing: %s left GOMAXPROCS set to %d\n&#34;, benchName, p)
+<a id="L261"></a><span class="ln">   261</span>				}
+<a id="L262"></a><span class="ln">   262</span>			}
+<a id="L263"></a><span class="ln">   263</span>		}
+<a id="L264"></a><span class="ln">   264</span>	}
+<a id="L265"></a><span class="ln">   265</span>	
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// trimOutput shortens the output from a benchmark, which can be very long.</span>
+<a id="L267"></a><span class="ln">   267</span>	func (b *B) trimOutput() {
+<a id="L268"></a><span class="ln">   268</span>		<span class="comment">// The output is likely to appear multiple times because the benchmark</span>
+<a id="L269"></a><span class="ln">   269</span>		<span class="comment">// is run multiple times, but at least it will be seen. This is not a big deal</span>
+<a id="L270"></a><span class="ln">   270</span>		<span class="comment">// because benchmarks rarely print, but just in case, we trim it if it&#39;s too long.</span>
+<a id="L271"></a><span class="ln">   271</span>		const maxNewlines = 10
+<a id="L272"></a><span class="ln">   272</span>		for nlCount, j := 0, 0; j &lt; len(b.output); j++ {
+<a id="L273"></a><span class="ln">   273</span>			if b.output[j] == &#39;\n&#39; {
+<a id="L274"></a><span class="ln">   274</span>				nlCount++
+<a id="L275"></a><span class="ln">   275</span>				if nlCount &gt;= maxNewlines {
+<a id="L276"></a><span class="ln">   276</span>					b.output = append(b.output[:j], &#34;\n\t... [output truncated]\n&#34;...)
+<a id="L277"></a><span class="ln">   277</span>					break
+<a id="L278"></a><span class="ln">   278</span>				}
+<a id="L279"></a><span class="ln">   279</span>			}
+<a id="L280"></a><span class="ln">   280</span>		}
+<a id="L281"></a><span class="ln">   281</span>	}
+<a id="L282"></a><span class="ln">   282</span>	
+<a id="L283"></a><span class="ln">   283</span>	<span class="comment">// Benchmark benchmarks a single function. Useful for creating</span>
+<a id="L284"></a><span class="ln">   284</span>	<span class="comment">// custom benchmarks that do not use the &#34;go test&#34; command.</span>
+<a id="L285"></a><span class="ln">   285</span>	func Benchmark(f func(b *B)) BenchmarkResult {
+<a id="L286"></a><span class="ln">   286</span>		b := &amp;B{
+<a id="L287"></a><span class="ln">   287</span>			common: common{
+<a id="L288"></a><span class="ln">   288</span>				signal: make(chan interface{}),
+<a id="L289"></a><span class="ln">   289</span>			},
+<a id="L290"></a><span class="ln">   290</span>			benchmark: InternalBenchmark{&#34;&#34;, f},
+<a id="L291"></a><span class="ln">   291</span>		}
+<a id="L292"></a><span class="ln">   292</span>		return b.run()
+<a id="L293"></a><span class="ln">   293</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

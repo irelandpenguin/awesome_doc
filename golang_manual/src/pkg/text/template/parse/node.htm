@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/text/template/parse/node.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/text/template/parse/node.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Parse nodes.</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package parse
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;bytes&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;strconv&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strings&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// A node is an element in the parse tree. The interface is trivial.</span>
+<a id="L17"></a><span class="ln">    17</span>	type Node interface {
+<a id="L18"></a><span class="ln">    18</span>		Type() NodeType
+<a id="L19"></a><span class="ln">    19</span>		String() string
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// Copy does a deep copy of the Node and all its components.</span>
+<a id="L21"></a><span class="ln">    21</span>		<span class="comment">// To avoid type assertions, some XxxNodes also have specialized</span>
+<a id="L22"></a><span class="ln">    22</span>		<span class="comment">// CopyXxx methods that return *XxxNode.</span>
+<a id="L23"></a><span class="ln">    23</span>		Copy() Node
+<a id="L24"></a><span class="ln">    24</span>	}
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// NodeType identifies the type of a parse tree node.</span>
+<a id="L27"></a><span class="ln">    27</span>	type NodeType int
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// Type returns itself and provides an easy default implementation</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// for embedding in a Node. Embedded in all non-trivial Nodes.</span>
+<a id="L31"></a><span class="ln">    31</span>	func (t NodeType) Type() NodeType {
+<a id="L32"></a><span class="ln">    32</span>		return t
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	const (
+<a id="L36"></a><span class="ln">    36</span>		NodeText       NodeType = iota <span class="comment">// Plain text.</span>
+<a id="L37"></a><span class="ln">    37</span>		NodeAction                     <span class="comment">// A simple action such as field evaluation.</span>
+<a id="L38"></a><span class="ln">    38</span>		NodeBool                       <span class="comment">// A boolean constant.</span>
+<a id="L39"></a><span class="ln">    39</span>		NodeCommand                    <span class="comment">// An element of a pipeline.</span>
+<a id="L40"></a><span class="ln">    40</span>		NodeDot                        <span class="comment">// The cursor, dot.</span>
+<a id="L41"></a><span class="ln">    41</span>		nodeElse                       <span class="comment">// An else action. Not added to tree.</span>
+<a id="L42"></a><span class="ln">    42</span>		nodeEnd                        <span class="comment">// An end action. Not added to tree.</span>
+<a id="L43"></a><span class="ln">    43</span>		NodeField                      <span class="comment">// A field or method name.</span>
+<a id="L44"></a><span class="ln">    44</span>		NodeIdentifier                 <span class="comment">// An identifier; always a function name.</span>
+<a id="L45"></a><span class="ln">    45</span>		NodeIf                         <span class="comment">// An if action.</span>
+<a id="L46"></a><span class="ln">    46</span>		NodeList                       <span class="comment">// A list of Nodes.</span>
+<a id="L47"></a><span class="ln">    47</span>		NodeNumber                     <span class="comment">// A numerical constant.</span>
+<a id="L48"></a><span class="ln">    48</span>		NodePipe                       <span class="comment">// A pipeline of commands.</span>
+<a id="L49"></a><span class="ln">    49</span>		NodeRange                      <span class="comment">// A range action.</span>
+<a id="L50"></a><span class="ln">    50</span>		NodeString                     <span class="comment">// A string constant.</span>
+<a id="L51"></a><span class="ln">    51</span>		NodeTemplate                   <span class="comment">// A template invocation action.</span>
+<a id="L52"></a><span class="ln">    52</span>		NodeVariable                   <span class="comment">// A $ variable.</span>
+<a id="L53"></a><span class="ln">    53</span>		NodeWith                       <span class="comment">// A with action.</span>
+<a id="L54"></a><span class="ln">    54</span>	)
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// Nodes.</span>
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// ListNode holds a sequence of nodes.</span>
+<a id="L59"></a><span class="ln">    59</span>	type ListNode struct {
+<a id="L60"></a><span class="ln">    60</span>		NodeType
+<a id="L61"></a><span class="ln">    61</span>		Nodes []Node <span class="comment">// The element nodes in lexical order.</span>
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	func newList() *ListNode {
+<a id="L65"></a><span class="ln">    65</span>		return &amp;ListNode{NodeType: NodeList}
+<a id="L66"></a><span class="ln">    66</span>	}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	func (l *ListNode) append(n Node) {
+<a id="L69"></a><span class="ln">    69</span>		l.Nodes = append(l.Nodes, n)
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	func (l *ListNode) String() string {
+<a id="L73"></a><span class="ln">    73</span>		b := new(bytes.Buffer)
+<a id="L74"></a><span class="ln">    74</span>		for _, n := range l.Nodes {
+<a id="L75"></a><span class="ln">    75</span>			fmt.Fprint(b, n)
+<a id="L76"></a><span class="ln">    76</span>		}
+<a id="L77"></a><span class="ln">    77</span>		return b.String()
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	func (l *ListNode) CopyList() *ListNode {
+<a id="L81"></a><span class="ln">    81</span>		if l == nil {
+<a id="L82"></a><span class="ln">    82</span>			return l
+<a id="L83"></a><span class="ln">    83</span>		}
+<a id="L84"></a><span class="ln">    84</span>		n := newList()
+<a id="L85"></a><span class="ln">    85</span>		for _, elem := range l.Nodes {
+<a id="L86"></a><span class="ln">    86</span>			n.append(elem.Copy())
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>		return n
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	func (l *ListNode) Copy() Node {
+<a id="L92"></a><span class="ln">    92</span>		return l.CopyList()
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// TextNode holds plain text.</span>
+<a id="L96"></a><span class="ln">    96</span>	type TextNode struct {
+<a id="L97"></a><span class="ln">    97</span>		NodeType
+<a id="L98"></a><span class="ln">    98</span>		Text []byte <span class="comment">// The text; may span newlines.</span>
+<a id="L99"></a><span class="ln">    99</span>	}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	func newText(text string) *TextNode {
+<a id="L102"></a><span class="ln">   102</span>		return &amp;TextNode{NodeType: NodeText, Text: []byte(text)}
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	func (t *TextNode) String() string {
+<a id="L106"></a><span class="ln">   106</span>		return fmt.Sprintf(&#34;%q&#34;, t.Text)
+<a id="L107"></a><span class="ln">   107</span>	}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	func (t *TextNode) Copy() Node {
+<a id="L110"></a><span class="ln">   110</span>		return &amp;TextNode{NodeType: NodeText, Text: append([]byte{}, t.Text...)}
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// PipeNode holds a pipeline with optional declaration</span>
+<a id="L114"></a><span class="ln">   114</span>	type PipeNode struct {
+<a id="L115"></a><span class="ln">   115</span>		NodeType
+<a id="L116"></a><span class="ln">   116</span>		Line int             <span class="comment">// The line number in the input.</span>
+<a id="L117"></a><span class="ln">   117</span>		Decl []*VariableNode <span class="comment">// Variable declarations in lexical order.</span>
+<a id="L118"></a><span class="ln">   118</span>		Cmds []*CommandNode  <span class="comment">// The commands in lexical order.</span>
+<a id="L119"></a><span class="ln">   119</span>	}
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	func newPipeline(line int, decl []*VariableNode) *PipeNode {
+<a id="L122"></a><span class="ln">   122</span>		return &amp;PipeNode{NodeType: NodePipe, Line: line, Decl: decl}
+<a id="L123"></a><span class="ln">   123</span>	}
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	func (p *PipeNode) append(command *CommandNode) {
+<a id="L126"></a><span class="ln">   126</span>		p.Cmds = append(p.Cmds, command)
+<a id="L127"></a><span class="ln">   127</span>	}
+<a id="L128"></a><span class="ln">   128</span>	
+<a id="L129"></a><span class="ln">   129</span>	func (p *PipeNode) String() string {
+<a id="L130"></a><span class="ln">   130</span>		s := &#34;&#34;
+<a id="L131"></a><span class="ln">   131</span>		if len(p.Decl) &gt; 0 {
+<a id="L132"></a><span class="ln">   132</span>			for i, v := range p.Decl {
+<a id="L133"></a><span class="ln">   133</span>				if i &gt; 0 {
+<a id="L134"></a><span class="ln">   134</span>					s += &#34;, &#34;
+<a id="L135"></a><span class="ln">   135</span>				}
+<a id="L136"></a><span class="ln">   136</span>				s += v.String()
+<a id="L137"></a><span class="ln">   137</span>			}
+<a id="L138"></a><span class="ln">   138</span>			s += &#34; := &#34;
+<a id="L139"></a><span class="ln">   139</span>		}
+<a id="L140"></a><span class="ln">   140</span>		for i, c := range p.Cmds {
+<a id="L141"></a><span class="ln">   141</span>			if i &gt; 0 {
+<a id="L142"></a><span class="ln">   142</span>				s += &#34; | &#34;
+<a id="L143"></a><span class="ln">   143</span>			}
+<a id="L144"></a><span class="ln">   144</span>			s += c.String()
+<a id="L145"></a><span class="ln">   145</span>		}
+<a id="L146"></a><span class="ln">   146</span>		return s
+<a id="L147"></a><span class="ln">   147</span>	}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>	func (p *PipeNode) CopyPipe() *PipeNode {
+<a id="L150"></a><span class="ln">   150</span>		if p == nil {
+<a id="L151"></a><span class="ln">   151</span>			return p
+<a id="L152"></a><span class="ln">   152</span>		}
+<a id="L153"></a><span class="ln">   153</span>		var decl []*VariableNode
+<a id="L154"></a><span class="ln">   154</span>		for _, d := range p.Decl {
+<a id="L155"></a><span class="ln">   155</span>			decl = append(decl, d.Copy().(*VariableNode))
+<a id="L156"></a><span class="ln">   156</span>		}
+<a id="L157"></a><span class="ln">   157</span>		n := newPipeline(p.Line, decl)
+<a id="L158"></a><span class="ln">   158</span>		for _, c := range p.Cmds {
+<a id="L159"></a><span class="ln">   159</span>			n.append(c.Copy().(*CommandNode))
+<a id="L160"></a><span class="ln">   160</span>		}
+<a id="L161"></a><span class="ln">   161</span>		return n
+<a id="L162"></a><span class="ln">   162</span>	}
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	func (p *PipeNode) Copy() Node {
+<a id="L165"></a><span class="ln">   165</span>		return p.CopyPipe()
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// ActionNode holds an action (something bounded by delimiters).</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// Control actions have their own nodes; ActionNode represents simple</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// ones such as field evaluations.</span>
+<a id="L171"></a><span class="ln">   171</span>	type ActionNode struct {
+<a id="L172"></a><span class="ln">   172</span>		NodeType
+<a id="L173"></a><span class="ln">   173</span>		Line int       <span class="comment">// The line number in the input.</span>
+<a id="L174"></a><span class="ln">   174</span>		Pipe *PipeNode <span class="comment">// The pipeline in the action.</span>
+<a id="L175"></a><span class="ln">   175</span>	}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>	func newAction(line int, pipe *PipeNode) *ActionNode {
+<a id="L178"></a><span class="ln">   178</span>		return &amp;ActionNode{NodeType: NodeAction, Line: line, Pipe: pipe}
+<a id="L179"></a><span class="ln">   179</span>	}
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>	func (a *ActionNode) String() string {
+<a id="L182"></a><span class="ln">   182</span>		return fmt.Sprintf(&#34;{{%s}}&#34;, a.Pipe)
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>	}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>	func (a *ActionNode) Copy() Node {
+<a id="L187"></a><span class="ln">   187</span>		return newAction(a.Line, a.Pipe.CopyPipe())
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>	}
+<a id="L190"></a><span class="ln">   190</span>	
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// CommandNode holds a command (a pipeline inside an evaluating action).</span>
+<a id="L192"></a><span class="ln">   192</span>	type CommandNode struct {
+<a id="L193"></a><span class="ln">   193</span>		NodeType
+<a id="L194"></a><span class="ln">   194</span>		Args []Node <span class="comment">// Arguments in lexical order: Identifier, field, or constant.</span>
+<a id="L195"></a><span class="ln">   195</span>	}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>	func newCommand() *CommandNode {
+<a id="L198"></a><span class="ln">   198</span>		return &amp;CommandNode{NodeType: NodeCommand}
+<a id="L199"></a><span class="ln">   199</span>	}
+<a id="L200"></a><span class="ln">   200</span>	
+<a id="L201"></a><span class="ln">   201</span>	func (c *CommandNode) append(arg Node) {
+<a id="L202"></a><span class="ln">   202</span>		c.Args = append(c.Args, arg)
+<a id="L203"></a><span class="ln">   203</span>	}
+<a id="L204"></a><span class="ln">   204</span>	
+<a id="L205"></a><span class="ln">   205</span>	func (c *CommandNode) String() string {
+<a id="L206"></a><span class="ln">   206</span>		s := &#34;&#34;
+<a id="L207"></a><span class="ln">   207</span>		for i, arg := range c.Args {
+<a id="L208"></a><span class="ln">   208</span>			if i &gt; 0 {
+<a id="L209"></a><span class="ln">   209</span>				s += &#34; &#34;
+<a id="L210"></a><span class="ln">   210</span>			}
+<a id="L211"></a><span class="ln">   211</span>			s += arg.String()
+<a id="L212"></a><span class="ln">   212</span>		}
+<a id="L213"></a><span class="ln">   213</span>		return s
+<a id="L214"></a><span class="ln">   214</span>	}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>	func (c *CommandNode) Copy() Node {
+<a id="L217"></a><span class="ln">   217</span>		if c == nil {
+<a id="L218"></a><span class="ln">   218</span>			return c
+<a id="L219"></a><span class="ln">   219</span>		}
+<a id="L220"></a><span class="ln">   220</span>		n := newCommand()
+<a id="L221"></a><span class="ln">   221</span>		for _, c := range c.Args {
+<a id="L222"></a><span class="ln">   222</span>			n.append(c.Copy())
+<a id="L223"></a><span class="ln">   223</span>		}
+<a id="L224"></a><span class="ln">   224</span>		return n
+<a id="L225"></a><span class="ln">   225</span>	}
+<a id="L226"></a><span class="ln">   226</span>	
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">// IdentifierNode holds an identifier.</span>
+<a id="L228"></a><span class="ln">   228</span>	type IdentifierNode struct {
+<a id="L229"></a><span class="ln">   229</span>		NodeType
+<a id="L230"></a><span class="ln">   230</span>		Ident string <span class="comment">// The identifier&#39;s name.</span>
+<a id="L231"></a><span class="ln">   231</span>	}
+<a id="L232"></a><span class="ln">   232</span>	
+<a id="L233"></a><span class="ln">   233</span>	<span class="comment">// NewIdentifier returns a new IdentifierNode with the given identifier name.</span>
+<a id="L234"></a><span class="ln">   234</span>	func NewIdentifier(ident string) *IdentifierNode {
+<a id="L235"></a><span class="ln">   235</span>		return &amp;IdentifierNode{NodeType: NodeIdentifier, Ident: ident}
+<a id="L236"></a><span class="ln">   236</span>	}
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>	func (i *IdentifierNode) String() string {
+<a id="L239"></a><span class="ln">   239</span>		return i.Ident
+<a id="L240"></a><span class="ln">   240</span>	}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>	func (i *IdentifierNode) Copy() Node {
+<a id="L243"></a><span class="ln">   243</span>		return NewIdentifier(i.Ident)
+<a id="L244"></a><span class="ln">   244</span>	}
+<a id="L245"></a><span class="ln">   245</span>	
+<a id="L246"></a><span class="ln">   246</span>	<span class="comment">// VariableNode holds a list of variable names. The dollar sign is</span>
+<a id="L247"></a><span class="ln">   247</span>	<span class="comment">// part of the name.</span>
+<a id="L248"></a><span class="ln">   248</span>	type VariableNode struct {
+<a id="L249"></a><span class="ln">   249</span>		NodeType
+<a id="L250"></a><span class="ln">   250</span>		Ident []string <span class="comment">// Variable names in lexical order.</span>
+<a id="L251"></a><span class="ln">   251</span>	}
+<a id="L252"></a><span class="ln">   252</span>	
+<a id="L253"></a><span class="ln">   253</span>	func newVariable(ident string) *VariableNode {
+<a id="L254"></a><span class="ln">   254</span>		return &amp;VariableNode{NodeType: NodeVariable, Ident: strings.Split(ident, &#34;.&#34;)}
+<a id="L255"></a><span class="ln">   255</span>	}
+<a id="L256"></a><span class="ln">   256</span>	
+<a id="L257"></a><span class="ln">   257</span>	func (v *VariableNode) String() string {
+<a id="L258"></a><span class="ln">   258</span>		s := &#34;&#34;
+<a id="L259"></a><span class="ln">   259</span>		for i, id := range v.Ident {
+<a id="L260"></a><span class="ln">   260</span>			if i &gt; 0 {
+<a id="L261"></a><span class="ln">   261</span>				s += &#34;.&#34;
+<a id="L262"></a><span class="ln">   262</span>			}
+<a id="L263"></a><span class="ln">   263</span>			s += id
+<a id="L264"></a><span class="ln">   264</span>		}
+<a id="L265"></a><span class="ln">   265</span>		return s
+<a id="L266"></a><span class="ln">   266</span>	}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>	func (v *VariableNode) Copy() Node {
+<a id="L269"></a><span class="ln">   269</span>		return &amp;VariableNode{NodeType: NodeVariable, Ident: append([]string{}, v.Ident...)}
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// DotNode holds the special identifier &#39;.&#39;. It is represented by a nil pointer.</span>
+<a id="L273"></a><span class="ln">   273</span>	type DotNode bool
+<a id="L274"></a><span class="ln">   274</span>	
+<a id="L275"></a><span class="ln">   275</span>	func newDot() *DotNode {
+<a id="L276"></a><span class="ln">   276</span>		return nil
+<a id="L277"></a><span class="ln">   277</span>	}
+<a id="L278"></a><span class="ln">   278</span>	
+<a id="L279"></a><span class="ln">   279</span>	func (d *DotNode) Type() NodeType {
+<a id="L280"></a><span class="ln">   280</span>		return NodeDot
+<a id="L281"></a><span class="ln">   281</span>	}
+<a id="L282"></a><span class="ln">   282</span>	
+<a id="L283"></a><span class="ln">   283</span>	func (d *DotNode) String() string {
+<a id="L284"></a><span class="ln">   284</span>		return &#34;.&#34;
+<a id="L285"></a><span class="ln">   285</span>	}
+<a id="L286"></a><span class="ln">   286</span>	
+<a id="L287"></a><span class="ln">   287</span>	func (d *DotNode) Copy() Node {
+<a id="L288"></a><span class="ln">   288</span>		return newDot()
+<a id="L289"></a><span class="ln">   289</span>	}
+<a id="L290"></a><span class="ln">   290</span>	
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// FieldNode holds a field (identifier starting with &#39;.&#39;).</span>
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">// The names may be chained (&#39;.x.y&#39;).</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// The period is dropped from each ident.</span>
+<a id="L294"></a><span class="ln">   294</span>	type FieldNode struct {
+<a id="L295"></a><span class="ln">   295</span>		NodeType
+<a id="L296"></a><span class="ln">   296</span>		Ident []string <span class="comment">// The identifiers in lexical order.</span>
+<a id="L297"></a><span class="ln">   297</span>	}
+<a id="L298"></a><span class="ln">   298</span>	
+<a id="L299"></a><span class="ln">   299</span>	func newField(ident string) *FieldNode {
+<a id="L300"></a><span class="ln">   300</span>		return &amp;FieldNode{NodeType: NodeField, Ident: strings.Split(ident[1:], &#34;.&#34;)} <span class="comment">// [1:] to drop leading period</span>
+<a id="L301"></a><span class="ln">   301</span>	}
+<a id="L302"></a><span class="ln">   302</span>	
+<a id="L303"></a><span class="ln">   303</span>	func (f *FieldNode) String() string {
+<a id="L304"></a><span class="ln">   304</span>		s := &#34;&#34;
+<a id="L305"></a><span class="ln">   305</span>		for _, id := range f.Ident {
+<a id="L306"></a><span class="ln">   306</span>			s += &#34;.&#34; + id
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>		return s
+<a id="L309"></a><span class="ln">   309</span>	}
+<a id="L310"></a><span class="ln">   310</span>	
+<a id="L311"></a><span class="ln">   311</span>	func (f *FieldNode) Copy() Node {
+<a id="L312"></a><span class="ln">   312</span>		return &amp;FieldNode{NodeType: NodeField, Ident: append([]string{}, f.Ident...)}
+<a id="L313"></a><span class="ln">   313</span>	}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// BoolNode holds a boolean constant.</span>
+<a id="L316"></a><span class="ln">   316</span>	type BoolNode struct {
+<a id="L317"></a><span class="ln">   317</span>		NodeType
+<a id="L318"></a><span class="ln">   318</span>		True bool <span class="comment">// The value of the boolean constant.</span>
+<a id="L319"></a><span class="ln">   319</span>	}
+<a id="L320"></a><span class="ln">   320</span>	
+<a id="L321"></a><span class="ln">   321</span>	func newBool(true bool) *BoolNode {
+<a id="L322"></a><span class="ln">   322</span>		return &amp;BoolNode{NodeType: NodeBool, True: true}
+<a id="L323"></a><span class="ln">   323</span>	}
+<a id="L324"></a><span class="ln">   324</span>	
+<a id="L325"></a><span class="ln">   325</span>	func (b *BoolNode) String() string {
+<a id="L326"></a><span class="ln">   326</span>		if b.True {
+<a id="L327"></a><span class="ln">   327</span>			return &#34;true&#34;
+<a id="L328"></a><span class="ln">   328</span>		}
+<a id="L329"></a><span class="ln">   329</span>		return &#34;false&#34;
+<a id="L330"></a><span class="ln">   330</span>	}
+<a id="L331"></a><span class="ln">   331</span>	
+<a id="L332"></a><span class="ln">   332</span>	func (b *BoolNode) Copy() Node {
+<a id="L333"></a><span class="ln">   333</span>		return newBool(b.True)
+<a id="L334"></a><span class="ln">   334</span>	}
+<a id="L335"></a><span class="ln">   335</span>	
+<a id="L336"></a><span class="ln">   336</span>	<span class="comment">// NumberNode holds a number: signed or unsigned integer, float, or complex.</span>
+<a id="L337"></a><span class="ln">   337</span>	<span class="comment">// The value is parsed and stored under all the types that can represent the value.</span>
+<a id="L338"></a><span class="ln">   338</span>	<span class="comment">// This simulates in a small amount of code the behavior of Go&#39;s ideal constants.</span>
+<a id="L339"></a><span class="ln">   339</span>	type NumberNode struct {
+<a id="L340"></a><span class="ln">   340</span>		NodeType
+<a id="L341"></a><span class="ln">   341</span>		IsInt      bool       <span class="comment">// Number has an integral value.</span>
+<a id="L342"></a><span class="ln">   342</span>		IsUint     bool       <span class="comment">// Number has an unsigned integral value.</span>
+<a id="L343"></a><span class="ln">   343</span>		IsFloat    bool       <span class="comment">// Number has a floating-point value.</span>
+<a id="L344"></a><span class="ln">   344</span>		IsComplex  bool       <span class="comment">// Number is complex.</span>
+<a id="L345"></a><span class="ln">   345</span>		Int64      int64      <span class="comment">// The signed integer value.</span>
+<a id="L346"></a><span class="ln">   346</span>		Uint64     uint64     <span class="comment">// The unsigned integer value.</span>
+<a id="L347"></a><span class="ln">   347</span>		Float64    float64    <span class="comment">// The floating-point value.</span>
+<a id="L348"></a><span class="ln">   348</span>		Complex128 complex128 <span class="comment">// The complex value.</span>
+<a id="L349"></a><span class="ln">   349</span>		Text       string     <span class="comment">// The original textual representation from the input.</span>
+<a id="L350"></a><span class="ln">   350</span>	}
+<a id="L351"></a><span class="ln">   351</span>	
+<a id="L352"></a><span class="ln">   352</span>	func newNumber(text string, typ itemType) (*NumberNode, error) {
+<a id="L353"></a><span class="ln">   353</span>		n := &amp;NumberNode{NodeType: NodeNumber, Text: text}
+<a id="L354"></a><span class="ln">   354</span>		switch typ {
+<a id="L355"></a><span class="ln">   355</span>		case itemCharConstant:
+<a id="L356"></a><span class="ln">   356</span>			rune, _, tail, err := strconv.UnquoteChar(text[1:], text[0])
+<a id="L357"></a><span class="ln">   357</span>			if err != nil {
+<a id="L358"></a><span class="ln">   358</span>				return nil, err
+<a id="L359"></a><span class="ln">   359</span>			}
+<a id="L360"></a><span class="ln">   360</span>			if tail != &#34;&#39;&#34; {
+<a id="L361"></a><span class="ln">   361</span>				return nil, fmt.Errorf(&#34;malformed character constant: %s&#34;, text)
+<a id="L362"></a><span class="ln">   362</span>			}
+<a id="L363"></a><span class="ln">   363</span>			n.Int64 = int64(rune)
+<a id="L364"></a><span class="ln">   364</span>			n.IsInt = true
+<a id="L365"></a><span class="ln">   365</span>			n.Uint64 = uint64(rune)
+<a id="L366"></a><span class="ln">   366</span>			n.IsUint = true
+<a id="L367"></a><span class="ln">   367</span>			n.Float64 = float64(rune) <span class="comment">// odd but those are the rules.</span>
+<a id="L368"></a><span class="ln">   368</span>			n.IsFloat = true
+<a id="L369"></a><span class="ln">   369</span>			return n, nil
+<a id="L370"></a><span class="ln">   370</span>		case itemComplex:
+<a id="L371"></a><span class="ln">   371</span>			<span class="comment">// fmt.Sscan can parse the pair, so let it do the work.</span>
+<a id="L372"></a><span class="ln">   372</span>			if _, err := fmt.Sscan(text, &amp;n.Complex128); err != nil {
+<a id="L373"></a><span class="ln">   373</span>				return nil, err
+<a id="L374"></a><span class="ln">   374</span>			}
+<a id="L375"></a><span class="ln">   375</span>			n.IsComplex = true
+<a id="L376"></a><span class="ln">   376</span>			n.simplifyComplex()
+<a id="L377"></a><span class="ln">   377</span>			return n, nil
+<a id="L378"></a><span class="ln">   378</span>		}
+<a id="L379"></a><span class="ln">   379</span>		<span class="comment">// Imaginary constants can only be complex unless they are zero.</span>
+<a id="L380"></a><span class="ln">   380</span>		if len(text) &gt; 0 &amp;&amp; text[len(text)-1] == &#39;i&#39; {
+<a id="L381"></a><span class="ln">   381</span>			f, err := strconv.ParseFloat(text[:len(text)-1], 64)
+<a id="L382"></a><span class="ln">   382</span>			if err == nil {
+<a id="L383"></a><span class="ln">   383</span>				n.IsComplex = true
+<a id="L384"></a><span class="ln">   384</span>				n.Complex128 = complex(0, f)
+<a id="L385"></a><span class="ln">   385</span>				n.simplifyComplex()
+<a id="L386"></a><span class="ln">   386</span>				return n, nil
+<a id="L387"></a><span class="ln">   387</span>			}
+<a id="L388"></a><span class="ln">   388</span>		}
+<a id="L389"></a><span class="ln">   389</span>		<span class="comment">// Do integer test first so we get 0x123 etc.</span>
+<a id="L390"></a><span class="ln">   390</span>		u, err := strconv.ParseUint(text, 0, 64) <span class="comment">// will fail for -0; fixed below.</span>
+<a id="L391"></a><span class="ln">   391</span>		if err == nil {
+<a id="L392"></a><span class="ln">   392</span>			n.IsUint = true
+<a id="L393"></a><span class="ln">   393</span>			n.Uint64 = u
+<a id="L394"></a><span class="ln">   394</span>		}
+<a id="L395"></a><span class="ln">   395</span>		i, err := strconv.ParseInt(text, 0, 64)
+<a id="L396"></a><span class="ln">   396</span>		if err == nil {
+<a id="L397"></a><span class="ln">   397</span>			n.IsInt = true
+<a id="L398"></a><span class="ln">   398</span>			n.Int64 = i
+<a id="L399"></a><span class="ln">   399</span>			if i == 0 {
+<a id="L400"></a><span class="ln">   400</span>				n.IsUint = true <span class="comment">// in case of -0.</span>
+<a id="L401"></a><span class="ln">   401</span>				n.Uint64 = u
+<a id="L402"></a><span class="ln">   402</span>			}
+<a id="L403"></a><span class="ln">   403</span>		}
+<a id="L404"></a><span class="ln">   404</span>		<span class="comment">// If an integer extraction succeeded, promote the float.</span>
+<a id="L405"></a><span class="ln">   405</span>		if n.IsInt {
+<a id="L406"></a><span class="ln">   406</span>			n.IsFloat = true
+<a id="L407"></a><span class="ln">   407</span>			n.Float64 = float64(n.Int64)
+<a id="L408"></a><span class="ln">   408</span>		} else if n.IsUint {
+<a id="L409"></a><span class="ln">   409</span>			n.IsFloat = true
+<a id="L410"></a><span class="ln">   410</span>			n.Float64 = float64(n.Uint64)
+<a id="L411"></a><span class="ln">   411</span>		} else {
+<a id="L412"></a><span class="ln">   412</span>			f, err := strconv.ParseFloat(text, 64)
+<a id="L413"></a><span class="ln">   413</span>			if err == nil {
+<a id="L414"></a><span class="ln">   414</span>				n.IsFloat = true
+<a id="L415"></a><span class="ln">   415</span>				n.Float64 = f
+<a id="L416"></a><span class="ln">   416</span>				<span class="comment">// If a floating-point extraction succeeded, extract the int if needed.</span>
+<a id="L417"></a><span class="ln">   417</span>				if !n.IsInt &amp;&amp; float64(int64(f)) == f {
+<a id="L418"></a><span class="ln">   418</span>					n.IsInt = true
+<a id="L419"></a><span class="ln">   419</span>					n.Int64 = int64(f)
+<a id="L420"></a><span class="ln">   420</span>				}
+<a id="L421"></a><span class="ln">   421</span>				if !n.IsUint &amp;&amp; float64(uint64(f)) == f {
+<a id="L422"></a><span class="ln">   422</span>					n.IsUint = true
+<a id="L423"></a><span class="ln">   423</span>					n.Uint64 = uint64(f)
+<a id="L424"></a><span class="ln">   424</span>				}
+<a id="L425"></a><span class="ln">   425</span>			}
+<a id="L426"></a><span class="ln">   426</span>		}
+<a id="L427"></a><span class="ln">   427</span>		if !n.IsInt &amp;&amp; !n.IsUint &amp;&amp; !n.IsFloat {
+<a id="L428"></a><span class="ln">   428</span>			return nil, fmt.Errorf(&#34;illegal number syntax: %q&#34;, text)
+<a id="L429"></a><span class="ln">   429</span>		}
+<a id="L430"></a><span class="ln">   430</span>		return n, nil
+<a id="L431"></a><span class="ln">   431</span>	}
+<a id="L432"></a><span class="ln">   432</span>	
+<a id="L433"></a><span class="ln">   433</span>	<span class="comment">// simplifyComplex pulls out any other types that are represented by the complex number.</span>
+<a id="L434"></a><span class="ln">   434</span>	<span class="comment">// These all require that the imaginary part be zero.</span>
+<a id="L435"></a><span class="ln">   435</span>	func (n *NumberNode) simplifyComplex() {
+<a id="L436"></a><span class="ln">   436</span>		n.IsFloat = imag(n.Complex128) == 0
+<a id="L437"></a><span class="ln">   437</span>		if n.IsFloat {
+<a id="L438"></a><span class="ln">   438</span>			n.Float64 = real(n.Complex128)
+<a id="L439"></a><span class="ln">   439</span>			n.IsInt = float64(int64(n.Float64)) == n.Float64
+<a id="L440"></a><span class="ln">   440</span>			if n.IsInt {
+<a id="L441"></a><span class="ln">   441</span>				n.Int64 = int64(n.Float64)
+<a id="L442"></a><span class="ln">   442</span>			}
+<a id="L443"></a><span class="ln">   443</span>			n.IsUint = float64(uint64(n.Float64)) == n.Float64
+<a id="L444"></a><span class="ln">   444</span>			if n.IsUint {
+<a id="L445"></a><span class="ln">   445</span>				n.Uint64 = uint64(n.Float64)
+<a id="L446"></a><span class="ln">   446</span>			}
+<a id="L447"></a><span class="ln">   447</span>		}
+<a id="L448"></a><span class="ln">   448</span>	}
+<a id="L449"></a><span class="ln">   449</span>	
+<a id="L450"></a><span class="ln">   450</span>	func (n *NumberNode) String() string {
+<a id="L451"></a><span class="ln">   451</span>		return n.Text
+<a id="L452"></a><span class="ln">   452</span>	}
+<a id="L453"></a><span class="ln">   453</span>	
+<a id="L454"></a><span class="ln">   454</span>	func (n *NumberNode) Copy() Node {
+<a id="L455"></a><span class="ln">   455</span>		nn := new(NumberNode)
+<a id="L456"></a><span class="ln">   456</span>		*nn = *n <span class="comment">// Easy, fast, correct.</span>
+<a id="L457"></a><span class="ln">   457</span>		return nn
+<a id="L458"></a><span class="ln">   458</span>	}
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>	<span class="comment">// StringNode holds a string constant. The value has been &#34;unquoted&#34;.</span>
+<a id="L461"></a><span class="ln">   461</span>	type StringNode struct {
+<a id="L462"></a><span class="ln">   462</span>		NodeType
+<a id="L463"></a><span class="ln">   463</span>		Quoted string <span class="comment">// The original text of the string, with quotes.</span>
+<a id="L464"></a><span class="ln">   464</span>		Text   string <span class="comment">// The string, after quote processing.</span>
+<a id="L465"></a><span class="ln">   465</span>	}
+<a id="L466"></a><span class="ln">   466</span>	
+<a id="L467"></a><span class="ln">   467</span>	func newString(orig, text string) *StringNode {
+<a id="L468"></a><span class="ln">   468</span>		return &amp;StringNode{NodeType: NodeString, Quoted: orig, Text: text}
+<a id="L469"></a><span class="ln">   469</span>	}
+<a id="L470"></a><span class="ln">   470</span>	
+<a id="L471"></a><span class="ln">   471</span>	func (s *StringNode) String() string {
+<a id="L472"></a><span class="ln">   472</span>		return s.Quoted
+<a id="L473"></a><span class="ln">   473</span>	}
+<a id="L474"></a><span class="ln">   474</span>	
+<a id="L475"></a><span class="ln">   475</span>	func (s *StringNode) Copy() Node {
+<a id="L476"></a><span class="ln">   476</span>		return newString(s.Quoted, s.Text)
+<a id="L477"></a><span class="ln">   477</span>	}
+<a id="L478"></a><span class="ln">   478</span>	
+<a id="L479"></a><span class="ln">   479</span>	<span class="comment">// endNode represents an {{end}} action. It is represented by a nil pointer.</span>
+<a id="L480"></a><span class="ln">   480</span>	<span class="comment">// It does not appear in the final parse tree.</span>
+<a id="L481"></a><span class="ln">   481</span>	type endNode bool
+<a id="L482"></a><span class="ln">   482</span>	
+<a id="L483"></a><span class="ln">   483</span>	func newEnd() *endNode {
+<a id="L484"></a><span class="ln">   484</span>		return nil
+<a id="L485"></a><span class="ln">   485</span>	}
+<a id="L486"></a><span class="ln">   486</span>	
+<a id="L487"></a><span class="ln">   487</span>	func (e *endNode) Type() NodeType {
+<a id="L488"></a><span class="ln">   488</span>		return nodeEnd
+<a id="L489"></a><span class="ln">   489</span>	}
+<a id="L490"></a><span class="ln">   490</span>	
+<a id="L491"></a><span class="ln">   491</span>	func (e *endNode) String() string {
+<a id="L492"></a><span class="ln">   492</span>		return &#34;{{end}}&#34;
+<a id="L493"></a><span class="ln">   493</span>	}
+<a id="L494"></a><span class="ln">   494</span>	
+<a id="L495"></a><span class="ln">   495</span>	func (e *endNode) Copy() Node {
+<a id="L496"></a><span class="ln">   496</span>		return newEnd()
+<a id="L497"></a><span class="ln">   497</span>	}
+<a id="L498"></a><span class="ln">   498</span>	
+<a id="L499"></a><span class="ln">   499</span>	<span class="comment">// elseNode represents an {{else}} action. Does not appear in the final tree.</span>
+<a id="L500"></a><span class="ln">   500</span>	type elseNode struct {
+<a id="L501"></a><span class="ln">   501</span>		NodeType
+<a id="L502"></a><span class="ln">   502</span>		Line int <span class="comment">// The line number in the input.</span>
+<a id="L503"></a><span class="ln">   503</span>	}
+<a id="L504"></a><span class="ln">   504</span>	
+<a id="L505"></a><span class="ln">   505</span>	func newElse(line int) *elseNode {
+<a id="L506"></a><span class="ln">   506</span>		return &amp;elseNode{NodeType: nodeElse, Line: line}
+<a id="L507"></a><span class="ln">   507</span>	}
+<a id="L508"></a><span class="ln">   508</span>	
+<a id="L509"></a><span class="ln">   509</span>	func (e *elseNode) Type() NodeType {
+<a id="L510"></a><span class="ln">   510</span>		return nodeElse
+<a id="L511"></a><span class="ln">   511</span>	}
+<a id="L512"></a><span class="ln">   512</span>	
+<a id="L513"></a><span class="ln">   513</span>	func (e *elseNode) String() string {
+<a id="L514"></a><span class="ln">   514</span>		return &#34;{{else}}&#34;
+<a id="L515"></a><span class="ln">   515</span>	}
+<a id="L516"></a><span class="ln">   516</span>	
+<a id="L517"></a><span class="ln">   517</span>	func (e *elseNode) Copy() Node {
+<a id="L518"></a><span class="ln">   518</span>		return newElse(e.Line)
+<a id="L519"></a><span class="ln">   519</span>	}
+<a id="L520"></a><span class="ln">   520</span>	
+<a id="L521"></a><span class="ln">   521</span>	<span class="comment">// BranchNode is the common representation of if, range, and with.</span>
+<a id="L522"></a><span class="ln">   522</span>	type BranchNode struct {
+<a id="L523"></a><span class="ln">   523</span>		NodeType
+<a id="L524"></a><span class="ln">   524</span>		Line     int       <span class="comment">// The line number in the input.</span>
+<a id="L525"></a><span class="ln">   525</span>		Pipe     *PipeNode <span class="comment">// The pipeline to be evaluated.</span>
+<a id="L526"></a><span class="ln">   526</span>		List     *ListNode <span class="comment">// What to execute if the value is non-empty.</span>
+<a id="L527"></a><span class="ln">   527</span>		ElseList *ListNode <span class="comment">// What to execute if the value is empty (nil if absent).</span>
+<a id="L528"></a><span class="ln">   528</span>	}
+<a id="L529"></a><span class="ln">   529</span>	
+<a id="L530"></a><span class="ln">   530</span>	func (b *BranchNode) String() string {
+<a id="L531"></a><span class="ln">   531</span>		name := &#34;&#34;
+<a id="L532"></a><span class="ln">   532</span>		switch b.NodeType {
+<a id="L533"></a><span class="ln">   533</span>		case NodeIf:
+<a id="L534"></a><span class="ln">   534</span>			name = &#34;if&#34;
+<a id="L535"></a><span class="ln">   535</span>		case NodeRange:
+<a id="L536"></a><span class="ln">   536</span>			name = &#34;range&#34;
+<a id="L537"></a><span class="ln">   537</span>		case NodeWith:
+<a id="L538"></a><span class="ln">   538</span>			name = &#34;with&#34;
+<a id="L539"></a><span class="ln">   539</span>		default:
+<a id="L540"></a><span class="ln">   540</span>			panic(&#34;unknown branch type&#34;)
+<a id="L541"></a><span class="ln">   541</span>		}
+<a id="L542"></a><span class="ln">   542</span>		if b.ElseList != nil {
+<a id="L543"></a><span class="ln">   543</span>			return fmt.Sprintf(&#34;{{%s %s}}%s{{else}}%s{{end}}&#34;, name, b.Pipe, b.List, b.ElseList)
+<a id="L544"></a><span class="ln">   544</span>		}
+<a id="L545"></a><span class="ln">   545</span>		return fmt.Sprintf(&#34;{{%s %s}}%s{{end}}&#34;, name, b.Pipe, b.List)
+<a id="L546"></a><span class="ln">   546</span>	}
+<a id="L547"></a><span class="ln">   547</span>	
+<a id="L548"></a><span class="ln">   548</span>	<span class="comment">// IfNode represents an {{if}} action and its commands.</span>
+<a id="L549"></a><span class="ln">   549</span>	type IfNode struct {
+<a id="L550"></a><span class="ln">   550</span>		BranchNode
+<a id="L551"></a><span class="ln">   551</span>	}
+<a id="L552"></a><span class="ln">   552</span>	
+<a id="L553"></a><span class="ln">   553</span>	func newIf(line int, pipe *PipeNode, list, elseList *ListNode) *IfNode {
+<a id="L554"></a><span class="ln">   554</span>		return &amp;IfNode{BranchNode{NodeType: NodeIf, Line: line, Pipe: pipe, List: list, ElseList: elseList}}
+<a id="L555"></a><span class="ln">   555</span>	}
+<a id="L556"></a><span class="ln">   556</span>	
+<a id="L557"></a><span class="ln">   557</span>	func (i *IfNode) Copy() Node {
+<a id="L558"></a><span class="ln">   558</span>		return newIf(i.Line, i.Pipe.CopyPipe(), i.List.CopyList(), i.ElseList.CopyList())
+<a id="L559"></a><span class="ln">   559</span>	}
+<a id="L560"></a><span class="ln">   560</span>	
+<a id="L561"></a><span class="ln">   561</span>	<span class="comment">// RangeNode represents a {{range}} action and its commands.</span>
+<a id="L562"></a><span class="ln">   562</span>	type RangeNode struct {
+<a id="L563"></a><span class="ln">   563</span>		BranchNode
+<a id="L564"></a><span class="ln">   564</span>	}
+<a id="L565"></a><span class="ln">   565</span>	
+<a id="L566"></a><span class="ln">   566</span>	func newRange(line int, pipe *PipeNode, list, elseList *ListNode) *RangeNode {
+<a id="L567"></a><span class="ln">   567</span>		return &amp;RangeNode{BranchNode{NodeType: NodeRange, Line: line, Pipe: pipe, List: list, ElseList: elseList}}
+<a id="L568"></a><span class="ln">   568</span>	}
+<a id="L569"></a><span class="ln">   569</span>	
+<a id="L570"></a><span class="ln">   570</span>	func (r *RangeNode) Copy() Node {
+<a id="L571"></a><span class="ln">   571</span>		return newRange(r.Line, r.Pipe.CopyPipe(), r.List.CopyList(), r.ElseList.CopyList())
+<a id="L572"></a><span class="ln">   572</span>	}
+<a id="L573"></a><span class="ln">   573</span>	
+<a id="L574"></a><span class="ln">   574</span>	<span class="comment">// WithNode represents a {{with}} action and its commands.</span>
+<a id="L575"></a><span class="ln">   575</span>	type WithNode struct {
+<a id="L576"></a><span class="ln">   576</span>		BranchNode
+<a id="L577"></a><span class="ln">   577</span>	}
+<a id="L578"></a><span class="ln">   578</span>	
+<a id="L579"></a><span class="ln">   579</span>	func newWith(line int, pipe *PipeNode, list, elseList *ListNode) *WithNode {
+<a id="L580"></a><span class="ln">   580</span>		return &amp;WithNode{BranchNode{NodeType: NodeWith, Line: line, Pipe: pipe, List: list, ElseList: elseList}}
+<a id="L581"></a><span class="ln">   581</span>	}
+<a id="L582"></a><span class="ln">   582</span>	
+<a id="L583"></a><span class="ln">   583</span>	func (w *WithNode) Copy() Node {
+<a id="L584"></a><span class="ln">   584</span>		return newWith(w.Line, w.Pipe.CopyPipe(), w.List.CopyList(), w.ElseList.CopyList())
+<a id="L585"></a><span class="ln">   585</span>	}
+<a id="L586"></a><span class="ln">   586</span>	
+<a id="L587"></a><span class="ln">   587</span>	<span class="comment">// TemplateNode represents a {{template}} action.</span>
+<a id="L588"></a><span class="ln">   588</span>	type TemplateNode struct {
+<a id="L589"></a><span class="ln">   589</span>		NodeType
+<a id="L590"></a><span class="ln">   590</span>		Line int       <span class="comment">// The line number in the input.</span>
+<a id="L591"></a><span class="ln">   591</span>		Name string    <span class="comment">// The name of the template (unquoted).</span>
+<a id="L592"></a><span class="ln">   592</span>		Pipe *PipeNode <span class="comment">// The command to evaluate as dot for the template.</span>
+<a id="L593"></a><span class="ln">   593</span>	}
+<a id="L594"></a><span class="ln">   594</span>	
+<a id="L595"></a><span class="ln">   595</span>	func newTemplate(line int, name string, pipe *PipeNode) *TemplateNode {
+<a id="L596"></a><span class="ln">   596</span>		return &amp;TemplateNode{NodeType: NodeTemplate, Line: line, Name: name, Pipe: pipe}
+<a id="L597"></a><span class="ln">   597</span>	}
+<a id="L598"></a><span class="ln">   598</span>	
+<a id="L599"></a><span class="ln">   599</span>	func (t *TemplateNode) String() string {
+<a id="L600"></a><span class="ln">   600</span>		if t.Pipe == nil {
+<a id="L601"></a><span class="ln">   601</span>			return fmt.Sprintf(&#34;{{template %q}}&#34;, t.Name)
+<a id="L602"></a><span class="ln">   602</span>		}
+<a id="L603"></a><span class="ln">   603</span>		return fmt.Sprintf(&#34;{{template %q %s}}&#34;, t.Name, t.Pipe)
+<a id="L604"></a><span class="ln">   604</span>	}
+<a id="L605"></a><span class="ln">   605</span>	
+<a id="L606"></a><span class="ln">   606</span>	func (t *TemplateNode) Copy() Node {
+<a id="L607"></a><span class="ln">   607</span>		return newTemplate(t.Line, t.Name, t.Pipe.CopyPipe())
+<a id="L608"></a><span class="ln">   608</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

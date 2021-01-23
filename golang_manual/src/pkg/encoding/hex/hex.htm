@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/hex/hex.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/hex/hex.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package hex implements hexadecimal encoding and decoding.</span>
+<a id="L6"></a><span class="ln">     6</span>	package hex
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;bytes&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	const hextable = &#34;0123456789abcdef&#34;
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// EncodedLen returns the length of an encoding of n source bytes.</span>
+<a id="L18"></a><span class="ln">    18</span>	func EncodedLen(n int) int { return n * 2 }
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// Encode encodes src into EncodedLen(len(src))</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// bytes of dst.  As a convenience, it returns the number</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// of bytes written to dst, but this value is always EncodedLen(len(src)).</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// Encode implements hexadecimal encoding.</span>
+<a id="L24"></a><span class="ln">    24</span>	func Encode(dst, src []byte) int {
+<a id="L25"></a><span class="ln">    25</span>		for i, v := range src {
+<a id="L26"></a><span class="ln">    26</span>			dst[i*2] = hextable[v&gt;&gt;4]
+<a id="L27"></a><span class="ln">    27</span>			dst[i*2+1] = hextable[v&amp;0x0f]
+<a id="L28"></a><span class="ln">    28</span>		}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>		return len(src) * 2
+<a id="L31"></a><span class="ln">    31</span>	}
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// ErrLength results from decoding an odd length slice.</span>
+<a id="L34"></a><span class="ln">    34</span>	var ErrLength = errors.New(&#34;encoding/hex: odd length hex string&#34;)
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// InvalidByteError values describe errors resulting from an invalid byte in a hex string.</span>
+<a id="L37"></a><span class="ln">    37</span>	type InvalidByteError byte
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	func (e InvalidByteError) Error() string {
+<a id="L40"></a><span class="ln">    40</span>		return fmt.Sprintf(&#34;encoding/hex: invalid byte: %#U&#34;, rune(e))
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	func DecodedLen(x int) int { return x / 2 }
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Decode decodes src into DecodedLen(len(src)) bytes, returning the actual</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// number of bytes written to dst.</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// If Decode encounters invalid input, it returns an error describing the failure.</span>
+<a id="L49"></a><span class="ln">    49</span>	func Decode(dst, src []byte) (int, error) {
+<a id="L50"></a><span class="ln">    50</span>		if len(src)%2 == 1 {
+<a id="L51"></a><span class="ln">    51</span>			return 0, ErrLength
+<a id="L52"></a><span class="ln">    52</span>		}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>		for i := 0; i &lt; len(src)/2; i++ {
+<a id="L55"></a><span class="ln">    55</span>			a, ok := fromHexChar(src[i*2])
+<a id="L56"></a><span class="ln">    56</span>			if !ok {
+<a id="L57"></a><span class="ln">    57</span>				return 0, InvalidByteError(src[i*2])
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>			b, ok := fromHexChar(src[i*2+1])
+<a id="L60"></a><span class="ln">    60</span>			if !ok {
+<a id="L61"></a><span class="ln">    61</span>				return 0, InvalidByteError(src[i*2+1])
+<a id="L62"></a><span class="ln">    62</span>			}
+<a id="L63"></a><span class="ln">    63</span>			dst[i] = (a &lt;&lt; 4) | b
+<a id="L64"></a><span class="ln">    64</span>		}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>		return len(src) / 2, nil
+<a id="L67"></a><span class="ln">    67</span>	}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// fromHexChar converts a hex character into its value and a success flag.</span>
+<a id="L70"></a><span class="ln">    70</span>	func fromHexChar(c byte) (byte, bool) {
+<a id="L71"></a><span class="ln">    71</span>		switch {
+<a id="L72"></a><span class="ln">    72</span>		case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L73"></a><span class="ln">    73</span>			return c - &#39;0&#39;, true
+<a id="L74"></a><span class="ln">    74</span>		case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L75"></a><span class="ln">    75</span>			return c - &#39;a&#39; + 10, true
+<a id="L76"></a><span class="ln">    76</span>		case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L77"></a><span class="ln">    77</span>			return c - &#39;A&#39; + 10, true
+<a id="L78"></a><span class="ln">    78</span>		}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>		return 0, false
+<a id="L81"></a><span class="ln">    81</span>	}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// EncodeToString returns the hexadecimal encoding of src.</span>
+<a id="L84"></a><span class="ln">    84</span>	func EncodeToString(src []byte) string {
+<a id="L85"></a><span class="ln">    85</span>		dst := make([]byte, EncodedLen(len(src)))
+<a id="L86"></a><span class="ln">    86</span>		Encode(dst, src)
+<a id="L87"></a><span class="ln">    87</span>		return string(dst)
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// DecodeString returns the bytes represented by the hexadecimal string s.</span>
+<a id="L91"></a><span class="ln">    91</span>	func DecodeString(s string) ([]byte, error) {
+<a id="L92"></a><span class="ln">    92</span>		src := []byte(s)
+<a id="L93"></a><span class="ln">    93</span>		dst := make([]byte, DecodedLen(len(src)))
+<a id="L94"></a><span class="ln">    94</span>		_, err := Decode(dst, src)
+<a id="L95"></a><span class="ln">    95</span>		if err != nil {
+<a id="L96"></a><span class="ln">    96</span>			return nil, err
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>		return dst, nil
+<a id="L99"></a><span class="ln">    99</span>	}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// Dump returns a string that contains a hex dump of the given data. The format</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// of the hex dump matches the output of `hexdump -C` on the command line.</span>
+<a id="L103"></a><span class="ln">   103</span>	func Dump(data []byte) string {
+<a id="L104"></a><span class="ln">   104</span>		var buf bytes.Buffer
+<a id="L105"></a><span class="ln">   105</span>		dumper := Dumper(&amp;buf)
+<a id="L106"></a><span class="ln">   106</span>		dumper.Write(data)
+<a id="L107"></a><span class="ln">   107</span>		dumper.Close()
+<a id="L108"></a><span class="ln">   108</span>		return string(buf.Bytes())
+<a id="L109"></a><span class="ln">   109</span>	}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// Dumper returns a WriteCloser that writes a hex dump of all written data to</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// w. The format of the dump matches the output of `hexdump -C` on the command</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// line.</span>
+<a id="L114"></a><span class="ln">   114</span>	func Dumper(w io.Writer) io.WriteCloser {
+<a id="L115"></a><span class="ln">   115</span>		return &amp;dumper{w: w}
+<a id="L116"></a><span class="ln">   116</span>	}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	type dumper struct {
+<a id="L119"></a><span class="ln">   119</span>		w          io.Writer
+<a id="L120"></a><span class="ln">   120</span>		rightChars [18]byte
+<a id="L121"></a><span class="ln">   121</span>		buf        [14]byte
+<a id="L122"></a><span class="ln">   122</span>		used       int  <span class="comment">// number of bytes in the current line</span>
+<a id="L123"></a><span class="ln">   123</span>		n          uint <span class="comment">// number of bytes, total</span>
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	func toChar(b byte) byte {
+<a id="L127"></a><span class="ln">   127</span>		if b &lt; 32 || b &gt; 126 {
+<a id="L128"></a><span class="ln">   128</span>			return &#39;.&#39;
+<a id="L129"></a><span class="ln">   129</span>		}
+<a id="L130"></a><span class="ln">   130</span>		return b
+<a id="L131"></a><span class="ln">   131</span>	}
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	func (h *dumper) Write(data []byte) (n int, err error) {
+<a id="L134"></a><span class="ln">   134</span>		<span class="comment">// Output lines look like:</span>
+<a id="L135"></a><span class="ln">   135</span>		<span class="comment">// 00000010  2e 2f 30 31 32 33 34 35  36 37 38 39 3a 3b 3c 3d  |./0123456789:;&lt;=|</span>
+<a id="L136"></a><span class="ln">   136</span>		<span class="comment">// ^ offset                          ^ extra space              ^ ASCII of line.</span>
+<a id="L137"></a><span class="ln">   137</span>		for i := range data {
+<a id="L138"></a><span class="ln">   138</span>			if h.used == 0 {
+<a id="L139"></a><span class="ln">   139</span>				<span class="comment">// At the beginning of a line we print the current</span>
+<a id="L140"></a><span class="ln">   140</span>				<span class="comment">// offset in hex.</span>
+<a id="L141"></a><span class="ln">   141</span>				h.buf[0] = byte(h.n &gt;&gt; 24)
+<a id="L142"></a><span class="ln">   142</span>				h.buf[1] = byte(h.n &gt;&gt; 16)
+<a id="L143"></a><span class="ln">   143</span>				h.buf[2] = byte(h.n &gt;&gt; 8)
+<a id="L144"></a><span class="ln">   144</span>				h.buf[3] = byte(h.n)
+<a id="L145"></a><span class="ln">   145</span>				Encode(h.buf[4:], h.buf[:4])
+<a id="L146"></a><span class="ln">   146</span>				h.buf[12] = &#39; &#39;
+<a id="L147"></a><span class="ln">   147</span>				h.buf[13] = &#39; &#39;
+<a id="L148"></a><span class="ln">   148</span>				_, err = h.w.Write(h.buf[4:])
+<a id="L149"></a><span class="ln">   149</span>			}
+<a id="L150"></a><span class="ln">   150</span>			Encode(h.buf[:], data[i:i+1])
+<a id="L151"></a><span class="ln">   151</span>			h.buf[2] = &#39; &#39;
+<a id="L152"></a><span class="ln">   152</span>			l := 3
+<a id="L153"></a><span class="ln">   153</span>			if h.used == 7 {
+<a id="L154"></a><span class="ln">   154</span>				<span class="comment">// There&#39;s an additional space after the 8th byte.</span>
+<a id="L155"></a><span class="ln">   155</span>				h.buf[3] = &#39; &#39;
+<a id="L156"></a><span class="ln">   156</span>				l = 4
+<a id="L157"></a><span class="ln">   157</span>			} else if h.used == 15 {
+<a id="L158"></a><span class="ln">   158</span>				<span class="comment">// At the end of the line there&#39;s an extra space and</span>
+<a id="L159"></a><span class="ln">   159</span>				<span class="comment">// the bar for the right column.</span>
+<a id="L160"></a><span class="ln">   160</span>				h.buf[3] = &#39; &#39;
+<a id="L161"></a><span class="ln">   161</span>				h.buf[4] = &#39;|&#39;
+<a id="L162"></a><span class="ln">   162</span>				l = 5
+<a id="L163"></a><span class="ln">   163</span>			}
+<a id="L164"></a><span class="ln">   164</span>			_, err = h.w.Write(h.buf[:l])
+<a id="L165"></a><span class="ln">   165</span>			if err != nil {
+<a id="L166"></a><span class="ln">   166</span>				return
+<a id="L167"></a><span class="ln">   167</span>			}
+<a id="L168"></a><span class="ln">   168</span>			n++
+<a id="L169"></a><span class="ln">   169</span>			h.rightChars[h.used] = toChar(data[i])
+<a id="L170"></a><span class="ln">   170</span>			h.used++
+<a id="L171"></a><span class="ln">   171</span>			h.n++
+<a id="L172"></a><span class="ln">   172</span>			if h.used == 16 {
+<a id="L173"></a><span class="ln">   173</span>				h.rightChars[16] = &#39;|&#39;
+<a id="L174"></a><span class="ln">   174</span>				h.rightChars[17] = &#39;\n&#39;
+<a id="L175"></a><span class="ln">   175</span>				_, err = h.w.Write(h.rightChars[:])
+<a id="L176"></a><span class="ln">   176</span>				if err != nil {
+<a id="L177"></a><span class="ln">   177</span>					return
+<a id="L178"></a><span class="ln">   178</span>				}
+<a id="L179"></a><span class="ln">   179</span>				h.used = 0
+<a id="L180"></a><span class="ln">   180</span>			}
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>		return
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	func (h *dumper) Close() (err error) {
+<a id="L186"></a><span class="ln">   186</span>		<span class="comment">// See the comments in Write() for the details of this format.</span>
+<a id="L187"></a><span class="ln">   187</span>		if h.used == 0 {
+<a id="L188"></a><span class="ln">   188</span>			return
+<a id="L189"></a><span class="ln">   189</span>		}
+<a id="L190"></a><span class="ln">   190</span>		h.buf[0] = &#39; &#39;
+<a id="L191"></a><span class="ln">   191</span>		h.buf[1] = &#39; &#39;
+<a id="L192"></a><span class="ln">   192</span>		h.buf[2] = &#39; &#39;
+<a id="L193"></a><span class="ln">   193</span>		h.buf[3] = &#39; &#39;
+<a id="L194"></a><span class="ln">   194</span>		h.buf[4] = &#39;|&#39;
+<a id="L195"></a><span class="ln">   195</span>		nBytes := h.used
+<a id="L196"></a><span class="ln">   196</span>		for h.used &lt; 16 {
+<a id="L197"></a><span class="ln">   197</span>			l := 3
+<a id="L198"></a><span class="ln">   198</span>			if h.used == 7 {
+<a id="L199"></a><span class="ln">   199</span>				l = 4
+<a id="L200"></a><span class="ln">   200</span>			} else if h.used == 15 {
+<a id="L201"></a><span class="ln">   201</span>				l = 5
+<a id="L202"></a><span class="ln">   202</span>			}
+<a id="L203"></a><span class="ln">   203</span>			_, err = h.w.Write(h.buf[:l])
+<a id="L204"></a><span class="ln">   204</span>			if err != nil {
+<a id="L205"></a><span class="ln">   205</span>				return
+<a id="L206"></a><span class="ln">   206</span>			}
+<a id="L207"></a><span class="ln">   207</span>			h.used++
+<a id="L208"></a><span class="ln">   208</span>		}
+<a id="L209"></a><span class="ln">   209</span>		h.rightChars[nBytes] = &#39;|&#39;
+<a id="L210"></a><span class="ln">   210</span>		h.rightChars[nBytes+1] = &#39;\n&#39;
+<a id="L211"></a><span class="ln">   211</span>		_, err = h.w.Write(h.rightChars[:nBytes+2])
+<a id="L212"></a><span class="ln">   212</span>		return
+<a id="L213"></a><span class="ln">   213</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/unicode/graphic.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/unicode/graphic.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package unicode
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Bit masks for each code point under U+0100, for fast lookup.</span>
+<a id="L8"></a><span class="ln">     8</span>	const (
+<a id="L9"></a><span class="ln">     9</span>		pC  = 1 &lt;&lt; iota <span class="comment">// a control character.</span>
+<a id="L10"></a><span class="ln">    10</span>		pP              <span class="comment">// a punctuation character.</span>
+<a id="L11"></a><span class="ln">    11</span>		pN              <span class="comment">// a numeral.</span>
+<a id="L12"></a><span class="ln">    12</span>		pS              <span class="comment">// a symbolic character.</span>
+<a id="L13"></a><span class="ln">    13</span>		pZ              <span class="comment">// a spacing character.</span>
+<a id="L14"></a><span class="ln">    14</span>		pLu             <span class="comment">// an upper-case letter.</span>
+<a id="L15"></a><span class="ln">    15</span>		pLl             <span class="comment">// a lower-case letter.</span>
+<a id="L16"></a><span class="ln">    16</span>		pp              <span class="comment">// a printable character according to Go&#39;s definition.</span>
+<a id="L17"></a><span class="ln">    17</span>		pg  = pp | pZ   <span class="comment">// a graphical character according to the Unicode definition.</span>
+<a id="L18"></a><span class="ln">    18</span>	)
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// GraphicRanges defines the set of graphic characters according to Unicode.</span>
+<a id="L21"></a><span class="ln">    21</span>	var GraphicRanges = []*RangeTable{
+<a id="L22"></a><span class="ln">    22</span>		L, M, N, P, S, Zs,
+<a id="L23"></a><span class="ln">    23</span>	}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// PrintRanges defines the set of printable characters according to Go.</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// ASCII space, U+0020, is handled separately.</span>
+<a id="L27"></a><span class="ln">    27</span>	var PrintRanges = []*RangeTable{
+<a id="L28"></a><span class="ln">    28</span>		L, M, N, P, S,
+<a id="L29"></a><span class="ln">    29</span>	}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// IsGraphic reports whether the rune is defined as a Graphic by Unicode.</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// Such characters include letters, marks, numbers, punctuation, symbols, and</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// spaces, from categories L, M, N, P, S, Zs.</span>
+<a id="L34"></a><span class="ln">    34</span>	func IsGraphic(r rune) bool {
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// We convert to uint32 to avoid the extra test for negative,</span>
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// and in the index we convert to uint8 to avoid the range check.</span>
+<a id="L37"></a><span class="ln">    37</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L38"></a><span class="ln">    38</span>			return properties[uint8(r)]&amp;pg != 0
+<a id="L39"></a><span class="ln">    39</span>		}
+<a id="L40"></a><span class="ln">    40</span>		return IsOneOf(GraphicRanges, r)
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// IsPrint reports whether the rune is defined as printable by Go. Such</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// characters include letters, marks, numbers, punctuation, symbols, and the</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// ASCII space character, from categories L, M, N, P, S and the ASCII space</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// character.  This categorization is the same as IsGraphic except that the</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// only spacing character is ASCII space, U+0020.</span>
+<a id="L48"></a><span class="ln">    48</span>	func IsPrint(r rune) bool {
+<a id="L49"></a><span class="ln">    49</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L50"></a><span class="ln">    50</span>			return properties[uint8(r)]&amp;pp != 0
+<a id="L51"></a><span class="ln">    51</span>		}
+<a id="L52"></a><span class="ln">    52</span>		return IsOneOf(PrintRanges, r)
+<a id="L53"></a><span class="ln">    53</span>	}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// IsOneOf reports whether the rune is a member of one of the ranges.</span>
+<a id="L56"></a><span class="ln">    56</span>	func IsOneOf(set []*RangeTable, r rune) bool {
+<a id="L57"></a><span class="ln">    57</span>		for _, inside := range set {
+<a id="L58"></a><span class="ln">    58</span>			if Is(inside, r) {
+<a id="L59"></a><span class="ln">    59</span>				return true
+<a id="L60"></a><span class="ln">    60</span>			}
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		return false
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// IsControl reports whether the rune is a control character.</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// The C (Other) Unicode category includes more code points</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// such as surrogates; use Is(C, r) to test for them.</span>
+<a id="L68"></a><span class="ln">    68</span>	func IsControl(r rune) bool {
+<a id="L69"></a><span class="ln">    69</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L70"></a><span class="ln">    70</span>			return properties[uint8(r)]&amp;pC != 0
+<a id="L71"></a><span class="ln">    71</span>		}
+<a id="L72"></a><span class="ln">    72</span>		<span class="comment">// All control characters are &lt; Latin1Max.</span>
+<a id="L73"></a><span class="ln">    73</span>		return false
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// IsLetter reports whether the rune is a letter (category L).</span>
+<a id="L77"></a><span class="ln">    77</span>	func IsLetter(r rune) bool {
+<a id="L78"></a><span class="ln">    78</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L79"></a><span class="ln">    79</span>			return properties[uint8(r)]&amp;(pLu|pLl) != 0
+<a id="L80"></a><span class="ln">    80</span>		}
+<a id="L81"></a><span class="ln">    81</span>		return Is(Letter, r)
+<a id="L82"></a><span class="ln">    82</span>	}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// IsMark reports whether the rune is a mark character (category M).</span>
+<a id="L85"></a><span class="ln">    85</span>	func IsMark(r rune) bool {
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// There are no mark characters in Latin-1.</span>
+<a id="L87"></a><span class="ln">    87</span>		return Is(Mark, r)
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// IsNumber reports whether the rune is a number (category N).</span>
+<a id="L91"></a><span class="ln">    91</span>	func IsNumber(r rune) bool {
+<a id="L92"></a><span class="ln">    92</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L93"></a><span class="ln">    93</span>			return properties[uint8(r)]&amp;pN != 0
+<a id="L94"></a><span class="ln">    94</span>		}
+<a id="L95"></a><span class="ln">    95</span>		return Is(Number, r)
+<a id="L96"></a><span class="ln">    96</span>	}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// IsPunct reports whether the rune is a Unicode punctuation character</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// (category P).</span>
+<a id="L100"></a><span class="ln">   100</span>	func IsPunct(r rune) bool {
+<a id="L101"></a><span class="ln">   101</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L102"></a><span class="ln">   102</span>			return properties[uint8(r)]&amp;pP != 0
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>		return Is(Punct, r)
+<a id="L105"></a><span class="ln">   105</span>	}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// IsSpace reports whether the rune is a space character as defined</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// by Unicode&#39;s White Space property; in the Latin-1 space</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// this is</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">//	&#39;\t&#39;, &#39;\n&#39;, &#39;\v&#39;, &#39;\f&#39;, &#39;\r&#39;, &#39; &#39;, U+0085 (NEL), U+00A0 (NBSP).</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// Other definitions of spacing characters are set by category</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// Z and property Pattern_White_Space.</span>
+<a id="L113"></a><span class="ln">   113</span>	func IsSpace(r rune) bool {
+<a id="L114"></a><span class="ln">   114</span>		<span class="comment">// This property isn&#39;t the same as Z; special-case it.</span>
+<a id="L115"></a><span class="ln">   115</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L116"></a><span class="ln">   116</span>			switch r {
+<a id="L117"></a><span class="ln">   117</span>			case &#39;\t&#39;, &#39;\n&#39;, &#39;\v&#39;, &#39;\f&#39;, &#39;\r&#39;, &#39; &#39;, 0x85, 0xA0:
+<a id="L118"></a><span class="ln">   118</span>				return true
+<a id="L119"></a><span class="ln">   119</span>			}
+<a id="L120"></a><span class="ln">   120</span>			return false
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		return Is(White_Space, r)
+<a id="L123"></a><span class="ln">   123</span>	}
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// IsSymbol reports whether the rune is a symbolic character.</span>
+<a id="L126"></a><span class="ln">   126</span>	func IsSymbol(r rune) bool {
+<a id="L127"></a><span class="ln">   127</span>		if uint32(r) &lt;= MaxLatin1 {
+<a id="L128"></a><span class="ln">   128</span>			return properties[uint8(r)]&amp;pS != 0
+<a id="L129"></a><span class="ln">   129</span>		}
+<a id="L130"></a><span class="ln">   130</span>		return Is(Symbol, r)
+<a id="L131"></a><span class="ln">   131</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/binary/binary.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/binary/binary.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package binary implements translation between numbers and byte sequences</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// and encoding and decoding of varints.</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// Numbers are translated by reading and writing fixed-size values.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// A fixed-size value is either a fixed-size arithmetic</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// type (int8, uint8, int16, float32, complex64, ...)</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// or an array or struct containing only fixed-size values.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Varints are a method of encoding integers using one or more bytes;</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// numbers with smaller absolute value take a smaller number of bytes.</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// For a specification, see http://code.google.com/apis/protocolbuffers/docs/encoding.html.</span>
+<a id="L16"></a><span class="ln">    16</span>	package binary
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	import (
+<a id="L19"></a><span class="ln">    19</span>		&#34;errors&#34;
+<a id="L20"></a><span class="ln">    20</span>		&#34;io&#34;
+<a id="L21"></a><span class="ln">    21</span>		&#34;math&#34;
+<a id="L22"></a><span class="ln">    22</span>		&#34;reflect&#34;
+<a id="L23"></a><span class="ln">    23</span>	)
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// A ByteOrder specifies how to convert byte sequences into</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// 16-, 32-, or 64-bit unsigned integers.</span>
+<a id="L27"></a><span class="ln">    27</span>	type ByteOrder interface {
+<a id="L28"></a><span class="ln">    28</span>		Uint16([]byte) uint16
+<a id="L29"></a><span class="ln">    29</span>		Uint32([]byte) uint32
+<a id="L30"></a><span class="ln">    30</span>		Uint64([]byte) uint64
+<a id="L31"></a><span class="ln">    31</span>		PutUint16([]byte, uint16)
+<a id="L32"></a><span class="ln">    32</span>		PutUint32([]byte, uint32)
+<a id="L33"></a><span class="ln">    33</span>		PutUint64([]byte, uint64)
+<a id="L34"></a><span class="ln">    34</span>		String() string
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// LittleEndian is the little-endian implementation of ByteOrder.</span>
+<a id="L38"></a><span class="ln">    38</span>	var LittleEndian littleEndian
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// BigEndian is the big-endian implementation of ByteOrder.</span>
+<a id="L41"></a><span class="ln">    41</span>	var BigEndian bigEndian
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	type littleEndian struct{}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	func (littleEndian) Uint16(b []byte) uint16 { return uint16(b[0]) | uint16(b[1])&lt;&lt;8 }
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	func (littleEndian) PutUint16(b []byte, v uint16) {
+<a id="L48"></a><span class="ln">    48</span>		b[0] = byte(v)
+<a id="L49"></a><span class="ln">    49</span>		b[1] = byte(v &gt;&gt; 8)
+<a id="L50"></a><span class="ln">    50</span>	}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	func (littleEndian) Uint32(b []byte) uint32 {
+<a id="L53"></a><span class="ln">    53</span>		return uint32(b[0]) | uint32(b[1])&lt;&lt;8 | uint32(b[2])&lt;&lt;16 | uint32(b[3])&lt;&lt;24
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	func (littleEndian) PutUint32(b []byte, v uint32) {
+<a id="L57"></a><span class="ln">    57</span>		b[0] = byte(v)
+<a id="L58"></a><span class="ln">    58</span>		b[1] = byte(v &gt;&gt; 8)
+<a id="L59"></a><span class="ln">    59</span>		b[2] = byte(v &gt;&gt; 16)
+<a id="L60"></a><span class="ln">    60</span>		b[3] = byte(v &gt;&gt; 24)
+<a id="L61"></a><span class="ln">    61</span>	}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	func (littleEndian) Uint64(b []byte) uint64 {
+<a id="L64"></a><span class="ln">    64</span>		return uint64(b[0]) | uint64(b[1])&lt;&lt;8 | uint64(b[2])&lt;&lt;16 | uint64(b[3])&lt;&lt;24 |
+<a id="L65"></a><span class="ln">    65</span>			uint64(b[4])&lt;&lt;32 | uint64(b[5])&lt;&lt;40 | uint64(b[6])&lt;&lt;48 | uint64(b[7])&lt;&lt;56
+<a id="L66"></a><span class="ln">    66</span>	}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	func (littleEndian) PutUint64(b []byte, v uint64) {
+<a id="L69"></a><span class="ln">    69</span>		b[0] = byte(v)
+<a id="L70"></a><span class="ln">    70</span>		b[1] = byte(v &gt;&gt; 8)
+<a id="L71"></a><span class="ln">    71</span>		b[2] = byte(v &gt;&gt; 16)
+<a id="L72"></a><span class="ln">    72</span>		b[3] = byte(v &gt;&gt; 24)
+<a id="L73"></a><span class="ln">    73</span>		b[4] = byte(v &gt;&gt; 32)
+<a id="L74"></a><span class="ln">    74</span>		b[5] = byte(v &gt;&gt; 40)
+<a id="L75"></a><span class="ln">    75</span>		b[6] = byte(v &gt;&gt; 48)
+<a id="L76"></a><span class="ln">    76</span>		b[7] = byte(v &gt;&gt; 56)
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	func (littleEndian) String() string { return &#34;LittleEndian&#34; }
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	func (littleEndian) GoString() string { return &#34;binary.LittleEndian&#34; }
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	type bigEndian struct{}
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>	func (bigEndian) Uint16(b []byte) uint16 { return uint16(b[1]) | uint16(b[0])&lt;&lt;8 }
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>	func (bigEndian) PutUint16(b []byte, v uint16) {
+<a id="L88"></a><span class="ln">    88</span>		b[0] = byte(v &gt;&gt; 8)
+<a id="L89"></a><span class="ln">    89</span>		b[1] = byte(v)
+<a id="L90"></a><span class="ln">    90</span>	}
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>	func (bigEndian) Uint32(b []byte) uint32 {
+<a id="L93"></a><span class="ln">    93</span>		return uint32(b[3]) | uint32(b[2])&lt;&lt;8 | uint32(b[1])&lt;&lt;16 | uint32(b[0])&lt;&lt;24
+<a id="L94"></a><span class="ln">    94</span>	}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	func (bigEndian) PutUint32(b []byte, v uint32) {
+<a id="L97"></a><span class="ln">    97</span>		b[0] = byte(v &gt;&gt; 24)
+<a id="L98"></a><span class="ln">    98</span>		b[1] = byte(v &gt;&gt; 16)
+<a id="L99"></a><span class="ln">    99</span>		b[2] = byte(v &gt;&gt; 8)
+<a id="L100"></a><span class="ln">   100</span>		b[3] = byte(v)
+<a id="L101"></a><span class="ln">   101</span>	}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>	func (bigEndian) Uint64(b []byte) uint64 {
+<a id="L104"></a><span class="ln">   104</span>		return uint64(b[7]) | uint64(b[6])&lt;&lt;8 | uint64(b[5])&lt;&lt;16 | uint64(b[4])&lt;&lt;24 |
+<a id="L105"></a><span class="ln">   105</span>			uint64(b[3])&lt;&lt;32 | uint64(b[2])&lt;&lt;40 | uint64(b[1])&lt;&lt;48 | uint64(b[0])&lt;&lt;56
+<a id="L106"></a><span class="ln">   106</span>	}
+<a id="L107"></a><span class="ln">   107</span>	
+<a id="L108"></a><span class="ln">   108</span>	func (bigEndian) PutUint64(b []byte, v uint64) {
+<a id="L109"></a><span class="ln">   109</span>		b[0] = byte(v &gt;&gt; 56)
+<a id="L110"></a><span class="ln">   110</span>		b[1] = byte(v &gt;&gt; 48)
+<a id="L111"></a><span class="ln">   111</span>		b[2] = byte(v &gt;&gt; 40)
+<a id="L112"></a><span class="ln">   112</span>		b[3] = byte(v &gt;&gt; 32)
+<a id="L113"></a><span class="ln">   113</span>		b[4] = byte(v &gt;&gt; 24)
+<a id="L114"></a><span class="ln">   114</span>		b[5] = byte(v &gt;&gt; 16)
+<a id="L115"></a><span class="ln">   115</span>		b[6] = byte(v &gt;&gt; 8)
+<a id="L116"></a><span class="ln">   116</span>		b[7] = byte(v)
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	func (bigEndian) String() string { return &#34;BigEndian&#34; }
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	func (bigEndian) GoString() string { return &#34;binary.BigEndian&#34; }
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// Read reads structured binary data from r into data.</span>
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// Data must be a pointer to a fixed-size value or a slice</span>
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// of fixed-size values.</span>
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// Bytes read from r are decoded using the specified byte order</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// and written to successive fields of the data.</span>
+<a id="L128"></a><span class="ln">   128</span>	func Read(r io.Reader, order ByteOrder, data interface{}) error {
+<a id="L129"></a><span class="ln">   129</span>		<span class="comment">// Fast path for basic types.</span>
+<a id="L130"></a><span class="ln">   130</span>		if n := intDestSize(data); n != 0 {
+<a id="L131"></a><span class="ln">   131</span>			var b [8]byte
+<a id="L132"></a><span class="ln">   132</span>			bs := b[:n]
+<a id="L133"></a><span class="ln">   133</span>			if _, err := io.ReadFull(r, bs); err != nil {
+<a id="L134"></a><span class="ln">   134</span>				return err
+<a id="L135"></a><span class="ln">   135</span>			}
+<a id="L136"></a><span class="ln">   136</span>			switch v := data.(type) {
+<a id="L137"></a><span class="ln">   137</span>			case *int8:
+<a id="L138"></a><span class="ln">   138</span>				*v = int8(b[0])
+<a id="L139"></a><span class="ln">   139</span>			case *uint8:
+<a id="L140"></a><span class="ln">   140</span>				*v = b[0]
+<a id="L141"></a><span class="ln">   141</span>			case *int16:
+<a id="L142"></a><span class="ln">   142</span>				*v = int16(order.Uint16(bs))
+<a id="L143"></a><span class="ln">   143</span>			case *uint16:
+<a id="L144"></a><span class="ln">   144</span>				*v = order.Uint16(bs)
+<a id="L145"></a><span class="ln">   145</span>			case *int32:
+<a id="L146"></a><span class="ln">   146</span>				*v = int32(order.Uint32(bs))
+<a id="L147"></a><span class="ln">   147</span>			case *uint32:
+<a id="L148"></a><span class="ln">   148</span>				*v = order.Uint32(bs)
+<a id="L149"></a><span class="ln">   149</span>			case *int64:
+<a id="L150"></a><span class="ln">   150</span>				*v = int64(order.Uint64(bs))
+<a id="L151"></a><span class="ln">   151</span>			case *uint64:
+<a id="L152"></a><span class="ln">   152</span>				*v = order.Uint64(bs)
+<a id="L153"></a><span class="ln">   153</span>			}
+<a id="L154"></a><span class="ln">   154</span>			return nil
+<a id="L155"></a><span class="ln">   155</span>		}
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>		<span class="comment">// Fallback to reflect-based.</span>
+<a id="L158"></a><span class="ln">   158</span>		var v reflect.Value
+<a id="L159"></a><span class="ln">   159</span>		switch d := reflect.ValueOf(data); d.Kind() {
+<a id="L160"></a><span class="ln">   160</span>		case reflect.Ptr:
+<a id="L161"></a><span class="ln">   161</span>			v = d.Elem()
+<a id="L162"></a><span class="ln">   162</span>		case reflect.Slice:
+<a id="L163"></a><span class="ln">   163</span>			v = d
+<a id="L164"></a><span class="ln">   164</span>		default:
+<a id="L165"></a><span class="ln">   165</span>			return errors.New(&#34;binary.Read: invalid type &#34; + d.Type().String())
+<a id="L166"></a><span class="ln">   166</span>		}
+<a id="L167"></a><span class="ln">   167</span>		size := dataSize(v)
+<a id="L168"></a><span class="ln">   168</span>		if size &lt; 0 {
+<a id="L169"></a><span class="ln">   169</span>			return errors.New(&#34;binary.Read: invalid type &#34; + v.Type().String())
+<a id="L170"></a><span class="ln">   170</span>		}
+<a id="L171"></a><span class="ln">   171</span>		d := &amp;decoder{order: order, buf: make([]byte, size)}
+<a id="L172"></a><span class="ln">   172</span>		if _, err := io.ReadFull(r, d.buf); err != nil {
+<a id="L173"></a><span class="ln">   173</span>			return err
+<a id="L174"></a><span class="ln">   174</span>		}
+<a id="L175"></a><span class="ln">   175</span>		d.value(v)
+<a id="L176"></a><span class="ln">   176</span>		return nil
+<a id="L177"></a><span class="ln">   177</span>	}
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// Write writes the binary representation of data into w.</span>
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">// Data must be a fixed-size value or a slice of fixed-size</span>
+<a id="L181"></a><span class="ln">   181</span>	<span class="comment">// values, or a pointer to such data.</span>
+<a id="L182"></a><span class="ln">   182</span>	<span class="comment">// Bytes written to w are encoded using the specified byte order</span>
+<a id="L183"></a><span class="ln">   183</span>	<span class="comment">// and read from successive fields of the data.</span>
+<a id="L184"></a><span class="ln">   184</span>	func Write(w io.Writer, order ByteOrder, data interface{}) error {
+<a id="L185"></a><span class="ln">   185</span>		<span class="comment">// Fast path for basic types.</span>
+<a id="L186"></a><span class="ln">   186</span>		var b [8]byte
+<a id="L187"></a><span class="ln">   187</span>		var bs []byte
+<a id="L188"></a><span class="ln">   188</span>		switch v := data.(type) {
+<a id="L189"></a><span class="ln">   189</span>		case *int8:
+<a id="L190"></a><span class="ln">   190</span>			bs = b[:1]
+<a id="L191"></a><span class="ln">   191</span>			b[0] = byte(*v)
+<a id="L192"></a><span class="ln">   192</span>		case int8:
+<a id="L193"></a><span class="ln">   193</span>			bs = b[:1]
+<a id="L194"></a><span class="ln">   194</span>			b[0] = byte(v)
+<a id="L195"></a><span class="ln">   195</span>		case *uint8:
+<a id="L196"></a><span class="ln">   196</span>			bs = b[:1]
+<a id="L197"></a><span class="ln">   197</span>			b[0] = *v
+<a id="L198"></a><span class="ln">   198</span>		case uint8:
+<a id="L199"></a><span class="ln">   199</span>			bs = b[:1]
+<a id="L200"></a><span class="ln">   200</span>			b[0] = byte(v)
+<a id="L201"></a><span class="ln">   201</span>		case *int16:
+<a id="L202"></a><span class="ln">   202</span>			bs = b[:2]
+<a id="L203"></a><span class="ln">   203</span>			order.PutUint16(bs, uint16(*v))
+<a id="L204"></a><span class="ln">   204</span>		case int16:
+<a id="L205"></a><span class="ln">   205</span>			bs = b[:2]
+<a id="L206"></a><span class="ln">   206</span>			order.PutUint16(bs, uint16(v))
+<a id="L207"></a><span class="ln">   207</span>		case *uint16:
+<a id="L208"></a><span class="ln">   208</span>			bs = b[:2]
+<a id="L209"></a><span class="ln">   209</span>			order.PutUint16(bs, *v)
+<a id="L210"></a><span class="ln">   210</span>		case uint16:
+<a id="L211"></a><span class="ln">   211</span>			bs = b[:2]
+<a id="L212"></a><span class="ln">   212</span>			order.PutUint16(bs, v)
+<a id="L213"></a><span class="ln">   213</span>		case *int32:
+<a id="L214"></a><span class="ln">   214</span>			bs = b[:4]
+<a id="L215"></a><span class="ln">   215</span>			order.PutUint32(bs, uint32(*v))
+<a id="L216"></a><span class="ln">   216</span>		case int32:
+<a id="L217"></a><span class="ln">   217</span>			bs = b[:4]
+<a id="L218"></a><span class="ln">   218</span>			order.PutUint32(bs, uint32(v))
+<a id="L219"></a><span class="ln">   219</span>		case *uint32:
+<a id="L220"></a><span class="ln">   220</span>			bs = b[:4]
+<a id="L221"></a><span class="ln">   221</span>			order.PutUint32(bs, *v)
+<a id="L222"></a><span class="ln">   222</span>		case uint32:
+<a id="L223"></a><span class="ln">   223</span>			bs = b[:4]
+<a id="L224"></a><span class="ln">   224</span>			order.PutUint32(bs, v)
+<a id="L225"></a><span class="ln">   225</span>		case *int64:
+<a id="L226"></a><span class="ln">   226</span>			bs = b[:8]
+<a id="L227"></a><span class="ln">   227</span>			order.PutUint64(bs, uint64(*v))
+<a id="L228"></a><span class="ln">   228</span>		case int64:
+<a id="L229"></a><span class="ln">   229</span>			bs = b[:8]
+<a id="L230"></a><span class="ln">   230</span>			order.PutUint64(bs, uint64(v))
+<a id="L231"></a><span class="ln">   231</span>		case *uint64:
+<a id="L232"></a><span class="ln">   232</span>			bs = b[:8]
+<a id="L233"></a><span class="ln">   233</span>			order.PutUint64(bs, *v)
+<a id="L234"></a><span class="ln">   234</span>		case uint64:
+<a id="L235"></a><span class="ln">   235</span>			bs = b[:8]
+<a id="L236"></a><span class="ln">   236</span>			order.PutUint64(bs, v)
+<a id="L237"></a><span class="ln">   237</span>		}
+<a id="L238"></a><span class="ln">   238</span>		if bs != nil {
+<a id="L239"></a><span class="ln">   239</span>			_, err := w.Write(bs)
+<a id="L240"></a><span class="ln">   240</span>			return err
+<a id="L241"></a><span class="ln">   241</span>		}
+<a id="L242"></a><span class="ln">   242</span>		v := reflect.Indirect(reflect.ValueOf(data))
+<a id="L243"></a><span class="ln">   243</span>		size := dataSize(v)
+<a id="L244"></a><span class="ln">   244</span>		if size &lt; 0 {
+<a id="L245"></a><span class="ln">   245</span>			return errors.New(&#34;binary.Write: invalid type &#34; + v.Type().String())
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		buf := make([]byte, size)
+<a id="L248"></a><span class="ln">   248</span>		e := &amp;encoder{order: order, buf: buf}
+<a id="L249"></a><span class="ln">   249</span>		e.value(v)
+<a id="L250"></a><span class="ln">   250</span>		_, err := w.Write(buf)
+<a id="L251"></a><span class="ln">   251</span>		return err
+<a id="L252"></a><span class="ln">   252</span>	}
+<a id="L253"></a><span class="ln">   253</span>	
+<a id="L254"></a><span class="ln">   254</span>	<span class="comment">// Size returns how many bytes Write would generate to encode the value v, which</span>
+<a id="L255"></a><span class="ln">   255</span>	<span class="comment">// must be a fixed-size value or a slice of fixed-size values, or a pointer to such data.</span>
+<a id="L256"></a><span class="ln">   256</span>	func Size(v interface{}) int {
+<a id="L257"></a><span class="ln">   257</span>		return dataSize(reflect.Indirect(reflect.ValueOf(v)))
+<a id="L258"></a><span class="ln">   258</span>	}
+<a id="L259"></a><span class="ln">   259</span>	
+<a id="L260"></a><span class="ln">   260</span>	<span class="comment">// dataSize returns the number of bytes the actual data represented by v occupies in memory.</span>
+<a id="L261"></a><span class="ln">   261</span>	<span class="comment">// For compound structures, it sums the sizes of the elements. Thus, for instance, for a slice</span>
+<a id="L262"></a><span class="ln">   262</span>	<span class="comment">// it returns the length of the slice times the element size and does not count the memory</span>
+<a id="L263"></a><span class="ln">   263</span>	<span class="comment">// occupied by the header.</span>
+<a id="L264"></a><span class="ln">   264</span>	func dataSize(v reflect.Value) int {
+<a id="L265"></a><span class="ln">   265</span>		if v.Kind() == reflect.Slice {
+<a id="L266"></a><span class="ln">   266</span>			elem := sizeof(v.Type().Elem())
+<a id="L267"></a><span class="ln">   267</span>			if elem &lt; 0 {
+<a id="L268"></a><span class="ln">   268</span>				return -1
+<a id="L269"></a><span class="ln">   269</span>			}
+<a id="L270"></a><span class="ln">   270</span>			return v.Len() * elem
+<a id="L271"></a><span class="ln">   271</span>		}
+<a id="L272"></a><span class="ln">   272</span>		return sizeof(v.Type())
+<a id="L273"></a><span class="ln">   273</span>	}
+<a id="L274"></a><span class="ln">   274</span>	
+<a id="L275"></a><span class="ln">   275</span>	func sizeof(t reflect.Type) int {
+<a id="L276"></a><span class="ln">   276</span>		switch t.Kind() {
+<a id="L277"></a><span class="ln">   277</span>		case reflect.Array:
+<a id="L278"></a><span class="ln">   278</span>			n := sizeof(t.Elem())
+<a id="L279"></a><span class="ln">   279</span>			if n &lt; 0 {
+<a id="L280"></a><span class="ln">   280</span>				return -1
+<a id="L281"></a><span class="ln">   281</span>			}
+<a id="L282"></a><span class="ln">   282</span>			return t.Len() * n
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>		case reflect.Struct:
+<a id="L285"></a><span class="ln">   285</span>			sum := 0
+<a id="L286"></a><span class="ln">   286</span>			for i, n := 0, t.NumField(); i &lt; n; i++ {
+<a id="L287"></a><span class="ln">   287</span>				s := sizeof(t.Field(i).Type)
+<a id="L288"></a><span class="ln">   288</span>				if s &lt; 0 {
+<a id="L289"></a><span class="ln">   289</span>					return -1
+<a id="L290"></a><span class="ln">   290</span>				}
+<a id="L291"></a><span class="ln">   291</span>				sum += s
+<a id="L292"></a><span class="ln">   292</span>			}
+<a id="L293"></a><span class="ln">   293</span>			return sum
+<a id="L294"></a><span class="ln">   294</span>	
+<a id="L295"></a><span class="ln">   295</span>		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+<a id="L296"></a><span class="ln">   296</span>			reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+<a id="L297"></a><span class="ln">   297</span>			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
+<a id="L298"></a><span class="ln">   298</span>			return int(t.Size())
+<a id="L299"></a><span class="ln">   299</span>		}
+<a id="L300"></a><span class="ln">   300</span>		return -1
+<a id="L301"></a><span class="ln">   301</span>	}
+<a id="L302"></a><span class="ln">   302</span>	
+<a id="L303"></a><span class="ln">   303</span>	type decoder struct {
+<a id="L304"></a><span class="ln">   304</span>		order ByteOrder
+<a id="L305"></a><span class="ln">   305</span>		buf   []byte
+<a id="L306"></a><span class="ln">   306</span>	}
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>	type encoder struct {
+<a id="L309"></a><span class="ln">   309</span>		order ByteOrder
+<a id="L310"></a><span class="ln">   310</span>		buf   []byte
+<a id="L311"></a><span class="ln">   311</span>	}
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>	func (d *decoder) uint8() uint8 {
+<a id="L314"></a><span class="ln">   314</span>		x := d.buf[0]
+<a id="L315"></a><span class="ln">   315</span>		d.buf = d.buf[1:]
+<a id="L316"></a><span class="ln">   316</span>		return x
+<a id="L317"></a><span class="ln">   317</span>	}
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>	func (e *encoder) uint8(x uint8) {
+<a id="L320"></a><span class="ln">   320</span>		e.buf[0] = x
+<a id="L321"></a><span class="ln">   321</span>		e.buf = e.buf[1:]
+<a id="L322"></a><span class="ln">   322</span>	}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>	func (d *decoder) uint16() uint16 {
+<a id="L325"></a><span class="ln">   325</span>		x := d.order.Uint16(d.buf[0:2])
+<a id="L326"></a><span class="ln">   326</span>		d.buf = d.buf[2:]
+<a id="L327"></a><span class="ln">   327</span>		return x
+<a id="L328"></a><span class="ln">   328</span>	}
+<a id="L329"></a><span class="ln">   329</span>	
+<a id="L330"></a><span class="ln">   330</span>	func (e *encoder) uint16(x uint16) {
+<a id="L331"></a><span class="ln">   331</span>		e.order.PutUint16(e.buf[0:2], x)
+<a id="L332"></a><span class="ln">   332</span>		e.buf = e.buf[2:]
+<a id="L333"></a><span class="ln">   333</span>	}
+<a id="L334"></a><span class="ln">   334</span>	
+<a id="L335"></a><span class="ln">   335</span>	func (d *decoder) uint32() uint32 {
+<a id="L336"></a><span class="ln">   336</span>		x := d.order.Uint32(d.buf[0:4])
+<a id="L337"></a><span class="ln">   337</span>		d.buf = d.buf[4:]
+<a id="L338"></a><span class="ln">   338</span>		return x
+<a id="L339"></a><span class="ln">   339</span>	}
+<a id="L340"></a><span class="ln">   340</span>	
+<a id="L341"></a><span class="ln">   341</span>	func (e *encoder) uint32(x uint32) {
+<a id="L342"></a><span class="ln">   342</span>		e.order.PutUint32(e.buf[0:4], x)
+<a id="L343"></a><span class="ln">   343</span>		e.buf = e.buf[4:]
+<a id="L344"></a><span class="ln">   344</span>	}
+<a id="L345"></a><span class="ln">   345</span>	
+<a id="L346"></a><span class="ln">   346</span>	func (d *decoder) uint64() uint64 {
+<a id="L347"></a><span class="ln">   347</span>		x := d.order.Uint64(d.buf[0:8])
+<a id="L348"></a><span class="ln">   348</span>		d.buf = d.buf[8:]
+<a id="L349"></a><span class="ln">   349</span>		return x
+<a id="L350"></a><span class="ln">   350</span>	}
+<a id="L351"></a><span class="ln">   351</span>	
+<a id="L352"></a><span class="ln">   352</span>	func (e *encoder) uint64(x uint64) {
+<a id="L353"></a><span class="ln">   353</span>		e.order.PutUint64(e.buf[0:8], x)
+<a id="L354"></a><span class="ln">   354</span>		e.buf = e.buf[8:]
+<a id="L355"></a><span class="ln">   355</span>	}
+<a id="L356"></a><span class="ln">   356</span>	
+<a id="L357"></a><span class="ln">   357</span>	func (d *decoder) int8() int8 { return int8(d.uint8()) }
+<a id="L358"></a><span class="ln">   358</span>	
+<a id="L359"></a><span class="ln">   359</span>	func (e *encoder) int8(x int8) { e.uint8(uint8(x)) }
+<a id="L360"></a><span class="ln">   360</span>	
+<a id="L361"></a><span class="ln">   361</span>	func (d *decoder) int16() int16 { return int16(d.uint16()) }
+<a id="L362"></a><span class="ln">   362</span>	
+<a id="L363"></a><span class="ln">   363</span>	func (e *encoder) int16(x int16) { e.uint16(uint16(x)) }
+<a id="L364"></a><span class="ln">   364</span>	
+<a id="L365"></a><span class="ln">   365</span>	func (d *decoder) int32() int32 { return int32(d.uint32()) }
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>	func (e *encoder) int32(x int32) { e.uint32(uint32(x)) }
+<a id="L368"></a><span class="ln">   368</span>	
+<a id="L369"></a><span class="ln">   369</span>	func (d *decoder) int64() int64 { return int64(d.uint64()) }
+<a id="L370"></a><span class="ln">   370</span>	
+<a id="L371"></a><span class="ln">   371</span>	func (e *encoder) int64(x int64) { e.uint64(uint64(x)) }
+<a id="L372"></a><span class="ln">   372</span>	
+<a id="L373"></a><span class="ln">   373</span>	func (d *decoder) value(v reflect.Value) {
+<a id="L374"></a><span class="ln">   374</span>		switch v.Kind() {
+<a id="L375"></a><span class="ln">   375</span>		case reflect.Array:
+<a id="L376"></a><span class="ln">   376</span>			l := v.Len()
+<a id="L377"></a><span class="ln">   377</span>			for i := 0; i &lt; l; i++ {
+<a id="L378"></a><span class="ln">   378</span>				d.value(v.Index(i))
+<a id="L379"></a><span class="ln">   379</span>			}
+<a id="L380"></a><span class="ln">   380</span>	
+<a id="L381"></a><span class="ln">   381</span>		case reflect.Struct:
+<a id="L382"></a><span class="ln">   382</span>			l := v.NumField()
+<a id="L383"></a><span class="ln">   383</span>			for i := 0; i &lt; l; i++ {
+<a id="L384"></a><span class="ln">   384</span>				d.value(v.Field(i))
+<a id="L385"></a><span class="ln">   385</span>			}
+<a id="L386"></a><span class="ln">   386</span>	
+<a id="L387"></a><span class="ln">   387</span>		case reflect.Slice:
+<a id="L388"></a><span class="ln">   388</span>			l := v.Len()
+<a id="L389"></a><span class="ln">   389</span>			for i := 0; i &lt; l; i++ {
+<a id="L390"></a><span class="ln">   390</span>				d.value(v.Index(i))
+<a id="L391"></a><span class="ln">   391</span>			}
+<a id="L392"></a><span class="ln">   392</span>	
+<a id="L393"></a><span class="ln">   393</span>		case reflect.Int8:
+<a id="L394"></a><span class="ln">   394</span>			v.SetInt(int64(d.int8()))
+<a id="L395"></a><span class="ln">   395</span>		case reflect.Int16:
+<a id="L396"></a><span class="ln">   396</span>			v.SetInt(int64(d.int16()))
+<a id="L397"></a><span class="ln">   397</span>		case reflect.Int32:
+<a id="L398"></a><span class="ln">   398</span>			v.SetInt(int64(d.int32()))
+<a id="L399"></a><span class="ln">   399</span>		case reflect.Int64:
+<a id="L400"></a><span class="ln">   400</span>			v.SetInt(d.int64())
+<a id="L401"></a><span class="ln">   401</span>	
+<a id="L402"></a><span class="ln">   402</span>		case reflect.Uint8:
+<a id="L403"></a><span class="ln">   403</span>			v.SetUint(uint64(d.uint8()))
+<a id="L404"></a><span class="ln">   404</span>		case reflect.Uint16:
+<a id="L405"></a><span class="ln">   405</span>			v.SetUint(uint64(d.uint16()))
+<a id="L406"></a><span class="ln">   406</span>		case reflect.Uint32:
+<a id="L407"></a><span class="ln">   407</span>			v.SetUint(uint64(d.uint32()))
+<a id="L408"></a><span class="ln">   408</span>		case reflect.Uint64:
+<a id="L409"></a><span class="ln">   409</span>			v.SetUint(d.uint64())
+<a id="L410"></a><span class="ln">   410</span>	
+<a id="L411"></a><span class="ln">   411</span>		case reflect.Float32:
+<a id="L412"></a><span class="ln">   412</span>			v.SetFloat(float64(math.Float32frombits(d.uint32())))
+<a id="L413"></a><span class="ln">   413</span>		case reflect.Float64:
+<a id="L414"></a><span class="ln">   414</span>			v.SetFloat(math.Float64frombits(d.uint64()))
+<a id="L415"></a><span class="ln">   415</span>	
+<a id="L416"></a><span class="ln">   416</span>		case reflect.Complex64:
+<a id="L417"></a><span class="ln">   417</span>			v.SetComplex(complex(
+<a id="L418"></a><span class="ln">   418</span>				float64(math.Float32frombits(d.uint32())),
+<a id="L419"></a><span class="ln">   419</span>				float64(math.Float32frombits(d.uint32())),
+<a id="L420"></a><span class="ln">   420</span>			))
+<a id="L421"></a><span class="ln">   421</span>		case reflect.Complex128:
+<a id="L422"></a><span class="ln">   422</span>			v.SetComplex(complex(
+<a id="L423"></a><span class="ln">   423</span>				math.Float64frombits(d.uint64()),
+<a id="L424"></a><span class="ln">   424</span>				math.Float64frombits(d.uint64()),
+<a id="L425"></a><span class="ln">   425</span>			))
+<a id="L426"></a><span class="ln">   426</span>		}
+<a id="L427"></a><span class="ln">   427</span>	}
+<a id="L428"></a><span class="ln">   428</span>	
+<a id="L429"></a><span class="ln">   429</span>	func (e *encoder) value(v reflect.Value) {
+<a id="L430"></a><span class="ln">   430</span>		switch v.Kind() {
+<a id="L431"></a><span class="ln">   431</span>		case reflect.Array:
+<a id="L432"></a><span class="ln">   432</span>			l := v.Len()
+<a id="L433"></a><span class="ln">   433</span>			for i := 0; i &lt; l; i++ {
+<a id="L434"></a><span class="ln">   434</span>				e.value(v.Index(i))
+<a id="L435"></a><span class="ln">   435</span>			}
+<a id="L436"></a><span class="ln">   436</span>	
+<a id="L437"></a><span class="ln">   437</span>		case reflect.Struct:
+<a id="L438"></a><span class="ln">   438</span>			l := v.NumField()
+<a id="L439"></a><span class="ln">   439</span>			for i := 0; i &lt; l; i++ {
+<a id="L440"></a><span class="ln">   440</span>				e.value(v.Field(i))
+<a id="L441"></a><span class="ln">   441</span>			}
+<a id="L442"></a><span class="ln">   442</span>	
+<a id="L443"></a><span class="ln">   443</span>		case reflect.Slice:
+<a id="L444"></a><span class="ln">   444</span>			l := v.Len()
+<a id="L445"></a><span class="ln">   445</span>			for i := 0; i &lt; l; i++ {
+<a id="L446"></a><span class="ln">   446</span>				e.value(v.Index(i))
+<a id="L447"></a><span class="ln">   447</span>			}
+<a id="L448"></a><span class="ln">   448</span>	
+<a id="L449"></a><span class="ln">   449</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L450"></a><span class="ln">   450</span>			switch v.Type().Kind() {
+<a id="L451"></a><span class="ln">   451</span>			case reflect.Int8:
+<a id="L452"></a><span class="ln">   452</span>				e.int8(int8(v.Int()))
+<a id="L453"></a><span class="ln">   453</span>			case reflect.Int16:
+<a id="L454"></a><span class="ln">   454</span>				e.int16(int16(v.Int()))
+<a id="L455"></a><span class="ln">   455</span>			case reflect.Int32:
+<a id="L456"></a><span class="ln">   456</span>				e.int32(int32(v.Int()))
+<a id="L457"></a><span class="ln">   457</span>			case reflect.Int64:
+<a id="L458"></a><span class="ln">   458</span>				e.int64(v.Int())
+<a id="L459"></a><span class="ln">   459</span>			}
+<a id="L460"></a><span class="ln">   460</span>	
+<a id="L461"></a><span class="ln">   461</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L462"></a><span class="ln">   462</span>			switch v.Type().Kind() {
+<a id="L463"></a><span class="ln">   463</span>			case reflect.Uint8:
+<a id="L464"></a><span class="ln">   464</span>				e.uint8(uint8(v.Uint()))
+<a id="L465"></a><span class="ln">   465</span>			case reflect.Uint16:
+<a id="L466"></a><span class="ln">   466</span>				e.uint16(uint16(v.Uint()))
+<a id="L467"></a><span class="ln">   467</span>			case reflect.Uint32:
+<a id="L468"></a><span class="ln">   468</span>				e.uint32(uint32(v.Uint()))
+<a id="L469"></a><span class="ln">   469</span>			case reflect.Uint64:
+<a id="L470"></a><span class="ln">   470</span>				e.uint64(v.Uint())
+<a id="L471"></a><span class="ln">   471</span>			}
+<a id="L472"></a><span class="ln">   472</span>	
+<a id="L473"></a><span class="ln">   473</span>		case reflect.Float32, reflect.Float64:
+<a id="L474"></a><span class="ln">   474</span>			switch v.Type().Kind() {
+<a id="L475"></a><span class="ln">   475</span>			case reflect.Float32:
+<a id="L476"></a><span class="ln">   476</span>				e.uint32(math.Float32bits(float32(v.Float())))
+<a id="L477"></a><span class="ln">   477</span>			case reflect.Float64:
+<a id="L478"></a><span class="ln">   478</span>				e.uint64(math.Float64bits(v.Float()))
+<a id="L479"></a><span class="ln">   479</span>			}
+<a id="L480"></a><span class="ln">   480</span>	
+<a id="L481"></a><span class="ln">   481</span>		case reflect.Complex64, reflect.Complex128:
+<a id="L482"></a><span class="ln">   482</span>			switch v.Type().Kind() {
+<a id="L483"></a><span class="ln">   483</span>			case reflect.Complex64:
+<a id="L484"></a><span class="ln">   484</span>				x := v.Complex()
+<a id="L485"></a><span class="ln">   485</span>				e.uint32(math.Float32bits(float32(real(x))))
+<a id="L486"></a><span class="ln">   486</span>				e.uint32(math.Float32bits(float32(imag(x))))
+<a id="L487"></a><span class="ln">   487</span>			case reflect.Complex128:
+<a id="L488"></a><span class="ln">   488</span>				x := v.Complex()
+<a id="L489"></a><span class="ln">   489</span>				e.uint64(math.Float64bits(real(x)))
+<a id="L490"></a><span class="ln">   490</span>				e.uint64(math.Float64bits(imag(x)))
+<a id="L491"></a><span class="ln">   491</span>			}
+<a id="L492"></a><span class="ln">   492</span>		}
+<a id="L493"></a><span class="ln">   493</span>	}
+<a id="L494"></a><span class="ln">   494</span>	
+<a id="L495"></a><span class="ln">   495</span>	<span class="comment">// intDestSize returns the size of the integer that ptrType points to,</span>
+<a id="L496"></a><span class="ln">   496</span>	<span class="comment">// or 0 if the type is not supported.</span>
+<a id="L497"></a><span class="ln">   497</span>	func intDestSize(ptrType interface{}) int {
+<a id="L498"></a><span class="ln">   498</span>		switch ptrType.(type) {
+<a id="L499"></a><span class="ln">   499</span>		case *int8, *uint8:
+<a id="L500"></a><span class="ln">   500</span>			return 1
+<a id="L501"></a><span class="ln">   501</span>		case *int16, *uint16:
+<a id="L502"></a><span class="ln">   502</span>			return 2
+<a id="L503"></a><span class="ln">   503</span>		case *int32, *uint32:
+<a id="L504"></a><span class="ln">   504</span>			return 4
+<a id="L505"></a><span class="ln">   505</span>		case *int64, *uint64:
+<a id="L506"></a><span class="ln">   506</span>			return 8
+<a id="L507"></a><span class="ln">   507</span>		}
+<a id="L508"></a><span class="ln">   508</span>		return 0
+<a id="L509"></a><span class="ln">   509</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/compress/zlib/reader.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/compress/zlib/reader.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">/*
+</span><a id="L6"></a><span class="ln">     6</span>	<span class="comment">Package zlib implements reading and writing of zlib format compressed data,
+</span><a id="L7"></a><span class="ln">     7</span>	<span class="comment">as specified in RFC 1950.
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">The implementation provides filters that uncompress during reading
+</span><a id="L10"></a><span class="ln">    10</span>	<span class="comment">and compress during writing.  For example, to write compressed data
+</span><a id="L11"></a><span class="ln">    11</span>	<span class="comment">to a buffer:
+</span><a id="L12"></a><span class="ln">    12</span>	<span class="comment">
+</span><a id="L13"></a><span class="ln">    13</span>	<span class="comment">	var b bytes.Buffer
+</span><a id="L14"></a><span class="ln">    14</span>	<span class="comment">	w, err := zlib.NewWriter(&amp;b)
+</span><a id="L15"></a><span class="ln">    15</span>	<span class="comment">	w.Write([]byte(&#34;hello, world\n&#34;))
+</span><a id="L16"></a><span class="ln">    16</span>	<span class="comment">	w.Close()
+</span><a id="L17"></a><span class="ln">    17</span>	<span class="comment">
+</span><a id="L18"></a><span class="ln">    18</span>	<span class="comment">and to read that data back:
+</span><a id="L19"></a><span class="ln">    19</span>	<span class="comment">
+</span><a id="L20"></a><span class="ln">    20</span>	<span class="comment">	r, err := zlib.NewReader(&amp;b)
+</span><a id="L21"></a><span class="ln">    21</span>	<span class="comment">	io.Copy(os.Stdout, r)
+</span><a id="L22"></a><span class="ln">    22</span>	<span class="comment">	r.Close()
+</span><a id="L23"></a><span class="ln">    23</span>	<span class="comment">*/</span>
+<a id="L24"></a><span class="ln">    24</span>	package zlib
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	import (
+<a id="L27"></a><span class="ln">    27</span>		&#34;bufio&#34;
+<a id="L28"></a><span class="ln">    28</span>		&#34;compress/flate&#34;
+<a id="L29"></a><span class="ln">    29</span>		&#34;errors&#34;
+<a id="L30"></a><span class="ln">    30</span>		&#34;hash&#34;
+<a id="L31"></a><span class="ln">    31</span>		&#34;hash/adler32&#34;
+<a id="L32"></a><span class="ln">    32</span>		&#34;io&#34;
+<a id="L33"></a><span class="ln">    33</span>	)
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	const zlibDeflate = 8
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	var (
+<a id="L38"></a><span class="ln">    38</span>		<span class="comment">// ErrChecksum is returned when reading ZLIB data that has an invalid checksum.</span>
+<a id="L39"></a><span class="ln">    39</span>		ErrChecksum = errors.New(&#34;zlib: invalid checksum&#34;)
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// ErrDictionary is returned when reading ZLIB data that has an invalid dictionary.</span>
+<a id="L41"></a><span class="ln">    41</span>		ErrDictionary = errors.New(&#34;zlib: invalid dictionary&#34;)
+<a id="L42"></a><span class="ln">    42</span>		<span class="comment">// ErrHeader is returned when reading ZLIB data that has an invalid header.</span>
+<a id="L43"></a><span class="ln">    43</span>		ErrHeader = errors.New(&#34;zlib: invalid header&#34;)
+<a id="L44"></a><span class="ln">    44</span>	)
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	type reader struct {
+<a id="L47"></a><span class="ln">    47</span>		r            flate.Reader
+<a id="L48"></a><span class="ln">    48</span>		decompressor io.ReadCloser
+<a id="L49"></a><span class="ln">    49</span>		digest       hash.Hash32
+<a id="L50"></a><span class="ln">    50</span>		err          error
+<a id="L51"></a><span class="ln">    51</span>		scratch      [4]byte
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// NewReader creates a new io.ReadCloser that satisfies reads by decompressing data read from r.</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// The implementation buffers input and may read more data than necessary from r.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// It is the caller&#39;s responsibility to call Close on the ReadCloser when done.</span>
+<a id="L57"></a><span class="ln">    57</span>	func NewReader(r io.Reader) (io.ReadCloser, error) {
+<a id="L58"></a><span class="ln">    58</span>		return NewReaderDict(r, nil)
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// NewReaderDict is like NewReader but uses a preset dictionary.</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// NewReaderDict ignores the dictionary if the compressed data does not refer to it.</span>
+<a id="L63"></a><span class="ln">    63</span>	func NewReaderDict(r io.Reader, dict []byte) (io.ReadCloser, error) {
+<a id="L64"></a><span class="ln">    64</span>		z := new(reader)
+<a id="L65"></a><span class="ln">    65</span>		if fr, ok := r.(flate.Reader); ok {
+<a id="L66"></a><span class="ln">    66</span>			z.r = fr
+<a id="L67"></a><span class="ln">    67</span>		} else {
+<a id="L68"></a><span class="ln">    68</span>			z.r = bufio.NewReader(r)
+<a id="L69"></a><span class="ln">    69</span>		}
+<a id="L70"></a><span class="ln">    70</span>		_, err := io.ReadFull(z.r, z.scratch[0:2])
+<a id="L71"></a><span class="ln">    71</span>		if err != nil {
+<a id="L72"></a><span class="ln">    72</span>			return nil, err
+<a id="L73"></a><span class="ln">    73</span>		}
+<a id="L74"></a><span class="ln">    74</span>		h := uint(z.scratch[0])&lt;&lt;8 | uint(z.scratch[1])
+<a id="L75"></a><span class="ln">    75</span>		if (z.scratch[0]&amp;0x0f != zlibDeflate) || (h%31 != 0) {
+<a id="L76"></a><span class="ln">    76</span>			return nil, ErrHeader
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		if z.scratch[1]&amp;0x20 != 0 {
+<a id="L79"></a><span class="ln">    79</span>			_, err = io.ReadFull(z.r, z.scratch[0:4])
+<a id="L80"></a><span class="ln">    80</span>			if err != nil {
+<a id="L81"></a><span class="ln">    81</span>				return nil, err
+<a id="L82"></a><span class="ln">    82</span>			}
+<a id="L83"></a><span class="ln">    83</span>			checksum := uint32(z.scratch[0])&lt;&lt;24 | uint32(z.scratch[1])&lt;&lt;16 | uint32(z.scratch[2])&lt;&lt;8 | uint32(z.scratch[3])
+<a id="L84"></a><span class="ln">    84</span>			if checksum != adler32.Checksum(dict) {
+<a id="L85"></a><span class="ln">    85</span>				return nil, ErrDictionary
+<a id="L86"></a><span class="ln">    86</span>			}
+<a id="L87"></a><span class="ln">    87</span>			z.decompressor = flate.NewReaderDict(z.r, dict)
+<a id="L88"></a><span class="ln">    88</span>		} else {
+<a id="L89"></a><span class="ln">    89</span>			z.decompressor = flate.NewReader(z.r)
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>		z.digest = adler32.New()
+<a id="L92"></a><span class="ln">    92</span>		return z, nil
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	func (z *reader) Read(p []byte) (n int, err error) {
+<a id="L96"></a><span class="ln">    96</span>		if z.err != nil {
+<a id="L97"></a><span class="ln">    97</span>			return 0, z.err
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		if len(p) == 0 {
+<a id="L100"></a><span class="ln">   100</span>			return 0, nil
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>		n, err = z.decompressor.Read(p)
+<a id="L104"></a><span class="ln">   104</span>		z.digest.Write(p[0:n])
+<a id="L105"></a><span class="ln">   105</span>		if n != 0 || err != io.EOF {
+<a id="L106"></a><span class="ln">   106</span>			z.err = err
+<a id="L107"></a><span class="ln">   107</span>			return
+<a id="L108"></a><span class="ln">   108</span>		}
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">// Finished file; check checksum.</span>
+<a id="L111"></a><span class="ln">   111</span>		if _, err := io.ReadFull(z.r, z.scratch[0:4]); err != nil {
+<a id="L112"></a><span class="ln">   112</span>			z.err = err
+<a id="L113"></a><span class="ln">   113</span>			return 0, err
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		<span class="comment">// ZLIB (RFC 1950) is big-endian, unlike GZIP (RFC 1952).</span>
+<a id="L116"></a><span class="ln">   116</span>		checksum := uint32(z.scratch[0])&lt;&lt;24 | uint32(z.scratch[1])&lt;&lt;16 | uint32(z.scratch[2])&lt;&lt;8 | uint32(z.scratch[3])
+<a id="L117"></a><span class="ln">   117</span>		if checksum != z.digest.Sum32() {
+<a id="L118"></a><span class="ln">   118</span>			z.err = ErrChecksum
+<a id="L119"></a><span class="ln">   119</span>			return 0, z.err
+<a id="L120"></a><span class="ln">   120</span>		}
+<a id="L121"></a><span class="ln">   121</span>		return
+<a id="L122"></a><span class="ln">   122</span>	}
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// Calling Close does not close the wrapped io.Reader originally passed to NewReader.</span>
+<a id="L125"></a><span class="ln">   125</span>	func (z *reader) Close() error {
+<a id="L126"></a><span class="ln">   126</span>		if z.err != nil {
+<a id="L127"></a><span class="ln">   127</span>			return z.err
+<a id="L128"></a><span class="ln">   128</span>		}
+<a id="L129"></a><span class="ln">   129</span>		z.err = z.decompressor.Close()
+<a id="L130"></a><span class="ln">   130</span>		return z.err
+<a id="L131"></a><span class="ln">   131</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

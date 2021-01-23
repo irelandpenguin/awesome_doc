@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/elliptic/elliptic.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/elliptic/elliptic.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package elliptic implements several standard elliptic curves over prime</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// fields.</span>
+<a id="L7"></a><span class="ln">     7</span>	package elliptic
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// This package operates, internally, on Jacobian coordinates. For a given</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// (x, y) position on the curve, the Jacobian coordinates are (x1, y1, z1)</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// where x = x1/z1² and y = y1/z1³. The greatest speedups come when the whole</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// calculation can be performed within the transform (as in ScalarMult and</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// ScalarBaseMult). But even for Add and Double, it&#39;s faster to apply and</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// reverse the transform than to operate in affine coordinates.</span>
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	import (
+<a id="L17"></a><span class="ln">    17</span>		&#34;io&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;math/big&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;sync&#34;
+<a id="L20"></a><span class="ln">    20</span>	)
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// A Curve represents a short-form Weierstrass curve with a=-3.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// See http://www.hyperelliptic.org/EFD/g1p/auto-shortw.html</span>
+<a id="L24"></a><span class="ln">    24</span>	type Curve interface {
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// Params returns the parameters for the curve.</span>
+<a id="L26"></a><span class="ln">    26</span>		Params() *CurveParams
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// IsOnCurve returns true if the given (x,y) lies on the curve.</span>
+<a id="L28"></a><span class="ln">    28</span>		IsOnCurve(x, y *big.Int) bool
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// Add returns the sum of (x1,y1) and (x2,y2)</span>
+<a id="L30"></a><span class="ln">    30</span>		Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int)
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// Double returns 2*(x,y)</span>
+<a id="L32"></a><span class="ln">    32</span>		Double(x1, y1 *big.Int) (x, y *big.Int)
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">// ScalarMult returns k*(Bx,By) where k is a number in big-endian form.</span>
+<a id="L34"></a><span class="ln">    34</span>		ScalarMult(x1, y1 *big.Int, scalar []byte) (x, y *big.Int)
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// ScalarBaseMult returns k*G, where G is the base point of the group and k</span>
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// is an integer in big-endian form.</span>
+<a id="L37"></a><span class="ln">    37</span>		ScalarBaseMult(scalar []byte) (x, y *big.Int)
+<a id="L38"></a><span class="ln">    38</span>	}
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// CurveParams contains the parameters of an elliptic curve and also provides</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// a generic, non-constant time implementation of Curve.</span>
+<a id="L42"></a><span class="ln">    42</span>	type CurveParams struct {
+<a id="L43"></a><span class="ln">    43</span>		P       *big.Int <span class="comment">// the order of the underlying field</span>
+<a id="L44"></a><span class="ln">    44</span>		N       *big.Int <span class="comment">// the order of the base point</span>
+<a id="L45"></a><span class="ln">    45</span>		B       *big.Int <span class="comment">// the constant of the curve equation</span>
+<a id="L46"></a><span class="ln">    46</span>		Gx, Gy  *big.Int <span class="comment">// (x,y) of the base point</span>
+<a id="L47"></a><span class="ln">    47</span>		BitSize int      <span class="comment">// the size of the underlying field</span>
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	func (curve *CurveParams) Params() *CurveParams {
+<a id="L51"></a><span class="ln">    51</span>		return curve
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	func (curve *CurveParams) IsOnCurve(x, y *big.Int) bool {
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// y² = x³ - 3x + b</span>
+<a id="L56"></a><span class="ln">    56</span>		y2 := new(big.Int).Mul(y, y)
+<a id="L57"></a><span class="ln">    57</span>		y2.Mod(y2, curve.P)
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>		x3 := new(big.Int).Mul(x, x)
+<a id="L60"></a><span class="ln">    60</span>		x3.Mul(x3, x)
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>		threeX := new(big.Int).Lsh(x, 1)
+<a id="L63"></a><span class="ln">    63</span>		threeX.Add(threeX, x)
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>		x3.Sub(x3, threeX)
+<a id="L66"></a><span class="ln">    66</span>		x3.Add(x3, curve.B)
+<a id="L67"></a><span class="ln">    67</span>		x3.Mod(x3, curve.P)
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>		return x3.Cmp(y2) == 0
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// affineFromJacobian reverses the Jacobian transform. See the comment at the</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// top of the file.</span>
+<a id="L74"></a><span class="ln">    74</span>	func (curve *CurveParams) affineFromJacobian(x, y, z *big.Int) (xOut, yOut *big.Int) {
+<a id="L75"></a><span class="ln">    75</span>		zinv := new(big.Int).ModInverse(z, curve.P)
+<a id="L76"></a><span class="ln">    76</span>		zinvsq := new(big.Int).Mul(zinv, zinv)
+<a id="L77"></a><span class="ln">    77</span>	
+<a id="L78"></a><span class="ln">    78</span>		xOut = new(big.Int).Mul(x, zinvsq)
+<a id="L79"></a><span class="ln">    79</span>		xOut.Mod(xOut, curve.P)
+<a id="L80"></a><span class="ln">    80</span>		zinvsq.Mul(zinvsq, zinv)
+<a id="L81"></a><span class="ln">    81</span>		yOut = new(big.Int).Mul(y, zinvsq)
+<a id="L82"></a><span class="ln">    82</span>		yOut.Mod(yOut, curve.P)
+<a id="L83"></a><span class="ln">    83</span>		return
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	func (curve *CurveParams) Add(x1, y1, x2, y2 *big.Int) (*big.Int, *big.Int) {
+<a id="L87"></a><span class="ln">    87</span>		z := new(big.Int).SetInt64(1)
+<a id="L88"></a><span class="ln">    88</span>		return curve.affineFromJacobian(curve.addJacobian(x1, y1, z, x2, y2, z))
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// addJacobian takes two points in Jacobian coordinates, (x1, y1, z1) and</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// (x2, y2, z2) and returns their sum, also in Jacobian form.</span>
+<a id="L93"></a><span class="ln">    93</span>	func (curve *CurveParams) addJacobian(x1, y1, z1, x2, y2, z2 *big.Int) (*big.Int, *big.Int, *big.Int) {
+<a id="L94"></a><span class="ln">    94</span>		<span class="comment">// See http://hyperelliptic.org/EFD/g1p/auto-shortw-jacobian-3.html#addition-add-2007-bl</span>
+<a id="L95"></a><span class="ln">    95</span>		z1z1 := new(big.Int).Mul(z1, z1)
+<a id="L96"></a><span class="ln">    96</span>		z1z1.Mod(z1z1, curve.P)
+<a id="L97"></a><span class="ln">    97</span>		z2z2 := new(big.Int).Mul(z2, z2)
+<a id="L98"></a><span class="ln">    98</span>		z2z2.Mod(z2z2, curve.P)
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>		u1 := new(big.Int).Mul(x1, z2z2)
+<a id="L101"></a><span class="ln">   101</span>		u1.Mod(u1, curve.P)
+<a id="L102"></a><span class="ln">   102</span>		u2 := new(big.Int).Mul(x2, z1z1)
+<a id="L103"></a><span class="ln">   103</span>		u2.Mod(u2, curve.P)
+<a id="L104"></a><span class="ln">   104</span>		h := new(big.Int).Sub(u2, u1)
+<a id="L105"></a><span class="ln">   105</span>		if h.Sign() == -1 {
+<a id="L106"></a><span class="ln">   106</span>			h.Add(h, curve.P)
+<a id="L107"></a><span class="ln">   107</span>		}
+<a id="L108"></a><span class="ln">   108</span>		i := new(big.Int).Lsh(h, 1)
+<a id="L109"></a><span class="ln">   109</span>		i.Mul(i, i)
+<a id="L110"></a><span class="ln">   110</span>		j := new(big.Int).Mul(h, i)
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>		s1 := new(big.Int).Mul(y1, z2)
+<a id="L113"></a><span class="ln">   113</span>		s1.Mul(s1, z2z2)
+<a id="L114"></a><span class="ln">   114</span>		s1.Mod(s1, curve.P)
+<a id="L115"></a><span class="ln">   115</span>		s2 := new(big.Int).Mul(y2, z1)
+<a id="L116"></a><span class="ln">   116</span>		s2.Mul(s2, z1z1)
+<a id="L117"></a><span class="ln">   117</span>		s2.Mod(s2, curve.P)
+<a id="L118"></a><span class="ln">   118</span>		r := new(big.Int).Sub(s2, s1)
+<a id="L119"></a><span class="ln">   119</span>		if r.Sign() == -1 {
+<a id="L120"></a><span class="ln">   120</span>			r.Add(r, curve.P)
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		r.Lsh(r, 1)
+<a id="L123"></a><span class="ln">   123</span>		v := new(big.Int).Mul(u1, i)
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>		x3 := new(big.Int).Set(r)
+<a id="L126"></a><span class="ln">   126</span>		x3.Mul(x3, x3)
+<a id="L127"></a><span class="ln">   127</span>		x3.Sub(x3, j)
+<a id="L128"></a><span class="ln">   128</span>		x3.Sub(x3, v)
+<a id="L129"></a><span class="ln">   129</span>		x3.Sub(x3, v)
+<a id="L130"></a><span class="ln">   130</span>		x3.Mod(x3, curve.P)
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>		y3 := new(big.Int).Set(r)
+<a id="L133"></a><span class="ln">   133</span>		v.Sub(v, x3)
+<a id="L134"></a><span class="ln">   134</span>		y3.Mul(y3, v)
+<a id="L135"></a><span class="ln">   135</span>		s1.Mul(s1, j)
+<a id="L136"></a><span class="ln">   136</span>		s1.Lsh(s1, 1)
+<a id="L137"></a><span class="ln">   137</span>		y3.Sub(y3, s1)
+<a id="L138"></a><span class="ln">   138</span>		y3.Mod(y3, curve.P)
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		z3 := new(big.Int).Add(z1, z2)
+<a id="L141"></a><span class="ln">   141</span>		z3.Mul(z3, z3)
+<a id="L142"></a><span class="ln">   142</span>		z3.Sub(z3, z1z1)
+<a id="L143"></a><span class="ln">   143</span>		if z3.Sign() == -1 {
+<a id="L144"></a><span class="ln">   144</span>			z3.Add(z3, curve.P)
+<a id="L145"></a><span class="ln">   145</span>		}
+<a id="L146"></a><span class="ln">   146</span>		z3.Sub(z3, z2z2)
+<a id="L147"></a><span class="ln">   147</span>		if z3.Sign() == -1 {
+<a id="L148"></a><span class="ln">   148</span>			z3.Add(z3, curve.P)
+<a id="L149"></a><span class="ln">   149</span>		}
+<a id="L150"></a><span class="ln">   150</span>		z3.Mul(z3, h)
+<a id="L151"></a><span class="ln">   151</span>		z3.Mod(z3, curve.P)
+<a id="L152"></a><span class="ln">   152</span>	
+<a id="L153"></a><span class="ln">   153</span>		return x3, y3, z3
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	func (curve *CurveParams) Double(x1, y1 *big.Int) (*big.Int, *big.Int) {
+<a id="L157"></a><span class="ln">   157</span>		z1 := new(big.Int).SetInt64(1)
+<a id="L158"></a><span class="ln">   158</span>		return curve.affineFromJacobian(curve.doubleJacobian(x1, y1, z1))
+<a id="L159"></a><span class="ln">   159</span>	}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// doubleJacobian takes a point in Jacobian coordinates, (x, y, z), and</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// returns its double, also in Jacobian form.</span>
+<a id="L163"></a><span class="ln">   163</span>	func (curve *CurveParams) doubleJacobian(x, y, z *big.Int) (*big.Int, *big.Int, *big.Int) {
+<a id="L164"></a><span class="ln">   164</span>		<span class="comment">// See http://hyperelliptic.org/EFD/g1p/auto-shortw-jacobian-3.html#doubling-dbl-2001-b</span>
+<a id="L165"></a><span class="ln">   165</span>		delta := new(big.Int).Mul(z, z)
+<a id="L166"></a><span class="ln">   166</span>		delta.Mod(delta, curve.P)
+<a id="L167"></a><span class="ln">   167</span>		gamma := new(big.Int).Mul(y, y)
+<a id="L168"></a><span class="ln">   168</span>		gamma.Mod(gamma, curve.P)
+<a id="L169"></a><span class="ln">   169</span>		alpha := new(big.Int).Sub(x, delta)
+<a id="L170"></a><span class="ln">   170</span>		if alpha.Sign() == -1 {
+<a id="L171"></a><span class="ln">   171</span>			alpha.Add(alpha, curve.P)
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>		alpha2 := new(big.Int).Add(x, delta)
+<a id="L174"></a><span class="ln">   174</span>		alpha.Mul(alpha, alpha2)
+<a id="L175"></a><span class="ln">   175</span>		alpha2.Set(alpha)
+<a id="L176"></a><span class="ln">   176</span>		alpha.Lsh(alpha, 1)
+<a id="L177"></a><span class="ln">   177</span>		alpha.Add(alpha, alpha2)
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>		beta := alpha2.Mul(x, gamma)
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>		x3 := new(big.Int).Mul(alpha, alpha)
+<a id="L182"></a><span class="ln">   182</span>		beta8 := new(big.Int).Lsh(beta, 3)
+<a id="L183"></a><span class="ln">   183</span>		x3.Sub(x3, beta8)
+<a id="L184"></a><span class="ln">   184</span>		for x3.Sign() == -1 {
+<a id="L185"></a><span class="ln">   185</span>			x3.Add(x3, curve.P)
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		x3.Mod(x3, curve.P)
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>		z3 := new(big.Int).Add(y, z)
+<a id="L190"></a><span class="ln">   190</span>		z3.Mul(z3, z3)
+<a id="L191"></a><span class="ln">   191</span>		z3.Sub(z3, gamma)
+<a id="L192"></a><span class="ln">   192</span>		if z3.Sign() == -1 {
+<a id="L193"></a><span class="ln">   193</span>			z3.Add(z3, curve.P)
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>		z3.Sub(z3, delta)
+<a id="L196"></a><span class="ln">   196</span>		if z3.Sign() == -1 {
+<a id="L197"></a><span class="ln">   197</span>			z3.Add(z3, curve.P)
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>		z3.Mod(z3, curve.P)
+<a id="L200"></a><span class="ln">   200</span>	
+<a id="L201"></a><span class="ln">   201</span>		beta.Lsh(beta, 2)
+<a id="L202"></a><span class="ln">   202</span>		beta.Sub(beta, x3)
+<a id="L203"></a><span class="ln">   203</span>		if beta.Sign() == -1 {
+<a id="L204"></a><span class="ln">   204</span>			beta.Add(beta, curve.P)
+<a id="L205"></a><span class="ln">   205</span>		}
+<a id="L206"></a><span class="ln">   206</span>		y3 := alpha.Mul(alpha, beta)
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>		gamma.Mul(gamma, gamma)
+<a id="L209"></a><span class="ln">   209</span>		gamma.Lsh(gamma, 3)
+<a id="L210"></a><span class="ln">   210</span>		gamma.Mod(gamma, curve.P)
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>		y3.Sub(y3, gamma)
+<a id="L213"></a><span class="ln">   213</span>		if y3.Sign() == -1 {
+<a id="L214"></a><span class="ln">   214</span>			y3.Add(y3, curve.P)
+<a id="L215"></a><span class="ln">   215</span>		}
+<a id="L216"></a><span class="ln">   216</span>		y3.Mod(y3, curve.P)
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>		return x3, y3, z3
+<a id="L219"></a><span class="ln">   219</span>	}
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>	func (curve *CurveParams) ScalarMult(Bx, By *big.Int, k []byte) (*big.Int, *big.Int) {
+<a id="L222"></a><span class="ln">   222</span>		<span class="comment">// We have a slight problem in that the identity of the group (the</span>
+<a id="L223"></a><span class="ln">   223</span>		<span class="comment">// point at infinity) cannot be represented in (x, y) form on a finite</span>
+<a id="L224"></a><span class="ln">   224</span>		<span class="comment">// machine. Thus the standard add/double algorithm has to be tweaked</span>
+<a id="L225"></a><span class="ln">   225</span>		<span class="comment">// slightly: our initial state is not the identity, but x, and we</span>
+<a id="L226"></a><span class="ln">   226</span>		<span class="comment">// ignore the first true bit in |k|.  If we don&#39;t find any true bits in</span>
+<a id="L227"></a><span class="ln">   227</span>		<span class="comment">// |k|, then we return nil, nil, because we cannot return the identity</span>
+<a id="L228"></a><span class="ln">   228</span>		<span class="comment">// element.</span>
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>		Bz := new(big.Int).SetInt64(1)
+<a id="L231"></a><span class="ln">   231</span>		x := Bx
+<a id="L232"></a><span class="ln">   232</span>		y := By
+<a id="L233"></a><span class="ln">   233</span>		z := Bz
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>		seenFirstTrue := false
+<a id="L236"></a><span class="ln">   236</span>		for _, byte := range k {
+<a id="L237"></a><span class="ln">   237</span>			for bitNum := 0; bitNum &lt; 8; bitNum++ {
+<a id="L238"></a><span class="ln">   238</span>				if seenFirstTrue {
+<a id="L239"></a><span class="ln">   239</span>					x, y, z = curve.doubleJacobian(x, y, z)
+<a id="L240"></a><span class="ln">   240</span>				}
+<a id="L241"></a><span class="ln">   241</span>				if byte&amp;0x80 == 0x80 {
+<a id="L242"></a><span class="ln">   242</span>					if !seenFirstTrue {
+<a id="L243"></a><span class="ln">   243</span>						seenFirstTrue = true
+<a id="L244"></a><span class="ln">   244</span>					} else {
+<a id="L245"></a><span class="ln">   245</span>						x, y, z = curve.addJacobian(Bx, By, Bz, x, y, z)
+<a id="L246"></a><span class="ln">   246</span>					}
+<a id="L247"></a><span class="ln">   247</span>				}
+<a id="L248"></a><span class="ln">   248</span>				byte &lt;&lt;= 1
+<a id="L249"></a><span class="ln">   249</span>			}
+<a id="L250"></a><span class="ln">   250</span>		}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>		if !seenFirstTrue {
+<a id="L253"></a><span class="ln">   253</span>			return nil, nil
+<a id="L254"></a><span class="ln">   254</span>		}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>		return curve.affineFromJacobian(x, y, z)
+<a id="L257"></a><span class="ln">   257</span>	}
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>	func (curve *CurveParams) ScalarBaseMult(k []byte) (*big.Int, *big.Int) {
+<a id="L260"></a><span class="ln">   260</span>		return curve.ScalarMult(curve.Gx, curve.Gy, k)
+<a id="L261"></a><span class="ln">   261</span>	}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>	var mask = []byte{0xff, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// GenerateKey returns a public/private key pair. The private key is</span>
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// generated using the given reader, which must return random data.</span>
+<a id="L267"></a><span class="ln">   267</span>	func GenerateKey(curve Curve, rand io.Reader) (priv []byte, x, y *big.Int, err error) {
+<a id="L268"></a><span class="ln">   268</span>		bitSize := curve.Params().BitSize
+<a id="L269"></a><span class="ln">   269</span>		byteLen := (bitSize + 7) &gt;&gt; 3
+<a id="L270"></a><span class="ln">   270</span>		priv = make([]byte, byteLen)
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>		for x == nil {
+<a id="L273"></a><span class="ln">   273</span>			_, err = io.ReadFull(rand, priv)
+<a id="L274"></a><span class="ln">   274</span>			if err != nil {
+<a id="L275"></a><span class="ln">   275</span>				return
+<a id="L276"></a><span class="ln">   276</span>			}
+<a id="L277"></a><span class="ln">   277</span>			<span class="comment">// We have to mask off any excess bits in the case that the size of the</span>
+<a id="L278"></a><span class="ln">   278</span>			<span class="comment">// underlying field is not a whole number of bytes.</span>
+<a id="L279"></a><span class="ln">   279</span>			priv[0] &amp;= mask[bitSize%8]
+<a id="L280"></a><span class="ln">   280</span>			<span class="comment">// This is because, in tests, rand will return all zeros and we don&#39;t</span>
+<a id="L281"></a><span class="ln">   281</span>			<span class="comment">// want to get the point at infinity and loop forever.</span>
+<a id="L282"></a><span class="ln">   282</span>			priv[1] ^= 0x42
+<a id="L283"></a><span class="ln">   283</span>			x, y = curve.ScalarBaseMult(priv)
+<a id="L284"></a><span class="ln">   284</span>		}
+<a id="L285"></a><span class="ln">   285</span>		return
+<a id="L286"></a><span class="ln">   286</span>	}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// Marshal converts a point into the form specified in section 4.3.6 of ANSI X9.62.</span>
+<a id="L289"></a><span class="ln">   289</span>	func Marshal(curve Curve, x, y *big.Int) []byte {
+<a id="L290"></a><span class="ln">   290</span>		byteLen := (curve.Params().BitSize + 7) &gt;&gt; 3
+<a id="L291"></a><span class="ln">   291</span>	
+<a id="L292"></a><span class="ln">   292</span>		ret := make([]byte, 1+2*byteLen)
+<a id="L293"></a><span class="ln">   293</span>		ret[0] = 4 <span class="comment">// uncompressed point</span>
+<a id="L294"></a><span class="ln">   294</span>	
+<a id="L295"></a><span class="ln">   295</span>		xBytes := x.Bytes()
+<a id="L296"></a><span class="ln">   296</span>		copy(ret[1+byteLen-len(xBytes):], xBytes)
+<a id="L297"></a><span class="ln">   297</span>		yBytes := y.Bytes()
+<a id="L298"></a><span class="ln">   298</span>		copy(ret[1+2*byteLen-len(yBytes):], yBytes)
+<a id="L299"></a><span class="ln">   299</span>		return ret
+<a id="L300"></a><span class="ln">   300</span>	}
+<a id="L301"></a><span class="ln">   301</span>	
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">// Unmarshal converts a point, serialized by Marshal, into an x, y pair. On error, x = nil.</span>
+<a id="L303"></a><span class="ln">   303</span>	func Unmarshal(curve Curve, data []byte) (x, y *big.Int) {
+<a id="L304"></a><span class="ln">   304</span>		byteLen := (curve.Params().BitSize + 7) &gt;&gt; 3
+<a id="L305"></a><span class="ln">   305</span>		if len(data) != 1+2*byteLen {
+<a id="L306"></a><span class="ln">   306</span>			return
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>		if data[0] != 4 { <span class="comment">// uncompressed form</span>
+<a id="L309"></a><span class="ln">   309</span>			return
+<a id="L310"></a><span class="ln">   310</span>		}
+<a id="L311"></a><span class="ln">   311</span>		x = new(big.Int).SetBytes(data[1 : 1+byteLen])
+<a id="L312"></a><span class="ln">   312</span>		y = new(big.Int).SetBytes(data[1+byteLen:])
+<a id="L313"></a><span class="ln">   313</span>		return
+<a id="L314"></a><span class="ln">   314</span>	}
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>	var initonce sync.Once
+<a id="L317"></a><span class="ln">   317</span>	var p256 *CurveParams
+<a id="L318"></a><span class="ln">   318</span>	var p384 *CurveParams
+<a id="L319"></a><span class="ln">   319</span>	var p521 *CurveParams
+<a id="L320"></a><span class="ln">   320</span>	
+<a id="L321"></a><span class="ln">   321</span>	func initAll() {
+<a id="L322"></a><span class="ln">   322</span>		initP224()
+<a id="L323"></a><span class="ln">   323</span>		initP256()
+<a id="L324"></a><span class="ln">   324</span>		initP384()
+<a id="L325"></a><span class="ln">   325</span>		initP521()
+<a id="L326"></a><span class="ln">   326</span>	}
+<a id="L327"></a><span class="ln">   327</span>	
+<a id="L328"></a><span class="ln">   328</span>	func initP256() {
+<a id="L329"></a><span class="ln">   329</span>		<span class="comment">// See FIPS 186-3, section D.2.3</span>
+<a id="L330"></a><span class="ln">   330</span>		p256 = new(CurveParams)
+<a id="L331"></a><span class="ln">   331</span>		p256.P, _ = new(big.Int).SetString(&#34;115792089210356248762697446949407573530086143415290314195533631308867097853951&#34;, 10)
+<a id="L332"></a><span class="ln">   332</span>		p256.N, _ = new(big.Int).SetString(&#34;115792089210356248762697446949407573529996955224135760342422259061068512044369&#34;, 10)
+<a id="L333"></a><span class="ln">   333</span>		p256.B, _ = new(big.Int).SetString(&#34;5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b&#34;, 16)
+<a id="L334"></a><span class="ln">   334</span>		p256.Gx, _ = new(big.Int).SetString(&#34;6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296&#34;, 16)
+<a id="L335"></a><span class="ln">   335</span>		p256.Gy, _ = new(big.Int).SetString(&#34;4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5&#34;, 16)
+<a id="L336"></a><span class="ln">   336</span>		p256.BitSize = 256
+<a id="L337"></a><span class="ln">   337</span>	}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>	func initP384() {
+<a id="L340"></a><span class="ln">   340</span>		<span class="comment">// See FIPS 186-3, section D.2.4</span>
+<a id="L341"></a><span class="ln">   341</span>		p384 = new(CurveParams)
+<a id="L342"></a><span class="ln">   342</span>		p384.P, _ = new(big.Int).SetString(&#34;39402006196394479212279040100143613805079739270465446667948293404245721771496870329047266088258938001861606973112319&#34;, 10)
+<a id="L343"></a><span class="ln">   343</span>		p384.N, _ = new(big.Int).SetString(&#34;39402006196394479212279040100143613805079739270465446667946905279627659399113263569398956308152294913554433653942643&#34;, 10)
+<a id="L344"></a><span class="ln">   344</span>		p384.B, _ = new(big.Int).SetString(&#34;b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef&#34;, 16)
+<a id="L345"></a><span class="ln">   345</span>		p384.Gx, _ = new(big.Int).SetString(&#34;aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7&#34;, 16)
+<a id="L346"></a><span class="ln">   346</span>		p384.Gy, _ = new(big.Int).SetString(&#34;3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f&#34;, 16)
+<a id="L347"></a><span class="ln">   347</span>		p384.BitSize = 384
+<a id="L348"></a><span class="ln">   348</span>	}
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>	func initP521() {
+<a id="L351"></a><span class="ln">   351</span>		<span class="comment">// See FIPS 186-3, section D.2.5</span>
+<a id="L352"></a><span class="ln">   352</span>		p521 = new(CurveParams)
+<a id="L353"></a><span class="ln">   353</span>		p521.P, _ = new(big.Int).SetString(&#34;6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151&#34;, 10)
+<a id="L354"></a><span class="ln">   354</span>		p521.N, _ = new(big.Int).SetString(&#34;6864797660130609714981900799081393217269435300143305409394463459185543183397655394245057746333217197532963996371363321113864768612440380340372808892707005449&#34;, 10)
+<a id="L355"></a><span class="ln">   355</span>		p521.B, _ = new(big.Int).SetString(&#34;051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00&#34;, 16)
+<a id="L356"></a><span class="ln">   356</span>		p521.Gx, _ = new(big.Int).SetString(&#34;c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66&#34;, 16)
+<a id="L357"></a><span class="ln">   357</span>		p521.Gy, _ = new(big.Int).SetString(&#34;11839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650&#34;, 16)
+<a id="L358"></a><span class="ln">   358</span>		p521.BitSize = 521
+<a id="L359"></a><span class="ln">   359</span>	}
+<a id="L360"></a><span class="ln">   360</span>	
+<a id="L361"></a><span class="ln">   361</span>	<span class="comment">// P256 returns a Curve which implements P-256 (see FIPS 186-3, section D.2.3)</span>
+<a id="L362"></a><span class="ln">   362</span>	func P256() Curve {
+<a id="L363"></a><span class="ln">   363</span>		initonce.Do(initAll)
+<a id="L364"></a><span class="ln">   364</span>		return p256
+<a id="L365"></a><span class="ln">   365</span>	}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>	<span class="comment">// P384 returns a Curve which implements P-384 (see FIPS 186-3, section D.2.4)</span>
+<a id="L368"></a><span class="ln">   368</span>	func P384() Curve {
+<a id="L369"></a><span class="ln">   369</span>		initonce.Do(initAll)
+<a id="L370"></a><span class="ln">   370</span>		return p384
+<a id="L371"></a><span class="ln">   371</span>	}
+<a id="L372"></a><span class="ln">   372</span>	
+<a id="L373"></a><span class="ln">   373</span>	<span class="comment">// P256 returns a Curve which implements P-521 (see FIPS 186-3, section D.2.5)</span>
+<a id="L374"></a><span class="ln">   374</span>	func P521() Curve {
+<a id="L375"></a><span class="ln">   375</span>		initonce.Do(initAll)
+<a id="L376"></a><span class="ln">   376</span>		return p521
+<a id="L377"></a><span class="ln">   377</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

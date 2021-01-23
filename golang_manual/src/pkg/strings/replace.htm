@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/strings/replace.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/strings/replace.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package strings
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;io&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// A Replacer replaces a list of strings with replacements.</span>
+<a id="L10"></a><span class="ln">    10</span>	type Replacer struct {
+<a id="L11"></a><span class="ln">    11</span>		r replacer
+<a id="L12"></a><span class="ln">    12</span>	}
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// replacer is the interface that a replacement algorithm needs to implement.</span>
+<a id="L15"></a><span class="ln">    15</span>	type replacer interface {
+<a id="L16"></a><span class="ln">    16</span>		Replace(s string) string
+<a id="L17"></a><span class="ln">    17</span>		WriteString(w io.Writer, s string) (n int, err error)
+<a id="L18"></a><span class="ln">    18</span>	}
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// byteBitmap represents bytes which are sought for replacement.</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// byteBitmap is 256 bits wide, with a bit set for each old byte to be</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// replaced.</span>
+<a id="L23"></a><span class="ln">    23</span>	type byteBitmap [256 / 32]uint32
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	func (m *byteBitmap) set(b byte) {
+<a id="L26"></a><span class="ln">    26</span>		m[b&gt;&gt;5] |= uint32(1 &lt;&lt; (b &amp; 31))
+<a id="L27"></a><span class="ln">    27</span>	}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// NewReplacer returns a new Replacer from a list of old, new string pairs.</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// Replacements are performed in order, without overlapping matches.</span>
+<a id="L31"></a><span class="ln">    31</span>	func NewReplacer(oldnew ...string) *Replacer {
+<a id="L32"></a><span class="ln">    32</span>		if len(oldnew)%2 == 1 {
+<a id="L33"></a><span class="ln">    33</span>			panic(&#34;strings.NewReplacer: odd argument count&#34;)
+<a id="L34"></a><span class="ln">    34</span>		}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// Possible implementations.</span>
+<a id="L37"></a><span class="ln">    37</span>		var (
+<a id="L38"></a><span class="ln">    38</span>			bb  byteReplacer
+<a id="L39"></a><span class="ln">    39</span>			bs  byteStringReplacer
+<a id="L40"></a><span class="ln">    40</span>			gen genericReplacer
+<a id="L41"></a><span class="ln">    41</span>		)
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>		allOldBytes, allNewBytes := true, true
+<a id="L44"></a><span class="ln">    44</span>		for len(oldnew) &gt; 0 {
+<a id="L45"></a><span class="ln">    45</span>			old, new := oldnew[0], oldnew[1]
+<a id="L46"></a><span class="ln">    46</span>			oldnew = oldnew[2:]
+<a id="L47"></a><span class="ln">    47</span>			if len(old) != 1 {
+<a id="L48"></a><span class="ln">    48</span>				allOldBytes = false
+<a id="L49"></a><span class="ln">    49</span>			}
+<a id="L50"></a><span class="ln">    50</span>			if len(new) != 1 {
+<a id="L51"></a><span class="ln">    51</span>				allNewBytes = false
+<a id="L52"></a><span class="ln">    52</span>			}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>			<span class="comment">// generic</span>
+<a id="L55"></a><span class="ln">    55</span>			gen.p = append(gen.p, pair{old, new})
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>			<span class="comment">// byte -&gt; string</span>
+<a id="L58"></a><span class="ln">    58</span>			if allOldBytes {
+<a id="L59"></a><span class="ln">    59</span>				bs.old.set(old[0])
+<a id="L60"></a><span class="ln">    60</span>				bs.new[old[0]] = []byte(new)
+<a id="L61"></a><span class="ln">    61</span>			}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>			<span class="comment">// byte -&gt; byte</span>
+<a id="L64"></a><span class="ln">    64</span>			if allOldBytes &amp;&amp; allNewBytes {
+<a id="L65"></a><span class="ln">    65</span>				bb.old.set(old[0])
+<a id="L66"></a><span class="ln">    66</span>				bb.new[old[0]] = new[0]
+<a id="L67"></a><span class="ln">    67</span>			}
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>		if allOldBytes &amp;&amp; allNewBytes {
+<a id="L71"></a><span class="ln">    71</span>			return &amp;Replacer{r: &amp;bb}
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		if allOldBytes {
+<a id="L74"></a><span class="ln">    74</span>			return &amp;Replacer{r: &amp;bs}
+<a id="L75"></a><span class="ln">    75</span>		}
+<a id="L76"></a><span class="ln">    76</span>		return &amp;Replacer{r: &amp;gen}
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// Replace returns a copy of s with all replacements performed.</span>
+<a id="L80"></a><span class="ln">    80</span>	func (r *Replacer) Replace(s string) string {
+<a id="L81"></a><span class="ln">    81</span>		return r.r.Replace(s)
+<a id="L82"></a><span class="ln">    82</span>	}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// WriteString writes s to w with all replacements performed.</span>
+<a id="L85"></a><span class="ln">    85</span>	func (r *Replacer) WriteString(w io.Writer, s string) (n int, err error) {
+<a id="L86"></a><span class="ln">    86</span>		return r.r.WriteString(w, s)
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// genericReplacer is the fully generic (and least optimized) algorithm.</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// It&#39;s used as a fallback when nothing faster can be used.</span>
+<a id="L91"></a><span class="ln">    91</span>	type genericReplacer struct {
+<a id="L92"></a><span class="ln">    92</span>		p []pair
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	type pair struct{ old, new string }
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	type appendSliceWriter struct {
+<a id="L98"></a><span class="ln">    98</span>		b []byte
+<a id="L99"></a><span class="ln">    99</span>	}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	func (w *appendSliceWriter) Write(p []byte) (int, error) {
+<a id="L102"></a><span class="ln">   102</span>		w.b = append(w.b, p...)
+<a id="L103"></a><span class="ln">   103</span>		return len(p), nil
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	func (r *genericReplacer) Replace(s string) string {
+<a id="L107"></a><span class="ln">   107</span>		<span class="comment">// TODO(bradfitz): optimized version</span>
+<a id="L108"></a><span class="ln">   108</span>		n, _ := r.WriteString(discard, s)
+<a id="L109"></a><span class="ln">   109</span>		w := appendSliceWriter{make([]byte, 0, n)}
+<a id="L110"></a><span class="ln">   110</span>		r.WriteString(&amp;w, s)
+<a id="L111"></a><span class="ln">   111</span>		return string(w.b)
+<a id="L112"></a><span class="ln">   112</span>	}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	func (r *genericReplacer) WriteString(w io.Writer, s string) (n int, err error) {
+<a id="L115"></a><span class="ln">   115</span>		lastEmpty := false <span class="comment">// the last replacement was of the empty string</span>
+<a id="L116"></a><span class="ln">   116</span>	Input:
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// TODO(bradfitz): optimized version</span>
+<a id="L118"></a><span class="ln">   118</span>		for i := 0; i &lt; len(s); {
+<a id="L119"></a><span class="ln">   119</span>			for _, p := range r.p {
+<a id="L120"></a><span class="ln">   120</span>				if p.old == &#34;&#34; &amp;&amp; lastEmpty {
+<a id="L121"></a><span class="ln">   121</span>					<span class="comment">// Don&#39;t let old match twice in a row.</span>
+<a id="L122"></a><span class="ln">   122</span>					<span class="comment">// (it doesn&#39;t advance the input and</span>
+<a id="L123"></a><span class="ln">   123</span>					<span class="comment">// would otherwise loop forever)</span>
+<a id="L124"></a><span class="ln">   124</span>					continue
+<a id="L125"></a><span class="ln">   125</span>				}
+<a id="L126"></a><span class="ln">   126</span>				if HasPrefix(s[i:], p.old) {
+<a id="L127"></a><span class="ln">   127</span>					if p.new != &#34;&#34; {
+<a id="L128"></a><span class="ln">   128</span>						wn, err := w.Write([]byte(p.new))
+<a id="L129"></a><span class="ln">   129</span>						n += wn
+<a id="L130"></a><span class="ln">   130</span>						if err != nil {
+<a id="L131"></a><span class="ln">   131</span>							return n, err
+<a id="L132"></a><span class="ln">   132</span>						}
+<a id="L133"></a><span class="ln">   133</span>					}
+<a id="L134"></a><span class="ln">   134</span>					i += len(p.old)
+<a id="L135"></a><span class="ln">   135</span>					lastEmpty = p.old == &#34;&#34;
+<a id="L136"></a><span class="ln">   136</span>					continue Input
+<a id="L137"></a><span class="ln">   137</span>				}
+<a id="L138"></a><span class="ln">   138</span>			}
+<a id="L139"></a><span class="ln">   139</span>			wn, err := w.Write([]byte{s[i]})
+<a id="L140"></a><span class="ln">   140</span>			n += wn
+<a id="L141"></a><span class="ln">   141</span>			if err != nil {
+<a id="L142"></a><span class="ln">   142</span>				return n, err
+<a id="L143"></a><span class="ln">   143</span>			}
+<a id="L144"></a><span class="ln">   144</span>			i++
+<a id="L145"></a><span class="ln">   145</span>		}
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>		<span class="comment">// Final empty match at end.</span>
+<a id="L148"></a><span class="ln">   148</span>		for _, p := range r.p {
+<a id="L149"></a><span class="ln">   149</span>			if p.old == &#34;&#34; {
+<a id="L150"></a><span class="ln">   150</span>				if p.new != &#34;&#34; {
+<a id="L151"></a><span class="ln">   151</span>					wn, err := w.Write([]byte(p.new))
+<a id="L152"></a><span class="ln">   152</span>					n += wn
+<a id="L153"></a><span class="ln">   153</span>					if err != nil {
+<a id="L154"></a><span class="ln">   154</span>						return n, err
+<a id="L155"></a><span class="ln">   155</span>					}
+<a id="L156"></a><span class="ln">   156</span>				}
+<a id="L157"></a><span class="ln">   157</span>				break
+<a id="L158"></a><span class="ln">   158</span>			}
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		return n, nil
+<a id="L162"></a><span class="ln">   162</span>	}
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// byteReplacer is the implementation that&#39;s used when all the &#34;old&#34;</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// and &#34;new&#34; values are single ASCII bytes.</span>
+<a id="L166"></a><span class="ln">   166</span>	type byteReplacer struct {
+<a id="L167"></a><span class="ln">   167</span>		<span class="comment">// old has a bit set for each old byte that should be replaced.</span>
+<a id="L168"></a><span class="ln">   168</span>		old byteBitmap
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>		<span class="comment">// replacement byte, indexed by old byte. only valid if</span>
+<a id="L171"></a><span class="ln">   171</span>		<span class="comment">// corresponding old bit is set.</span>
+<a id="L172"></a><span class="ln">   172</span>		new [256]byte
+<a id="L173"></a><span class="ln">   173</span>	}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>	func (r *byteReplacer) Replace(s string) string {
+<a id="L176"></a><span class="ln">   176</span>		var buf []byte <span class="comment">// lazily allocated</span>
+<a id="L177"></a><span class="ln">   177</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L178"></a><span class="ln">   178</span>			b := s[i]
+<a id="L179"></a><span class="ln">   179</span>			if r.old[b&gt;&gt;5]&amp;uint32(1&lt;&lt;(b&amp;31)) != 0 {
+<a id="L180"></a><span class="ln">   180</span>				if buf == nil {
+<a id="L181"></a><span class="ln">   181</span>					buf = []byte(s)
+<a id="L182"></a><span class="ln">   182</span>				}
+<a id="L183"></a><span class="ln">   183</span>				buf[i] = r.new[b]
+<a id="L184"></a><span class="ln">   184</span>			}
+<a id="L185"></a><span class="ln">   185</span>		}
+<a id="L186"></a><span class="ln">   186</span>		if buf == nil {
+<a id="L187"></a><span class="ln">   187</span>			return s
+<a id="L188"></a><span class="ln">   188</span>		}
+<a id="L189"></a><span class="ln">   189</span>		return string(buf)
+<a id="L190"></a><span class="ln">   190</span>	}
+<a id="L191"></a><span class="ln">   191</span>	
+<a id="L192"></a><span class="ln">   192</span>	func (r *byteReplacer) WriteString(w io.Writer, s string) (n int, err error) {
+<a id="L193"></a><span class="ln">   193</span>		<span class="comment">// TODO(bradfitz): use io.WriteString with slices of s, avoiding allocation.</span>
+<a id="L194"></a><span class="ln">   194</span>		bufsize := 32 &lt;&lt; 10
+<a id="L195"></a><span class="ln">   195</span>		if len(s) &lt; bufsize {
+<a id="L196"></a><span class="ln">   196</span>			bufsize = len(s)
+<a id="L197"></a><span class="ln">   197</span>		}
+<a id="L198"></a><span class="ln">   198</span>		buf := make([]byte, bufsize)
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>		for len(s) &gt; 0 {
+<a id="L201"></a><span class="ln">   201</span>			ncopy := copy(buf, s[:])
+<a id="L202"></a><span class="ln">   202</span>			s = s[ncopy:]
+<a id="L203"></a><span class="ln">   203</span>			for i, b := range buf[:ncopy] {
+<a id="L204"></a><span class="ln">   204</span>				if r.old[b&gt;&gt;5]&amp;uint32(1&lt;&lt;(b&amp;31)) != 0 {
+<a id="L205"></a><span class="ln">   205</span>					buf[i] = r.new[b]
+<a id="L206"></a><span class="ln">   206</span>				}
+<a id="L207"></a><span class="ln">   207</span>			}
+<a id="L208"></a><span class="ln">   208</span>			wn, err := w.Write(buf[:ncopy])
+<a id="L209"></a><span class="ln">   209</span>			n += wn
+<a id="L210"></a><span class="ln">   210</span>			if err != nil {
+<a id="L211"></a><span class="ln">   211</span>				return n, err
+<a id="L212"></a><span class="ln">   212</span>			}
+<a id="L213"></a><span class="ln">   213</span>		}
+<a id="L214"></a><span class="ln">   214</span>		return n, nil
+<a id="L215"></a><span class="ln">   215</span>	}
+<a id="L216"></a><span class="ln">   216</span>	
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// byteStringReplacer is the implementation that&#39;s used when all the</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// &#34;old&#34; values are single ASCII bytes but the &#34;new&#34; values vary in</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// size.</span>
+<a id="L220"></a><span class="ln">   220</span>	type byteStringReplacer struct {
+<a id="L221"></a><span class="ln">   221</span>		<span class="comment">// old has a bit set for each old byte that should be replaced.</span>
+<a id="L222"></a><span class="ln">   222</span>		old byteBitmap
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>		<span class="comment">// replacement string, indexed by old byte. only valid if</span>
+<a id="L225"></a><span class="ln">   225</span>		<span class="comment">// corresponding old bit is set.</span>
+<a id="L226"></a><span class="ln">   226</span>		new [256][]byte
+<a id="L227"></a><span class="ln">   227</span>	}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>	func (r *byteStringReplacer) Replace(s string) string {
+<a id="L230"></a><span class="ln">   230</span>		newSize := 0
+<a id="L231"></a><span class="ln">   231</span>		anyChanges := false
+<a id="L232"></a><span class="ln">   232</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L233"></a><span class="ln">   233</span>			b := s[i]
+<a id="L234"></a><span class="ln">   234</span>			if r.old[b&gt;&gt;5]&amp;uint32(1&lt;&lt;(b&amp;31)) != 0 {
+<a id="L235"></a><span class="ln">   235</span>				anyChanges = true
+<a id="L236"></a><span class="ln">   236</span>				newSize += len(r.new[b])
+<a id="L237"></a><span class="ln">   237</span>			} else {
+<a id="L238"></a><span class="ln">   238</span>				newSize++
+<a id="L239"></a><span class="ln">   239</span>			}
+<a id="L240"></a><span class="ln">   240</span>		}
+<a id="L241"></a><span class="ln">   241</span>		if !anyChanges {
+<a id="L242"></a><span class="ln">   242</span>			return s
+<a id="L243"></a><span class="ln">   243</span>		}
+<a id="L244"></a><span class="ln">   244</span>		buf := make([]byte, newSize)
+<a id="L245"></a><span class="ln">   245</span>		bi := buf
+<a id="L246"></a><span class="ln">   246</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L247"></a><span class="ln">   247</span>			b := s[i]
+<a id="L248"></a><span class="ln">   248</span>			if r.old[b&gt;&gt;5]&amp;uint32(1&lt;&lt;(b&amp;31)) != 0 {
+<a id="L249"></a><span class="ln">   249</span>				n := copy(bi[:], r.new[b])
+<a id="L250"></a><span class="ln">   250</span>				bi = bi[n:]
+<a id="L251"></a><span class="ln">   251</span>			} else {
+<a id="L252"></a><span class="ln">   252</span>				bi[0] = b
+<a id="L253"></a><span class="ln">   253</span>				bi = bi[1:]
+<a id="L254"></a><span class="ln">   254</span>			}
+<a id="L255"></a><span class="ln">   255</span>		}
+<a id="L256"></a><span class="ln">   256</span>		return string(buf)
+<a id="L257"></a><span class="ln">   257</span>	}
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>	<span class="comment">// WriteString maintains one buffer that&#39;s at most 32KB.  The bytes in</span>
+<a id="L260"></a><span class="ln">   260</span>	<span class="comment">// s are enumerated and the buffer is filled.  If it reaches its</span>
+<a id="L261"></a><span class="ln">   261</span>	<span class="comment">// capacity or a byte has a replacement, the buffer is flushed to w.</span>
+<a id="L262"></a><span class="ln">   262</span>	func (r *byteStringReplacer) WriteString(w io.Writer, s string) (n int, err error) {
+<a id="L263"></a><span class="ln">   263</span>		<span class="comment">// TODO(bradfitz): use io.WriteString with slices of s instead.</span>
+<a id="L264"></a><span class="ln">   264</span>		bufsize := 32 &lt;&lt; 10
+<a id="L265"></a><span class="ln">   265</span>		if len(s) &lt; bufsize {
+<a id="L266"></a><span class="ln">   266</span>			bufsize = len(s)
+<a id="L267"></a><span class="ln">   267</span>		}
+<a id="L268"></a><span class="ln">   268</span>		buf := make([]byte, bufsize)
+<a id="L269"></a><span class="ln">   269</span>		bi := buf[:0]
+<a id="L270"></a><span class="ln">   270</span>	
+<a id="L271"></a><span class="ln">   271</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L272"></a><span class="ln">   272</span>			b := s[i]
+<a id="L273"></a><span class="ln">   273</span>			var new []byte
+<a id="L274"></a><span class="ln">   274</span>			if r.old[b&gt;&gt;5]&amp;uint32(1&lt;&lt;(b&amp;31)) != 0 {
+<a id="L275"></a><span class="ln">   275</span>				new = r.new[b]
+<a id="L276"></a><span class="ln">   276</span>			} else {
+<a id="L277"></a><span class="ln">   277</span>				bi = append(bi, b)
+<a id="L278"></a><span class="ln">   278</span>			}
+<a id="L279"></a><span class="ln">   279</span>			if len(bi) == cap(bi) || (len(bi) &gt; 0 &amp;&amp; len(new) &gt; 0) {
+<a id="L280"></a><span class="ln">   280</span>				nw, err := w.Write(bi)
+<a id="L281"></a><span class="ln">   281</span>				n += nw
+<a id="L282"></a><span class="ln">   282</span>				if err != nil {
+<a id="L283"></a><span class="ln">   283</span>					return n, err
+<a id="L284"></a><span class="ln">   284</span>				}
+<a id="L285"></a><span class="ln">   285</span>				bi = buf[:0]
+<a id="L286"></a><span class="ln">   286</span>			}
+<a id="L287"></a><span class="ln">   287</span>			if len(new) &gt; 0 {
+<a id="L288"></a><span class="ln">   288</span>				nw, err := w.Write(new)
+<a id="L289"></a><span class="ln">   289</span>				n += nw
+<a id="L290"></a><span class="ln">   290</span>				if err != nil {
+<a id="L291"></a><span class="ln">   291</span>					return n, err
+<a id="L292"></a><span class="ln">   292</span>				}
+<a id="L293"></a><span class="ln">   293</span>			}
+<a id="L294"></a><span class="ln">   294</span>		}
+<a id="L295"></a><span class="ln">   295</span>		if len(bi) &gt; 0 {
+<a id="L296"></a><span class="ln">   296</span>			nw, err := w.Write(bi)
+<a id="L297"></a><span class="ln">   297</span>			n += nw
+<a id="L298"></a><span class="ln">   298</span>			if err != nil {
+<a id="L299"></a><span class="ln">   299</span>				return n, err
+<a id="L300"></a><span class="ln">   300</span>			}
+<a id="L301"></a><span class="ln">   301</span>		}
+<a id="L302"></a><span class="ln">   302</span>		return n, nil
+<a id="L303"></a><span class="ln">   303</span>	}
+<a id="L304"></a><span class="ln">   304</span>	
+<a id="L305"></a><span class="ln">   305</span>	<span class="comment">// strings is too low-level to import io/ioutil</span>
+<a id="L306"></a><span class="ln">   306</span>	var discard io.Writer = devNull(0)
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>	type devNull int
+<a id="L309"></a><span class="ln">   309</span>	
+<a id="L310"></a><span class="ln">   310</span>	func (devNull) Write(p []byte) (int, error) {
+<a id="L311"></a><span class="ln">   311</span>		return len(p), nil
+<a id="L312"></a><span class="ln">   312</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

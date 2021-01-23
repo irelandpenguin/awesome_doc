@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/runtime/error.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/runtime/error.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package runtime
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// The Error interface identifies a run time error.</span>
+<a id="L8"></a><span class="ln">     8</span>	type Error interface {
+<a id="L9"></a><span class="ln">     9</span>		error
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>		<span class="comment">// RuntimeError is a no-op function but</span>
+<a id="L12"></a><span class="ln">    12</span>		<span class="comment">// serves to distinguish types that are runtime</span>
+<a id="L13"></a><span class="ln">    13</span>		<span class="comment">// errors from ordinary errors: a type is a</span>
+<a id="L14"></a><span class="ln">    14</span>		<span class="comment">// runtime error if it has a RuntimeError method.</span>
+<a id="L15"></a><span class="ln">    15</span>		RuntimeError()
+<a id="L16"></a><span class="ln">    16</span>	}
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// A TypeAssertionError explains a failed type assertion.</span>
+<a id="L19"></a><span class="ln">    19</span>	type TypeAssertionError struct {
+<a id="L20"></a><span class="ln">    20</span>		interfaceString string
+<a id="L21"></a><span class="ln">    21</span>		concreteString  string
+<a id="L22"></a><span class="ln">    22</span>		assertedString  string
+<a id="L23"></a><span class="ln">    23</span>		missingMethod   string <span class="comment">// one method needed by Interface, missing from Concrete</span>
+<a id="L24"></a><span class="ln">    24</span>	}
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	func (*TypeAssertionError) RuntimeError() {}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	func (e *TypeAssertionError) Error() string {
+<a id="L29"></a><span class="ln">    29</span>		inter := e.interfaceString
+<a id="L30"></a><span class="ln">    30</span>		if inter == &#34;&#34; {
+<a id="L31"></a><span class="ln">    31</span>			inter = &#34;interface&#34;
+<a id="L32"></a><span class="ln">    32</span>		}
+<a id="L33"></a><span class="ln">    33</span>		if e.concreteString == &#34;&#34; {
+<a id="L34"></a><span class="ln">    34</span>			return &#34;interface conversion: &#34; + inter + &#34; is nil, not &#34; + e.assertedString
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>		if e.missingMethod == &#34;&#34; {
+<a id="L37"></a><span class="ln">    37</span>			return &#34;interface conversion: &#34; + inter + &#34; is &#34; + e.concreteString +
+<a id="L38"></a><span class="ln">    38</span>				&#34;, not &#34; + e.assertedString
+<a id="L39"></a><span class="ln">    39</span>		}
+<a id="L40"></a><span class="ln">    40</span>		return &#34;interface conversion: &#34; + e.concreteString + &#34; is not &#34; + e.assertedString +
+<a id="L41"></a><span class="ln">    41</span>			&#34;: missing method &#34; + e.missingMethod
+<a id="L42"></a><span class="ln">    42</span>	}
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// For calling from C.</span>
+<a id="L45"></a><span class="ln">    45</span>	func newTypeAssertionError(ps1, ps2, ps3 *string, pmeth *string, ret *interface{}) {
+<a id="L46"></a><span class="ln">    46</span>		var s1, s2, s3, meth string
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>		if ps1 != nil {
+<a id="L49"></a><span class="ln">    49</span>			s1 = *ps1
+<a id="L50"></a><span class="ln">    50</span>		}
+<a id="L51"></a><span class="ln">    51</span>		if ps2 != nil {
+<a id="L52"></a><span class="ln">    52</span>			s2 = *ps2
+<a id="L53"></a><span class="ln">    53</span>		}
+<a id="L54"></a><span class="ln">    54</span>		if ps3 != nil {
+<a id="L55"></a><span class="ln">    55</span>			s3 = *ps3
+<a id="L56"></a><span class="ln">    56</span>		}
+<a id="L57"></a><span class="ln">    57</span>		if pmeth != nil {
+<a id="L58"></a><span class="ln">    58</span>			meth = *pmeth
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		*ret = &amp;TypeAssertionError{s1, s2, s3, meth}
+<a id="L61"></a><span class="ln">    61</span>	}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// An errorString represents a runtime error described by a single string.</span>
+<a id="L64"></a><span class="ln">    64</span>	type errorString string
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	func (e errorString) RuntimeError() {}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	func (e errorString) Error() string {
+<a id="L69"></a><span class="ln">    69</span>		return &#34;runtime error: &#34; + string(e)
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// For calling from C.</span>
+<a id="L73"></a><span class="ln">    73</span>	func newErrorString(s string, ret *interface{}) {
+<a id="L74"></a><span class="ln">    74</span>		*ret = errorString(s)
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	type stringer interface {
+<a id="L78"></a><span class="ln">    78</span>		String() string
+<a id="L79"></a><span class="ln">    79</span>	}
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	func typestring(interface{}) string
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// For calling from C.</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// Prints an argument passed to panic.</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// There&#39;s room for arbitrary complexity here, but we keep it</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// simple and handle just a few important cases: int, string, and Stringer.</span>
+<a id="L87"></a><span class="ln">    87</span>	func printany(i interface{}) {
+<a id="L88"></a><span class="ln">    88</span>		switch v := i.(type) {
+<a id="L89"></a><span class="ln">    89</span>		case nil:
+<a id="L90"></a><span class="ln">    90</span>			print(&#34;nil&#34;)
+<a id="L91"></a><span class="ln">    91</span>		case stringer:
+<a id="L92"></a><span class="ln">    92</span>			print(v.String())
+<a id="L93"></a><span class="ln">    93</span>		case error:
+<a id="L94"></a><span class="ln">    94</span>			print(v.Error())
+<a id="L95"></a><span class="ln">    95</span>		case int:
+<a id="L96"></a><span class="ln">    96</span>			print(v)
+<a id="L97"></a><span class="ln">    97</span>		case string:
+<a id="L98"></a><span class="ln">    98</span>			print(v)
+<a id="L99"></a><span class="ln">    99</span>		default:
+<a id="L100"></a><span class="ln">   100</span>			print(&#34;(&#34;, typestring(i), &#34;) &#34;, i)
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>	}
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// called from generated code</span>
+<a id="L105"></a><span class="ln">   105</span>	func panicwrap(pkg, typ, meth string) {
+<a id="L106"></a><span class="ln">   106</span>		panic(&#34;value method &#34; + pkg + &#34;.&#34; + typ + &#34;.&#34; + meth + &#34; called using nil *&#34; + typ + &#34; pointer&#34;)
+<a id="L107"></a><span class="ln">   107</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/strconv/ftoa.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/strconv/ftoa.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Binary to decimal floating point conversion.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// Algorithm:</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//   1) store mantissa in multiprecision decimal</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">//   2) shift decimal by exponent</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//   3) read digits out &amp; format</span>
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	package strconv
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	import &#34;math&#34;
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// TODO: move elsewhere?</span>
+<a id="L16"></a><span class="ln">    16</span>	type floatInfo struct {
+<a id="L17"></a><span class="ln">    17</span>		mantbits uint
+<a id="L18"></a><span class="ln">    18</span>		expbits  uint
+<a id="L19"></a><span class="ln">    19</span>		bias     int
+<a id="L20"></a><span class="ln">    20</span>	}
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	var float32info = floatInfo{23, 8, -127}
+<a id="L23"></a><span class="ln">    23</span>	var float64info = floatInfo{52, 11, -1023}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// FormatFloat converts the floating-point number f to a string,</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// according to the format fmt and precision prec.  It rounds the</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// result assuming that the original was obtained from a floating-point</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// value of bitSize bits (32 for float32, 64 for float64).</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// The format fmt is one of</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// &#39;b&#39; (-ddddp±ddd, a binary exponent),</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// &#39;e&#39; (-d.dddde±dd, a decimal exponent),</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// &#39;E&#39; (-d.ddddE±dd, a decimal exponent),</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// &#39;f&#39; (-ddd.dddd, no exponent),</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// &#39;g&#39; (&#39;e&#39; for large exponents, &#39;f&#39; otherwise), or</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// &#39;G&#39; (&#39;E&#39; for large exponents, &#39;f&#39; otherwise).</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// The precision prec controls the number of digits</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// (excluding the exponent) printed by the &#39;e&#39;, &#39;E&#39;, &#39;f&#39;, &#39;g&#39;, and &#39;G&#39; formats.</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// For &#39;e&#39;, &#39;E&#39;, and &#39;f&#39; it is the number of digits after the decimal point.</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// For &#39;g&#39; and &#39;G&#39; it is the total number of digits.</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// The special precision -1 uses the smallest number of digits</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// necessary such that ParseFloat will return f exactly.</span>
+<a id="L44"></a><span class="ln">    44</span>	func FormatFloat(f float64, fmt byte, prec, bitSize int) string {
+<a id="L45"></a><span class="ln">    45</span>		return string(genericFtoa(make([]byte, 0, max(prec+4, 24)), f, fmt, prec, bitSize))
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// AppendFloat appends the string form of the floating-point number f,</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// as generated by FormatFloat, to dst and returns the extended buffer.</span>
+<a id="L50"></a><span class="ln">    50</span>	func AppendFloat(dst []byte, f float64, fmt byte, prec int, bitSize int) []byte {
+<a id="L51"></a><span class="ln">    51</span>		return genericFtoa(dst, f, fmt, prec, bitSize)
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
+<a id="L55"></a><span class="ln">    55</span>		var bits uint64
+<a id="L56"></a><span class="ln">    56</span>		var flt *floatInfo
+<a id="L57"></a><span class="ln">    57</span>		switch bitSize {
+<a id="L58"></a><span class="ln">    58</span>		case 32:
+<a id="L59"></a><span class="ln">    59</span>			bits = uint64(math.Float32bits(float32(val)))
+<a id="L60"></a><span class="ln">    60</span>			flt = &amp;float32info
+<a id="L61"></a><span class="ln">    61</span>		case 64:
+<a id="L62"></a><span class="ln">    62</span>			bits = math.Float64bits(val)
+<a id="L63"></a><span class="ln">    63</span>			flt = &amp;float64info
+<a id="L64"></a><span class="ln">    64</span>		default:
+<a id="L65"></a><span class="ln">    65</span>			panic(&#34;strconv: illegal AppendFloat/FormatFloat bitSize&#34;)
+<a id="L66"></a><span class="ln">    66</span>		}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>		neg := bits&gt;&gt;(flt.expbits+flt.mantbits) != 0
+<a id="L69"></a><span class="ln">    69</span>		exp := int(bits&gt;&gt;flt.mantbits) &amp; (1&lt;&lt;flt.expbits - 1)
+<a id="L70"></a><span class="ln">    70</span>		mant := bits &amp; (uint64(1)&lt;&lt;flt.mantbits - 1)
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>		switch exp {
+<a id="L73"></a><span class="ln">    73</span>		case 1&lt;&lt;flt.expbits - 1:
+<a id="L74"></a><span class="ln">    74</span>			<span class="comment">// Inf, NaN</span>
+<a id="L75"></a><span class="ln">    75</span>			var s string
+<a id="L76"></a><span class="ln">    76</span>			switch {
+<a id="L77"></a><span class="ln">    77</span>			case mant != 0:
+<a id="L78"></a><span class="ln">    78</span>				s = &#34;NaN&#34;
+<a id="L79"></a><span class="ln">    79</span>			case neg:
+<a id="L80"></a><span class="ln">    80</span>				s = &#34;-Inf&#34;
+<a id="L81"></a><span class="ln">    81</span>			default:
+<a id="L82"></a><span class="ln">    82</span>				s = &#34;+Inf&#34;
+<a id="L83"></a><span class="ln">    83</span>			}
+<a id="L84"></a><span class="ln">    84</span>			return append(dst, s...)
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>		case 0:
+<a id="L87"></a><span class="ln">    87</span>			<span class="comment">// denormalized</span>
+<a id="L88"></a><span class="ln">    88</span>			exp++
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>		default:
+<a id="L91"></a><span class="ln">    91</span>			<span class="comment">// add implicit top bit</span>
+<a id="L92"></a><span class="ln">    92</span>			mant |= uint64(1) &lt;&lt; flt.mantbits
+<a id="L93"></a><span class="ln">    93</span>		}
+<a id="L94"></a><span class="ln">    94</span>		exp += flt.bias
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// Pick off easy binary format.</span>
+<a id="L97"></a><span class="ln">    97</span>		if fmt == &#39;b&#39; {
+<a id="L98"></a><span class="ln">    98</span>			return fmtB(dst, neg, mant, exp, flt)
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>		<span class="comment">// Negative precision means &#34;only as much as needed to be exact.&#34;</span>
+<a id="L102"></a><span class="ln">   102</span>		shortest := prec &lt; 0
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>		d := new(decimal)
+<a id="L105"></a><span class="ln">   105</span>		if shortest {
+<a id="L106"></a><span class="ln">   106</span>			ok := false
+<a id="L107"></a><span class="ln">   107</span>			if optimize &amp;&amp; bitSize == 64 {
+<a id="L108"></a><span class="ln">   108</span>				<span class="comment">// Try Grisu3 algorithm.</span>
+<a id="L109"></a><span class="ln">   109</span>				f := new(extFloat)
+<a id="L110"></a><span class="ln">   110</span>				lower, upper := f.AssignComputeBounds(val)
+<a id="L111"></a><span class="ln">   111</span>				ok = f.ShortestDecimal(d, &amp;lower, &amp;upper)
+<a id="L112"></a><span class="ln">   112</span>			}
+<a id="L113"></a><span class="ln">   113</span>			if !ok {
+<a id="L114"></a><span class="ln">   114</span>				<span class="comment">// Create exact decimal representation.</span>
+<a id="L115"></a><span class="ln">   115</span>				<span class="comment">// The shift is exp - flt.mantbits because mant is a 1-bit integer</span>
+<a id="L116"></a><span class="ln">   116</span>				<span class="comment">// followed by a flt.mantbits fraction, and we are treating it as</span>
+<a id="L117"></a><span class="ln">   117</span>				<span class="comment">// a 1+flt.mantbits-bit integer.</span>
+<a id="L118"></a><span class="ln">   118</span>				d.Assign(mant)
+<a id="L119"></a><span class="ln">   119</span>				d.Shift(exp - int(flt.mantbits))
+<a id="L120"></a><span class="ln">   120</span>				roundShortest(d, mant, exp, flt)
+<a id="L121"></a><span class="ln">   121</span>			}
+<a id="L122"></a><span class="ln">   122</span>			<span class="comment">// Precision for shortest representation mode.</span>
+<a id="L123"></a><span class="ln">   123</span>			if prec &lt; 0 {
+<a id="L124"></a><span class="ln">   124</span>				switch fmt {
+<a id="L125"></a><span class="ln">   125</span>				case &#39;e&#39;, &#39;E&#39;:
+<a id="L126"></a><span class="ln">   126</span>					prec = d.nd - 1
+<a id="L127"></a><span class="ln">   127</span>				case &#39;f&#39;:
+<a id="L128"></a><span class="ln">   128</span>					prec = max(d.nd-d.dp, 0)
+<a id="L129"></a><span class="ln">   129</span>				case &#39;g&#39;, &#39;G&#39;:
+<a id="L130"></a><span class="ln">   130</span>					prec = d.nd
+<a id="L131"></a><span class="ln">   131</span>				}
+<a id="L132"></a><span class="ln">   132</span>			}
+<a id="L133"></a><span class="ln">   133</span>		} else {
+<a id="L134"></a><span class="ln">   134</span>			<span class="comment">// Create exact decimal representation.</span>
+<a id="L135"></a><span class="ln">   135</span>			d.Assign(mant)
+<a id="L136"></a><span class="ln">   136</span>			d.Shift(exp - int(flt.mantbits))
+<a id="L137"></a><span class="ln">   137</span>			<span class="comment">// Round appropriately.</span>
+<a id="L138"></a><span class="ln">   138</span>			switch fmt {
+<a id="L139"></a><span class="ln">   139</span>			case &#39;e&#39;, &#39;E&#39;:
+<a id="L140"></a><span class="ln">   140</span>				d.Round(prec + 1)
+<a id="L141"></a><span class="ln">   141</span>			case &#39;f&#39;:
+<a id="L142"></a><span class="ln">   142</span>				d.Round(d.dp + prec)
+<a id="L143"></a><span class="ln">   143</span>			case &#39;g&#39;, &#39;G&#39;:
+<a id="L144"></a><span class="ln">   144</span>				if prec == 0 {
+<a id="L145"></a><span class="ln">   145</span>					prec = 1
+<a id="L146"></a><span class="ln">   146</span>				}
+<a id="L147"></a><span class="ln">   147</span>				d.Round(prec)
+<a id="L148"></a><span class="ln">   148</span>			}
+<a id="L149"></a><span class="ln">   149</span>		}
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>		switch fmt {
+<a id="L152"></a><span class="ln">   152</span>		case &#39;e&#39;, &#39;E&#39;:
+<a id="L153"></a><span class="ln">   153</span>			return fmtE(dst, neg, d, prec, fmt)
+<a id="L154"></a><span class="ln">   154</span>		case &#39;f&#39;:
+<a id="L155"></a><span class="ln">   155</span>			return fmtF(dst, neg, d, prec)
+<a id="L156"></a><span class="ln">   156</span>		case &#39;g&#39;, &#39;G&#39;:
+<a id="L157"></a><span class="ln">   157</span>			<span class="comment">// trailing fractional zeros in &#39;e&#39; form will be trimmed.</span>
+<a id="L158"></a><span class="ln">   158</span>			eprec := prec
+<a id="L159"></a><span class="ln">   159</span>			if eprec &gt; d.nd &amp;&amp; d.nd &gt;= d.dp {
+<a id="L160"></a><span class="ln">   160</span>				eprec = d.nd
+<a id="L161"></a><span class="ln">   161</span>			}
+<a id="L162"></a><span class="ln">   162</span>			<span class="comment">// %e is used if the exponent from the conversion</span>
+<a id="L163"></a><span class="ln">   163</span>			<span class="comment">// is less than -4 or greater than or equal to the precision.</span>
+<a id="L164"></a><span class="ln">   164</span>			<span class="comment">// if precision was the shortest possible, use precision 6 for this decision.</span>
+<a id="L165"></a><span class="ln">   165</span>			if shortest {
+<a id="L166"></a><span class="ln">   166</span>				eprec = 6
+<a id="L167"></a><span class="ln">   167</span>			}
+<a id="L168"></a><span class="ln">   168</span>			exp := d.dp - 1
+<a id="L169"></a><span class="ln">   169</span>			if exp &lt; -4 || exp &gt;= eprec {
+<a id="L170"></a><span class="ln">   170</span>				if prec &gt; d.nd {
+<a id="L171"></a><span class="ln">   171</span>					prec = d.nd
+<a id="L172"></a><span class="ln">   172</span>				}
+<a id="L173"></a><span class="ln">   173</span>				return fmtE(dst, neg, d, prec-1, fmt+&#39;e&#39;-&#39;g&#39;)
+<a id="L174"></a><span class="ln">   174</span>			}
+<a id="L175"></a><span class="ln">   175</span>			if prec &gt; d.dp {
+<a id="L176"></a><span class="ln">   176</span>				prec = d.nd
+<a id="L177"></a><span class="ln">   177</span>			}
+<a id="L178"></a><span class="ln">   178</span>			return fmtF(dst, neg, d, max(prec-d.dp, 0))
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>		<span class="comment">// unknown format</span>
+<a id="L182"></a><span class="ln">   182</span>		return append(dst, &#39;%&#39;, fmt)
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	<span class="comment">// Round d (= mant * 2^exp) to the shortest number of digits</span>
+<a id="L186"></a><span class="ln">   186</span>	<span class="comment">// that will let the original floating point value be precisely</span>
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// reconstructed.  Size is original floating point size (64 or 32).</span>
+<a id="L188"></a><span class="ln">   188</span>	func roundShortest(d *decimal, mant uint64, exp int, flt *floatInfo) {
+<a id="L189"></a><span class="ln">   189</span>		<span class="comment">// If mantissa is zero, the number is zero; stop now.</span>
+<a id="L190"></a><span class="ln">   190</span>		if mant == 0 {
+<a id="L191"></a><span class="ln">   191</span>			d.nd = 0
+<a id="L192"></a><span class="ln">   192</span>			return
+<a id="L193"></a><span class="ln">   193</span>		}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// Compute upper and lower such that any decimal number</span>
+<a id="L196"></a><span class="ln">   196</span>		<span class="comment">// between upper and lower (possibly inclusive)</span>
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// will round to the original floating point number.</span>
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>		<span class="comment">// We may see at once that the number is already shortest.</span>
+<a id="L200"></a><span class="ln">   200</span>		<span class="comment">//</span>
+<a id="L201"></a><span class="ln">   201</span>		<span class="comment">// Suppose d is not denormal, so that 2^exp &lt;= d &lt; 10^dp.</span>
+<a id="L202"></a><span class="ln">   202</span>		<span class="comment">// The closest shorter number is at least 10^(dp-nd) away.</span>
+<a id="L203"></a><span class="ln">   203</span>		<span class="comment">// The lower/upper bounds computed below are at distance</span>
+<a id="L204"></a><span class="ln">   204</span>		<span class="comment">// at most 2^(exp-mantbits).</span>
+<a id="L205"></a><span class="ln">   205</span>		<span class="comment">//</span>
+<a id="L206"></a><span class="ln">   206</span>		<span class="comment">// So the number is already shortest if 10^(dp-nd) &gt; 2^(exp-mantbits),</span>
+<a id="L207"></a><span class="ln">   207</span>		<span class="comment">// or equivalently log2(10)*(dp-nd) &gt; exp-mantbits.</span>
+<a id="L208"></a><span class="ln">   208</span>		<span class="comment">// It is true if 332/100*(dp-nd) &gt;= exp-mantbits (log2(10) &gt; 3.32).</span>
+<a id="L209"></a><span class="ln">   209</span>		minexp := flt.bias + 1 <span class="comment">// minimum possible exponent</span>
+<a id="L210"></a><span class="ln">   210</span>		if exp &gt; minexp &amp;&amp; 332*(d.dp-d.nd) &gt;= 100*(exp-int(flt.mantbits)) {
+<a id="L211"></a><span class="ln">   211</span>			<span class="comment">// The number is already shortest.</span>
+<a id="L212"></a><span class="ln">   212</span>			return
+<a id="L213"></a><span class="ln">   213</span>		}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>		<span class="comment">// d = mant &lt;&lt; (exp - mantbits)</span>
+<a id="L216"></a><span class="ln">   216</span>		<span class="comment">// Next highest floating point number is mant+1 &lt;&lt; exp-mantbits.</span>
+<a id="L217"></a><span class="ln">   217</span>		<span class="comment">// Our upper bound is halfway inbetween, mant*2+1 &lt;&lt; exp-mantbits-1.</span>
+<a id="L218"></a><span class="ln">   218</span>		upper := new(decimal)
+<a id="L219"></a><span class="ln">   219</span>		upper.Assign(mant*2 + 1)
+<a id="L220"></a><span class="ln">   220</span>		upper.Shift(exp - int(flt.mantbits) - 1)
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>		<span class="comment">// d = mant &lt;&lt; (exp - mantbits)</span>
+<a id="L223"></a><span class="ln">   223</span>		<span class="comment">// Next lowest floating point number is mant-1 &lt;&lt; exp-mantbits,</span>
+<a id="L224"></a><span class="ln">   224</span>		<span class="comment">// unless mant-1 drops the significant bit and exp is not the minimum exp,</span>
+<a id="L225"></a><span class="ln">   225</span>		<span class="comment">// in which case the next lowest is mant*2-1 &lt;&lt; exp-mantbits-1.</span>
+<a id="L226"></a><span class="ln">   226</span>		<span class="comment">// Either way, call it mantlo &lt;&lt; explo-mantbits.</span>
+<a id="L227"></a><span class="ln">   227</span>		<span class="comment">// Our lower bound is halfway inbetween, mantlo*2+1 &lt;&lt; explo-mantbits-1.</span>
+<a id="L228"></a><span class="ln">   228</span>		var mantlo uint64
+<a id="L229"></a><span class="ln">   229</span>		var explo int
+<a id="L230"></a><span class="ln">   230</span>		if mant &gt; 1&lt;&lt;flt.mantbits || exp == minexp {
+<a id="L231"></a><span class="ln">   231</span>			mantlo = mant - 1
+<a id="L232"></a><span class="ln">   232</span>			explo = exp
+<a id="L233"></a><span class="ln">   233</span>		} else {
+<a id="L234"></a><span class="ln">   234</span>			mantlo = mant*2 - 1
+<a id="L235"></a><span class="ln">   235</span>			explo = exp - 1
+<a id="L236"></a><span class="ln">   236</span>		}
+<a id="L237"></a><span class="ln">   237</span>		lower := new(decimal)
+<a id="L238"></a><span class="ln">   238</span>		lower.Assign(mantlo*2 + 1)
+<a id="L239"></a><span class="ln">   239</span>		lower.Shift(explo - int(flt.mantbits) - 1)
+<a id="L240"></a><span class="ln">   240</span>	
+<a id="L241"></a><span class="ln">   241</span>		<span class="comment">// The upper and lower bounds are possible outputs only if</span>
+<a id="L242"></a><span class="ln">   242</span>		<span class="comment">// the original mantissa is even, so that IEEE round-to-even</span>
+<a id="L243"></a><span class="ln">   243</span>		<span class="comment">// would round to the original mantissa and not the neighbors.</span>
+<a id="L244"></a><span class="ln">   244</span>		inclusive := mant%2 == 0
+<a id="L245"></a><span class="ln">   245</span>	
+<a id="L246"></a><span class="ln">   246</span>		<span class="comment">// Now we can figure out the minimum number of digits required.</span>
+<a id="L247"></a><span class="ln">   247</span>		<span class="comment">// Walk along until d has distinguished itself from upper and lower.</span>
+<a id="L248"></a><span class="ln">   248</span>		for i := 0; i &lt; d.nd; i++ {
+<a id="L249"></a><span class="ln">   249</span>			var l, m, u byte <span class="comment">// lower, middle, upper digits</span>
+<a id="L250"></a><span class="ln">   250</span>			if i &lt; lower.nd {
+<a id="L251"></a><span class="ln">   251</span>				l = lower.d[i]
+<a id="L252"></a><span class="ln">   252</span>			} else {
+<a id="L253"></a><span class="ln">   253</span>				l = &#39;0&#39;
+<a id="L254"></a><span class="ln">   254</span>			}
+<a id="L255"></a><span class="ln">   255</span>			m = d.d[i]
+<a id="L256"></a><span class="ln">   256</span>			if i &lt; upper.nd {
+<a id="L257"></a><span class="ln">   257</span>				u = upper.d[i]
+<a id="L258"></a><span class="ln">   258</span>			} else {
+<a id="L259"></a><span class="ln">   259</span>				u = &#39;0&#39;
+<a id="L260"></a><span class="ln">   260</span>			}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>			<span class="comment">// Okay to round down (truncate) if lower has a different digit</span>
+<a id="L263"></a><span class="ln">   263</span>			<span class="comment">// or if lower is inclusive and is exactly the result of rounding down.</span>
+<a id="L264"></a><span class="ln">   264</span>			okdown := l != m || (inclusive &amp;&amp; l == m &amp;&amp; i+1 == lower.nd)
+<a id="L265"></a><span class="ln">   265</span>	
+<a id="L266"></a><span class="ln">   266</span>			<span class="comment">// Okay to round up if upper has a different digit and</span>
+<a id="L267"></a><span class="ln">   267</span>			<span class="comment">// either upper is inclusive or upper is bigger than the result of rounding up.</span>
+<a id="L268"></a><span class="ln">   268</span>			okup := m != u &amp;&amp; (inclusive || m+1 &lt; u || i+1 &lt; upper.nd)
+<a id="L269"></a><span class="ln">   269</span>	
+<a id="L270"></a><span class="ln">   270</span>			<span class="comment">// If it&#39;s okay to do either, then round to the nearest one.</span>
+<a id="L271"></a><span class="ln">   271</span>			<span class="comment">// If it&#39;s okay to do only one, do it.</span>
+<a id="L272"></a><span class="ln">   272</span>			switch {
+<a id="L273"></a><span class="ln">   273</span>			case okdown &amp;&amp; okup:
+<a id="L274"></a><span class="ln">   274</span>				d.Round(i + 1)
+<a id="L275"></a><span class="ln">   275</span>				return
+<a id="L276"></a><span class="ln">   276</span>			case okdown:
+<a id="L277"></a><span class="ln">   277</span>				d.RoundDown(i + 1)
+<a id="L278"></a><span class="ln">   278</span>				return
+<a id="L279"></a><span class="ln">   279</span>			case okup:
+<a id="L280"></a><span class="ln">   280</span>				d.RoundUp(i + 1)
+<a id="L281"></a><span class="ln">   281</span>				return
+<a id="L282"></a><span class="ln">   282</span>			}
+<a id="L283"></a><span class="ln">   283</span>		}
+<a id="L284"></a><span class="ln">   284</span>	}
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>	<span class="comment">// %e: -d.ddddde±dd</span>
+<a id="L287"></a><span class="ln">   287</span>	func fmtE(dst []byte, neg bool, d *decimal, prec int, fmt byte) []byte {
+<a id="L288"></a><span class="ln">   288</span>		<span class="comment">// sign</span>
+<a id="L289"></a><span class="ln">   289</span>		if neg {
+<a id="L290"></a><span class="ln">   290</span>			dst = append(dst, &#39;-&#39;)
+<a id="L291"></a><span class="ln">   291</span>		}
+<a id="L292"></a><span class="ln">   292</span>	
+<a id="L293"></a><span class="ln">   293</span>		<span class="comment">// first digit</span>
+<a id="L294"></a><span class="ln">   294</span>		ch := byte(&#39;0&#39;)
+<a id="L295"></a><span class="ln">   295</span>		if d.nd != 0 {
+<a id="L296"></a><span class="ln">   296</span>			ch = d.d[0]
+<a id="L297"></a><span class="ln">   297</span>		}
+<a id="L298"></a><span class="ln">   298</span>		dst = append(dst, ch)
+<a id="L299"></a><span class="ln">   299</span>	
+<a id="L300"></a><span class="ln">   300</span>		<span class="comment">// .moredigits</span>
+<a id="L301"></a><span class="ln">   301</span>		if prec &gt; 0 {
+<a id="L302"></a><span class="ln">   302</span>			dst = append(dst, &#39;.&#39;)
+<a id="L303"></a><span class="ln">   303</span>			for i := 1; i &lt;= prec; i++ {
+<a id="L304"></a><span class="ln">   304</span>				ch = &#39;0&#39;
+<a id="L305"></a><span class="ln">   305</span>				if i &lt; d.nd {
+<a id="L306"></a><span class="ln">   306</span>					ch = d.d[i]
+<a id="L307"></a><span class="ln">   307</span>				}
+<a id="L308"></a><span class="ln">   308</span>				dst = append(dst, ch)
+<a id="L309"></a><span class="ln">   309</span>			}
+<a id="L310"></a><span class="ln">   310</span>		}
+<a id="L311"></a><span class="ln">   311</span>	
+<a id="L312"></a><span class="ln">   312</span>		<span class="comment">// e±</span>
+<a id="L313"></a><span class="ln">   313</span>		dst = append(dst, fmt)
+<a id="L314"></a><span class="ln">   314</span>		exp := d.dp - 1
+<a id="L315"></a><span class="ln">   315</span>		if d.nd == 0 { <span class="comment">// special case: 0 has exponent 0</span>
+<a id="L316"></a><span class="ln">   316</span>			exp = 0
+<a id="L317"></a><span class="ln">   317</span>		}
+<a id="L318"></a><span class="ln">   318</span>		if exp &lt; 0 {
+<a id="L319"></a><span class="ln">   319</span>			ch = &#39;-&#39;
+<a id="L320"></a><span class="ln">   320</span>			exp = -exp
+<a id="L321"></a><span class="ln">   321</span>		} else {
+<a id="L322"></a><span class="ln">   322</span>			ch = &#39;+&#39;
+<a id="L323"></a><span class="ln">   323</span>		}
+<a id="L324"></a><span class="ln">   324</span>		dst = append(dst, ch)
+<a id="L325"></a><span class="ln">   325</span>	
+<a id="L326"></a><span class="ln">   326</span>		<span class="comment">// dddd</span>
+<a id="L327"></a><span class="ln">   327</span>		var buf [3]byte
+<a id="L328"></a><span class="ln">   328</span>		i := len(buf)
+<a id="L329"></a><span class="ln">   329</span>		for exp &gt;= 10 {
+<a id="L330"></a><span class="ln">   330</span>			i--
+<a id="L331"></a><span class="ln">   331</span>			buf[i] = byte(exp%10 + &#39;0&#39;)
+<a id="L332"></a><span class="ln">   332</span>			exp /= 10
+<a id="L333"></a><span class="ln">   333</span>		}
+<a id="L334"></a><span class="ln">   334</span>		<span class="comment">// exp &lt; 10</span>
+<a id="L335"></a><span class="ln">   335</span>		i--
+<a id="L336"></a><span class="ln">   336</span>		buf[i] = byte(exp + &#39;0&#39;)
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>		<span class="comment">// leading zeroes</span>
+<a id="L339"></a><span class="ln">   339</span>		if i &gt; len(buf)-2 {
+<a id="L340"></a><span class="ln">   340</span>			i--
+<a id="L341"></a><span class="ln">   341</span>			buf[i] = &#39;0&#39;
+<a id="L342"></a><span class="ln">   342</span>		}
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>		return append(dst, buf[i:]...)
+<a id="L345"></a><span class="ln">   345</span>	}
+<a id="L346"></a><span class="ln">   346</span>	
+<a id="L347"></a><span class="ln">   347</span>	<span class="comment">// %f: -ddddddd.ddddd</span>
+<a id="L348"></a><span class="ln">   348</span>	func fmtF(dst []byte, neg bool, d *decimal, prec int) []byte {
+<a id="L349"></a><span class="ln">   349</span>		<span class="comment">// sign</span>
+<a id="L350"></a><span class="ln">   350</span>		if neg {
+<a id="L351"></a><span class="ln">   351</span>			dst = append(dst, &#39;-&#39;)
+<a id="L352"></a><span class="ln">   352</span>		}
+<a id="L353"></a><span class="ln">   353</span>	
+<a id="L354"></a><span class="ln">   354</span>		<span class="comment">// integer, padded with zeros as needed.</span>
+<a id="L355"></a><span class="ln">   355</span>		if d.dp &gt; 0 {
+<a id="L356"></a><span class="ln">   356</span>			var i int
+<a id="L357"></a><span class="ln">   357</span>			for i = 0; i &lt; d.dp &amp;&amp; i &lt; d.nd; i++ {
+<a id="L358"></a><span class="ln">   358</span>				dst = append(dst, d.d[i])
+<a id="L359"></a><span class="ln">   359</span>			}
+<a id="L360"></a><span class="ln">   360</span>			for ; i &lt; d.dp; i++ {
+<a id="L361"></a><span class="ln">   361</span>				dst = append(dst, &#39;0&#39;)
+<a id="L362"></a><span class="ln">   362</span>			}
+<a id="L363"></a><span class="ln">   363</span>		} else {
+<a id="L364"></a><span class="ln">   364</span>			dst = append(dst, &#39;0&#39;)
+<a id="L365"></a><span class="ln">   365</span>		}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>		<span class="comment">// fraction</span>
+<a id="L368"></a><span class="ln">   368</span>		if prec &gt; 0 {
+<a id="L369"></a><span class="ln">   369</span>			dst = append(dst, &#39;.&#39;)
+<a id="L370"></a><span class="ln">   370</span>			for i := 0; i &lt; prec; i++ {
+<a id="L371"></a><span class="ln">   371</span>				ch := byte(&#39;0&#39;)
+<a id="L372"></a><span class="ln">   372</span>				if j := d.dp + i; 0 &lt;= j &amp;&amp; j &lt; d.nd {
+<a id="L373"></a><span class="ln">   373</span>					ch = d.d[j]
+<a id="L374"></a><span class="ln">   374</span>				}
+<a id="L375"></a><span class="ln">   375</span>				dst = append(dst, ch)
+<a id="L376"></a><span class="ln">   376</span>			}
+<a id="L377"></a><span class="ln">   377</span>		}
+<a id="L378"></a><span class="ln">   378</span>	
+<a id="L379"></a><span class="ln">   379</span>		return dst
+<a id="L380"></a><span class="ln">   380</span>	}
+<a id="L381"></a><span class="ln">   381</span>	
+<a id="L382"></a><span class="ln">   382</span>	<span class="comment">// %b: -ddddddddp+ddd</span>
+<a id="L383"></a><span class="ln">   383</span>	func fmtB(dst []byte, neg bool, mant uint64, exp int, flt *floatInfo) []byte {
+<a id="L384"></a><span class="ln">   384</span>		var buf [50]byte
+<a id="L385"></a><span class="ln">   385</span>		w := len(buf)
+<a id="L386"></a><span class="ln">   386</span>		exp -= int(flt.mantbits)
+<a id="L387"></a><span class="ln">   387</span>		esign := byte(&#39;+&#39;)
+<a id="L388"></a><span class="ln">   388</span>		if exp &lt; 0 {
+<a id="L389"></a><span class="ln">   389</span>			esign = &#39;-&#39;
+<a id="L390"></a><span class="ln">   390</span>			exp = -exp
+<a id="L391"></a><span class="ln">   391</span>		}
+<a id="L392"></a><span class="ln">   392</span>		n := 0
+<a id="L393"></a><span class="ln">   393</span>		for exp &gt; 0 || n &lt; 1 {
+<a id="L394"></a><span class="ln">   394</span>			n++
+<a id="L395"></a><span class="ln">   395</span>			w--
+<a id="L396"></a><span class="ln">   396</span>			buf[w] = byte(exp%10 + &#39;0&#39;)
+<a id="L397"></a><span class="ln">   397</span>			exp /= 10
+<a id="L398"></a><span class="ln">   398</span>		}
+<a id="L399"></a><span class="ln">   399</span>		w--
+<a id="L400"></a><span class="ln">   400</span>		buf[w] = esign
+<a id="L401"></a><span class="ln">   401</span>		w--
+<a id="L402"></a><span class="ln">   402</span>		buf[w] = &#39;p&#39;
+<a id="L403"></a><span class="ln">   403</span>		n = 0
+<a id="L404"></a><span class="ln">   404</span>		for mant &gt; 0 || n &lt; 1 {
+<a id="L405"></a><span class="ln">   405</span>			n++
+<a id="L406"></a><span class="ln">   406</span>			w--
+<a id="L407"></a><span class="ln">   407</span>			buf[w] = byte(mant%10 + &#39;0&#39;)
+<a id="L408"></a><span class="ln">   408</span>			mant /= 10
+<a id="L409"></a><span class="ln">   409</span>		}
+<a id="L410"></a><span class="ln">   410</span>		if neg {
+<a id="L411"></a><span class="ln">   411</span>			w--
+<a id="L412"></a><span class="ln">   412</span>			buf[w] = &#39;-&#39;
+<a id="L413"></a><span class="ln">   413</span>		}
+<a id="L414"></a><span class="ln">   414</span>		return append(dst, buf[w:]...)
+<a id="L415"></a><span class="ln">   415</span>	}
+<a id="L416"></a><span class="ln">   416</span>	
+<a id="L417"></a><span class="ln">   417</span>	func max(a, b int) int {
+<a id="L418"></a><span class="ln">   418</span>		if a &gt; b {
+<a id="L419"></a><span class="ln">   419</span>			return a
+<a id="L420"></a><span class="ln">   420</span>		}
+<a id="L421"></a><span class="ln">   421</span>		return b
+<a id="L422"></a><span class="ln">   422</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

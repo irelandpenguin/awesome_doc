@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/rpc/jsonrpc/client.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/rpc/jsonrpc/client.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package jsonrpc implements a JSON-RPC ClientCodec and ServerCodec</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// for the rpc package.</span>
+<a id="L7"></a><span class="ln">     7</span>	package jsonrpc
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;encoding/json&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;net&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;net/rpc&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;sync&#34;
+<a id="L16"></a><span class="ln">    16</span>	)
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	type clientCodec struct {
+<a id="L19"></a><span class="ln">    19</span>		dec *json.Decoder <span class="comment">// for reading JSON values</span>
+<a id="L20"></a><span class="ln">    20</span>		enc *json.Encoder <span class="comment">// for writing JSON values</span>
+<a id="L21"></a><span class="ln">    21</span>		c   io.Closer
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// temporary work space</span>
+<a id="L24"></a><span class="ln">    24</span>		req  clientRequest
+<a id="L25"></a><span class="ln">    25</span>		resp clientResponse
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// JSON-RPC responses include the request id but not the request method.</span>
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// Package rpc expects both.</span>
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// We save the request method in pending when sending a request</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// and then look it up by request ID when filling out the rpc Response.</span>
+<a id="L31"></a><span class="ln">    31</span>		mutex   sync.Mutex        <span class="comment">// protects pending</span>
+<a id="L32"></a><span class="ln">    32</span>		pending map[uint64]string <span class="comment">// map request id to method name</span>
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// NewClientCodec returns a new rpc.ClientCodec using JSON-RPC on conn.</span>
+<a id="L36"></a><span class="ln">    36</span>	func NewClientCodec(conn io.ReadWriteCloser) rpc.ClientCodec {
+<a id="L37"></a><span class="ln">    37</span>		return &amp;clientCodec{
+<a id="L38"></a><span class="ln">    38</span>			dec:     json.NewDecoder(conn),
+<a id="L39"></a><span class="ln">    39</span>			enc:     json.NewEncoder(conn),
+<a id="L40"></a><span class="ln">    40</span>			c:       conn,
+<a id="L41"></a><span class="ln">    41</span>			pending: make(map[uint64]string),
+<a id="L42"></a><span class="ln">    42</span>		}
+<a id="L43"></a><span class="ln">    43</span>	}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	type clientRequest struct {
+<a id="L46"></a><span class="ln">    46</span>		Method string         `json:&#34;method&#34;`
+<a id="L47"></a><span class="ln">    47</span>		Params [1]interface{} `json:&#34;params&#34;`
+<a id="L48"></a><span class="ln">    48</span>		Id     uint64         `json:&#34;id&#34;`
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
+<a id="L52"></a><span class="ln">    52</span>		c.mutex.Lock()
+<a id="L53"></a><span class="ln">    53</span>		c.pending[r.Seq] = r.ServiceMethod
+<a id="L54"></a><span class="ln">    54</span>		c.mutex.Unlock()
+<a id="L55"></a><span class="ln">    55</span>		c.req.Method = r.ServiceMethod
+<a id="L56"></a><span class="ln">    56</span>		c.req.Params[0] = param
+<a id="L57"></a><span class="ln">    57</span>		c.req.Id = r.Seq
+<a id="L58"></a><span class="ln">    58</span>		return c.enc.Encode(&amp;c.req)
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	type clientResponse struct {
+<a id="L62"></a><span class="ln">    62</span>		Id     uint64           `json:&#34;id&#34;`
+<a id="L63"></a><span class="ln">    63</span>		Result *json.RawMessage `json:&#34;result&#34;`
+<a id="L64"></a><span class="ln">    64</span>		Error  interface{}      `json:&#34;error&#34;`
+<a id="L65"></a><span class="ln">    65</span>	}
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	func (r *clientResponse) reset() {
+<a id="L68"></a><span class="ln">    68</span>		r.Id = 0
+<a id="L69"></a><span class="ln">    69</span>		r.Result = nil
+<a id="L70"></a><span class="ln">    70</span>		r.Error = nil
+<a id="L71"></a><span class="ln">    71</span>	}
+<a id="L72"></a><span class="ln">    72</span>	
+<a id="L73"></a><span class="ln">    73</span>	func (c *clientCodec) ReadResponseHeader(r *rpc.Response) error {
+<a id="L74"></a><span class="ln">    74</span>		c.resp.reset()
+<a id="L75"></a><span class="ln">    75</span>		if err := c.dec.Decode(&amp;c.resp); err != nil {
+<a id="L76"></a><span class="ln">    76</span>			return err
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>		c.mutex.Lock()
+<a id="L80"></a><span class="ln">    80</span>		r.ServiceMethod = c.pending[c.resp.Id]
+<a id="L81"></a><span class="ln">    81</span>		delete(c.pending, c.resp.Id)
+<a id="L82"></a><span class="ln">    82</span>		c.mutex.Unlock()
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>		r.Error = &#34;&#34;
+<a id="L85"></a><span class="ln">    85</span>		r.Seq = c.resp.Id
+<a id="L86"></a><span class="ln">    86</span>		if c.resp.Error != nil {
+<a id="L87"></a><span class="ln">    87</span>			x, ok := c.resp.Error.(string)
+<a id="L88"></a><span class="ln">    88</span>			if !ok {
+<a id="L89"></a><span class="ln">    89</span>				return fmt.Errorf(&#34;invalid error %v&#34;, c.resp.Error)
+<a id="L90"></a><span class="ln">    90</span>			}
+<a id="L91"></a><span class="ln">    91</span>			if x == &#34;&#34; {
+<a id="L92"></a><span class="ln">    92</span>				x = &#34;unspecified error&#34;
+<a id="L93"></a><span class="ln">    93</span>			}
+<a id="L94"></a><span class="ln">    94</span>			r.Error = x
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>		return nil
+<a id="L97"></a><span class="ln">    97</span>	}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	func (c *clientCodec) ReadResponseBody(x interface{}) error {
+<a id="L100"></a><span class="ln">   100</span>		if x == nil {
+<a id="L101"></a><span class="ln">   101</span>			return nil
+<a id="L102"></a><span class="ln">   102</span>		}
+<a id="L103"></a><span class="ln">   103</span>		return json.Unmarshal(*c.resp.Result, x)
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	func (c *clientCodec) Close() error {
+<a id="L107"></a><span class="ln">   107</span>		return c.c.Close()
+<a id="L108"></a><span class="ln">   108</span>	}
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// NewClient returns a new rpc.Client to handle requests to the</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// set of services at the other end of the connection.</span>
+<a id="L112"></a><span class="ln">   112</span>	func NewClient(conn io.ReadWriteCloser) *rpc.Client {
+<a id="L113"></a><span class="ln">   113</span>		return rpc.NewClientWithCodec(NewClientCodec(conn))
+<a id="L114"></a><span class="ln">   114</span>	}
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// Dial connects to a JSON-RPC server at the specified network address.</span>
+<a id="L117"></a><span class="ln">   117</span>	func Dial(network, address string) (*rpc.Client, error) {
+<a id="L118"></a><span class="ln">   118</span>		conn, err := net.Dial(network, address)
+<a id="L119"></a><span class="ln">   119</span>		if err != nil {
+<a id="L120"></a><span class="ln">   120</span>			return nil, err
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		return NewClient(conn), err
+<a id="L123"></a><span class="ln">   123</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

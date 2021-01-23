@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/fd.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/fd.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package net
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;io&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;os&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;sync&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;syscall&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;time&#34;
+<a id="L16"></a><span class="ln">    16</span>	)
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// Network file descriptor.</span>
+<a id="L19"></a><span class="ln">    19</span>	type netFD struct {
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// locking/lifetime of sysfd</span>
+<a id="L21"></a><span class="ln">    21</span>		sysmu  sync.Mutex
+<a id="L22"></a><span class="ln">    22</span>		sysref int
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>		<span class="comment">// must lock both sysmu and pollserver to write</span>
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// can lock either to read</span>
+<a id="L26"></a><span class="ln">    26</span>		closing bool
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// immutable until Close</span>
+<a id="L29"></a><span class="ln">    29</span>		sysfd       int
+<a id="L30"></a><span class="ln">    30</span>		family      int
+<a id="L31"></a><span class="ln">    31</span>		sotype      int
+<a id="L32"></a><span class="ln">    32</span>		isConnected bool
+<a id="L33"></a><span class="ln">    33</span>		sysfile     *os.File
+<a id="L34"></a><span class="ln">    34</span>		cr          chan error
+<a id="L35"></a><span class="ln">    35</span>		cw          chan error
+<a id="L36"></a><span class="ln">    36</span>		net         string
+<a id="L37"></a><span class="ln">    37</span>		laddr       Addr
+<a id="L38"></a><span class="ln">    38</span>		raddr       Addr
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// owned by client</span>
+<a id="L41"></a><span class="ln">    41</span>		rdeadline int64
+<a id="L42"></a><span class="ln">    42</span>		rio       sync.Mutex
+<a id="L43"></a><span class="ln">    43</span>		wdeadline int64
+<a id="L44"></a><span class="ln">    44</span>		wio       sync.Mutex
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// owned by fd wait server</span>
+<a id="L47"></a><span class="ln">    47</span>		ncr, ncw int
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// A pollServer helps FDs determine when to retry a non-blocking</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// read or write after they get EAGAIN.  When an FD needs to wait,</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// send the fd on s.cr (for a read) or s.cw (for a write) to pass the</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// request to the poll server.  Then receive on fd.cr/fd.cw.</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// When the pollServer finds that i/o on FD should be possible</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// again, it will send fd on fd.cr/fd.cw to wake any waiting processes.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// This protocol is implemented as s.WaitRead() and s.WaitWrite().</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// There is one subtlety: when sending on s.cr/s.cw, the</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// poll server is probably in a system call, waiting for an fd</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// to become ready.  It&#39;s not looking at the request channels.</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// To resolve this, the poll server waits not just on the FDs it has</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// been given but also its own pipe.  After sending on the</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// buffered channel s.cr/s.cw, WaitRead/WaitWrite writes a</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// byte to the pipe, causing the pollServer&#39;s poll system call to</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// return.  In response to the pipe being readable, the pollServer</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// re-polls its request channels.</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">//</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// Note that the ordering is &#34;send request&#34; and then &#34;wake up server&#34;.</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// If the operations were reversed, there would be a race: the poll</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// server might wake up and look at the request channel, see that it</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// was empty, and go back to sleep, all before the requester managed</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// to send the request.  Because the send must complete before the wakeup,</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// the request channel must be buffered.  A buffer of size 1 is sufficient</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// for any request load.  If many processes are trying to submit requests,</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// one will succeed, the pollServer will read the request, and then the</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// channel will be empty for the next process&#39;s request.  A larger buffer</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// might help batch requests.</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">//</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// To avoid races in closing, all fd operations are locked and</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// refcounted. when netFD.Close() is called, it calls syscall.Shutdown</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// and sets a closing flag. Only when the last reference is removed</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// will the fd be closed.</span>
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	type pollServer struct {
+<a id="L85"></a><span class="ln">    85</span>		cr, cw     chan *netFD <span class="comment">// buffered &gt;= 1</span>
+<a id="L86"></a><span class="ln">    86</span>		pr, pw     *os.File
+<a id="L87"></a><span class="ln">    87</span>		poll       *pollster <span class="comment">// low-level OS hooks</span>
+<a id="L88"></a><span class="ln">    88</span>		sync.Mutex           <span class="comment">// controls pending and deadline</span>
+<a id="L89"></a><span class="ln">    89</span>		pending    map[int]*netFD
+<a id="L90"></a><span class="ln">    90</span>		deadline   int64 <span class="comment">// next deadline (nsec since 1970)</span>
+<a id="L91"></a><span class="ln">    91</span>	}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	func (s *pollServer) AddFD(fd *netFD, mode int) error {
+<a id="L94"></a><span class="ln">    94</span>		s.Lock()
+<a id="L95"></a><span class="ln">    95</span>		intfd := fd.sysfd
+<a id="L96"></a><span class="ln">    96</span>		if intfd &lt; 0 || fd.closing {
+<a id="L97"></a><span class="ln">    97</span>			<span class="comment">// fd closed underfoot</span>
+<a id="L98"></a><span class="ln">    98</span>			s.Unlock()
+<a id="L99"></a><span class="ln">    99</span>			return errClosing
+<a id="L100"></a><span class="ln">   100</span>		}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>		var t int64
+<a id="L103"></a><span class="ln">   103</span>		key := intfd &lt;&lt; 1
+<a id="L104"></a><span class="ln">   104</span>		if mode == &#39;r&#39; {
+<a id="L105"></a><span class="ln">   105</span>			fd.ncr++
+<a id="L106"></a><span class="ln">   106</span>			t = fd.rdeadline
+<a id="L107"></a><span class="ln">   107</span>		} else {
+<a id="L108"></a><span class="ln">   108</span>			fd.ncw++
+<a id="L109"></a><span class="ln">   109</span>			key++
+<a id="L110"></a><span class="ln">   110</span>			t = fd.wdeadline
+<a id="L111"></a><span class="ln">   111</span>		}
+<a id="L112"></a><span class="ln">   112</span>		s.pending[key] = fd
+<a id="L113"></a><span class="ln">   113</span>		doWakeup := false
+<a id="L114"></a><span class="ln">   114</span>		if t &gt; 0 &amp;&amp; (s.deadline == 0 || t &lt; s.deadline) {
+<a id="L115"></a><span class="ln">   115</span>			s.deadline = t
+<a id="L116"></a><span class="ln">   116</span>			doWakeup = true
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>		wake, err := s.poll.AddFD(intfd, mode, false)
+<a id="L120"></a><span class="ln">   120</span>		if err != nil {
+<a id="L121"></a><span class="ln">   121</span>			panic(&#34;pollServer AddFD &#34; + err.Error())
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>		if wake {
+<a id="L124"></a><span class="ln">   124</span>			doWakeup = true
+<a id="L125"></a><span class="ln">   125</span>		}
+<a id="L126"></a><span class="ln">   126</span>		s.Unlock()
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>		if doWakeup {
+<a id="L129"></a><span class="ln">   129</span>			s.Wakeup()
+<a id="L130"></a><span class="ln">   130</span>		}
+<a id="L131"></a><span class="ln">   131</span>		return nil
+<a id="L132"></a><span class="ln">   132</span>	}
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// Evict evicts fd from the pending list, unblocking</span>
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// any I/O running on fd.  The caller must have locked</span>
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// pollserver.</span>
+<a id="L137"></a><span class="ln">   137</span>	func (s *pollServer) Evict(fd *netFD) {
+<a id="L138"></a><span class="ln">   138</span>		if s.pending[fd.sysfd&lt;&lt;1] == fd {
+<a id="L139"></a><span class="ln">   139</span>			s.WakeFD(fd, &#39;r&#39;, errClosing)
+<a id="L140"></a><span class="ln">   140</span>			s.poll.DelFD(fd.sysfd, &#39;r&#39;)
+<a id="L141"></a><span class="ln">   141</span>			delete(s.pending, fd.sysfd&lt;&lt;1)
+<a id="L142"></a><span class="ln">   142</span>		}
+<a id="L143"></a><span class="ln">   143</span>		if s.pending[fd.sysfd&lt;&lt;1|1] == fd {
+<a id="L144"></a><span class="ln">   144</span>			s.WakeFD(fd, &#39;w&#39;, errClosing)
+<a id="L145"></a><span class="ln">   145</span>			s.poll.DelFD(fd.sysfd, &#39;w&#39;)
+<a id="L146"></a><span class="ln">   146</span>			delete(s.pending, fd.sysfd&lt;&lt;1|1)
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>	}
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>	var wakeupbuf [1]byte
+<a id="L151"></a><span class="ln">   151</span>	
+<a id="L152"></a><span class="ln">   152</span>	func (s *pollServer) Wakeup() { s.pw.Write(wakeupbuf[0:]) }
+<a id="L153"></a><span class="ln">   153</span>	
+<a id="L154"></a><span class="ln">   154</span>	func (s *pollServer) LookupFD(fd int, mode int) *netFD {
+<a id="L155"></a><span class="ln">   155</span>		key := fd &lt;&lt; 1
+<a id="L156"></a><span class="ln">   156</span>		if mode == &#39;w&#39; {
+<a id="L157"></a><span class="ln">   157</span>			key++
+<a id="L158"></a><span class="ln">   158</span>		}
+<a id="L159"></a><span class="ln">   159</span>		netfd, ok := s.pending[key]
+<a id="L160"></a><span class="ln">   160</span>		if !ok {
+<a id="L161"></a><span class="ln">   161</span>			return nil
+<a id="L162"></a><span class="ln">   162</span>		}
+<a id="L163"></a><span class="ln">   163</span>		delete(s.pending, key)
+<a id="L164"></a><span class="ln">   164</span>		return netfd
+<a id="L165"></a><span class="ln">   165</span>	}
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>	func (s *pollServer) WakeFD(fd *netFD, mode int, err error) {
+<a id="L168"></a><span class="ln">   168</span>		if mode == &#39;r&#39; {
+<a id="L169"></a><span class="ln">   169</span>			for fd.ncr &gt; 0 {
+<a id="L170"></a><span class="ln">   170</span>				fd.ncr--
+<a id="L171"></a><span class="ln">   171</span>				fd.cr &lt;- err
+<a id="L172"></a><span class="ln">   172</span>			}
+<a id="L173"></a><span class="ln">   173</span>		} else {
+<a id="L174"></a><span class="ln">   174</span>			for fd.ncw &gt; 0 {
+<a id="L175"></a><span class="ln">   175</span>				fd.ncw--
+<a id="L176"></a><span class="ln">   176</span>				fd.cw &lt;- err
+<a id="L177"></a><span class="ln">   177</span>			}
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>	}
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>	func (s *pollServer) Now() int64 {
+<a id="L182"></a><span class="ln">   182</span>		return time.Now().UnixNano()
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	func (s *pollServer) CheckDeadlines() {
+<a id="L186"></a><span class="ln">   186</span>		now := s.Now()
+<a id="L187"></a><span class="ln">   187</span>		<span class="comment">// TODO(rsc): This will need to be handled more efficiently,</span>
+<a id="L188"></a><span class="ln">   188</span>		<span class="comment">// probably with a heap indexed by wakeup time.</span>
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>		var next_deadline int64
+<a id="L191"></a><span class="ln">   191</span>		for key, fd := range s.pending {
+<a id="L192"></a><span class="ln">   192</span>			var t int64
+<a id="L193"></a><span class="ln">   193</span>			var mode int
+<a id="L194"></a><span class="ln">   194</span>			if key&amp;1 == 0 {
+<a id="L195"></a><span class="ln">   195</span>				mode = &#39;r&#39;
+<a id="L196"></a><span class="ln">   196</span>			} else {
+<a id="L197"></a><span class="ln">   197</span>				mode = &#39;w&#39;
+<a id="L198"></a><span class="ln">   198</span>			}
+<a id="L199"></a><span class="ln">   199</span>			if mode == &#39;r&#39; {
+<a id="L200"></a><span class="ln">   200</span>				t = fd.rdeadline
+<a id="L201"></a><span class="ln">   201</span>			} else {
+<a id="L202"></a><span class="ln">   202</span>				t = fd.wdeadline
+<a id="L203"></a><span class="ln">   203</span>			}
+<a id="L204"></a><span class="ln">   204</span>			if t &gt; 0 {
+<a id="L205"></a><span class="ln">   205</span>				if t &lt;= now {
+<a id="L206"></a><span class="ln">   206</span>					delete(s.pending, key)
+<a id="L207"></a><span class="ln">   207</span>					if mode == &#39;r&#39; {
+<a id="L208"></a><span class="ln">   208</span>						s.poll.DelFD(fd.sysfd, mode)
+<a id="L209"></a><span class="ln">   209</span>						fd.rdeadline = -1
+<a id="L210"></a><span class="ln">   210</span>					} else {
+<a id="L211"></a><span class="ln">   211</span>						s.poll.DelFD(fd.sysfd, mode)
+<a id="L212"></a><span class="ln">   212</span>						fd.wdeadline = -1
+<a id="L213"></a><span class="ln">   213</span>					}
+<a id="L214"></a><span class="ln">   214</span>					s.WakeFD(fd, mode, nil)
+<a id="L215"></a><span class="ln">   215</span>				} else if next_deadline == 0 || t &lt; next_deadline {
+<a id="L216"></a><span class="ln">   216</span>					next_deadline = t
+<a id="L217"></a><span class="ln">   217</span>				}
+<a id="L218"></a><span class="ln">   218</span>			}
+<a id="L219"></a><span class="ln">   219</span>		}
+<a id="L220"></a><span class="ln">   220</span>		s.deadline = next_deadline
+<a id="L221"></a><span class="ln">   221</span>	}
+<a id="L222"></a><span class="ln">   222</span>	
+<a id="L223"></a><span class="ln">   223</span>	func (s *pollServer) Run() {
+<a id="L224"></a><span class="ln">   224</span>		var scratch [100]byte
+<a id="L225"></a><span class="ln">   225</span>		s.Lock()
+<a id="L226"></a><span class="ln">   226</span>		defer s.Unlock()
+<a id="L227"></a><span class="ln">   227</span>		for {
+<a id="L228"></a><span class="ln">   228</span>			var t = s.deadline
+<a id="L229"></a><span class="ln">   229</span>			if t &gt; 0 {
+<a id="L230"></a><span class="ln">   230</span>				t = t - s.Now()
+<a id="L231"></a><span class="ln">   231</span>				if t &lt;= 0 {
+<a id="L232"></a><span class="ln">   232</span>					s.CheckDeadlines()
+<a id="L233"></a><span class="ln">   233</span>					continue
+<a id="L234"></a><span class="ln">   234</span>				}
+<a id="L235"></a><span class="ln">   235</span>			}
+<a id="L236"></a><span class="ln">   236</span>			fd, mode, err := s.poll.WaitFD(s, t)
+<a id="L237"></a><span class="ln">   237</span>			if err != nil {
+<a id="L238"></a><span class="ln">   238</span>				print(&#34;pollServer WaitFD: &#34;, err.Error(), &#34;\n&#34;)
+<a id="L239"></a><span class="ln">   239</span>				return
+<a id="L240"></a><span class="ln">   240</span>			}
+<a id="L241"></a><span class="ln">   241</span>			if fd &lt; 0 {
+<a id="L242"></a><span class="ln">   242</span>				<span class="comment">// Timeout happened.</span>
+<a id="L243"></a><span class="ln">   243</span>				s.CheckDeadlines()
+<a id="L244"></a><span class="ln">   244</span>				continue
+<a id="L245"></a><span class="ln">   245</span>			}
+<a id="L246"></a><span class="ln">   246</span>			if fd == int(s.pr.Fd()) {
+<a id="L247"></a><span class="ln">   247</span>				<span class="comment">// Drain our wakeup pipe (we could loop here,</span>
+<a id="L248"></a><span class="ln">   248</span>				<span class="comment">// but it&#39;s unlikely that there are more than</span>
+<a id="L249"></a><span class="ln">   249</span>				<span class="comment">// len(scratch) wakeup calls).</span>
+<a id="L250"></a><span class="ln">   250</span>				s.pr.Read(scratch[0:])
+<a id="L251"></a><span class="ln">   251</span>				s.CheckDeadlines()
+<a id="L252"></a><span class="ln">   252</span>			} else {
+<a id="L253"></a><span class="ln">   253</span>				netfd := s.LookupFD(fd, mode)
+<a id="L254"></a><span class="ln">   254</span>				if netfd == nil {
+<a id="L255"></a><span class="ln">   255</span>					<span class="comment">// This can happen because the WaitFD runs without</span>
+<a id="L256"></a><span class="ln">   256</span>					<span class="comment">// holding s&#39;s lock, so there might be a pending wakeup</span>
+<a id="L257"></a><span class="ln">   257</span>					<span class="comment">// for an fd that has been evicted.  No harm done.</span>
+<a id="L258"></a><span class="ln">   258</span>					continue
+<a id="L259"></a><span class="ln">   259</span>				}
+<a id="L260"></a><span class="ln">   260</span>				s.WakeFD(netfd, mode, nil)
+<a id="L261"></a><span class="ln">   261</span>			}
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	func (s *pollServer) WaitRead(fd *netFD) error {
+<a id="L266"></a><span class="ln">   266</span>		err := s.AddFD(fd, &#39;r&#39;)
+<a id="L267"></a><span class="ln">   267</span>		if err == nil {
+<a id="L268"></a><span class="ln">   268</span>			err = &lt;-fd.cr
+<a id="L269"></a><span class="ln">   269</span>		}
+<a id="L270"></a><span class="ln">   270</span>		return err
+<a id="L271"></a><span class="ln">   271</span>	}
+<a id="L272"></a><span class="ln">   272</span>	
+<a id="L273"></a><span class="ln">   273</span>	func (s *pollServer) WaitWrite(fd *netFD) error {
+<a id="L274"></a><span class="ln">   274</span>		err := s.AddFD(fd, &#39;w&#39;)
+<a id="L275"></a><span class="ln">   275</span>		if err == nil {
+<a id="L276"></a><span class="ln">   276</span>			err = &lt;-fd.cw
+<a id="L277"></a><span class="ln">   277</span>		}
+<a id="L278"></a><span class="ln">   278</span>		return err
+<a id="L279"></a><span class="ln">   279</span>	}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// Network FD methods.</span>
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// All the network FDs use a single pollServer.</span>
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>	var pollserver *pollServer
+<a id="L285"></a><span class="ln">   285</span>	var onceStartServer sync.Once
+<a id="L286"></a><span class="ln">   286</span>	
+<a id="L287"></a><span class="ln">   287</span>	func startServer() {
+<a id="L288"></a><span class="ln">   288</span>		p, err := newPollServer()
+<a id="L289"></a><span class="ln">   289</span>		if err != nil {
+<a id="L290"></a><span class="ln">   290</span>			print(&#34;Start pollServer: &#34;, err.Error(), &#34;\n&#34;)
+<a id="L291"></a><span class="ln">   291</span>		}
+<a id="L292"></a><span class="ln">   292</span>		pollserver = p
+<a id="L293"></a><span class="ln">   293</span>	}
+<a id="L294"></a><span class="ln">   294</span>	
+<a id="L295"></a><span class="ln">   295</span>	func newFD(fd, family, sotype int, net string) (*netFD, error) {
+<a id="L296"></a><span class="ln">   296</span>		onceStartServer.Do(startServer)
+<a id="L297"></a><span class="ln">   297</span>		if err := syscall.SetNonblock(fd, true); err != nil {
+<a id="L298"></a><span class="ln">   298</span>			return nil, err
+<a id="L299"></a><span class="ln">   299</span>		}
+<a id="L300"></a><span class="ln">   300</span>		netfd := &amp;netFD{
+<a id="L301"></a><span class="ln">   301</span>			sysfd:  fd,
+<a id="L302"></a><span class="ln">   302</span>			family: family,
+<a id="L303"></a><span class="ln">   303</span>			sotype: sotype,
+<a id="L304"></a><span class="ln">   304</span>			net:    net,
+<a id="L305"></a><span class="ln">   305</span>		}
+<a id="L306"></a><span class="ln">   306</span>		netfd.cr = make(chan error, 1)
+<a id="L307"></a><span class="ln">   307</span>		netfd.cw = make(chan error, 1)
+<a id="L308"></a><span class="ln">   308</span>		return netfd, nil
+<a id="L309"></a><span class="ln">   309</span>	}
+<a id="L310"></a><span class="ln">   310</span>	
+<a id="L311"></a><span class="ln">   311</span>	func (fd *netFD) setAddr(laddr, raddr Addr) {
+<a id="L312"></a><span class="ln">   312</span>		fd.laddr = laddr
+<a id="L313"></a><span class="ln">   313</span>		fd.raddr = raddr
+<a id="L314"></a><span class="ln">   314</span>		var ls, rs string
+<a id="L315"></a><span class="ln">   315</span>		if laddr != nil {
+<a id="L316"></a><span class="ln">   316</span>			ls = laddr.String()
+<a id="L317"></a><span class="ln">   317</span>		}
+<a id="L318"></a><span class="ln">   318</span>		if raddr != nil {
+<a id="L319"></a><span class="ln">   319</span>			rs = raddr.String()
+<a id="L320"></a><span class="ln">   320</span>		}
+<a id="L321"></a><span class="ln">   321</span>		fd.sysfile = os.NewFile(uintptr(fd.sysfd), fd.net+&#34;:&#34;+ls+&#34;-&gt;&#34;+rs)
+<a id="L322"></a><span class="ln">   322</span>	}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>	func (fd *netFD) connect(ra syscall.Sockaddr) error {
+<a id="L325"></a><span class="ln">   325</span>		err := syscall.Connect(fd.sysfd, ra)
+<a id="L326"></a><span class="ln">   326</span>		if err == syscall.EINPROGRESS {
+<a id="L327"></a><span class="ln">   327</span>			if err = pollserver.WaitWrite(fd); err != nil {
+<a id="L328"></a><span class="ln">   328</span>				return err
+<a id="L329"></a><span class="ln">   329</span>			}
+<a id="L330"></a><span class="ln">   330</span>			var e int
+<a id="L331"></a><span class="ln">   331</span>			e, err = syscall.GetsockoptInt(fd.sysfd, syscall.SOL_SOCKET, syscall.SO_ERROR)
+<a id="L332"></a><span class="ln">   332</span>			if err != nil {
+<a id="L333"></a><span class="ln">   333</span>				return os.NewSyscallError(&#34;getsockopt&#34;, err)
+<a id="L334"></a><span class="ln">   334</span>			}
+<a id="L335"></a><span class="ln">   335</span>			if e != 0 {
+<a id="L336"></a><span class="ln">   336</span>				err = syscall.Errno(e)
+<a id="L337"></a><span class="ln">   337</span>			}
+<a id="L338"></a><span class="ln">   338</span>		}
+<a id="L339"></a><span class="ln">   339</span>		return err
+<a id="L340"></a><span class="ln">   340</span>	}
+<a id="L341"></a><span class="ln">   341</span>	
+<a id="L342"></a><span class="ln">   342</span>	var errClosing = errors.New(&#34;use of closed network connection&#34;)
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// Add a reference to this fd.</span>
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// If closing==true, pollserver must be locked; mark the fd as closing.</span>
+<a id="L346"></a><span class="ln">   346</span>	<span class="comment">// Returns an error if the fd cannot be used.</span>
+<a id="L347"></a><span class="ln">   347</span>	func (fd *netFD) incref(closing bool) error {
+<a id="L348"></a><span class="ln">   348</span>		if fd == nil {
+<a id="L349"></a><span class="ln">   349</span>			return errClosing
+<a id="L350"></a><span class="ln">   350</span>		}
+<a id="L351"></a><span class="ln">   351</span>		fd.sysmu.Lock()
+<a id="L352"></a><span class="ln">   352</span>		if fd.closing {
+<a id="L353"></a><span class="ln">   353</span>			fd.sysmu.Unlock()
+<a id="L354"></a><span class="ln">   354</span>			return errClosing
+<a id="L355"></a><span class="ln">   355</span>		}
+<a id="L356"></a><span class="ln">   356</span>		fd.sysref++
+<a id="L357"></a><span class="ln">   357</span>		if closing {
+<a id="L358"></a><span class="ln">   358</span>			fd.closing = true
+<a id="L359"></a><span class="ln">   359</span>		}
+<a id="L360"></a><span class="ln">   360</span>		fd.sysmu.Unlock()
+<a id="L361"></a><span class="ln">   361</span>		return nil
+<a id="L362"></a><span class="ln">   362</span>	}
+<a id="L363"></a><span class="ln">   363</span>	
+<a id="L364"></a><span class="ln">   364</span>	<span class="comment">// Remove a reference to this FD and close if we&#39;ve been asked to do so (and</span>
+<a id="L365"></a><span class="ln">   365</span>	<span class="comment">// there are no references left.</span>
+<a id="L366"></a><span class="ln">   366</span>	func (fd *netFD) decref() {
+<a id="L367"></a><span class="ln">   367</span>		if fd == nil {
+<a id="L368"></a><span class="ln">   368</span>			return
+<a id="L369"></a><span class="ln">   369</span>		}
+<a id="L370"></a><span class="ln">   370</span>		fd.sysmu.Lock()
+<a id="L371"></a><span class="ln">   371</span>		fd.sysref--
+<a id="L372"></a><span class="ln">   372</span>		if fd.closing &amp;&amp; fd.sysref == 0 &amp;&amp; fd.sysfile != nil {
+<a id="L373"></a><span class="ln">   373</span>			fd.sysfile.Close()
+<a id="L374"></a><span class="ln">   374</span>			fd.sysfile = nil
+<a id="L375"></a><span class="ln">   375</span>			fd.sysfd = -1
+<a id="L376"></a><span class="ln">   376</span>		}
+<a id="L377"></a><span class="ln">   377</span>		fd.sysmu.Unlock()
+<a id="L378"></a><span class="ln">   378</span>	}
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>	func (fd *netFD) Close() error {
+<a id="L381"></a><span class="ln">   381</span>		pollserver.Lock() <span class="comment">// needed for both fd.incref(true) and pollserver.Evict</span>
+<a id="L382"></a><span class="ln">   382</span>		defer pollserver.Unlock()
+<a id="L383"></a><span class="ln">   383</span>		if err := fd.incref(true); err != nil {
+<a id="L384"></a><span class="ln">   384</span>			return err
+<a id="L385"></a><span class="ln">   385</span>		}
+<a id="L386"></a><span class="ln">   386</span>		<span class="comment">// Unblock any I/O.  Once it all unblocks and returns,</span>
+<a id="L387"></a><span class="ln">   387</span>		<span class="comment">// so that it cannot be referring to fd.sysfd anymore,</span>
+<a id="L388"></a><span class="ln">   388</span>		<span class="comment">// the final decref will close fd.sysfd.  This should happen</span>
+<a id="L389"></a><span class="ln">   389</span>		<span class="comment">// fairly quickly, since all the I/O is non-blocking, and any</span>
+<a id="L390"></a><span class="ln">   390</span>		<span class="comment">// attempts to block in the pollserver will return errClosing.</span>
+<a id="L391"></a><span class="ln">   391</span>		pollserver.Evict(fd)
+<a id="L392"></a><span class="ln">   392</span>		fd.decref()
+<a id="L393"></a><span class="ln">   393</span>		return nil
+<a id="L394"></a><span class="ln">   394</span>	}
+<a id="L395"></a><span class="ln">   395</span>	
+<a id="L396"></a><span class="ln">   396</span>	func (fd *netFD) shutdown(how int) error {
+<a id="L397"></a><span class="ln">   397</span>		if err := fd.incref(false); err != nil {
+<a id="L398"></a><span class="ln">   398</span>			return err
+<a id="L399"></a><span class="ln">   399</span>		}
+<a id="L400"></a><span class="ln">   400</span>		defer fd.decref()
+<a id="L401"></a><span class="ln">   401</span>		err := syscall.Shutdown(fd.sysfd, how)
+<a id="L402"></a><span class="ln">   402</span>		if err != nil {
+<a id="L403"></a><span class="ln">   403</span>			return &amp;OpError{&#34;shutdown&#34;, fd.net, fd.laddr, err}
+<a id="L404"></a><span class="ln">   404</span>		}
+<a id="L405"></a><span class="ln">   405</span>		return nil
+<a id="L406"></a><span class="ln">   406</span>	}
+<a id="L407"></a><span class="ln">   407</span>	
+<a id="L408"></a><span class="ln">   408</span>	func (fd *netFD) CloseRead() error {
+<a id="L409"></a><span class="ln">   409</span>		return fd.shutdown(syscall.SHUT_RD)
+<a id="L410"></a><span class="ln">   410</span>	}
+<a id="L411"></a><span class="ln">   411</span>	
+<a id="L412"></a><span class="ln">   412</span>	func (fd *netFD) CloseWrite() error {
+<a id="L413"></a><span class="ln">   413</span>		return fd.shutdown(syscall.SHUT_WR)
+<a id="L414"></a><span class="ln">   414</span>	}
+<a id="L415"></a><span class="ln">   415</span>	
+<a id="L416"></a><span class="ln">   416</span>	func (fd *netFD) Read(p []byte) (n int, err error) {
+<a id="L417"></a><span class="ln">   417</span>		fd.rio.Lock()
+<a id="L418"></a><span class="ln">   418</span>		defer fd.rio.Unlock()
+<a id="L419"></a><span class="ln">   419</span>		if err := fd.incref(false); err != nil {
+<a id="L420"></a><span class="ln">   420</span>			return 0, err
+<a id="L421"></a><span class="ln">   421</span>		}
+<a id="L422"></a><span class="ln">   422</span>		defer fd.decref()
+<a id="L423"></a><span class="ln">   423</span>		for {
+<a id="L424"></a><span class="ln">   424</span>			n, err = syscall.Read(int(fd.sysfd), p)
+<a id="L425"></a><span class="ln">   425</span>			if err == syscall.EAGAIN {
+<a id="L426"></a><span class="ln">   426</span>				err = errTimeout
+<a id="L427"></a><span class="ln">   427</span>				if fd.rdeadline &gt;= 0 {
+<a id="L428"></a><span class="ln">   428</span>					if err = pollserver.WaitRead(fd); err == nil {
+<a id="L429"></a><span class="ln">   429</span>						continue
+<a id="L430"></a><span class="ln">   430</span>					}
+<a id="L431"></a><span class="ln">   431</span>				}
+<a id="L432"></a><span class="ln">   432</span>			}
+<a id="L433"></a><span class="ln">   433</span>			if err != nil {
+<a id="L434"></a><span class="ln">   434</span>				n = 0
+<a id="L435"></a><span class="ln">   435</span>			} else if n == 0 &amp;&amp; err == nil &amp;&amp; fd.sotype != syscall.SOCK_DGRAM {
+<a id="L436"></a><span class="ln">   436</span>				err = io.EOF
+<a id="L437"></a><span class="ln">   437</span>			}
+<a id="L438"></a><span class="ln">   438</span>			break
+<a id="L439"></a><span class="ln">   439</span>		}
+<a id="L440"></a><span class="ln">   440</span>		if err != nil &amp;&amp; err != io.EOF {
+<a id="L441"></a><span class="ln">   441</span>			err = &amp;OpError{&#34;read&#34;, fd.net, fd.raddr, err}
+<a id="L442"></a><span class="ln">   442</span>		}
+<a id="L443"></a><span class="ln">   443</span>		return
+<a id="L444"></a><span class="ln">   444</span>	}
+<a id="L445"></a><span class="ln">   445</span>	
+<a id="L446"></a><span class="ln">   446</span>	func (fd *netFD) ReadFrom(p []byte) (n int, sa syscall.Sockaddr, err error) {
+<a id="L447"></a><span class="ln">   447</span>		fd.rio.Lock()
+<a id="L448"></a><span class="ln">   448</span>		defer fd.rio.Unlock()
+<a id="L449"></a><span class="ln">   449</span>		if err := fd.incref(false); err != nil {
+<a id="L450"></a><span class="ln">   450</span>			return 0, nil, err
+<a id="L451"></a><span class="ln">   451</span>		}
+<a id="L452"></a><span class="ln">   452</span>		defer fd.decref()
+<a id="L453"></a><span class="ln">   453</span>		for {
+<a id="L454"></a><span class="ln">   454</span>			n, sa, err = syscall.Recvfrom(fd.sysfd, p, 0)
+<a id="L455"></a><span class="ln">   455</span>			if err == syscall.EAGAIN {
+<a id="L456"></a><span class="ln">   456</span>				err = errTimeout
+<a id="L457"></a><span class="ln">   457</span>				if fd.rdeadline &gt;= 0 {
+<a id="L458"></a><span class="ln">   458</span>					if err = pollserver.WaitRead(fd); err == nil {
+<a id="L459"></a><span class="ln">   459</span>						continue
+<a id="L460"></a><span class="ln">   460</span>					}
+<a id="L461"></a><span class="ln">   461</span>				}
+<a id="L462"></a><span class="ln">   462</span>			}
+<a id="L463"></a><span class="ln">   463</span>			if err != nil {
+<a id="L464"></a><span class="ln">   464</span>				n = 0
+<a id="L465"></a><span class="ln">   465</span>			}
+<a id="L466"></a><span class="ln">   466</span>			break
+<a id="L467"></a><span class="ln">   467</span>		}
+<a id="L468"></a><span class="ln">   468</span>		if err != nil &amp;&amp; err != io.EOF {
+<a id="L469"></a><span class="ln">   469</span>			err = &amp;OpError{&#34;read&#34;, fd.net, fd.laddr, err}
+<a id="L470"></a><span class="ln">   470</span>		}
+<a id="L471"></a><span class="ln">   471</span>		return
+<a id="L472"></a><span class="ln">   472</span>	}
+<a id="L473"></a><span class="ln">   473</span>	
+<a id="L474"></a><span class="ln">   474</span>	func (fd *netFD) ReadMsg(p []byte, oob []byte) (n, oobn, flags int, sa syscall.Sockaddr, err error) {
+<a id="L475"></a><span class="ln">   475</span>		fd.rio.Lock()
+<a id="L476"></a><span class="ln">   476</span>		defer fd.rio.Unlock()
+<a id="L477"></a><span class="ln">   477</span>		if err := fd.incref(false); err != nil {
+<a id="L478"></a><span class="ln">   478</span>			return 0, 0, 0, nil, err
+<a id="L479"></a><span class="ln">   479</span>		}
+<a id="L480"></a><span class="ln">   480</span>		defer fd.decref()
+<a id="L481"></a><span class="ln">   481</span>		for {
+<a id="L482"></a><span class="ln">   482</span>			n, oobn, flags, sa, err = syscall.Recvmsg(fd.sysfd, p, oob, 0)
+<a id="L483"></a><span class="ln">   483</span>			if err == syscall.EAGAIN {
+<a id="L484"></a><span class="ln">   484</span>				err = errTimeout
+<a id="L485"></a><span class="ln">   485</span>				if fd.rdeadline &gt;= 0 {
+<a id="L486"></a><span class="ln">   486</span>					if err = pollserver.WaitRead(fd); err == nil {
+<a id="L487"></a><span class="ln">   487</span>						continue
+<a id="L488"></a><span class="ln">   488</span>					}
+<a id="L489"></a><span class="ln">   489</span>				}
+<a id="L490"></a><span class="ln">   490</span>			}
+<a id="L491"></a><span class="ln">   491</span>			if err == nil &amp;&amp; n == 0 {
+<a id="L492"></a><span class="ln">   492</span>				err = io.EOF
+<a id="L493"></a><span class="ln">   493</span>			}
+<a id="L494"></a><span class="ln">   494</span>			break
+<a id="L495"></a><span class="ln">   495</span>		}
+<a id="L496"></a><span class="ln">   496</span>		if err != nil &amp;&amp; err != io.EOF {
+<a id="L497"></a><span class="ln">   497</span>			err = &amp;OpError{&#34;read&#34;, fd.net, fd.laddr, err}
+<a id="L498"></a><span class="ln">   498</span>			return
+<a id="L499"></a><span class="ln">   499</span>		}
+<a id="L500"></a><span class="ln">   500</span>		return
+<a id="L501"></a><span class="ln">   501</span>	}
+<a id="L502"></a><span class="ln">   502</span>	
+<a id="L503"></a><span class="ln">   503</span>	func (fd *netFD) Write(p []byte) (int, error) {
+<a id="L504"></a><span class="ln">   504</span>		fd.wio.Lock()
+<a id="L505"></a><span class="ln">   505</span>		defer fd.wio.Unlock()
+<a id="L506"></a><span class="ln">   506</span>		if err := fd.incref(false); err != nil {
+<a id="L507"></a><span class="ln">   507</span>			return 0, err
+<a id="L508"></a><span class="ln">   508</span>		}
+<a id="L509"></a><span class="ln">   509</span>		defer fd.decref()
+<a id="L510"></a><span class="ln">   510</span>		if fd.sysfile == nil {
+<a id="L511"></a><span class="ln">   511</span>			return 0, syscall.EINVAL
+<a id="L512"></a><span class="ln">   512</span>		}
+<a id="L513"></a><span class="ln">   513</span>	
+<a id="L514"></a><span class="ln">   514</span>		var err error
+<a id="L515"></a><span class="ln">   515</span>		nn := 0
+<a id="L516"></a><span class="ln">   516</span>		for {
+<a id="L517"></a><span class="ln">   517</span>			var n int
+<a id="L518"></a><span class="ln">   518</span>			n, err = syscall.Write(int(fd.sysfd), p[nn:])
+<a id="L519"></a><span class="ln">   519</span>			if n &gt; 0 {
+<a id="L520"></a><span class="ln">   520</span>				nn += n
+<a id="L521"></a><span class="ln">   521</span>			}
+<a id="L522"></a><span class="ln">   522</span>			if nn == len(p) {
+<a id="L523"></a><span class="ln">   523</span>				break
+<a id="L524"></a><span class="ln">   524</span>			}
+<a id="L525"></a><span class="ln">   525</span>			if err == syscall.EAGAIN {
+<a id="L526"></a><span class="ln">   526</span>				err = errTimeout
+<a id="L527"></a><span class="ln">   527</span>				if fd.wdeadline &gt;= 0 {
+<a id="L528"></a><span class="ln">   528</span>					if err = pollserver.WaitWrite(fd); err == nil {
+<a id="L529"></a><span class="ln">   529</span>						continue
+<a id="L530"></a><span class="ln">   530</span>					}
+<a id="L531"></a><span class="ln">   531</span>				}
+<a id="L532"></a><span class="ln">   532</span>			}
+<a id="L533"></a><span class="ln">   533</span>			if err != nil {
+<a id="L534"></a><span class="ln">   534</span>				n = 0
+<a id="L535"></a><span class="ln">   535</span>				break
+<a id="L536"></a><span class="ln">   536</span>			}
+<a id="L537"></a><span class="ln">   537</span>			if n == 0 {
+<a id="L538"></a><span class="ln">   538</span>				err = io.ErrUnexpectedEOF
+<a id="L539"></a><span class="ln">   539</span>				break
+<a id="L540"></a><span class="ln">   540</span>			}
+<a id="L541"></a><span class="ln">   541</span>		}
+<a id="L542"></a><span class="ln">   542</span>		if err != nil {
+<a id="L543"></a><span class="ln">   543</span>			err = &amp;OpError{&#34;write&#34;, fd.net, fd.raddr, err}
+<a id="L544"></a><span class="ln">   544</span>		}
+<a id="L545"></a><span class="ln">   545</span>		return nn, err
+<a id="L546"></a><span class="ln">   546</span>	}
+<a id="L547"></a><span class="ln">   547</span>	
+<a id="L548"></a><span class="ln">   548</span>	func (fd *netFD) WriteTo(p []byte, sa syscall.Sockaddr) (n int, err error) {
+<a id="L549"></a><span class="ln">   549</span>		fd.wio.Lock()
+<a id="L550"></a><span class="ln">   550</span>		defer fd.wio.Unlock()
+<a id="L551"></a><span class="ln">   551</span>		if err := fd.incref(false); err != nil {
+<a id="L552"></a><span class="ln">   552</span>			return 0, err
+<a id="L553"></a><span class="ln">   553</span>		}
+<a id="L554"></a><span class="ln">   554</span>		defer fd.decref()
+<a id="L555"></a><span class="ln">   555</span>		for {
+<a id="L556"></a><span class="ln">   556</span>			err = syscall.Sendto(fd.sysfd, p, 0, sa)
+<a id="L557"></a><span class="ln">   557</span>			if err == syscall.EAGAIN {
+<a id="L558"></a><span class="ln">   558</span>				err = errTimeout
+<a id="L559"></a><span class="ln">   559</span>				if fd.wdeadline &gt;= 0 {
+<a id="L560"></a><span class="ln">   560</span>					if err = pollserver.WaitWrite(fd); err == nil {
+<a id="L561"></a><span class="ln">   561</span>						continue
+<a id="L562"></a><span class="ln">   562</span>					}
+<a id="L563"></a><span class="ln">   563</span>				}
+<a id="L564"></a><span class="ln">   564</span>			}
+<a id="L565"></a><span class="ln">   565</span>			break
+<a id="L566"></a><span class="ln">   566</span>		}
+<a id="L567"></a><span class="ln">   567</span>		if err == nil {
+<a id="L568"></a><span class="ln">   568</span>			n = len(p)
+<a id="L569"></a><span class="ln">   569</span>		} else {
+<a id="L570"></a><span class="ln">   570</span>			err = &amp;OpError{&#34;write&#34;, fd.net, fd.raddr, err}
+<a id="L571"></a><span class="ln">   571</span>		}
+<a id="L572"></a><span class="ln">   572</span>		return
+<a id="L573"></a><span class="ln">   573</span>	}
+<a id="L574"></a><span class="ln">   574</span>	
+<a id="L575"></a><span class="ln">   575</span>	func (fd *netFD) WriteMsg(p []byte, oob []byte, sa syscall.Sockaddr) (n int, oobn int, err error) {
+<a id="L576"></a><span class="ln">   576</span>		fd.wio.Lock()
+<a id="L577"></a><span class="ln">   577</span>		defer fd.wio.Unlock()
+<a id="L578"></a><span class="ln">   578</span>		if err := fd.incref(false); err != nil {
+<a id="L579"></a><span class="ln">   579</span>			return 0, 0, err
+<a id="L580"></a><span class="ln">   580</span>		}
+<a id="L581"></a><span class="ln">   581</span>		defer fd.decref()
+<a id="L582"></a><span class="ln">   582</span>		for {
+<a id="L583"></a><span class="ln">   583</span>			err = syscall.Sendmsg(fd.sysfd, p, oob, sa, 0)
+<a id="L584"></a><span class="ln">   584</span>			if err == syscall.EAGAIN {
+<a id="L585"></a><span class="ln">   585</span>				err = errTimeout
+<a id="L586"></a><span class="ln">   586</span>				if fd.wdeadline &gt;= 0 {
+<a id="L587"></a><span class="ln">   587</span>					if err = pollserver.WaitWrite(fd); err == nil {
+<a id="L588"></a><span class="ln">   588</span>						continue
+<a id="L589"></a><span class="ln">   589</span>					}
+<a id="L590"></a><span class="ln">   590</span>				}
+<a id="L591"></a><span class="ln">   591</span>			}
+<a id="L592"></a><span class="ln">   592</span>			break
+<a id="L593"></a><span class="ln">   593</span>		}
+<a id="L594"></a><span class="ln">   594</span>		if err == nil {
+<a id="L595"></a><span class="ln">   595</span>			n = len(p)
+<a id="L596"></a><span class="ln">   596</span>			oobn = len(oob)
+<a id="L597"></a><span class="ln">   597</span>		} else {
+<a id="L598"></a><span class="ln">   598</span>			err = &amp;OpError{&#34;write&#34;, fd.net, fd.raddr, err}
+<a id="L599"></a><span class="ln">   599</span>		}
+<a id="L600"></a><span class="ln">   600</span>		return
+<a id="L601"></a><span class="ln">   601</span>	}
+<a id="L602"></a><span class="ln">   602</span>	
+<a id="L603"></a><span class="ln">   603</span>	func (fd *netFD) accept(toAddr func(syscall.Sockaddr) Addr) (netfd *netFD, err error) {
+<a id="L604"></a><span class="ln">   604</span>		if err := fd.incref(false); err != nil {
+<a id="L605"></a><span class="ln">   605</span>			return nil, err
+<a id="L606"></a><span class="ln">   606</span>		}
+<a id="L607"></a><span class="ln">   607</span>		defer fd.decref()
+<a id="L608"></a><span class="ln">   608</span>	
+<a id="L609"></a><span class="ln">   609</span>		<span class="comment">// See ../syscall/exec.go for description of ForkLock.</span>
+<a id="L610"></a><span class="ln">   610</span>		<span class="comment">// It is okay to hold the lock across syscall.Accept</span>
+<a id="L611"></a><span class="ln">   611</span>		<span class="comment">// because we have put fd.sysfd into non-blocking mode.</span>
+<a id="L612"></a><span class="ln">   612</span>		var s int
+<a id="L613"></a><span class="ln">   613</span>		var rsa syscall.Sockaddr
+<a id="L614"></a><span class="ln">   614</span>		for {
+<a id="L615"></a><span class="ln">   615</span>			syscall.ForkLock.RLock()
+<a id="L616"></a><span class="ln">   616</span>			s, rsa, err = syscall.Accept(fd.sysfd)
+<a id="L617"></a><span class="ln">   617</span>			if err != nil {
+<a id="L618"></a><span class="ln">   618</span>				syscall.ForkLock.RUnlock()
+<a id="L619"></a><span class="ln">   619</span>				if err == syscall.EAGAIN {
+<a id="L620"></a><span class="ln">   620</span>					err = errTimeout
+<a id="L621"></a><span class="ln">   621</span>					if fd.rdeadline &gt;= 0 {
+<a id="L622"></a><span class="ln">   622</span>						if err = pollserver.WaitRead(fd); err == nil {
+<a id="L623"></a><span class="ln">   623</span>							continue
+<a id="L624"></a><span class="ln">   624</span>						}
+<a id="L625"></a><span class="ln">   625</span>					}
+<a id="L626"></a><span class="ln">   626</span>				} else if err == syscall.ECONNABORTED {
+<a id="L627"></a><span class="ln">   627</span>					<span class="comment">// This means that a socket on the listen queue was closed</span>
+<a id="L628"></a><span class="ln">   628</span>					<span class="comment">// before we Accept()ed it; it&#39;s a silly error, so try again.</span>
+<a id="L629"></a><span class="ln">   629</span>					continue
+<a id="L630"></a><span class="ln">   630</span>				}
+<a id="L631"></a><span class="ln">   631</span>				return nil, &amp;OpError{&#34;accept&#34;, fd.net, fd.laddr, err}
+<a id="L632"></a><span class="ln">   632</span>			}
+<a id="L633"></a><span class="ln">   633</span>			break
+<a id="L634"></a><span class="ln">   634</span>		}
+<a id="L635"></a><span class="ln">   635</span>		syscall.CloseOnExec(s)
+<a id="L636"></a><span class="ln">   636</span>		syscall.ForkLock.RUnlock()
+<a id="L637"></a><span class="ln">   637</span>	
+<a id="L638"></a><span class="ln">   638</span>		if netfd, err = newFD(s, fd.family, fd.sotype, fd.net); err != nil {
+<a id="L639"></a><span class="ln">   639</span>			syscall.Close(s)
+<a id="L640"></a><span class="ln">   640</span>			return nil, err
+<a id="L641"></a><span class="ln">   641</span>		}
+<a id="L642"></a><span class="ln">   642</span>		lsa, _ := syscall.Getsockname(netfd.sysfd)
+<a id="L643"></a><span class="ln">   643</span>		netfd.setAddr(toAddr(lsa), toAddr(rsa))
+<a id="L644"></a><span class="ln">   644</span>		return netfd, nil
+<a id="L645"></a><span class="ln">   645</span>	}
+<a id="L646"></a><span class="ln">   646</span>	
+<a id="L647"></a><span class="ln">   647</span>	func (fd *netFD) dup() (f *os.File, err error) {
+<a id="L648"></a><span class="ln">   648</span>		ns, err := syscall.Dup(fd.sysfd)
+<a id="L649"></a><span class="ln">   649</span>		if err != nil {
+<a id="L650"></a><span class="ln">   650</span>			return nil, &amp;OpError{&#34;dup&#34;, fd.net, fd.laddr, err}
+<a id="L651"></a><span class="ln">   651</span>		}
+<a id="L652"></a><span class="ln">   652</span>	
+<a id="L653"></a><span class="ln">   653</span>		<span class="comment">// We want blocking mode for the new fd, hence the double negative.</span>
+<a id="L654"></a><span class="ln">   654</span>		if err = syscall.SetNonblock(ns, false); err != nil {
+<a id="L655"></a><span class="ln">   655</span>			return nil, &amp;OpError{&#34;setnonblock&#34;, fd.net, fd.laddr, err}
+<a id="L656"></a><span class="ln">   656</span>		}
+<a id="L657"></a><span class="ln">   657</span>	
+<a id="L658"></a><span class="ln">   658</span>		return os.NewFile(uintptr(ns), fd.sysfile.Name()), nil
+<a id="L659"></a><span class="ln">   659</span>	}
+<a id="L660"></a><span class="ln">   660</span>	
+<a id="L661"></a><span class="ln">   661</span>	func closesocket(s int) error {
+<a id="L662"></a><span class="ln">   662</span>		return syscall.Close(s)
+<a id="L663"></a><span class="ln">   663</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

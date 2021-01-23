@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/html/template/context.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/html/template/context.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package template
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;fmt&#34;
+<a id="L9"></a><span class="ln">     9</span>	)
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// context describes the state an HTML parser must be in when it reaches the</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// portion of HTML produced by evaluating a particular template node.</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// The zero value of type context is the start context for a template that</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// produces an HTML fragment as defined at</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// http://www.w3.org/TR/html5/the-end.html#parsing-html-fragments</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// where the context element is null.</span>
+<a id="L18"></a><span class="ln">    18</span>	type context struct {
+<a id="L19"></a><span class="ln">    19</span>		state   state
+<a id="L20"></a><span class="ln">    20</span>		delim   delim
+<a id="L21"></a><span class="ln">    21</span>		urlPart urlPart
+<a id="L22"></a><span class="ln">    22</span>		jsCtx   jsCtx
+<a id="L23"></a><span class="ln">    23</span>		attr    attr
+<a id="L24"></a><span class="ln">    24</span>		element element
+<a id="L25"></a><span class="ln">    25</span>		err     *Error
+<a id="L26"></a><span class="ln">    26</span>	}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	func (c context) String() string {
+<a id="L29"></a><span class="ln">    29</span>		return fmt.Sprintf(&#34;{%v %v %v %v %v %v %v}&#34;, c.state, c.delim, c.urlPart, c.jsCtx, c.attr, c.element, c.err)
+<a id="L30"></a><span class="ln">    30</span>	}
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// eq returns whether two contexts are equal.</span>
+<a id="L33"></a><span class="ln">    33</span>	func (c context) eq(d context) bool {
+<a id="L34"></a><span class="ln">    34</span>		return c.state == d.state &amp;&amp;
+<a id="L35"></a><span class="ln">    35</span>			c.delim == d.delim &amp;&amp;
+<a id="L36"></a><span class="ln">    36</span>			c.urlPart == d.urlPart &amp;&amp;
+<a id="L37"></a><span class="ln">    37</span>			c.jsCtx == d.jsCtx &amp;&amp;
+<a id="L38"></a><span class="ln">    38</span>			c.attr == d.attr &amp;&amp;
+<a id="L39"></a><span class="ln">    39</span>			c.element == d.element &amp;&amp;
+<a id="L40"></a><span class="ln">    40</span>			c.err == d.err
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// mangle produces an identifier that includes a suffix that distinguishes it</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// from template names mangled with different contexts.</span>
+<a id="L45"></a><span class="ln">    45</span>	func (c context) mangle(templateName string) string {
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// The mangled name for the default context is the input templateName.</span>
+<a id="L47"></a><span class="ln">    47</span>		if c.state == stateText {
+<a id="L48"></a><span class="ln">    48</span>			return templateName
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		s := templateName + &#34;$htmltemplate_&#34; + c.state.String()
+<a id="L51"></a><span class="ln">    51</span>		if c.delim != 0 {
+<a id="L52"></a><span class="ln">    52</span>			s += &#34;_&#34; + c.delim.String()
+<a id="L53"></a><span class="ln">    53</span>		}
+<a id="L54"></a><span class="ln">    54</span>		if c.urlPart != 0 {
+<a id="L55"></a><span class="ln">    55</span>			s += &#34;_&#34; + c.urlPart.String()
+<a id="L56"></a><span class="ln">    56</span>		}
+<a id="L57"></a><span class="ln">    57</span>		if c.jsCtx != 0 {
+<a id="L58"></a><span class="ln">    58</span>			s += &#34;_&#34; + c.jsCtx.String()
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		if c.attr != 0 {
+<a id="L61"></a><span class="ln">    61</span>			s += &#34;_&#34; + c.attr.String()
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>		if c.element != 0 {
+<a id="L64"></a><span class="ln">    64</span>			s += &#34;_&#34; + c.element.String()
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		return s
+<a id="L67"></a><span class="ln">    67</span>	}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// state describes a high-level HTML parser state.</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">//</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// It bounds the top of the element stack, and by extension the HTML insertion</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// mode, but also contains state that does not correspond to anything in the</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// HTML5 parsing algorithm because a single token production in the HTML</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// grammar may contain embedded actions in a template. For instance, the quoted</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// HTML attribute produced by</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">//     &lt;div title=&#34;Hello {{.World}}&#34;&gt;</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// is a single token in HTML&#39;s grammar but in a template spans several nodes.</span>
+<a id="L78"></a><span class="ln">    78</span>	type state uint8
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	const (
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// stateText is parsed character data. An HTML parser is in</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">// this state when its parse position is outside an HTML tag,</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// directive, comment, and special element body.</span>
+<a id="L84"></a><span class="ln">    84</span>		stateText state = iota
+<a id="L85"></a><span class="ln">    85</span>		<span class="comment">// stateTag occurs before an HTML attribute or the end of a tag.</span>
+<a id="L86"></a><span class="ln">    86</span>		stateTag
+<a id="L87"></a><span class="ln">    87</span>		<span class="comment">// stateAttrName occurs inside an attribute name.</span>
+<a id="L88"></a><span class="ln">    88</span>		<span class="comment">// It occurs between the ^&#39;s in ` ^name^ = value`.</span>
+<a id="L89"></a><span class="ln">    89</span>		stateAttrName
+<a id="L90"></a><span class="ln">    90</span>		<span class="comment">// stateAfterName occurs after an attr name has ended but before any</span>
+<a id="L91"></a><span class="ln">    91</span>		<span class="comment">// equals sign. It occurs between the ^&#39;s in ` name^ ^= value`.</span>
+<a id="L92"></a><span class="ln">    92</span>		stateAfterName
+<a id="L93"></a><span class="ln">    93</span>		<span class="comment">// stateBeforeValue occurs after the equals sign but before the value.</span>
+<a id="L94"></a><span class="ln">    94</span>		<span class="comment">// It occurs between the ^&#39;s in ` name =^ ^value`.</span>
+<a id="L95"></a><span class="ln">    95</span>		stateBeforeValue
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// stateHTMLCmt occurs inside an &lt;!-- HTML comment --&gt;.</span>
+<a id="L97"></a><span class="ln">    97</span>		stateHTMLCmt
+<a id="L98"></a><span class="ln">    98</span>		<span class="comment">// stateRCDATA occurs inside an RCDATA element (&lt;textarea&gt; or &lt;title&gt;)</span>
+<a id="L99"></a><span class="ln">    99</span>		<span class="comment">// as described at http://dev.w3.org/html5/spec/syntax.html#elements-0</span>
+<a id="L100"></a><span class="ln">   100</span>		stateRCDATA
+<a id="L101"></a><span class="ln">   101</span>		<span class="comment">// stateAttr occurs inside an HTML attribute whose content is text.</span>
+<a id="L102"></a><span class="ln">   102</span>		stateAttr
+<a id="L103"></a><span class="ln">   103</span>		<span class="comment">// stateURL occurs inside an HTML attribute whose content is a URL.</span>
+<a id="L104"></a><span class="ln">   104</span>		stateURL
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// stateJS occurs inside an event handler or script element.</span>
+<a id="L106"></a><span class="ln">   106</span>		stateJS
+<a id="L107"></a><span class="ln">   107</span>		<span class="comment">// stateJSDqStr occurs inside a JavaScript double quoted string.</span>
+<a id="L108"></a><span class="ln">   108</span>		stateJSDqStr
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// stateJSSqStr occurs inside a JavaScript single quoted string.</span>
+<a id="L110"></a><span class="ln">   110</span>		stateJSSqStr
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">// stateJSRegexp occurs inside a JavaScript regexp literal.</span>
+<a id="L112"></a><span class="ln">   112</span>		stateJSRegexp
+<a id="L113"></a><span class="ln">   113</span>		<span class="comment">// stateJSBlockCmt occurs inside a JavaScript /* block comment */.</span>
+<a id="L114"></a><span class="ln">   114</span>		stateJSBlockCmt
+<a id="L115"></a><span class="ln">   115</span>		<span class="comment">// stateJSLineCmt occurs inside a JavaScript // line comment.</span>
+<a id="L116"></a><span class="ln">   116</span>		stateJSLineCmt
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// stateCSS occurs inside a &lt;style&gt; element or style attribute.</span>
+<a id="L118"></a><span class="ln">   118</span>		stateCSS
+<a id="L119"></a><span class="ln">   119</span>		<span class="comment">// stateCSSDqStr occurs inside a CSS double quoted string.</span>
+<a id="L120"></a><span class="ln">   120</span>		stateCSSDqStr
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">// stateCSSSqStr occurs inside a CSS single quoted string.</span>
+<a id="L122"></a><span class="ln">   122</span>		stateCSSSqStr
+<a id="L123"></a><span class="ln">   123</span>		<span class="comment">// stateCSSDqURL occurs inside a CSS double quoted url(&#34;...&#34;).</span>
+<a id="L124"></a><span class="ln">   124</span>		stateCSSDqURL
+<a id="L125"></a><span class="ln">   125</span>		<span class="comment">// stateCSSSqURL occurs inside a CSS single quoted url(&#39;...&#39;).</span>
+<a id="L126"></a><span class="ln">   126</span>		stateCSSSqURL
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// stateCSSURL occurs inside a CSS unquoted url(...).</span>
+<a id="L128"></a><span class="ln">   128</span>		stateCSSURL
+<a id="L129"></a><span class="ln">   129</span>		<span class="comment">// stateCSSBlockCmt occurs inside a CSS /* block comment */.</span>
+<a id="L130"></a><span class="ln">   130</span>		stateCSSBlockCmt
+<a id="L131"></a><span class="ln">   131</span>		<span class="comment">// stateCSSLineCmt occurs inside a CSS // line comment.</span>
+<a id="L132"></a><span class="ln">   132</span>		stateCSSLineCmt
+<a id="L133"></a><span class="ln">   133</span>		<span class="comment">// stateError is an infectious error state outside any valid</span>
+<a id="L134"></a><span class="ln">   134</span>		<span class="comment">// HTML/CSS/JS construct.</span>
+<a id="L135"></a><span class="ln">   135</span>		stateError
+<a id="L136"></a><span class="ln">   136</span>	)
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>	var stateNames = [...]string{
+<a id="L139"></a><span class="ln">   139</span>		stateText:        &#34;stateText&#34;,
+<a id="L140"></a><span class="ln">   140</span>		stateTag:         &#34;stateTag&#34;,
+<a id="L141"></a><span class="ln">   141</span>		stateAttrName:    &#34;stateAttrName&#34;,
+<a id="L142"></a><span class="ln">   142</span>		stateAfterName:   &#34;stateAfterName&#34;,
+<a id="L143"></a><span class="ln">   143</span>		stateBeforeValue: &#34;stateBeforeValue&#34;,
+<a id="L144"></a><span class="ln">   144</span>		stateHTMLCmt:     &#34;stateHTMLCmt&#34;,
+<a id="L145"></a><span class="ln">   145</span>		stateRCDATA:      &#34;stateRCDATA&#34;,
+<a id="L146"></a><span class="ln">   146</span>		stateAttr:        &#34;stateAttr&#34;,
+<a id="L147"></a><span class="ln">   147</span>		stateURL:         &#34;stateURL&#34;,
+<a id="L148"></a><span class="ln">   148</span>		stateJS:          &#34;stateJS&#34;,
+<a id="L149"></a><span class="ln">   149</span>		stateJSDqStr:     &#34;stateJSDqStr&#34;,
+<a id="L150"></a><span class="ln">   150</span>		stateJSSqStr:     &#34;stateJSSqStr&#34;,
+<a id="L151"></a><span class="ln">   151</span>		stateJSRegexp:    &#34;stateJSRegexp&#34;,
+<a id="L152"></a><span class="ln">   152</span>		stateJSBlockCmt:  &#34;stateJSBlockCmt&#34;,
+<a id="L153"></a><span class="ln">   153</span>		stateJSLineCmt:   &#34;stateJSLineCmt&#34;,
+<a id="L154"></a><span class="ln">   154</span>		stateCSS:         &#34;stateCSS&#34;,
+<a id="L155"></a><span class="ln">   155</span>		stateCSSDqStr:    &#34;stateCSSDqStr&#34;,
+<a id="L156"></a><span class="ln">   156</span>		stateCSSSqStr:    &#34;stateCSSSqStr&#34;,
+<a id="L157"></a><span class="ln">   157</span>		stateCSSDqURL:    &#34;stateCSSDqURL&#34;,
+<a id="L158"></a><span class="ln">   158</span>		stateCSSSqURL:    &#34;stateCSSSqURL&#34;,
+<a id="L159"></a><span class="ln">   159</span>		stateCSSURL:      &#34;stateCSSURL&#34;,
+<a id="L160"></a><span class="ln">   160</span>		stateCSSBlockCmt: &#34;stateCSSBlockCmt&#34;,
+<a id="L161"></a><span class="ln">   161</span>		stateCSSLineCmt:  &#34;stateCSSLineCmt&#34;,
+<a id="L162"></a><span class="ln">   162</span>		stateError:       &#34;stateError&#34;,
+<a id="L163"></a><span class="ln">   163</span>	}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>	func (s state) String() string {
+<a id="L166"></a><span class="ln">   166</span>		if int(s) &lt; len(stateNames) {
+<a id="L167"></a><span class="ln">   167</span>			return stateNames[s]
+<a id="L168"></a><span class="ln">   168</span>		}
+<a id="L169"></a><span class="ln">   169</span>		return fmt.Sprintf(&#34;illegal state %d&#34;, int(s))
+<a id="L170"></a><span class="ln">   170</span>	}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// isComment is true for any state that contains content meant for template</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">// authors &amp; maintainers, not for end-users or machines.</span>
+<a id="L174"></a><span class="ln">   174</span>	func isComment(s state) bool {
+<a id="L175"></a><span class="ln">   175</span>		switch s {
+<a id="L176"></a><span class="ln">   176</span>		case stateHTMLCmt, stateJSBlockCmt, stateJSLineCmt, stateCSSBlockCmt, stateCSSLineCmt:
+<a id="L177"></a><span class="ln">   177</span>			return true
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>		return false
+<a id="L180"></a><span class="ln">   180</span>	}
+<a id="L181"></a><span class="ln">   181</span>	
+<a id="L182"></a><span class="ln">   182</span>	<span class="comment">// isInTag return whether s occurs solely inside an HTML tag.</span>
+<a id="L183"></a><span class="ln">   183</span>	func isInTag(s state) bool {
+<a id="L184"></a><span class="ln">   184</span>		switch s {
+<a id="L185"></a><span class="ln">   185</span>		case stateTag, stateAttrName, stateAfterName, stateBeforeValue, stateAttr:
+<a id="L186"></a><span class="ln">   186</span>			return true
+<a id="L187"></a><span class="ln">   187</span>		}
+<a id="L188"></a><span class="ln">   188</span>		return false
+<a id="L189"></a><span class="ln">   189</span>	}
+<a id="L190"></a><span class="ln">   190</span>	
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// delim is the delimiter that will end the current HTML attribute.</span>
+<a id="L192"></a><span class="ln">   192</span>	type delim uint8
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>	const (
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// delimNone occurs outside any attribute.</span>
+<a id="L196"></a><span class="ln">   196</span>		delimNone delim = iota
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// delimDoubleQuote occurs when a double quote (&#34;) closes the attribute.</span>
+<a id="L198"></a><span class="ln">   198</span>		delimDoubleQuote
+<a id="L199"></a><span class="ln">   199</span>		<span class="comment">// delimSingleQuote occurs when a single quote (&#39;) closes the attribute.</span>
+<a id="L200"></a><span class="ln">   200</span>		delimSingleQuote
+<a id="L201"></a><span class="ln">   201</span>		<span class="comment">// delimSpaceOrTagEnd occurs when a space or right angle bracket (&gt;)</span>
+<a id="L202"></a><span class="ln">   202</span>		<span class="comment">// closes the attribute.</span>
+<a id="L203"></a><span class="ln">   203</span>		delimSpaceOrTagEnd
+<a id="L204"></a><span class="ln">   204</span>	)
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>	var delimNames = [...]string{
+<a id="L207"></a><span class="ln">   207</span>		delimNone:          &#34;delimNone&#34;,
+<a id="L208"></a><span class="ln">   208</span>		delimDoubleQuote:   &#34;delimDoubleQuote&#34;,
+<a id="L209"></a><span class="ln">   209</span>		delimSingleQuote:   &#34;delimSingleQuote&#34;,
+<a id="L210"></a><span class="ln">   210</span>		delimSpaceOrTagEnd: &#34;delimSpaceOrTagEnd&#34;,
+<a id="L211"></a><span class="ln">   211</span>	}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	func (d delim) String() string {
+<a id="L214"></a><span class="ln">   214</span>		if int(d) &lt; len(delimNames) {
+<a id="L215"></a><span class="ln">   215</span>			return delimNames[d]
+<a id="L216"></a><span class="ln">   216</span>		}
+<a id="L217"></a><span class="ln">   217</span>		return fmt.Sprintf(&#34;illegal delim %d&#34;, int(d))
+<a id="L218"></a><span class="ln">   218</span>	}
+<a id="L219"></a><span class="ln">   219</span>	
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">// urlPart identifies a part in an RFC 3986 hierarchical URL to allow different</span>
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// encoding strategies.</span>
+<a id="L222"></a><span class="ln">   222</span>	type urlPart uint8
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	const (
+<a id="L225"></a><span class="ln">   225</span>		<span class="comment">// urlPartNone occurs when not in a URL, or possibly at the start:</span>
+<a id="L226"></a><span class="ln">   226</span>		<span class="comment">// ^ in &#34;^http://auth/path?k=v#frag&#34;.</span>
+<a id="L227"></a><span class="ln">   227</span>		urlPartNone urlPart = iota
+<a id="L228"></a><span class="ln">   228</span>		<span class="comment">// urlPartPreQuery occurs in the scheme, authority, or path; between the</span>
+<a id="L229"></a><span class="ln">   229</span>		<span class="comment">// ^s in &#34;h^ttp://auth/path^?k=v#frag&#34;.</span>
+<a id="L230"></a><span class="ln">   230</span>		urlPartPreQuery
+<a id="L231"></a><span class="ln">   231</span>		<span class="comment">// urlPartQueryOrFrag occurs in the query portion between the ^s in</span>
+<a id="L232"></a><span class="ln">   232</span>		<span class="comment">// &#34;http://auth/path?^k=v#frag^&#34;.</span>
+<a id="L233"></a><span class="ln">   233</span>		urlPartQueryOrFrag
+<a id="L234"></a><span class="ln">   234</span>		<span class="comment">// urlPartUnknown occurs due to joining of contexts both before and</span>
+<a id="L235"></a><span class="ln">   235</span>		<span class="comment">// after the query separator.</span>
+<a id="L236"></a><span class="ln">   236</span>		urlPartUnknown
+<a id="L237"></a><span class="ln">   237</span>	)
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	var urlPartNames = [...]string{
+<a id="L240"></a><span class="ln">   240</span>		urlPartNone:        &#34;urlPartNone&#34;,
+<a id="L241"></a><span class="ln">   241</span>		urlPartPreQuery:    &#34;urlPartPreQuery&#34;,
+<a id="L242"></a><span class="ln">   242</span>		urlPartQueryOrFrag: &#34;urlPartQueryOrFrag&#34;,
+<a id="L243"></a><span class="ln">   243</span>		urlPartUnknown:     &#34;urlPartUnknown&#34;,
+<a id="L244"></a><span class="ln">   244</span>	}
+<a id="L245"></a><span class="ln">   245</span>	
+<a id="L246"></a><span class="ln">   246</span>	func (u urlPart) String() string {
+<a id="L247"></a><span class="ln">   247</span>		if int(u) &lt; len(urlPartNames) {
+<a id="L248"></a><span class="ln">   248</span>			return urlPartNames[u]
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		return fmt.Sprintf(&#34;illegal urlPart %d&#34;, int(u))
+<a id="L251"></a><span class="ln">   251</span>	}
+<a id="L252"></a><span class="ln">   252</span>	
+<a id="L253"></a><span class="ln">   253</span>	<span class="comment">// jsCtx determines whether a &#39;/&#39; starts a regular expression literal or a</span>
+<a id="L254"></a><span class="ln">   254</span>	<span class="comment">// division operator.</span>
+<a id="L255"></a><span class="ln">   255</span>	type jsCtx uint8
+<a id="L256"></a><span class="ln">   256</span>	
+<a id="L257"></a><span class="ln">   257</span>	const (
+<a id="L258"></a><span class="ln">   258</span>		<span class="comment">// jsCtxRegexp occurs where a &#39;/&#39; would start a regexp literal.</span>
+<a id="L259"></a><span class="ln">   259</span>		jsCtxRegexp jsCtx = iota
+<a id="L260"></a><span class="ln">   260</span>		<span class="comment">// jsCtxDivOp occurs where a &#39;/&#39; would start a division operator.</span>
+<a id="L261"></a><span class="ln">   261</span>		jsCtxDivOp
+<a id="L262"></a><span class="ln">   262</span>		<span class="comment">// jsCtxUnknown occurs where a &#39;/&#39; is ambiguous due to context joining.</span>
+<a id="L263"></a><span class="ln">   263</span>		jsCtxUnknown
+<a id="L264"></a><span class="ln">   264</span>	)
+<a id="L265"></a><span class="ln">   265</span>	
+<a id="L266"></a><span class="ln">   266</span>	func (c jsCtx) String() string {
+<a id="L267"></a><span class="ln">   267</span>		switch c {
+<a id="L268"></a><span class="ln">   268</span>		case jsCtxRegexp:
+<a id="L269"></a><span class="ln">   269</span>			return &#34;jsCtxRegexp&#34;
+<a id="L270"></a><span class="ln">   270</span>		case jsCtxDivOp:
+<a id="L271"></a><span class="ln">   271</span>			return &#34;jsCtxDivOp&#34;
+<a id="L272"></a><span class="ln">   272</span>		case jsCtxUnknown:
+<a id="L273"></a><span class="ln">   273</span>			return &#34;jsCtxUnknown&#34;
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>		return fmt.Sprintf(&#34;illegal jsCtx %d&#34;, int(c))
+<a id="L276"></a><span class="ln">   276</span>	}
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>	<span class="comment">// element identifies the HTML element when inside a start tag or special body.</span>
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// Certain HTML element (for example &lt;script&gt; and &lt;style&gt;) have bodies that are</span>
+<a id="L280"></a><span class="ln">   280</span>	<span class="comment">// treated differently from stateText so the element type is necessary to</span>
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// transition into the correct context at the end of a tag and to identify the</span>
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// end delimiter for the body.</span>
+<a id="L283"></a><span class="ln">   283</span>	type element uint8
+<a id="L284"></a><span class="ln">   284</span>	
+<a id="L285"></a><span class="ln">   285</span>	const (
+<a id="L286"></a><span class="ln">   286</span>		<span class="comment">// elementNone occurs outside a special tag or special element body.</span>
+<a id="L287"></a><span class="ln">   287</span>		elementNone element = iota
+<a id="L288"></a><span class="ln">   288</span>		<span class="comment">// elementScript corresponds to the raw text &lt;script&gt; element.</span>
+<a id="L289"></a><span class="ln">   289</span>		elementScript
+<a id="L290"></a><span class="ln">   290</span>		<span class="comment">// elementStyle corresponds to the raw text &lt;style&gt; element.</span>
+<a id="L291"></a><span class="ln">   291</span>		elementStyle
+<a id="L292"></a><span class="ln">   292</span>		<span class="comment">// elementTextarea corresponds to the RCDATA &lt;textarea&gt; element.</span>
+<a id="L293"></a><span class="ln">   293</span>		elementTextarea
+<a id="L294"></a><span class="ln">   294</span>		<span class="comment">// elementTitle corresponds to the RCDATA &lt;title&gt; element.</span>
+<a id="L295"></a><span class="ln">   295</span>		elementTitle
+<a id="L296"></a><span class="ln">   296</span>	)
+<a id="L297"></a><span class="ln">   297</span>	
+<a id="L298"></a><span class="ln">   298</span>	var elementNames = [...]string{
+<a id="L299"></a><span class="ln">   299</span>		elementNone:     &#34;elementNone&#34;,
+<a id="L300"></a><span class="ln">   300</span>		elementScript:   &#34;elementScript&#34;,
+<a id="L301"></a><span class="ln">   301</span>		elementStyle:    &#34;elementStyle&#34;,
+<a id="L302"></a><span class="ln">   302</span>		elementTextarea: &#34;elementTextarea&#34;,
+<a id="L303"></a><span class="ln">   303</span>		elementTitle:    &#34;elementTitle&#34;,
+<a id="L304"></a><span class="ln">   304</span>	}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>	func (e element) String() string {
+<a id="L307"></a><span class="ln">   307</span>		if int(e) &lt; len(elementNames) {
+<a id="L308"></a><span class="ln">   308</span>			return elementNames[e]
+<a id="L309"></a><span class="ln">   309</span>		}
+<a id="L310"></a><span class="ln">   310</span>		return fmt.Sprintf(&#34;illegal element %d&#34;, int(e))
+<a id="L311"></a><span class="ln">   311</span>	}
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>	<span class="comment">// attr identifies the most recent HTML attribute when inside a start tag.</span>
+<a id="L314"></a><span class="ln">   314</span>	type attr uint8
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>	const (
+<a id="L317"></a><span class="ln">   317</span>		<span class="comment">// attrNone corresponds to a normal attribute or no attribute.</span>
+<a id="L318"></a><span class="ln">   318</span>		attrNone attr = iota
+<a id="L319"></a><span class="ln">   319</span>		<span class="comment">// attrScript corresponds to an event handler attribute.</span>
+<a id="L320"></a><span class="ln">   320</span>		attrScript
+<a id="L321"></a><span class="ln">   321</span>		<span class="comment">// attrStyle corresponds to the style attribute whose value is CSS.</span>
+<a id="L322"></a><span class="ln">   322</span>		attrStyle
+<a id="L323"></a><span class="ln">   323</span>		<span class="comment">// attrURL corresponds to an attribute whose value is a URL.</span>
+<a id="L324"></a><span class="ln">   324</span>		attrURL
+<a id="L325"></a><span class="ln">   325</span>	)
+<a id="L326"></a><span class="ln">   326</span>	
+<a id="L327"></a><span class="ln">   327</span>	var attrNames = [...]string{
+<a id="L328"></a><span class="ln">   328</span>		attrNone:   &#34;attrNone&#34;,
+<a id="L329"></a><span class="ln">   329</span>		attrScript: &#34;attrScript&#34;,
+<a id="L330"></a><span class="ln">   330</span>		attrStyle:  &#34;attrStyle&#34;,
+<a id="L331"></a><span class="ln">   331</span>		attrURL:    &#34;attrURL&#34;,
+<a id="L332"></a><span class="ln">   332</span>	}
+<a id="L333"></a><span class="ln">   333</span>	
+<a id="L334"></a><span class="ln">   334</span>	func (a attr) String() string {
+<a id="L335"></a><span class="ln">   335</span>		if int(a) &lt; len(attrNames) {
+<a id="L336"></a><span class="ln">   336</span>			return attrNames[a]
+<a id="L337"></a><span class="ln">   337</span>		}
+<a id="L338"></a><span class="ln">   338</span>		return fmt.Sprintf(&#34;illegal attr %d&#34;, int(a))
+<a id="L339"></a><span class="ln">   339</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/crypto.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/crypto.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package crypto collects common cryptographic constants.</span>
+<a id="L6"></a><span class="ln">     6</span>	package crypto
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;hash&#34;
+<a id="L10"></a><span class="ln">    10</span>	)
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// Hash identifies a cryptographic hash function that is implemented in another</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// package.</span>
+<a id="L14"></a><span class="ln">    14</span>	type Hash uint
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	const (
+<a id="L17"></a><span class="ln">    17</span>		MD4       Hash = 1 + iota <span class="comment">// import code.google.com/p/go.crypto/md4</span>
+<a id="L18"></a><span class="ln">    18</span>		MD5                       <span class="comment">// import crypto/md5</span>
+<a id="L19"></a><span class="ln">    19</span>		SHA1                      <span class="comment">// import crypto/sha1</span>
+<a id="L20"></a><span class="ln">    20</span>		SHA224                    <span class="comment">// import crypto/sha256</span>
+<a id="L21"></a><span class="ln">    21</span>		SHA256                    <span class="comment">// import crypto/sha256</span>
+<a id="L22"></a><span class="ln">    22</span>		SHA384                    <span class="comment">// import crypto/sha512</span>
+<a id="L23"></a><span class="ln">    23</span>		SHA512                    <span class="comment">// import crypto/sha512</span>
+<a id="L24"></a><span class="ln">    24</span>		MD5SHA1                   <span class="comment">// no implementation; MD5+SHA1 used for TLS RSA</span>
+<a id="L25"></a><span class="ln">    25</span>		RIPEMD160                 <span class="comment">// import code.google.com/p/go.crypto/ripemd160</span>
+<a id="L26"></a><span class="ln">    26</span>		maxHash
+<a id="L27"></a><span class="ln">    27</span>	)
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	var digestSizes = []uint8{
+<a id="L30"></a><span class="ln">    30</span>		MD4:       16,
+<a id="L31"></a><span class="ln">    31</span>		MD5:       16,
+<a id="L32"></a><span class="ln">    32</span>		SHA1:      20,
+<a id="L33"></a><span class="ln">    33</span>		SHA224:    28,
+<a id="L34"></a><span class="ln">    34</span>		SHA256:    32,
+<a id="L35"></a><span class="ln">    35</span>		SHA384:    48,
+<a id="L36"></a><span class="ln">    36</span>		SHA512:    64,
+<a id="L37"></a><span class="ln">    37</span>		MD5SHA1:   36,
+<a id="L38"></a><span class="ln">    38</span>		RIPEMD160: 20,
+<a id="L39"></a><span class="ln">    39</span>	}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// Size returns the length, in bytes, of a digest resulting from the given hash</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// function. It doesn&#39;t require that the hash function in question be linked</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// into the program.</span>
+<a id="L44"></a><span class="ln">    44</span>	func (h Hash) Size() int {
+<a id="L45"></a><span class="ln">    45</span>		if h &gt; 0 &amp;&amp; h &lt; maxHash {
+<a id="L46"></a><span class="ln">    46</span>			return int(digestSizes[h])
+<a id="L47"></a><span class="ln">    47</span>		}
+<a id="L48"></a><span class="ln">    48</span>		panic(&#34;crypto: Size of unknown hash function&#34;)
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	var hashes = make([]func() hash.Hash, maxHash)
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// New returns a new hash.Hash calculating the given hash function. New panics</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// if the hash function is not linked into the binary.</span>
+<a id="L55"></a><span class="ln">    55</span>	func (h Hash) New() hash.Hash {
+<a id="L56"></a><span class="ln">    56</span>		if h &gt; 0 &amp;&amp; h &lt; maxHash {
+<a id="L57"></a><span class="ln">    57</span>			f := hashes[h]
+<a id="L58"></a><span class="ln">    58</span>			if f != nil {
+<a id="L59"></a><span class="ln">    59</span>				return f()
+<a id="L60"></a><span class="ln">    60</span>			}
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		panic(&#34;crypto: requested hash function is unavailable&#34;)
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// Available reports whether the given hash function is linked into the binary.</span>
+<a id="L66"></a><span class="ln">    66</span>	func (h Hash) Available() bool {
+<a id="L67"></a><span class="ln">    67</span>		return h &lt; maxHash &amp;&amp; hashes[h] != nil
+<a id="L68"></a><span class="ln">    68</span>	}
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// RegisterHash registers a function that returns a new instance of the given</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// hash function. This is intended to be called from the init function in</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// packages that implement hash functions.</span>
+<a id="L73"></a><span class="ln">    73</span>	func RegisterHash(h Hash, f func() hash.Hash) {
+<a id="L74"></a><span class="ln">    74</span>		if h &gt;= maxHash {
+<a id="L75"></a><span class="ln">    75</span>			panic(&#34;crypto: RegisterHash of unknown hash function&#34;)
+<a id="L76"></a><span class="ln">    76</span>		}
+<a id="L77"></a><span class="ln">    77</span>		hashes[h] = f
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// PrivateKey represents a private key using an unspecified algorithm.</span>
+<a id="L81"></a><span class="ln">    81</span>	type PrivateKey interface{}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

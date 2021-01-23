@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/compress/gzip/gunzip.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/compress/gzip/gunzip.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package gzip implements reading and writing of gzip format compressed files,</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// as specified in RFC 1952.</span>
+<a id="L7"></a><span class="ln">     7</span>	package gzip
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;bufio&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;compress/flate&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;errors&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;hash&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;hash/crc32&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;io&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;time&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	const (
+<a id="L20"></a><span class="ln">    20</span>		gzipID1     = 0x1f
+<a id="L21"></a><span class="ln">    21</span>		gzipID2     = 0x8b
+<a id="L22"></a><span class="ln">    22</span>		gzipDeflate = 8
+<a id="L23"></a><span class="ln">    23</span>		flagText    = 1 &lt;&lt; 0
+<a id="L24"></a><span class="ln">    24</span>		flagHdrCrc  = 1 &lt;&lt; 1
+<a id="L25"></a><span class="ln">    25</span>		flagExtra   = 1 &lt;&lt; 2
+<a id="L26"></a><span class="ln">    26</span>		flagName    = 1 &lt;&lt; 3
+<a id="L27"></a><span class="ln">    27</span>		flagComment = 1 &lt;&lt; 4
+<a id="L28"></a><span class="ln">    28</span>	)
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	func makeReader(r io.Reader) flate.Reader {
+<a id="L31"></a><span class="ln">    31</span>		if rr, ok := r.(flate.Reader); ok {
+<a id="L32"></a><span class="ln">    32</span>			return rr
+<a id="L33"></a><span class="ln">    33</span>		}
+<a id="L34"></a><span class="ln">    34</span>		return bufio.NewReader(r)
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	var (
+<a id="L38"></a><span class="ln">    38</span>		<span class="comment">// ErrChecksum is returned when reading GZIP data that has an invalid checksum.</span>
+<a id="L39"></a><span class="ln">    39</span>		ErrChecksum = errors.New(&#34;gzip: invalid checksum&#34;)
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// ErrHeader is returned when reading GZIP data that has an invalid header.</span>
+<a id="L41"></a><span class="ln">    41</span>		ErrHeader = errors.New(&#34;gzip: invalid header&#34;)
+<a id="L42"></a><span class="ln">    42</span>	)
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// The gzip file stores a header giving metadata about the compressed file.</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// That header is exposed as the fields of the Writer and Reader structs.</span>
+<a id="L46"></a><span class="ln">    46</span>	type Header struct {
+<a id="L47"></a><span class="ln">    47</span>		Comment string    <span class="comment">// comment</span>
+<a id="L48"></a><span class="ln">    48</span>		Extra   []byte    <span class="comment">// &#34;extra data&#34;</span>
+<a id="L49"></a><span class="ln">    49</span>		ModTime time.Time <span class="comment">// modification time</span>
+<a id="L50"></a><span class="ln">    50</span>		Name    string    <span class="comment">// file name</span>
+<a id="L51"></a><span class="ln">    51</span>		OS      byte      <span class="comment">// operating system type</span>
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// A Reader is an io.Reader that can be read to retrieve</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// uncompressed data from a gzip-format compressed file.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// In general, a gzip file can be a concatenation of gzip files,</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// each with its own header.  Reads from the Reader</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// return the concatenation of the uncompressed data of each.</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// Only the first header is recorded in the Reader fields.</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">//</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// Gzip files store a length and checksum of the uncompressed data.</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// The Reader will return a ErrChecksum when Read</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// reaches the end of the uncompressed data if it does not</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// have the expected length or checksum.  Clients should treat data</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// returned by Read as tentative until they receive the io.EOF</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// marking the end of the data.</span>
+<a id="L68"></a><span class="ln">    68</span>	type Reader struct {
+<a id="L69"></a><span class="ln">    69</span>		Header
+<a id="L70"></a><span class="ln">    70</span>		r            flate.Reader
+<a id="L71"></a><span class="ln">    71</span>		decompressor io.ReadCloser
+<a id="L72"></a><span class="ln">    72</span>		digest       hash.Hash32
+<a id="L73"></a><span class="ln">    73</span>		size         uint32
+<a id="L74"></a><span class="ln">    74</span>		flg          byte
+<a id="L75"></a><span class="ln">    75</span>		buf          [512]byte
+<a id="L76"></a><span class="ln">    76</span>		err          error
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// NewReader creates a new Reader reading the given reader.</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// The implementation buffers input and may read more data than necessary from r.</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// It is the caller&#39;s responsibility to call Close on the Reader when done.</span>
+<a id="L82"></a><span class="ln">    82</span>	func NewReader(r io.Reader) (*Reader, error) {
+<a id="L83"></a><span class="ln">    83</span>		z := new(Reader)
+<a id="L84"></a><span class="ln">    84</span>		z.r = makeReader(r)
+<a id="L85"></a><span class="ln">    85</span>		z.digest = crc32.NewIEEE()
+<a id="L86"></a><span class="ln">    86</span>		if err := z.readHeader(true); err != nil {
+<a id="L87"></a><span class="ln">    87</span>			return nil, err
+<a id="L88"></a><span class="ln">    88</span>		}
+<a id="L89"></a><span class="ln">    89</span>		return z, nil
+<a id="L90"></a><span class="ln">    90</span>	}
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// GZIP (RFC 1952) is little-endian, unlike ZLIB (RFC 1950).</span>
+<a id="L93"></a><span class="ln">    93</span>	func get4(p []byte) uint32 {
+<a id="L94"></a><span class="ln">    94</span>		return uint32(p[0]) | uint32(p[1])&lt;&lt;8 | uint32(p[2])&lt;&lt;16 | uint32(p[3])&lt;&lt;24
+<a id="L95"></a><span class="ln">    95</span>	}
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	func (z *Reader) readString() (string, error) {
+<a id="L98"></a><span class="ln">    98</span>		var err error
+<a id="L99"></a><span class="ln">    99</span>		needconv := false
+<a id="L100"></a><span class="ln">   100</span>		for i := 0; ; i++ {
+<a id="L101"></a><span class="ln">   101</span>			if i &gt;= len(z.buf) {
+<a id="L102"></a><span class="ln">   102</span>				return &#34;&#34;, ErrHeader
+<a id="L103"></a><span class="ln">   103</span>			}
+<a id="L104"></a><span class="ln">   104</span>			z.buf[i], err = z.r.ReadByte()
+<a id="L105"></a><span class="ln">   105</span>			if err != nil {
+<a id="L106"></a><span class="ln">   106</span>				return &#34;&#34;, err
+<a id="L107"></a><span class="ln">   107</span>			}
+<a id="L108"></a><span class="ln">   108</span>			if z.buf[i] &gt; 0x7f {
+<a id="L109"></a><span class="ln">   109</span>				needconv = true
+<a id="L110"></a><span class="ln">   110</span>			}
+<a id="L111"></a><span class="ln">   111</span>			if z.buf[i] == 0 {
+<a id="L112"></a><span class="ln">   112</span>				<span class="comment">// GZIP (RFC 1952) specifies that strings are NUL-terminated ISO 8859-1 (Latin-1).</span>
+<a id="L113"></a><span class="ln">   113</span>				if needconv {
+<a id="L114"></a><span class="ln">   114</span>					s := make([]rune, 0, i)
+<a id="L115"></a><span class="ln">   115</span>					for _, v := range z.buf[0:i] {
+<a id="L116"></a><span class="ln">   116</span>						s = append(s, rune(v))
+<a id="L117"></a><span class="ln">   117</span>					}
+<a id="L118"></a><span class="ln">   118</span>					return string(s), nil
+<a id="L119"></a><span class="ln">   119</span>				}
+<a id="L120"></a><span class="ln">   120</span>				return string(z.buf[0:i]), nil
+<a id="L121"></a><span class="ln">   121</span>			}
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>		panic(&#34;not reached&#34;)
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	func (z *Reader) read2() (uint32, error) {
+<a id="L127"></a><span class="ln">   127</span>		_, err := io.ReadFull(z.r, z.buf[0:2])
+<a id="L128"></a><span class="ln">   128</span>		if err != nil {
+<a id="L129"></a><span class="ln">   129</span>			return 0, err
+<a id="L130"></a><span class="ln">   130</span>		}
+<a id="L131"></a><span class="ln">   131</span>		return uint32(z.buf[0]) | uint32(z.buf[1])&lt;&lt;8, nil
+<a id="L132"></a><span class="ln">   132</span>	}
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	func (z *Reader) readHeader(save bool) error {
+<a id="L135"></a><span class="ln">   135</span>		_, err := io.ReadFull(z.r, z.buf[0:10])
+<a id="L136"></a><span class="ln">   136</span>		if err != nil {
+<a id="L137"></a><span class="ln">   137</span>			return err
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>		if z.buf[0] != gzipID1 || z.buf[1] != gzipID2 || z.buf[2] != gzipDeflate {
+<a id="L140"></a><span class="ln">   140</span>			return ErrHeader
+<a id="L141"></a><span class="ln">   141</span>		}
+<a id="L142"></a><span class="ln">   142</span>		z.flg = z.buf[3]
+<a id="L143"></a><span class="ln">   143</span>		if save {
+<a id="L144"></a><span class="ln">   144</span>			z.ModTime = time.Unix(int64(get4(z.buf[4:8])), 0)
+<a id="L145"></a><span class="ln">   145</span>			<span class="comment">// z.buf[8] is xfl, ignored</span>
+<a id="L146"></a><span class="ln">   146</span>			z.OS = z.buf[9]
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		z.digest.Reset()
+<a id="L149"></a><span class="ln">   149</span>		z.digest.Write(z.buf[0:10])
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>		if z.flg&amp;flagExtra != 0 {
+<a id="L152"></a><span class="ln">   152</span>			n, err := z.read2()
+<a id="L153"></a><span class="ln">   153</span>			if err != nil {
+<a id="L154"></a><span class="ln">   154</span>				return err
+<a id="L155"></a><span class="ln">   155</span>			}
+<a id="L156"></a><span class="ln">   156</span>			data := make([]byte, n)
+<a id="L157"></a><span class="ln">   157</span>			if _, err = io.ReadFull(z.r, data); err != nil {
+<a id="L158"></a><span class="ln">   158</span>				return err
+<a id="L159"></a><span class="ln">   159</span>			}
+<a id="L160"></a><span class="ln">   160</span>			if save {
+<a id="L161"></a><span class="ln">   161</span>				z.Extra = data
+<a id="L162"></a><span class="ln">   162</span>			}
+<a id="L163"></a><span class="ln">   163</span>		}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>		var s string
+<a id="L166"></a><span class="ln">   166</span>		if z.flg&amp;flagName != 0 {
+<a id="L167"></a><span class="ln">   167</span>			if s, err = z.readString(); err != nil {
+<a id="L168"></a><span class="ln">   168</span>				return err
+<a id="L169"></a><span class="ln">   169</span>			}
+<a id="L170"></a><span class="ln">   170</span>			if save {
+<a id="L171"></a><span class="ln">   171</span>				z.Name = s
+<a id="L172"></a><span class="ln">   172</span>			}
+<a id="L173"></a><span class="ln">   173</span>		}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>		if z.flg&amp;flagComment != 0 {
+<a id="L176"></a><span class="ln">   176</span>			if s, err = z.readString(); err != nil {
+<a id="L177"></a><span class="ln">   177</span>				return err
+<a id="L178"></a><span class="ln">   178</span>			}
+<a id="L179"></a><span class="ln">   179</span>			if save {
+<a id="L180"></a><span class="ln">   180</span>				z.Comment = s
+<a id="L181"></a><span class="ln">   181</span>			}
+<a id="L182"></a><span class="ln">   182</span>		}
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>		if z.flg&amp;flagHdrCrc != 0 {
+<a id="L185"></a><span class="ln">   185</span>			n, err := z.read2()
+<a id="L186"></a><span class="ln">   186</span>			if err != nil {
+<a id="L187"></a><span class="ln">   187</span>				return err
+<a id="L188"></a><span class="ln">   188</span>			}
+<a id="L189"></a><span class="ln">   189</span>			sum := z.digest.Sum32() &amp; 0xFFFF
+<a id="L190"></a><span class="ln">   190</span>			if n != sum {
+<a id="L191"></a><span class="ln">   191</span>				return ErrHeader
+<a id="L192"></a><span class="ln">   192</span>			}
+<a id="L193"></a><span class="ln">   193</span>		}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>		z.digest.Reset()
+<a id="L196"></a><span class="ln">   196</span>		z.decompressor = flate.NewReader(z.r)
+<a id="L197"></a><span class="ln">   197</span>		return nil
+<a id="L198"></a><span class="ln">   198</span>	}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>	func (z *Reader) Read(p []byte) (n int, err error) {
+<a id="L201"></a><span class="ln">   201</span>		if z.err != nil {
+<a id="L202"></a><span class="ln">   202</span>			return 0, z.err
+<a id="L203"></a><span class="ln">   203</span>		}
+<a id="L204"></a><span class="ln">   204</span>		if len(p) == 0 {
+<a id="L205"></a><span class="ln">   205</span>			return 0, nil
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>		n, err = z.decompressor.Read(p)
+<a id="L209"></a><span class="ln">   209</span>		z.digest.Write(p[0:n])
+<a id="L210"></a><span class="ln">   210</span>		z.size += uint32(n)
+<a id="L211"></a><span class="ln">   211</span>		if n != 0 || err != io.EOF {
+<a id="L212"></a><span class="ln">   212</span>			z.err = err
+<a id="L213"></a><span class="ln">   213</span>			return
+<a id="L214"></a><span class="ln">   214</span>		}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>		<span class="comment">// Finished file; check checksum + size.</span>
+<a id="L217"></a><span class="ln">   217</span>		if _, err := io.ReadFull(z.r, z.buf[0:8]); err != nil {
+<a id="L218"></a><span class="ln">   218</span>			z.err = err
+<a id="L219"></a><span class="ln">   219</span>			return 0, err
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>		crc32, isize := get4(z.buf[0:4]), get4(z.buf[4:8])
+<a id="L222"></a><span class="ln">   222</span>		sum := z.digest.Sum32()
+<a id="L223"></a><span class="ln">   223</span>		if sum != crc32 || isize != z.size {
+<a id="L224"></a><span class="ln">   224</span>			z.err = ErrChecksum
+<a id="L225"></a><span class="ln">   225</span>			return 0, z.err
+<a id="L226"></a><span class="ln">   226</span>		}
+<a id="L227"></a><span class="ln">   227</span>	
+<a id="L228"></a><span class="ln">   228</span>		<span class="comment">// File is ok; is there another?</span>
+<a id="L229"></a><span class="ln">   229</span>		if err = z.readHeader(false); err != nil {
+<a id="L230"></a><span class="ln">   230</span>			z.err = err
+<a id="L231"></a><span class="ln">   231</span>			return
+<a id="L232"></a><span class="ln">   232</span>		}
+<a id="L233"></a><span class="ln">   233</span>	
+<a id="L234"></a><span class="ln">   234</span>		<span class="comment">// Yes.  Reset and read from it.</span>
+<a id="L235"></a><span class="ln">   235</span>		z.digest.Reset()
+<a id="L236"></a><span class="ln">   236</span>		z.size = 0
+<a id="L237"></a><span class="ln">   237</span>		return z.Read(p)
+<a id="L238"></a><span class="ln">   238</span>	}
+<a id="L239"></a><span class="ln">   239</span>	
+<a id="L240"></a><span class="ln">   240</span>	<span class="comment">// Close closes the Reader. It does not close the underlying io.Reader.</span>
+<a id="L241"></a><span class="ln">   241</span>	func (z *Reader) Close() error { return z.decompressor.Close() }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

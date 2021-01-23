@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/reflect/deepequal.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/reflect/deepequal.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Deep equality test via reflection</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package reflect
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// During deepValueEqual, must keep track of checks that are</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// in progress.  The comparison algorithm assumes that all</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// checks in progress are true when it reencounters them.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// Visited are stored in a map indexed by 17 * a1 + a2;</span>
+<a id="L13"></a><span class="ln">    13</span>	type visit struct {
+<a id="L14"></a><span class="ln">    14</span>		a1   uintptr
+<a id="L15"></a><span class="ln">    15</span>		a2   uintptr
+<a id="L16"></a><span class="ln">    16</span>		typ  Type
+<a id="L17"></a><span class="ln">    17</span>		next *visit
+<a id="L18"></a><span class="ln">    18</span>	}
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// Tests for deep equality using reflected types. The map argument tracks</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// comparisons that have already been seen, which allows short circuiting on</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// recursive types.</span>
+<a id="L23"></a><span class="ln">    23</span>	func deepValueEqual(v1, v2 Value, visited map[uintptr]*visit, depth int) (b bool) {
+<a id="L24"></a><span class="ln">    24</span>		if !v1.IsValid() || !v2.IsValid() {
+<a id="L25"></a><span class="ln">    25</span>			return v1.IsValid() == v2.IsValid()
+<a id="L26"></a><span class="ln">    26</span>		}
+<a id="L27"></a><span class="ln">    27</span>		if v1.Type() != v2.Type() {
+<a id="L28"></a><span class="ln">    28</span>			return false
+<a id="L29"></a><span class="ln">    29</span>		}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// if depth &gt; 10 { panic(&#34;deepValueEqual&#34;) }	// for debugging</span>
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>		if v1.CanAddr() &amp;&amp; v2.CanAddr() {
+<a id="L34"></a><span class="ln">    34</span>			addr1 := v1.UnsafeAddr()
+<a id="L35"></a><span class="ln">    35</span>			addr2 := v2.UnsafeAddr()
+<a id="L36"></a><span class="ln">    36</span>			if addr1 &gt; addr2 {
+<a id="L37"></a><span class="ln">    37</span>				<span class="comment">// Canonicalize order to reduce number of entries in visited.</span>
+<a id="L38"></a><span class="ln">    38</span>				addr1, addr2 = addr2, addr1
+<a id="L39"></a><span class="ln">    39</span>			}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>			<span class="comment">// Short circuit if references are identical ...</span>
+<a id="L42"></a><span class="ln">    42</span>			if addr1 == addr2 {
+<a id="L43"></a><span class="ln">    43</span>				return true
+<a id="L44"></a><span class="ln">    44</span>			}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>			<span class="comment">// ... or already seen</span>
+<a id="L47"></a><span class="ln">    47</span>			h := 17*addr1 + addr2
+<a id="L48"></a><span class="ln">    48</span>			seen := visited[h]
+<a id="L49"></a><span class="ln">    49</span>			typ := v1.Type()
+<a id="L50"></a><span class="ln">    50</span>			for p := seen; p != nil; p = p.next {
+<a id="L51"></a><span class="ln">    51</span>				if p.a1 == addr1 &amp;&amp; p.a2 == addr2 &amp;&amp; p.typ == typ {
+<a id="L52"></a><span class="ln">    52</span>					return true
+<a id="L53"></a><span class="ln">    53</span>				}
+<a id="L54"></a><span class="ln">    54</span>			}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>			<span class="comment">// Remember for later.</span>
+<a id="L57"></a><span class="ln">    57</span>			visited[h] = &amp;visit{addr1, addr2, typ, seen}
+<a id="L58"></a><span class="ln">    58</span>		}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>		switch v1.Kind() {
+<a id="L61"></a><span class="ln">    61</span>		case Array:
+<a id="L62"></a><span class="ln">    62</span>			if v1.Len() != v2.Len() {
+<a id="L63"></a><span class="ln">    63</span>				return false
+<a id="L64"></a><span class="ln">    64</span>			}
+<a id="L65"></a><span class="ln">    65</span>			for i := 0; i &lt; v1.Len(); i++ {
+<a id="L66"></a><span class="ln">    66</span>				if !deepValueEqual(v1.Index(i), v2.Index(i), visited, depth+1) {
+<a id="L67"></a><span class="ln">    67</span>					return false
+<a id="L68"></a><span class="ln">    68</span>				}
+<a id="L69"></a><span class="ln">    69</span>			}
+<a id="L70"></a><span class="ln">    70</span>			return true
+<a id="L71"></a><span class="ln">    71</span>		case Slice:
+<a id="L72"></a><span class="ln">    72</span>			if v1.IsNil() != v2.IsNil() {
+<a id="L73"></a><span class="ln">    73</span>				return false
+<a id="L74"></a><span class="ln">    74</span>			}
+<a id="L75"></a><span class="ln">    75</span>			if v1.Len() != v2.Len() {
+<a id="L76"></a><span class="ln">    76</span>				return false
+<a id="L77"></a><span class="ln">    77</span>			}
+<a id="L78"></a><span class="ln">    78</span>			for i := 0; i &lt; v1.Len(); i++ {
+<a id="L79"></a><span class="ln">    79</span>				if !deepValueEqual(v1.Index(i), v2.Index(i), visited, depth+1) {
+<a id="L80"></a><span class="ln">    80</span>					return false
+<a id="L81"></a><span class="ln">    81</span>				}
+<a id="L82"></a><span class="ln">    82</span>			}
+<a id="L83"></a><span class="ln">    83</span>			return true
+<a id="L84"></a><span class="ln">    84</span>		case Interface:
+<a id="L85"></a><span class="ln">    85</span>			if v1.IsNil() || v2.IsNil() {
+<a id="L86"></a><span class="ln">    86</span>				return v1.IsNil() == v2.IsNil()
+<a id="L87"></a><span class="ln">    87</span>			}
+<a id="L88"></a><span class="ln">    88</span>			return deepValueEqual(v1.Elem(), v2.Elem(), visited, depth+1)
+<a id="L89"></a><span class="ln">    89</span>		case Ptr:
+<a id="L90"></a><span class="ln">    90</span>			return deepValueEqual(v1.Elem(), v2.Elem(), visited, depth+1)
+<a id="L91"></a><span class="ln">    91</span>		case Struct:
+<a id="L92"></a><span class="ln">    92</span>			for i, n := 0, v1.NumField(); i &lt; n; i++ {
+<a id="L93"></a><span class="ln">    93</span>				if !deepValueEqual(v1.Field(i), v2.Field(i), visited, depth+1) {
+<a id="L94"></a><span class="ln">    94</span>					return false
+<a id="L95"></a><span class="ln">    95</span>				}
+<a id="L96"></a><span class="ln">    96</span>			}
+<a id="L97"></a><span class="ln">    97</span>			return true
+<a id="L98"></a><span class="ln">    98</span>		case Map:
+<a id="L99"></a><span class="ln">    99</span>			if v1.IsNil() != v2.IsNil() {
+<a id="L100"></a><span class="ln">   100</span>				return false
+<a id="L101"></a><span class="ln">   101</span>			}
+<a id="L102"></a><span class="ln">   102</span>			if v1.Len() != v2.Len() {
+<a id="L103"></a><span class="ln">   103</span>				return false
+<a id="L104"></a><span class="ln">   104</span>			}
+<a id="L105"></a><span class="ln">   105</span>			for _, k := range v1.MapKeys() {
+<a id="L106"></a><span class="ln">   106</span>				if !deepValueEqual(v1.MapIndex(k), v2.MapIndex(k), visited, depth+1) {
+<a id="L107"></a><span class="ln">   107</span>					return false
+<a id="L108"></a><span class="ln">   108</span>				}
+<a id="L109"></a><span class="ln">   109</span>			}
+<a id="L110"></a><span class="ln">   110</span>			return true
+<a id="L111"></a><span class="ln">   111</span>		case Func:
+<a id="L112"></a><span class="ln">   112</span>			if v1.IsNil() &amp;&amp; v2.IsNil() {
+<a id="L113"></a><span class="ln">   113</span>				return true
+<a id="L114"></a><span class="ln">   114</span>			}
+<a id="L115"></a><span class="ln">   115</span>			<span class="comment">// Can&#39;t do better than this:</span>
+<a id="L116"></a><span class="ln">   116</span>			return false
+<a id="L117"></a><span class="ln">   117</span>		default:
+<a id="L118"></a><span class="ln">   118</span>			<span class="comment">// Normal equality suffices</span>
+<a id="L119"></a><span class="ln">   119</span>			return valueInterface(v1, false) == valueInterface(v2, false)
+<a id="L120"></a><span class="ln">   120</span>		}
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>		panic(&#34;Not reached&#34;)
+<a id="L123"></a><span class="ln">   123</span>	}
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// DeepEqual tests for deep equality. It uses normal == equality where possible</span>
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// but will scan members of arrays, slices, maps, and fields of structs. It correctly</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// handles recursive types. Functions are equal only if they are both nil.</span>
+<a id="L128"></a><span class="ln">   128</span>	func DeepEqual(a1, a2 interface{}) bool {
+<a id="L129"></a><span class="ln">   129</span>		if a1 == nil || a2 == nil {
+<a id="L130"></a><span class="ln">   130</span>			return a1 == a2
+<a id="L131"></a><span class="ln">   131</span>		}
+<a id="L132"></a><span class="ln">   132</span>		v1 := ValueOf(a1)
+<a id="L133"></a><span class="ln">   133</span>		v2 := ValueOf(a2)
+<a id="L134"></a><span class="ln">   134</span>		if v1.Type() != v2.Type() {
+<a id="L135"></a><span class="ln">   135</span>			return false
+<a id="L136"></a><span class="ln">   136</span>		}
+<a id="L137"></a><span class="ln">   137</span>		return deepValueEqual(v1, v2, make(map[uintptr]*visit), 0)
+<a id="L138"></a><span class="ln">   138</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

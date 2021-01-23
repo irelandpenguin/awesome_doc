@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/csv/writer.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/csv/writer.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package csv
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bufio&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;io&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;strings&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unicode&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;unicode/utf8&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// A Writer writes records to a CSV encoded file.</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">//</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// As returned by NewWriter, a Writer writes records terminated by a</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// newline and uses &#39;,&#39; as the field delimiter.  The exported fields can be</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// changed to customize the details before the first call to Write or WriteAll.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// Comma is the field delimiter.</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// If UseCRLF is true, the Writer ends each record with \r\n instead of \n.</span>
+<a id="L24"></a><span class="ln">    24</span>	type Writer struct {
+<a id="L25"></a><span class="ln">    25</span>		Comma   rune <span class="comment">// Field delimiter (set to to &#39;,&#39; by NewWriter)</span>
+<a id="L26"></a><span class="ln">    26</span>		UseCRLF bool <span class="comment">// True to use \r\n as the line terminator</span>
+<a id="L27"></a><span class="ln">    27</span>		w       *bufio.Writer
+<a id="L28"></a><span class="ln">    28</span>	}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// NewWriter returns a new Writer that writes to w.</span>
+<a id="L31"></a><span class="ln">    31</span>	func NewWriter(w io.Writer) *Writer {
+<a id="L32"></a><span class="ln">    32</span>		return &amp;Writer{
+<a id="L33"></a><span class="ln">    33</span>			Comma: &#39;,&#39;,
+<a id="L34"></a><span class="ln">    34</span>			w:     bufio.NewWriter(w),
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>	}
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// Writer writes a single CSV record to w along with any necessary quoting.</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// A record is a slice of strings with each string being one field.</span>
+<a id="L40"></a><span class="ln">    40</span>	func (w *Writer) Write(record []string) (err error) {
+<a id="L41"></a><span class="ln">    41</span>		for n, field := range record {
+<a id="L42"></a><span class="ln">    42</span>			if n &gt; 0 {
+<a id="L43"></a><span class="ln">    43</span>				if _, err = w.w.WriteRune(w.Comma); err != nil {
+<a id="L44"></a><span class="ln">    44</span>					return
+<a id="L45"></a><span class="ln">    45</span>				}
+<a id="L46"></a><span class="ln">    46</span>			}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>			<span class="comment">// If we don&#39;t have to have a quoted field then just</span>
+<a id="L49"></a><span class="ln">    49</span>			<span class="comment">// write out the field and continue to the next field.</span>
+<a id="L50"></a><span class="ln">    50</span>			if !w.fieldNeedsQuotes(field) {
+<a id="L51"></a><span class="ln">    51</span>				if _, err = w.w.WriteString(field); err != nil {
+<a id="L52"></a><span class="ln">    52</span>					return
+<a id="L53"></a><span class="ln">    53</span>				}
+<a id="L54"></a><span class="ln">    54</span>				continue
+<a id="L55"></a><span class="ln">    55</span>			}
+<a id="L56"></a><span class="ln">    56</span>			if err = w.w.WriteByte(&#39;&#34;&#39;); err != nil {
+<a id="L57"></a><span class="ln">    57</span>				return
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>			for _, r1 := range field {
+<a id="L61"></a><span class="ln">    61</span>				switch r1 {
+<a id="L62"></a><span class="ln">    62</span>				case &#39;&#34;&#39;:
+<a id="L63"></a><span class="ln">    63</span>					_, err = w.w.WriteString(`&#34;&#34;`)
+<a id="L64"></a><span class="ln">    64</span>				case &#39;\r&#39;:
+<a id="L65"></a><span class="ln">    65</span>					if !w.UseCRLF {
+<a id="L66"></a><span class="ln">    66</span>						err = w.w.WriteByte(&#39;\r&#39;)
+<a id="L67"></a><span class="ln">    67</span>					}
+<a id="L68"></a><span class="ln">    68</span>				case &#39;\n&#39;:
+<a id="L69"></a><span class="ln">    69</span>					if w.UseCRLF {
+<a id="L70"></a><span class="ln">    70</span>						_, err = w.w.WriteString(&#34;\r\n&#34;)
+<a id="L71"></a><span class="ln">    71</span>					} else {
+<a id="L72"></a><span class="ln">    72</span>						err = w.w.WriteByte(&#39;\n&#39;)
+<a id="L73"></a><span class="ln">    73</span>					}
+<a id="L74"></a><span class="ln">    74</span>				default:
+<a id="L75"></a><span class="ln">    75</span>					_, err = w.w.WriteRune(r1)
+<a id="L76"></a><span class="ln">    76</span>				}
+<a id="L77"></a><span class="ln">    77</span>				if err != nil {
+<a id="L78"></a><span class="ln">    78</span>					return
+<a id="L79"></a><span class="ln">    79</span>				}
+<a id="L80"></a><span class="ln">    80</span>			}
+<a id="L81"></a><span class="ln">    81</span>	
+<a id="L82"></a><span class="ln">    82</span>			if err = w.w.WriteByte(&#39;&#34;&#39;); err != nil {
+<a id="L83"></a><span class="ln">    83</span>				return
+<a id="L84"></a><span class="ln">    84</span>			}
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>		if w.UseCRLF {
+<a id="L87"></a><span class="ln">    87</span>			_, err = w.w.WriteString(&#34;\r\n&#34;)
+<a id="L88"></a><span class="ln">    88</span>		} else {
+<a id="L89"></a><span class="ln">    89</span>			err = w.w.WriteByte(&#39;\n&#39;)
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>		return
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// Flush writes any buffered data to the underlying io.Writer.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (w *Writer) Flush() {
+<a id="L96"></a><span class="ln">    96</span>		w.w.Flush()
+<a id="L97"></a><span class="ln">    97</span>	}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// WriteAll writes multiple CSV records to w using Write and then calls Flush.</span>
+<a id="L100"></a><span class="ln">   100</span>	func (w *Writer) WriteAll(records [][]string) (err error) {
+<a id="L101"></a><span class="ln">   101</span>		for _, record := range records {
+<a id="L102"></a><span class="ln">   102</span>			err = w.Write(record)
+<a id="L103"></a><span class="ln">   103</span>			if err != nil {
+<a id="L104"></a><span class="ln">   104</span>				break
+<a id="L105"></a><span class="ln">   105</span>			}
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>		w.Flush()
+<a id="L108"></a><span class="ln">   108</span>		return nil
+<a id="L109"></a><span class="ln">   109</span>	}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// fieldNeedsQuotes returns true if our field must be enclosed in quotes.</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// Empty fields, files with a Comma, fields with a quote or newline, and</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// fields which start with a space must be enclosed in quotes.</span>
+<a id="L114"></a><span class="ln">   114</span>	func (w *Writer) fieldNeedsQuotes(field string) bool {
+<a id="L115"></a><span class="ln">   115</span>		if len(field) == 0 || strings.IndexRune(field, w.Comma) &gt;= 0 || strings.IndexAny(field, &#34;\&#34;\r\n&#34;) &gt;= 0 {
+<a id="L116"></a><span class="ln">   116</span>			return true
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>		r1, _ := utf8.DecodeRuneInString(field)
+<a id="L120"></a><span class="ln">   120</span>		return unicode.IsSpace(r1)
+<a id="L121"></a><span class="ln">   121</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

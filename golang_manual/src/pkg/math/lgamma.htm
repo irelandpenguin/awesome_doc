@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/lgamma.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/lgamma.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package math
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">/*
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">	Floating-point logarithm of the Gamma function.
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">*/</span>
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// The original C code and the long comment below are</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// from FreeBSD&#39;s /usr/src/lib/msun/src/e_lgamma_r.c and</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// came with this notice.  The go code is a simplified</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// version of the original C.</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">//</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// ====================================================</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Developed at SunPro, a Sun Microsystems, Inc. business.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// Permission to use, copy, modify, and distribute this</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// software is freely granted, provided that this notice</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// is preserved.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// ====================================================</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">//</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// __ieee754_lgamma_r(x, signgamp)</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Reentrant version of the logarithm of the Gamma function</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// with user provided pointer for the sign of Gamma(x).</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">//</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// Method:</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">//   1. Argument Reduction for 0 &lt; x &lt;= 8</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">//      Since gamma(1+s)=s*gamma(s), for x in [0,8], we may</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">//      reduce x to a number in [1.5,2.5] by</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//              lgamma(1+s) = log(s) + lgamma(s)</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//      for example,</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//              lgamma(7.3) = log(6.3) + lgamma(6.3)</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//                          = log(6.3*5.3) + lgamma(5.3)</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//                          = log(6.3*5.3*4.3*3.3*2.3) + lgamma(2.3)</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//   2. Polynomial approximation of lgamma around its</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//      minimum (ymin=1.461632144968362245) to maintain monotonicity.</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//      On [ymin-0.23, ymin+0.27] (i.e., [1.23164,1.73163]), use</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//              Let z = x-ymin;</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//              lgamma(x) = -1.214862905358496078218 + z**2*poly(z)</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//              poly(z) is a 14 degree polynomial.</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//   2. Rational approximation in the primary interval [2,3]</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//      We use the following approximation:</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//              s = x-2.0;</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//              lgamma(x) = 0.5*s + s*P(s)/Q(s)</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">//      with accuracy</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//              |P/Q - (lgamma(x)-0.5s)| &lt; 2**-61.71</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//      Our algorithms are based on the following observation</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//                             zeta(2)-1    2    zeta(3)-1    3</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// lgamma(2+s) = s*(1-Euler) + --------- * s  -  --------- * s  + ...</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">//                                 2                 3</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//      where Euler = 0.5772156649... is the Euler constant, which</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//      is very close to 0.5.</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">//</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">//   3. For x&gt;=8, we have</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">//      lgamma(x)~(x-0.5)log(x)-x+0.5*log(2pi)+1/(12x)-1/(360x**3)+....</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">//      (better formula:</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">//         lgamma(x)~(x-0.5)*(log(x)-1)-.5*(log(2pi)-1) + ...)</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">//      Let z = 1/x, then we approximation</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">//              f(z) = lgamma(x) - (x-0.5)(log(x)-1)</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">//      by</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">//                                  3       5             11</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">//              w = w0 + w1*z + w2*z  + w3*z  + ... + w6*z</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">//      where</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">//              |w - f(z)| &lt; 2**-58.74</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">//</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">//   4. For negative x, since (G is gamma function)</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//              -x*G(-x)*G(x) = pi/sin(pi*x),</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">//      we have</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//              G(x) = pi/(sin(pi*x)*(-x)*G(-x))</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">//      since G(-x) is positive, sign(G(x)) = sign(sin(pi*x)) for x&lt;0</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">//      Hence, for x&lt;0, signgam = sign(sin(pi*x)) and</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">//              lgamma(x) = log(|Gamma(x)|)</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">//                        = log(pi/(|x*sin(pi*x)|)) - lgamma(-x);</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">//      Note: one should avoid computing pi*(-x) directly in the</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">//            computation of sin(pi*(-x)).</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">//</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">//   5. Special Cases</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">//              lgamma(2+s) ~ s*(1-Euler) for tiny s</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">//              lgamma(1)=lgamma(2)=0</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">//              lgamma(x) ~ -log(x) for tiny x</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">//              lgamma(0) = lgamma(inf) = inf</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">//              lgamma(-integer) = +-inf</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">//</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">//</span>
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	var _lgamA = [...]float64{
+<a id="L92"></a><span class="ln">    92</span>		7.72156649015328655494e-02, <span class="comment">// 0x3FB3C467E37DB0C8</span>
+<a id="L93"></a><span class="ln">    93</span>		3.22467033424113591611e-01, <span class="comment">// 0x3FD4A34CC4A60FAD</span>
+<a id="L94"></a><span class="ln">    94</span>		6.73523010531292681824e-02, <span class="comment">// 0x3FB13E001A5562A7</span>
+<a id="L95"></a><span class="ln">    95</span>		2.05808084325167332806e-02, <span class="comment">// 0x3F951322AC92547B</span>
+<a id="L96"></a><span class="ln">    96</span>		7.38555086081402883957e-03, <span class="comment">// 0x3F7E404FB68FEFE8</span>
+<a id="L97"></a><span class="ln">    97</span>		2.89051383673415629091e-03, <span class="comment">// 0x3F67ADD8CCB7926B</span>
+<a id="L98"></a><span class="ln">    98</span>		1.19270763183362067845e-03, <span class="comment">// 0x3F538A94116F3F5D</span>
+<a id="L99"></a><span class="ln">    99</span>		5.10069792153511336608e-04, <span class="comment">// 0x3F40B6C689B99C00</span>
+<a id="L100"></a><span class="ln">   100</span>		2.20862790713908385557e-04, <span class="comment">// 0x3F2CF2ECED10E54D</span>
+<a id="L101"></a><span class="ln">   101</span>		1.08011567247583939954e-04, <span class="comment">// 0x3F1C5088987DFB07</span>
+<a id="L102"></a><span class="ln">   102</span>		2.52144565451257326939e-05, <span class="comment">// 0x3EFA7074428CFA52</span>
+<a id="L103"></a><span class="ln">   103</span>		4.48640949618915160150e-05, <span class="comment">// 0x3F07858E90A45837</span>
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	var _lgamR = [...]float64{
+<a id="L106"></a><span class="ln">   106</span>		1.0, <span class="comment">// placeholder</span>
+<a id="L107"></a><span class="ln">   107</span>		1.39200533467621045958e+00, <span class="comment">// 0x3FF645A762C4AB74</span>
+<a id="L108"></a><span class="ln">   108</span>		7.21935547567138069525e-01, <span class="comment">// 0x3FE71A1893D3DCDC</span>
+<a id="L109"></a><span class="ln">   109</span>		1.71933865632803078993e-01, <span class="comment">// 0x3FC601EDCCFBDF27</span>
+<a id="L110"></a><span class="ln">   110</span>		1.86459191715652901344e-02, <span class="comment">// 0x3F9317EA742ED475</span>
+<a id="L111"></a><span class="ln">   111</span>		7.77942496381893596434e-04, <span class="comment">// 0x3F497DDACA41A95B</span>
+<a id="L112"></a><span class="ln">   112</span>		7.32668430744625636189e-06, <span class="comment">// 0x3EDEBAF7A5B38140</span>
+<a id="L113"></a><span class="ln">   113</span>	}
+<a id="L114"></a><span class="ln">   114</span>	var _lgamS = [...]float64{
+<a id="L115"></a><span class="ln">   115</span>		-7.72156649015328655494e-02, <span class="comment">// 0xBFB3C467E37DB0C8</span>
+<a id="L116"></a><span class="ln">   116</span>		2.14982415960608852501e-01,  <span class="comment">// 0x3FCB848B36E20878</span>
+<a id="L117"></a><span class="ln">   117</span>		3.25778796408930981787e-01,  <span class="comment">// 0x3FD4D98F4F139F59</span>
+<a id="L118"></a><span class="ln">   118</span>		1.46350472652464452805e-01,  <span class="comment">// 0x3FC2BB9CBEE5F2F7</span>
+<a id="L119"></a><span class="ln">   119</span>		2.66422703033638609560e-02,  <span class="comment">// 0x3F9B481C7E939961</span>
+<a id="L120"></a><span class="ln">   120</span>		1.84028451407337715652e-03,  <span class="comment">// 0x3F5E26B67368F239</span>
+<a id="L121"></a><span class="ln">   121</span>		3.19475326584100867617e-05,  <span class="comment">// 0x3F00BFECDD17E945</span>
+<a id="L122"></a><span class="ln">   122</span>	}
+<a id="L123"></a><span class="ln">   123</span>	var _lgamT = [...]float64{
+<a id="L124"></a><span class="ln">   124</span>		4.83836122723810047042e-01,  <span class="comment">// 0x3FDEF72BC8EE38A2</span>
+<a id="L125"></a><span class="ln">   125</span>		-1.47587722994593911752e-01, <span class="comment">// 0xBFC2E4278DC6C509</span>
+<a id="L126"></a><span class="ln">   126</span>		6.46249402391333854778e-02,  <span class="comment">// 0x3FB08B4294D5419B</span>
+<a id="L127"></a><span class="ln">   127</span>		-3.27885410759859649565e-02, <span class="comment">// 0xBFA0C9A8DF35B713</span>
+<a id="L128"></a><span class="ln">   128</span>		1.79706750811820387126e-02,  <span class="comment">// 0x3F9266E7970AF9EC</span>
+<a id="L129"></a><span class="ln">   129</span>		-1.03142241298341437450e-02, <span class="comment">// 0xBF851F9FBA91EC6A</span>
+<a id="L130"></a><span class="ln">   130</span>		6.10053870246291332635e-03,  <span class="comment">// 0x3F78FCE0E370E344</span>
+<a id="L131"></a><span class="ln">   131</span>		-3.68452016781138256760e-03, <span class="comment">// 0xBF6E2EFFB3E914D7</span>
+<a id="L132"></a><span class="ln">   132</span>		2.25964780900612472250e-03,  <span class="comment">// 0x3F6282D32E15C915</span>
+<a id="L133"></a><span class="ln">   133</span>		-1.40346469989232843813e-03, <span class="comment">// 0xBF56FE8EBF2D1AF1</span>
+<a id="L134"></a><span class="ln">   134</span>		8.81081882437654011382e-04,  <span class="comment">// 0x3F4CDF0CEF61A8E9</span>
+<a id="L135"></a><span class="ln">   135</span>		-5.38595305356740546715e-04, <span class="comment">// 0xBF41A6109C73E0EC</span>
+<a id="L136"></a><span class="ln">   136</span>		3.15632070903625950361e-04,  <span class="comment">// 0x3F34AF6D6C0EBBF7</span>
+<a id="L137"></a><span class="ln">   137</span>		-3.12754168375120860518e-04, <span class="comment">// 0xBF347F24ECC38C38</span>
+<a id="L138"></a><span class="ln">   138</span>		3.35529192635519073543e-04,  <span class="comment">// 0x3F35FD3EE8C2D3F4</span>
+<a id="L139"></a><span class="ln">   139</span>	}
+<a id="L140"></a><span class="ln">   140</span>	var _lgamU = [...]float64{
+<a id="L141"></a><span class="ln">   141</span>		-7.72156649015328655494e-02, <span class="comment">// 0xBFB3C467E37DB0C8</span>
+<a id="L142"></a><span class="ln">   142</span>		6.32827064025093366517e-01,  <span class="comment">// 0x3FE4401E8B005DFF</span>
+<a id="L143"></a><span class="ln">   143</span>		1.45492250137234768737e+00,  <span class="comment">// 0x3FF7475CD119BD6F</span>
+<a id="L144"></a><span class="ln">   144</span>		9.77717527963372745603e-01,  <span class="comment">// 0x3FEF497644EA8450</span>
+<a id="L145"></a><span class="ln">   145</span>		2.28963728064692451092e-01,  <span class="comment">// 0x3FCD4EAEF6010924</span>
+<a id="L146"></a><span class="ln">   146</span>		1.33810918536787660377e-02,  <span class="comment">// 0x3F8B678BBF2BAB09</span>
+<a id="L147"></a><span class="ln">   147</span>	}
+<a id="L148"></a><span class="ln">   148</span>	var _lgamV = [...]float64{
+<a id="L149"></a><span class="ln">   149</span>		1.0,
+<a id="L150"></a><span class="ln">   150</span>		2.45597793713041134822e+00, <span class="comment">// 0x4003A5D7C2BD619C</span>
+<a id="L151"></a><span class="ln">   151</span>		2.12848976379893395361e+00, <span class="comment">// 0x40010725A42B18F5</span>
+<a id="L152"></a><span class="ln">   152</span>		7.69285150456672783825e-01, <span class="comment">// 0x3FE89DFBE45050AF</span>
+<a id="L153"></a><span class="ln">   153</span>		1.04222645593369134254e-01, <span class="comment">// 0x3FBAAE55D6537C88</span>
+<a id="L154"></a><span class="ln">   154</span>		3.21709242282423911810e-03, <span class="comment">// 0x3F6A5ABB57D0CF61</span>
+<a id="L155"></a><span class="ln">   155</span>	}
+<a id="L156"></a><span class="ln">   156</span>	var _lgamW = [...]float64{
+<a id="L157"></a><span class="ln">   157</span>		4.18938533204672725052e-01,  <span class="comment">// 0x3FDACFE390C97D69</span>
+<a id="L158"></a><span class="ln">   158</span>		8.33333333333329678849e-02,  <span class="comment">// 0x3FB555555555553B</span>
+<a id="L159"></a><span class="ln">   159</span>		-2.77777777728775536470e-03, <span class="comment">// 0xBF66C16C16B02E5C</span>
+<a id="L160"></a><span class="ln">   160</span>		7.93650558643019558500e-04,  <span class="comment">// 0x3F4A019F98CF38B6</span>
+<a id="L161"></a><span class="ln">   161</span>		-5.95187557450339963135e-04, <span class="comment">// 0xBF4380CB8C0FE741</span>
+<a id="L162"></a><span class="ln">   162</span>		8.36339918996282139126e-04,  <span class="comment">// 0x3F4B67BA4CDAD5D1</span>
+<a id="L163"></a><span class="ln">   163</span>		-1.63092934096575273989e-03, <span class="comment">// 0xBF5AB89D0B9E43E4</span>
+<a id="L164"></a><span class="ln">   164</span>	}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// Lgamma returns the natural logarithm and sign (-1 or +1) of Gamma(x).</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">//</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// Special cases are:</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">//	Lgamma(+Inf) = +Inf</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">//	Lgamma(0) = +Inf</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">//	Lgamma(-integer) = +Inf</span>
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">//	Lgamma(-Inf) = -Inf</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">//	Lgamma(NaN) = NaN</span>
+<a id="L174"></a><span class="ln">   174</span>	func Lgamma(x float64) (lgamma float64, sign int) {
+<a id="L175"></a><span class="ln">   175</span>		const (
+<a id="L176"></a><span class="ln">   176</span>			Ymin  = 1.461632144968362245
+<a id="L177"></a><span class="ln">   177</span>			Two52 = 1 &lt;&lt; 52                     <span class="comment">// 0x4330000000000000 ~4.5036e+15</span>
+<a id="L178"></a><span class="ln">   178</span>			Two53 = 1 &lt;&lt; 53                     <span class="comment">// 0x4340000000000000 ~9.0072e+15</span>
+<a id="L179"></a><span class="ln">   179</span>			Two58 = 1 &lt;&lt; 58                     <span class="comment">// 0x4390000000000000 ~2.8823e+17</span>
+<a id="L180"></a><span class="ln">   180</span>			Tiny  = 1.0 / (1 &lt;&lt; 70)             <span class="comment">// 0x3b90000000000000 ~8.47033e-22</span>
+<a id="L181"></a><span class="ln">   181</span>			Tc    = 1.46163214496836224576e+00  <span class="comment">// 0x3FF762D86356BE3F</span>
+<a id="L182"></a><span class="ln">   182</span>			Tf    = -1.21486290535849611461e-01 <span class="comment">// 0xBFBF19B9BCC38A42</span>
+<a id="L183"></a><span class="ln">   183</span>			<span class="comment">// Tt = -(tail of Tf)</span>
+<a id="L184"></a><span class="ln">   184</span>			Tt = -3.63867699703950536541e-18 <span class="comment">// 0xBC50C7CAA48A971F</span>
+<a id="L185"></a><span class="ln">   185</span>		)
+<a id="L186"></a><span class="ln">   186</span>		<span class="comment">// special cases</span>
+<a id="L187"></a><span class="ln">   187</span>		sign = 1
+<a id="L188"></a><span class="ln">   188</span>		switch {
+<a id="L189"></a><span class="ln">   189</span>		case IsNaN(x):
+<a id="L190"></a><span class="ln">   190</span>			lgamma = x
+<a id="L191"></a><span class="ln">   191</span>			return
+<a id="L192"></a><span class="ln">   192</span>		case IsInf(x, 0):
+<a id="L193"></a><span class="ln">   193</span>			lgamma = x
+<a id="L194"></a><span class="ln">   194</span>			return
+<a id="L195"></a><span class="ln">   195</span>		case x == 0:
+<a id="L196"></a><span class="ln">   196</span>			lgamma = Inf(1)
+<a id="L197"></a><span class="ln">   197</span>			return
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>		neg := false
+<a id="L201"></a><span class="ln">   201</span>		if x &lt; 0 {
+<a id="L202"></a><span class="ln">   202</span>			x = -x
+<a id="L203"></a><span class="ln">   203</span>			neg = true
+<a id="L204"></a><span class="ln">   204</span>		}
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>		if x &lt; Tiny { <span class="comment">// if |x| &lt; 2**-70, return -log(|x|)</span>
+<a id="L207"></a><span class="ln">   207</span>			if neg {
+<a id="L208"></a><span class="ln">   208</span>				sign = -1
+<a id="L209"></a><span class="ln">   209</span>			}
+<a id="L210"></a><span class="ln">   210</span>			lgamma = -Log(x)
+<a id="L211"></a><span class="ln">   211</span>			return
+<a id="L212"></a><span class="ln">   212</span>		}
+<a id="L213"></a><span class="ln">   213</span>		var nadj float64
+<a id="L214"></a><span class="ln">   214</span>		if neg {
+<a id="L215"></a><span class="ln">   215</span>			if x &gt;= Two52 { <span class="comment">// |x| &gt;= 2**52, must be -integer</span>
+<a id="L216"></a><span class="ln">   216</span>				lgamma = Inf(1)
+<a id="L217"></a><span class="ln">   217</span>				return
+<a id="L218"></a><span class="ln">   218</span>			}
+<a id="L219"></a><span class="ln">   219</span>			t := sinPi(x)
+<a id="L220"></a><span class="ln">   220</span>			if t == 0 {
+<a id="L221"></a><span class="ln">   221</span>				lgamma = Inf(1) <span class="comment">// -integer</span>
+<a id="L222"></a><span class="ln">   222</span>				return
+<a id="L223"></a><span class="ln">   223</span>			}
+<a id="L224"></a><span class="ln">   224</span>			nadj = Log(Pi / Abs(t*x))
+<a id="L225"></a><span class="ln">   225</span>			if t &lt; 0 {
+<a id="L226"></a><span class="ln">   226</span>				sign = -1
+<a id="L227"></a><span class="ln">   227</span>			}
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>		switch {
+<a id="L231"></a><span class="ln">   231</span>		case x == 1 || x == 2: <span class="comment">// purge off 1 and 2</span>
+<a id="L232"></a><span class="ln">   232</span>			lgamma = 0
+<a id="L233"></a><span class="ln">   233</span>			return
+<a id="L234"></a><span class="ln">   234</span>		case x &lt; 2: <span class="comment">// use lgamma(x) = lgamma(x+1) - log(x)</span>
+<a id="L235"></a><span class="ln">   235</span>			var y float64
+<a id="L236"></a><span class="ln">   236</span>			var i int
+<a id="L237"></a><span class="ln">   237</span>			if x &lt;= 0.9 {
+<a id="L238"></a><span class="ln">   238</span>				lgamma = -Log(x)
+<a id="L239"></a><span class="ln">   239</span>				switch {
+<a id="L240"></a><span class="ln">   240</span>				case x &gt;= (Ymin - 1 + 0.27): <span class="comment">// 0.7316 &lt;= x &lt;=  0.9</span>
+<a id="L241"></a><span class="ln">   241</span>					y = 1 - x
+<a id="L242"></a><span class="ln">   242</span>					i = 0
+<a id="L243"></a><span class="ln">   243</span>				case x &gt;= (Ymin - 1 - 0.27): <span class="comment">// 0.2316 &lt;= x &lt; 0.7316</span>
+<a id="L244"></a><span class="ln">   244</span>					y = x - (Tc - 1)
+<a id="L245"></a><span class="ln">   245</span>					i = 1
+<a id="L246"></a><span class="ln">   246</span>				default: <span class="comment">// 0 &lt; x &lt; 0.2316</span>
+<a id="L247"></a><span class="ln">   247</span>					y = x
+<a id="L248"></a><span class="ln">   248</span>					i = 2
+<a id="L249"></a><span class="ln">   249</span>				}
+<a id="L250"></a><span class="ln">   250</span>			} else {
+<a id="L251"></a><span class="ln">   251</span>				lgamma = 0
+<a id="L252"></a><span class="ln">   252</span>				switch {
+<a id="L253"></a><span class="ln">   253</span>				case x &gt;= (Ymin + 0.27): <span class="comment">// 1.7316 &lt;= x &lt; 2</span>
+<a id="L254"></a><span class="ln">   254</span>					y = 2 - x
+<a id="L255"></a><span class="ln">   255</span>					i = 0
+<a id="L256"></a><span class="ln">   256</span>				case x &gt;= (Ymin - 0.27): <span class="comment">// 1.2316 &lt;= x &lt; 1.7316</span>
+<a id="L257"></a><span class="ln">   257</span>					y = x - Tc
+<a id="L258"></a><span class="ln">   258</span>					i = 1
+<a id="L259"></a><span class="ln">   259</span>				default: <span class="comment">// 0.9 &lt; x &lt; 1.2316</span>
+<a id="L260"></a><span class="ln">   260</span>					y = x - 1
+<a id="L261"></a><span class="ln">   261</span>					i = 2
+<a id="L262"></a><span class="ln">   262</span>				}
+<a id="L263"></a><span class="ln">   263</span>			}
+<a id="L264"></a><span class="ln">   264</span>			switch i {
+<a id="L265"></a><span class="ln">   265</span>			case 0:
+<a id="L266"></a><span class="ln">   266</span>				z := y * y
+<a id="L267"></a><span class="ln">   267</span>				p1 := _lgamA[0] + z*(_lgamA[2]+z*(_lgamA[4]+z*(_lgamA[6]+z*(_lgamA[8]+z*_lgamA[10]))))
+<a id="L268"></a><span class="ln">   268</span>				p2 := z * (_lgamA[1] + z*(+_lgamA[3]+z*(_lgamA[5]+z*(_lgamA[7]+z*(_lgamA[9]+z*_lgamA[11])))))
+<a id="L269"></a><span class="ln">   269</span>				p := y*p1 + p2
+<a id="L270"></a><span class="ln">   270</span>				lgamma += (p - 0.5*y)
+<a id="L271"></a><span class="ln">   271</span>			case 1:
+<a id="L272"></a><span class="ln">   272</span>				z := y * y
+<a id="L273"></a><span class="ln">   273</span>				w := z * y
+<a id="L274"></a><span class="ln">   274</span>				p1 := _lgamT[0] + w*(_lgamT[3]+w*(_lgamT[6]+w*(_lgamT[9]+w*_lgamT[12]))) <span class="comment">// parallel comp</span>
+<a id="L275"></a><span class="ln">   275</span>				p2 := _lgamT[1] + w*(_lgamT[4]+w*(_lgamT[7]+w*(_lgamT[10]+w*_lgamT[13])))
+<a id="L276"></a><span class="ln">   276</span>				p3 := _lgamT[2] + w*(_lgamT[5]+w*(_lgamT[8]+w*(_lgamT[11]+w*_lgamT[14])))
+<a id="L277"></a><span class="ln">   277</span>				p := z*p1 - (Tt - w*(p2+y*p3))
+<a id="L278"></a><span class="ln">   278</span>				lgamma += (Tf + p)
+<a id="L279"></a><span class="ln">   279</span>			case 2:
+<a id="L280"></a><span class="ln">   280</span>				p1 := y * (_lgamU[0] + y*(_lgamU[1]+y*(_lgamU[2]+y*(_lgamU[3]+y*(_lgamU[4]+y*_lgamU[5])))))
+<a id="L281"></a><span class="ln">   281</span>				p2 := 1 + y*(_lgamV[1]+y*(_lgamV[2]+y*(_lgamV[3]+y*(_lgamV[4]+y*_lgamV[5]))))
+<a id="L282"></a><span class="ln">   282</span>				lgamma += (-0.5*y + p1/p2)
+<a id="L283"></a><span class="ln">   283</span>			}
+<a id="L284"></a><span class="ln">   284</span>		case x &lt; 8: <span class="comment">// 2 &lt;= x &lt; 8</span>
+<a id="L285"></a><span class="ln">   285</span>			i := int(x)
+<a id="L286"></a><span class="ln">   286</span>			y := x - float64(i)
+<a id="L287"></a><span class="ln">   287</span>			p := y * (_lgamS[0] + y*(_lgamS[1]+y*(_lgamS[2]+y*(_lgamS[3]+y*(_lgamS[4]+y*(_lgamS[5]+y*_lgamS[6]))))))
+<a id="L288"></a><span class="ln">   288</span>			q := 1 + y*(_lgamR[1]+y*(_lgamR[2]+y*(_lgamR[3]+y*(_lgamR[4]+y*(_lgamR[5]+y*_lgamR[6])))))
+<a id="L289"></a><span class="ln">   289</span>			lgamma = 0.5*y + p/q
+<a id="L290"></a><span class="ln">   290</span>			z := 1.0 <span class="comment">// Lgamma(1+s) = Log(s) + Lgamma(s)</span>
+<a id="L291"></a><span class="ln">   291</span>			switch i {
+<a id="L292"></a><span class="ln">   292</span>			case 7:
+<a id="L293"></a><span class="ln">   293</span>				z *= (y + 6)
+<a id="L294"></a><span class="ln">   294</span>				fallthrough
+<a id="L295"></a><span class="ln">   295</span>			case 6:
+<a id="L296"></a><span class="ln">   296</span>				z *= (y + 5)
+<a id="L297"></a><span class="ln">   297</span>				fallthrough
+<a id="L298"></a><span class="ln">   298</span>			case 5:
+<a id="L299"></a><span class="ln">   299</span>				z *= (y + 4)
+<a id="L300"></a><span class="ln">   300</span>				fallthrough
+<a id="L301"></a><span class="ln">   301</span>			case 4:
+<a id="L302"></a><span class="ln">   302</span>				z *= (y + 3)
+<a id="L303"></a><span class="ln">   303</span>				fallthrough
+<a id="L304"></a><span class="ln">   304</span>			case 3:
+<a id="L305"></a><span class="ln">   305</span>				z *= (y + 2)
+<a id="L306"></a><span class="ln">   306</span>				lgamma += Log(z)
+<a id="L307"></a><span class="ln">   307</span>			}
+<a id="L308"></a><span class="ln">   308</span>		case x &lt; Two58: <span class="comment">// 8 &lt;= x &lt; 2**58</span>
+<a id="L309"></a><span class="ln">   309</span>			t := Log(x)
+<a id="L310"></a><span class="ln">   310</span>			z := 1 / x
+<a id="L311"></a><span class="ln">   311</span>			y := z * z
+<a id="L312"></a><span class="ln">   312</span>			w := _lgamW[0] + z*(_lgamW[1]+y*(_lgamW[2]+y*(_lgamW[3]+y*(_lgamW[4]+y*(_lgamW[5]+y*_lgamW[6])))))
+<a id="L313"></a><span class="ln">   313</span>			lgamma = (x-0.5)*(t-1) + w
+<a id="L314"></a><span class="ln">   314</span>		default: <span class="comment">// 2**58 &lt;= x &lt;= Inf</span>
+<a id="L315"></a><span class="ln">   315</span>			lgamma = x * (Log(x) - 1)
+<a id="L316"></a><span class="ln">   316</span>		}
+<a id="L317"></a><span class="ln">   317</span>		if neg {
+<a id="L318"></a><span class="ln">   318</span>			lgamma = nadj - lgamma
+<a id="L319"></a><span class="ln">   319</span>		}
+<a id="L320"></a><span class="ln">   320</span>		return
+<a id="L321"></a><span class="ln">   321</span>	}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// sinPi(x) is a helper function for negative x</span>
+<a id="L324"></a><span class="ln">   324</span>	func sinPi(x float64) float64 {
+<a id="L325"></a><span class="ln">   325</span>		const (
+<a id="L326"></a><span class="ln">   326</span>			Two52 = 1 &lt;&lt; 52 <span class="comment">// 0x4330000000000000 ~4.5036e+15</span>
+<a id="L327"></a><span class="ln">   327</span>			Two53 = 1 &lt;&lt; 53 <span class="comment">// 0x4340000000000000 ~9.0072e+15</span>
+<a id="L328"></a><span class="ln">   328</span>		)
+<a id="L329"></a><span class="ln">   329</span>		if x &lt; 0.25 {
+<a id="L330"></a><span class="ln">   330</span>			return -Sin(Pi * x)
+<a id="L331"></a><span class="ln">   331</span>		}
+<a id="L332"></a><span class="ln">   332</span>	
+<a id="L333"></a><span class="ln">   333</span>		<span class="comment">// argument reduction</span>
+<a id="L334"></a><span class="ln">   334</span>		z := Floor(x)
+<a id="L335"></a><span class="ln">   335</span>		var n int
+<a id="L336"></a><span class="ln">   336</span>		if z != x { <span class="comment">// inexact</span>
+<a id="L337"></a><span class="ln">   337</span>			x = Mod(x, 2)
+<a id="L338"></a><span class="ln">   338</span>			n = int(x * 4)
+<a id="L339"></a><span class="ln">   339</span>		} else {
+<a id="L340"></a><span class="ln">   340</span>			if x &gt;= Two53 { <span class="comment">// x must be even</span>
+<a id="L341"></a><span class="ln">   341</span>				x = 0
+<a id="L342"></a><span class="ln">   342</span>				n = 0
+<a id="L343"></a><span class="ln">   343</span>			} else {
+<a id="L344"></a><span class="ln">   344</span>				if x &lt; Two52 {
+<a id="L345"></a><span class="ln">   345</span>					z = x + Two52 <span class="comment">// exact</span>
+<a id="L346"></a><span class="ln">   346</span>				}
+<a id="L347"></a><span class="ln">   347</span>				n = int(1 &amp; Float64bits(z))
+<a id="L348"></a><span class="ln">   348</span>				x = float64(n)
+<a id="L349"></a><span class="ln">   349</span>				n &lt;&lt;= 2
+<a id="L350"></a><span class="ln">   350</span>			}
+<a id="L351"></a><span class="ln">   351</span>		}
+<a id="L352"></a><span class="ln">   352</span>		switch n {
+<a id="L353"></a><span class="ln">   353</span>		case 0:
+<a id="L354"></a><span class="ln">   354</span>			x = Sin(Pi * x)
+<a id="L355"></a><span class="ln">   355</span>		case 1, 2:
+<a id="L356"></a><span class="ln">   356</span>			x = Cos(Pi * (0.5 - x))
+<a id="L357"></a><span class="ln">   357</span>		case 3, 4:
+<a id="L358"></a><span class="ln">   358</span>			x = Sin(Pi * (1 - x))
+<a id="L359"></a><span class="ln">   359</span>		case 5, 6:
+<a id="L360"></a><span class="ln">   360</span>			x = -Cos(Pi * (x - 1.5))
+<a id="L361"></a><span class="ln">   361</span>		default:
+<a id="L362"></a><span class="ln">   362</span>			x = Sin(Pi * (x - 2))
+<a id="L363"></a><span class="ln">   363</span>		}
+<a id="L364"></a><span class="ln">   364</span>		return -x
+<a id="L365"></a><span class="ln">   365</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/ast/walk.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/ast/walk.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package ast
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;fmt&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// A Visitor&#39;s Visit method is invoked for each node encountered by Walk.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// If the result visitor w is not nil, Walk visits each of the children</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// of node with the visitor w, followed by a call of w.Visit(nil).</span>
+<a id="L12"></a><span class="ln">    12</span>	type Visitor interface {
+<a id="L13"></a><span class="ln">    13</span>		Visit(node Node) (w Visitor)
+<a id="L14"></a><span class="ln">    14</span>	}
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// Helper functions for common node lists. They may be empty.</span>
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	func walkIdentList(v Visitor, list []*Ident) {
+<a id="L19"></a><span class="ln">    19</span>		for _, x := range list {
+<a id="L20"></a><span class="ln">    20</span>			Walk(v, x)
+<a id="L21"></a><span class="ln">    21</span>		}
+<a id="L22"></a><span class="ln">    22</span>	}
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	func walkExprList(v Visitor, list []Expr) {
+<a id="L25"></a><span class="ln">    25</span>		for _, x := range list {
+<a id="L26"></a><span class="ln">    26</span>			Walk(v, x)
+<a id="L27"></a><span class="ln">    27</span>		}
+<a id="L28"></a><span class="ln">    28</span>	}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	func walkStmtList(v Visitor, list []Stmt) {
+<a id="L31"></a><span class="ln">    31</span>		for _, x := range list {
+<a id="L32"></a><span class="ln">    32</span>			Walk(v, x)
+<a id="L33"></a><span class="ln">    33</span>		}
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	func walkDeclList(v Visitor, list []Decl) {
+<a id="L37"></a><span class="ln">    37</span>		for _, x := range list {
+<a id="L38"></a><span class="ln">    38</span>			Walk(v, x)
+<a id="L39"></a><span class="ln">    39</span>		}
+<a id="L40"></a><span class="ln">    40</span>	}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// TODO(gri): Investigate if providing a closure to Walk leads to</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//            simpler use (and may help eliminate Inspect in turn).</span>
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Walk traverses an AST in depth-first order: It starts by calling</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// v.Visit(node); node must not be nil. If the visitor w returned by</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// v.Visit(node) is not nil, Walk is invoked recursively with visitor</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// w for each of the non-nil children of node, followed by a call of</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// w.Visit(nil).</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//</span>
+<a id="L51"></a><span class="ln">    51</span>	func Walk(v Visitor, node Node) {
+<a id="L52"></a><span class="ln">    52</span>		if v = v.Visit(node); v == nil {
+<a id="L53"></a><span class="ln">    53</span>			return
+<a id="L54"></a><span class="ln">    54</span>		}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>		<span class="comment">// walk children</span>
+<a id="L57"></a><span class="ln">    57</span>		<span class="comment">// (the order of the cases matches the order</span>
+<a id="L58"></a><span class="ln">    58</span>		<span class="comment">// of the corresponding node types in ast.go)</span>
+<a id="L59"></a><span class="ln">    59</span>		switch n := node.(type) {
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// Comments and fields</span>
+<a id="L61"></a><span class="ln">    61</span>		case *Comment:
+<a id="L62"></a><span class="ln">    62</span>			<span class="comment">// nothing to do</span>
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>		case *CommentGroup:
+<a id="L65"></a><span class="ln">    65</span>			for _, c := range n.List {
+<a id="L66"></a><span class="ln">    66</span>				Walk(v, c)
+<a id="L67"></a><span class="ln">    67</span>			}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>		case *Field:
+<a id="L70"></a><span class="ln">    70</span>			if n.Doc != nil {
+<a id="L71"></a><span class="ln">    71</span>				Walk(v, n.Doc)
+<a id="L72"></a><span class="ln">    72</span>			}
+<a id="L73"></a><span class="ln">    73</span>			walkIdentList(v, n.Names)
+<a id="L74"></a><span class="ln">    74</span>			Walk(v, n.Type)
+<a id="L75"></a><span class="ln">    75</span>			if n.Tag != nil {
+<a id="L76"></a><span class="ln">    76</span>				Walk(v, n.Tag)
+<a id="L77"></a><span class="ln">    77</span>			}
+<a id="L78"></a><span class="ln">    78</span>			if n.Comment != nil {
+<a id="L79"></a><span class="ln">    79</span>				Walk(v, n.Comment)
+<a id="L80"></a><span class="ln">    80</span>			}
+<a id="L81"></a><span class="ln">    81</span>	
+<a id="L82"></a><span class="ln">    82</span>		case *FieldList:
+<a id="L83"></a><span class="ln">    83</span>			for _, f := range n.List {
+<a id="L84"></a><span class="ln">    84</span>				Walk(v, f)
+<a id="L85"></a><span class="ln">    85</span>			}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>		<span class="comment">// Expressions</span>
+<a id="L88"></a><span class="ln">    88</span>		case *BadExpr, *Ident, *BasicLit:
+<a id="L89"></a><span class="ln">    89</span>			<span class="comment">// nothing to do</span>
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>		case *Ellipsis:
+<a id="L92"></a><span class="ln">    92</span>			if n.Elt != nil {
+<a id="L93"></a><span class="ln">    93</span>				Walk(v, n.Elt)
+<a id="L94"></a><span class="ln">    94</span>			}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>		case *FuncLit:
+<a id="L97"></a><span class="ln">    97</span>			Walk(v, n.Type)
+<a id="L98"></a><span class="ln">    98</span>			Walk(v, n.Body)
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>		case *CompositeLit:
+<a id="L101"></a><span class="ln">   101</span>			if n.Type != nil {
+<a id="L102"></a><span class="ln">   102</span>				Walk(v, n.Type)
+<a id="L103"></a><span class="ln">   103</span>			}
+<a id="L104"></a><span class="ln">   104</span>			walkExprList(v, n.Elts)
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>		case *ParenExpr:
+<a id="L107"></a><span class="ln">   107</span>			Walk(v, n.X)
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>		case *SelectorExpr:
+<a id="L110"></a><span class="ln">   110</span>			Walk(v, n.X)
+<a id="L111"></a><span class="ln">   111</span>			Walk(v, n.Sel)
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>		case *IndexExpr:
+<a id="L114"></a><span class="ln">   114</span>			Walk(v, n.X)
+<a id="L115"></a><span class="ln">   115</span>			Walk(v, n.Index)
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>		case *SliceExpr:
+<a id="L118"></a><span class="ln">   118</span>			Walk(v, n.X)
+<a id="L119"></a><span class="ln">   119</span>			if n.Low != nil {
+<a id="L120"></a><span class="ln">   120</span>				Walk(v, n.Low)
+<a id="L121"></a><span class="ln">   121</span>			}
+<a id="L122"></a><span class="ln">   122</span>			if n.High != nil {
+<a id="L123"></a><span class="ln">   123</span>				Walk(v, n.High)
+<a id="L124"></a><span class="ln">   124</span>			}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>		case *TypeAssertExpr:
+<a id="L127"></a><span class="ln">   127</span>			Walk(v, n.X)
+<a id="L128"></a><span class="ln">   128</span>			if n.Type != nil {
+<a id="L129"></a><span class="ln">   129</span>				Walk(v, n.Type)
+<a id="L130"></a><span class="ln">   130</span>			}
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>		case *CallExpr:
+<a id="L133"></a><span class="ln">   133</span>			Walk(v, n.Fun)
+<a id="L134"></a><span class="ln">   134</span>			walkExprList(v, n.Args)
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>		case *StarExpr:
+<a id="L137"></a><span class="ln">   137</span>			Walk(v, n.X)
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>		case *UnaryExpr:
+<a id="L140"></a><span class="ln">   140</span>			Walk(v, n.X)
+<a id="L141"></a><span class="ln">   141</span>	
+<a id="L142"></a><span class="ln">   142</span>		case *BinaryExpr:
+<a id="L143"></a><span class="ln">   143</span>			Walk(v, n.X)
+<a id="L144"></a><span class="ln">   144</span>			Walk(v, n.Y)
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>		case *KeyValueExpr:
+<a id="L147"></a><span class="ln">   147</span>			Walk(v, n.Key)
+<a id="L148"></a><span class="ln">   148</span>			Walk(v, n.Value)
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// Types</span>
+<a id="L151"></a><span class="ln">   151</span>		case *ArrayType:
+<a id="L152"></a><span class="ln">   152</span>			if n.Len != nil {
+<a id="L153"></a><span class="ln">   153</span>				Walk(v, n.Len)
+<a id="L154"></a><span class="ln">   154</span>			}
+<a id="L155"></a><span class="ln">   155</span>			Walk(v, n.Elt)
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>		case *StructType:
+<a id="L158"></a><span class="ln">   158</span>			Walk(v, n.Fields)
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>		case *FuncType:
+<a id="L161"></a><span class="ln">   161</span>			Walk(v, n.Params)
+<a id="L162"></a><span class="ln">   162</span>			if n.Results != nil {
+<a id="L163"></a><span class="ln">   163</span>				Walk(v, n.Results)
+<a id="L164"></a><span class="ln">   164</span>			}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>		case *InterfaceType:
+<a id="L167"></a><span class="ln">   167</span>			Walk(v, n.Methods)
+<a id="L168"></a><span class="ln">   168</span>	
+<a id="L169"></a><span class="ln">   169</span>		case *MapType:
+<a id="L170"></a><span class="ln">   170</span>			Walk(v, n.Key)
+<a id="L171"></a><span class="ln">   171</span>			Walk(v, n.Value)
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>		case *ChanType:
+<a id="L174"></a><span class="ln">   174</span>			Walk(v, n.Value)
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>		<span class="comment">// Statements</span>
+<a id="L177"></a><span class="ln">   177</span>		case *BadStmt:
+<a id="L178"></a><span class="ln">   178</span>			<span class="comment">// nothing to do</span>
+<a id="L179"></a><span class="ln">   179</span>	
+<a id="L180"></a><span class="ln">   180</span>		case *DeclStmt:
+<a id="L181"></a><span class="ln">   181</span>			Walk(v, n.Decl)
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>		case *EmptyStmt:
+<a id="L184"></a><span class="ln">   184</span>			<span class="comment">// nothing to do</span>
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>		case *LabeledStmt:
+<a id="L187"></a><span class="ln">   187</span>			Walk(v, n.Label)
+<a id="L188"></a><span class="ln">   188</span>			Walk(v, n.Stmt)
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>		case *ExprStmt:
+<a id="L191"></a><span class="ln">   191</span>			Walk(v, n.X)
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>		case *SendStmt:
+<a id="L194"></a><span class="ln">   194</span>			Walk(v, n.Chan)
+<a id="L195"></a><span class="ln">   195</span>			Walk(v, n.Value)
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>		case *IncDecStmt:
+<a id="L198"></a><span class="ln">   198</span>			Walk(v, n.X)
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>		case *AssignStmt:
+<a id="L201"></a><span class="ln">   201</span>			walkExprList(v, n.Lhs)
+<a id="L202"></a><span class="ln">   202</span>			walkExprList(v, n.Rhs)
+<a id="L203"></a><span class="ln">   203</span>	
+<a id="L204"></a><span class="ln">   204</span>		case *GoStmt:
+<a id="L205"></a><span class="ln">   205</span>			Walk(v, n.Call)
+<a id="L206"></a><span class="ln">   206</span>	
+<a id="L207"></a><span class="ln">   207</span>		case *DeferStmt:
+<a id="L208"></a><span class="ln">   208</span>			Walk(v, n.Call)
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>		case *ReturnStmt:
+<a id="L211"></a><span class="ln">   211</span>			walkExprList(v, n.Results)
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>		case *BranchStmt:
+<a id="L214"></a><span class="ln">   214</span>			if n.Label != nil {
+<a id="L215"></a><span class="ln">   215</span>				Walk(v, n.Label)
+<a id="L216"></a><span class="ln">   216</span>			}
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>		case *BlockStmt:
+<a id="L219"></a><span class="ln">   219</span>			walkStmtList(v, n.List)
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>		case *IfStmt:
+<a id="L222"></a><span class="ln">   222</span>			if n.Init != nil {
+<a id="L223"></a><span class="ln">   223</span>				Walk(v, n.Init)
+<a id="L224"></a><span class="ln">   224</span>			}
+<a id="L225"></a><span class="ln">   225</span>			Walk(v, n.Cond)
+<a id="L226"></a><span class="ln">   226</span>			Walk(v, n.Body)
+<a id="L227"></a><span class="ln">   227</span>			if n.Else != nil {
+<a id="L228"></a><span class="ln">   228</span>				Walk(v, n.Else)
+<a id="L229"></a><span class="ln">   229</span>			}
+<a id="L230"></a><span class="ln">   230</span>	
+<a id="L231"></a><span class="ln">   231</span>		case *CaseClause:
+<a id="L232"></a><span class="ln">   232</span>			walkExprList(v, n.List)
+<a id="L233"></a><span class="ln">   233</span>			walkStmtList(v, n.Body)
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>		case *SwitchStmt:
+<a id="L236"></a><span class="ln">   236</span>			if n.Init != nil {
+<a id="L237"></a><span class="ln">   237</span>				Walk(v, n.Init)
+<a id="L238"></a><span class="ln">   238</span>			}
+<a id="L239"></a><span class="ln">   239</span>			if n.Tag != nil {
+<a id="L240"></a><span class="ln">   240</span>				Walk(v, n.Tag)
+<a id="L241"></a><span class="ln">   241</span>			}
+<a id="L242"></a><span class="ln">   242</span>			Walk(v, n.Body)
+<a id="L243"></a><span class="ln">   243</span>	
+<a id="L244"></a><span class="ln">   244</span>		case *TypeSwitchStmt:
+<a id="L245"></a><span class="ln">   245</span>			if n.Init != nil {
+<a id="L246"></a><span class="ln">   246</span>				Walk(v, n.Init)
+<a id="L247"></a><span class="ln">   247</span>			}
+<a id="L248"></a><span class="ln">   248</span>			Walk(v, n.Assign)
+<a id="L249"></a><span class="ln">   249</span>			Walk(v, n.Body)
+<a id="L250"></a><span class="ln">   250</span>	
+<a id="L251"></a><span class="ln">   251</span>		case *CommClause:
+<a id="L252"></a><span class="ln">   252</span>			if n.Comm != nil {
+<a id="L253"></a><span class="ln">   253</span>				Walk(v, n.Comm)
+<a id="L254"></a><span class="ln">   254</span>			}
+<a id="L255"></a><span class="ln">   255</span>			walkStmtList(v, n.Body)
+<a id="L256"></a><span class="ln">   256</span>	
+<a id="L257"></a><span class="ln">   257</span>		case *SelectStmt:
+<a id="L258"></a><span class="ln">   258</span>			Walk(v, n.Body)
+<a id="L259"></a><span class="ln">   259</span>	
+<a id="L260"></a><span class="ln">   260</span>		case *ForStmt:
+<a id="L261"></a><span class="ln">   261</span>			if n.Init != nil {
+<a id="L262"></a><span class="ln">   262</span>				Walk(v, n.Init)
+<a id="L263"></a><span class="ln">   263</span>			}
+<a id="L264"></a><span class="ln">   264</span>			if n.Cond != nil {
+<a id="L265"></a><span class="ln">   265</span>				Walk(v, n.Cond)
+<a id="L266"></a><span class="ln">   266</span>			}
+<a id="L267"></a><span class="ln">   267</span>			if n.Post != nil {
+<a id="L268"></a><span class="ln">   268</span>				Walk(v, n.Post)
+<a id="L269"></a><span class="ln">   269</span>			}
+<a id="L270"></a><span class="ln">   270</span>			Walk(v, n.Body)
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>		case *RangeStmt:
+<a id="L273"></a><span class="ln">   273</span>			Walk(v, n.Key)
+<a id="L274"></a><span class="ln">   274</span>			if n.Value != nil {
+<a id="L275"></a><span class="ln">   275</span>				Walk(v, n.Value)
+<a id="L276"></a><span class="ln">   276</span>			}
+<a id="L277"></a><span class="ln">   277</span>			Walk(v, n.X)
+<a id="L278"></a><span class="ln">   278</span>			Walk(v, n.Body)
+<a id="L279"></a><span class="ln">   279</span>	
+<a id="L280"></a><span class="ln">   280</span>		<span class="comment">// Declarations</span>
+<a id="L281"></a><span class="ln">   281</span>		case *ImportSpec:
+<a id="L282"></a><span class="ln">   282</span>			if n.Doc != nil {
+<a id="L283"></a><span class="ln">   283</span>				Walk(v, n.Doc)
+<a id="L284"></a><span class="ln">   284</span>			}
+<a id="L285"></a><span class="ln">   285</span>			if n.Name != nil {
+<a id="L286"></a><span class="ln">   286</span>				Walk(v, n.Name)
+<a id="L287"></a><span class="ln">   287</span>			}
+<a id="L288"></a><span class="ln">   288</span>			Walk(v, n.Path)
+<a id="L289"></a><span class="ln">   289</span>			if n.Comment != nil {
+<a id="L290"></a><span class="ln">   290</span>				Walk(v, n.Comment)
+<a id="L291"></a><span class="ln">   291</span>			}
+<a id="L292"></a><span class="ln">   292</span>	
+<a id="L293"></a><span class="ln">   293</span>		case *ValueSpec:
+<a id="L294"></a><span class="ln">   294</span>			if n.Doc != nil {
+<a id="L295"></a><span class="ln">   295</span>				Walk(v, n.Doc)
+<a id="L296"></a><span class="ln">   296</span>			}
+<a id="L297"></a><span class="ln">   297</span>			walkIdentList(v, n.Names)
+<a id="L298"></a><span class="ln">   298</span>			if n.Type != nil {
+<a id="L299"></a><span class="ln">   299</span>				Walk(v, n.Type)
+<a id="L300"></a><span class="ln">   300</span>			}
+<a id="L301"></a><span class="ln">   301</span>			walkExprList(v, n.Values)
+<a id="L302"></a><span class="ln">   302</span>			if n.Comment != nil {
+<a id="L303"></a><span class="ln">   303</span>				Walk(v, n.Comment)
+<a id="L304"></a><span class="ln">   304</span>			}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>		case *TypeSpec:
+<a id="L307"></a><span class="ln">   307</span>			if n.Doc != nil {
+<a id="L308"></a><span class="ln">   308</span>				Walk(v, n.Doc)
+<a id="L309"></a><span class="ln">   309</span>			}
+<a id="L310"></a><span class="ln">   310</span>			Walk(v, n.Name)
+<a id="L311"></a><span class="ln">   311</span>			Walk(v, n.Type)
+<a id="L312"></a><span class="ln">   312</span>			if n.Comment != nil {
+<a id="L313"></a><span class="ln">   313</span>				Walk(v, n.Comment)
+<a id="L314"></a><span class="ln">   314</span>			}
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>		case *BadDecl:
+<a id="L317"></a><span class="ln">   317</span>			<span class="comment">// nothing to do</span>
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>		case *GenDecl:
+<a id="L320"></a><span class="ln">   320</span>			if n.Doc != nil {
+<a id="L321"></a><span class="ln">   321</span>				Walk(v, n.Doc)
+<a id="L322"></a><span class="ln">   322</span>			}
+<a id="L323"></a><span class="ln">   323</span>			for _, s := range n.Specs {
+<a id="L324"></a><span class="ln">   324</span>				Walk(v, s)
+<a id="L325"></a><span class="ln">   325</span>			}
+<a id="L326"></a><span class="ln">   326</span>	
+<a id="L327"></a><span class="ln">   327</span>		case *FuncDecl:
+<a id="L328"></a><span class="ln">   328</span>			if n.Doc != nil {
+<a id="L329"></a><span class="ln">   329</span>				Walk(v, n.Doc)
+<a id="L330"></a><span class="ln">   330</span>			}
+<a id="L331"></a><span class="ln">   331</span>			if n.Recv != nil {
+<a id="L332"></a><span class="ln">   332</span>				Walk(v, n.Recv)
+<a id="L333"></a><span class="ln">   333</span>			}
+<a id="L334"></a><span class="ln">   334</span>			Walk(v, n.Name)
+<a id="L335"></a><span class="ln">   335</span>			Walk(v, n.Type)
+<a id="L336"></a><span class="ln">   336</span>			if n.Body != nil {
+<a id="L337"></a><span class="ln">   337</span>				Walk(v, n.Body)
+<a id="L338"></a><span class="ln">   338</span>			}
+<a id="L339"></a><span class="ln">   339</span>	
+<a id="L340"></a><span class="ln">   340</span>		<span class="comment">// Files and packages</span>
+<a id="L341"></a><span class="ln">   341</span>		case *File:
+<a id="L342"></a><span class="ln">   342</span>			if n.Doc != nil {
+<a id="L343"></a><span class="ln">   343</span>				Walk(v, n.Doc)
+<a id="L344"></a><span class="ln">   344</span>			}
+<a id="L345"></a><span class="ln">   345</span>			Walk(v, n.Name)
+<a id="L346"></a><span class="ln">   346</span>			walkDeclList(v, n.Decls)
+<a id="L347"></a><span class="ln">   347</span>			for _, g := range n.Comments {
+<a id="L348"></a><span class="ln">   348</span>				Walk(v, g)
+<a id="L349"></a><span class="ln">   349</span>			}
+<a id="L350"></a><span class="ln">   350</span>			<span class="comment">// don&#39;t walk n.Comments - they have been</span>
+<a id="L351"></a><span class="ln">   351</span>			<span class="comment">// visited already through the individual</span>
+<a id="L352"></a><span class="ln">   352</span>			<span class="comment">// nodes</span>
+<a id="L353"></a><span class="ln">   353</span>	
+<a id="L354"></a><span class="ln">   354</span>		case *Package:
+<a id="L355"></a><span class="ln">   355</span>			for _, f := range n.Files {
+<a id="L356"></a><span class="ln">   356</span>				Walk(v, f)
+<a id="L357"></a><span class="ln">   357</span>			}
+<a id="L358"></a><span class="ln">   358</span>	
+<a id="L359"></a><span class="ln">   359</span>		default:
+<a id="L360"></a><span class="ln">   360</span>			fmt.Printf(&#34;ast.Walk: unexpected node type %T&#34;, n)
+<a id="L361"></a><span class="ln">   361</span>			panic(&#34;ast.Walk&#34;)
+<a id="L362"></a><span class="ln">   362</span>		}
+<a id="L363"></a><span class="ln">   363</span>	
+<a id="L364"></a><span class="ln">   364</span>		v.Visit(nil)
+<a id="L365"></a><span class="ln">   365</span>	}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>	type inspector func(Node) bool
+<a id="L368"></a><span class="ln">   368</span>	
+<a id="L369"></a><span class="ln">   369</span>	func (f inspector) Visit(node Node) Visitor {
+<a id="L370"></a><span class="ln">   370</span>		if f(node) {
+<a id="L371"></a><span class="ln">   371</span>			return f
+<a id="L372"></a><span class="ln">   372</span>		}
+<a id="L373"></a><span class="ln">   373</span>		return nil
+<a id="L374"></a><span class="ln">   374</span>	}
+<a id="L375"></a><span class="ln">   375</span>	
+<a id="L376"></a><span class="ln">   376</span>	<span class="comment">// Inspect traverses an AST in depth-first order: It starts by calling</span>
+<a id="L377"></a><span class="ln">   377</span>	<span class="comment">// f(node); node must not be nil. If f returns true, Inspect invokes f</span>
+<a id="L378"></a><span class="ln">   378</span>	<span class="comment">// for all the non-nil children of node, recursively.</span>
+<a id="L379"></a><span class="ln">   379</span>	<span class="comment">//</span>
+<a id="L380"></a><span class="ln">   380</span>	func Inspect(node Node, f func(Node) bool) {
+<a id="L381"></a><span class="ln">   381</span>		Walk(inspector(f), node)
+<a id="L382"></a><span class="ln">   382</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

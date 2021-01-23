@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/syscall/syscall_linux.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/syscall/syscall_linux.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Linux system calls.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// This file is compiled as ordinary Go code,</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// but it is also input to mksyscall,</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// which parses the //sys lines and generates system call stubs.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// Note that sometimes we use a lowercase //sys name and</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// wrap it in our own nicer implementation.</span>
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	package syscall
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	import &#34;unsafe&#34;
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">/*
+</span><a id="L17"></a><span class="ln">    17</span>	<span class="comment"> * Wrapped
+</span><a id="L18"></a><span class="ln">    18</span>	<span class="comment"> */</span>
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//sys	open(path string, mode int, perm uint32) (fd int, err error)</span>
+<a id="L21"></a><span class="ln">    21</span>	func Open(path string, mode int, perm uint32) (fd int, err error) {
+<a id="L22"></a><span class="ln">    22</span>		return open(path, mode|O_LARGEFILE, perm)
+<a id="L23"></a><span class="ln">    23</span>	}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//sys	openat(dirfd int, path string, flags int, mode uint32) (fd int, err error)</span>
+<a id="L26"></a><span class="ln">    26</span>	func Openat(dirfd int, path string, flags int, mode uint32) (fd int, err error) {
+<a id="L27"></a><span class="ln">    27</span>		return openat(dirfd, path, flags|O_LARGEFILE, mode)
+<a id="L28"></a><span class="ln">    28</span>	}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">//sysnb	pipe(p *[2]_C_int) (err error)</span>
+<a id="L31"></a><span class="ln">    31</span>	func Pipe(p []int) (err error) {
+<a id="L32"></a><span class="ln">    32</span>		if len(p) != 2 {
+<a id="L33"></a><span class="ln">    33</span>			return EINVAL
+<a id="L34"></a><span class="ln">    34</span>		}
+<a id="L35"></a><span class="ln">    35</span>		var pp [2]_C_int
+<a id="L36"></a><span class="ln">    36</span>		err = pipe(&amp;pp)
+<a id="L37"></a><span class="ln">    37</span>		p[0] = int(pp[0])
+<a id="L38"></a><span class="ln">    38</span>		p[1] = int(pp[1])
+<a id="L39"></a><span class="ln">    39</span>		return
+<a id="L40"></a><span class="ln">    40</span>	}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//sys	utimes(path string, times *[2]Timeval) (err error)</span>
+<a id="L43"></a><span class="ln">    43</span>	func Utimes(path string, tv []Timeval) (err error) {
+<a id="L44"></a><span class="ln">    44</span>		if len(tv) != 2 {
+<a id="L45"></a><span class="ln">    45</span>			return EINVAL
+<a id="L46"></a><span class="ln">    46</span>		}
+<a id="L47"></a><span class="ln">    47</span>		return utimes(path, (*[2]Timeval)(unsafe.Pointer(&amp;tv[0])))
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//sys	futimesat(dirfd int, path *byte, times *[2]Timeval) (err error)</span>
+<a id="L51"></a><span class="ln">    51</span>	func Futimesat(dirfd int, path string, tv []Timeval) (err error) {
+<a id="L52"></a><span class="ln">    52</span>		if len(tv) != 2 {
+<a id="L53"></a><span class="ln">    53</span>			return EINVAL
+<a id="L54"></a><span class="ln">    54</span>		}
+<a id="L55"></a><span class="ln">    55</span>		return futimesat(dirfd, StringBytePtr(path), (*[2]Timeval)(unsafe.Pointer(&amp;tv[0])))
+<a id="L56"></a><span class="ln">    56</span>	}
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	func Futimes(fd int, tv []Timeval) (err error) {
+<a id="L59"></a><span class="ln">    59</span>		<span class="comment">// Believe it or not, this is the best we can do on Linux</span>
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// (and is what glibc does).</span>
+<a id="L61"></a><span class="ln">    61</span>		return Utimes(&#34;/proc/self/fd/&#34;+itoa(fd), tv)
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	const ImplementsGetwd = true
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">//sys	Getcwd(buf []byte) (n int, err error)</span>
+<a id="L67"></a><span class="ln">    67</span>	func Getwd() (wd string, err error) {
+<a id="L68"></a><span class="ln">    68</span>		var buf [PathMax]byte
+<a id="L69"></a><span class="ln">    69</span>		n, err := Getcwd(buf[0:])
+<a id="L70"></a><span class="ln">    70</span>		if err != nil {
+<a id="L71"></a><span class="ln">    71</span>			return &#34;&#34;, err
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		<span class="comment">// Getcwd returns the number of bytes written to buf, including the NUL.</span>
+<a id="L74"></a><span class="ln">    74</span>		if n &lt; 1 || n &gt; len(buf) || buf[n-1] != 0 {
+<a id="L75"></a><span class="ln">    75</span>			return &#34;&#34;, EINVAL
+<a id="L76"></a><span class="ln">    76</span>		}
+<a id="L77"></a><span class="ln">    77</span>		return string(buf[0 : n-1]), nil
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	func Getgroups() (gids []int, err error) {
+<a id="L81"></a><span class="ln">    81</span>		n, err := getgroups(0, nil)
+<a id="L82"></a><span class="ln">    82</span>		if err != nil {
+<a id="L83"></a><span class="ln">    83</span>			return nil, err
+<a id="L84"></a><span class="ln">    84</span>		}
+<a id="L85"></a><span class="ln">    85</span>		if n == 0 {
+<a id="L86"></a><span class="ln">    86</span>			return nil, nil
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>		<span class="comment">// Sanity check group count.  Max is 1&lt;&lt;16 on Linux.</span>
+<a id="L90"></a><span class="ln">    90</span>		if n &lt; 0 || n &gt; 1&lt;&lt;20 {
+<a id="L91"></a><span class="ln">    91</span>			return nil, EINVAL
+<a id="L92"></a><span class="ln">    92</span>		}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>		a := make([]_Gid_t, n)
+<a id="L95"></a><span class="ln">    95</span>		n, err = getgroups(n, &amp;a[0])
+<a id="L96"></a><span class="ln">    96</span>		if err != nil {
+<a id="L97"></a><span class="ln">    97</span>			return nil, err
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		gids = make([]int, n)
+<a id="L100"></a><span class="ln">   100</span>		for i, v := range a[0:n] {
+<a id="L101"></a><span class="ln">   101</span>			gids[i] = int(v)
+<a id="L102"></a><span class="ln">   102</span>		}
+<a id="L103"></a><span class="ln">   103</span>		return
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	func Setgroups(gids []int) (err error) {
+<a id="L107"></a><span class="ln">   107</span>		if len(gids) == 0 {
+<a id="L108"></a><span class="ln">   108</span>			return setgroups(0, nil)
+<a id="L109"></a><span class="ln">   109</span>		}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>		a := make([]_Gid_t, len(gids))
+<a id="L112"></a><span class="ln">   112</span>		for i, v := range gids {
+<a id="L113"></a><span class="ln">   113</span>			a[i] = _Gid_t(v)
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		return setgroups(len(a), &amp;a[0])
+<a id="L116"></a><span class="ln">   116</span>	}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	type WaitStatus uint32
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">// Wait status is 7 bits at bottom, either 0 (exited),</span>
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// 0x7F (stopped), or a signal number that caused an exit.</span>
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// The 0x80 bit is whether there was a core dump.</span>
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// An extra number (exit code, signal causing a stop)</span>
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// is in the high bits.  At least that&#39;s the idea.</span>
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// There are various irregularities.  For example, the</span>
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// &#34;continued&#34; status is 0xFFFF, distinguishing itself</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// from stopped via the core dump bit.</span>
+<a id="L128"></a><span class="ln">   128</span>	
+<a id="L129"></a><span class="ln">   129</span>	const (
+<a id="L130"></a><span class="ln">   130</span>		mask    = 0x7F
+<a id="L131"></a><span class="ln">   131</span>		core    = 0x80
+<a id="L132"></a><span class="ln">   132</span>		exited  = 0x00
+<a id="L133"></a><span class="ln">   133</span>		stopped = 0x7F
+<a id="L134"></a><span class="ln">   134</span>		shift   = 8
+<a id="L135"></a><span class="ln">   135</span>	)
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	func (w WaitStatus) Exited() bool { return w&amp;mask == exited }
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>	func (w WaitStatus) Signaled() bool { return w&amp;mask != stopped &amp;&amp; w&amp;mask != exited }
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>	func (w WaitStatus) Stopped() bool { return w&amp;0xFF == stopped }
+<a id="L142"></a><span class="ln">   142</span>	
+<a id="L143"></a><span class="ln">   143</span>	func (w WaitStatus) Continued() bool { return w == 0xFFFF }
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>	func (w WaitStatus) CoreDump() bool { return w.Signaled() &amp;&amp; w&amp;core != 0 }
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>	func (w WaitStatus) ExitStatus() int {
+<a id="L148"></a><span class="ln">   148</span>		if !w.Exited() {
+<a id="L149"></a><span class="ln">   149</span>			return -1
+<a id="L150"></a><span class="ln">   150</span>		}
+<a id="L151"></a><span class="ln">   151</span>		return int(w&gt;&gt;shift) &amp; 0xFF
+<a id="L152"></a><span class="ln">   152</span>	}
+<a id="L153"></a><span class="ln">   153</span>	
+<a id="L154"></a><span class="ln">   154</span>	func (w WaitStatus) Signal() Signal {
+<a id="L155"></a><span class="ln">   155</span>		if !w.Signaled() {
+<a id="L156"></a><span class="ln">   156</span>			return -1
+<a id="L157"></a><span class="ln">   157</span>		}
+<a id="L158"></a><span class="ln">   158</span>		return Signal(w &amp; mask)
+<a id="L159"></a><span class="ln">   159</span>	}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>	func (w WaitStatus) StopSignal() Signal {
+<a id="L162"></a><span class="ln">   162</span>		if !w.Stopped() {
+<a id="L163"></a><span class="ln">   163</span>			return -1
+<a id="L164"></a><span class="ln">   164</span>		}
+<a id="L165"></a><span class="ln">   165</span>		return Signal(w&gt;&gt;shift) &amp; 0xFF
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	func (w WaitStatus) TrapCause() int {
+<a id="L169"></a><span class="ln">   169</span>		if w.StopSignal() != SIGTRAP {
+<a id="L170"></a><span class="ln">   170</span>			return -1
+<a id="L171"></a><span class="ln">   171</span>		}
+<a id="L172"></a><span class="ln">   172</span>		return int(w&gt;&gt;shift) &gt;&gt; 8
+<a id="L173"></a><span class="ln">   173</span>	}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">//sys	wait4(pid int, wstatus *_C_int, options int, rusage *Rusage) (wpid int, err error)</span>
+<a id="L176"></a><span class="ln">   176</span>	func Wait4(pid int, wstatus *WaitStatus, options int, rusage *Rusage) (wpid int, err error) {
+<a id="L177"></a><span class="ln">   177</span>		var status _C_int
+<a id="L178"></a><span class="ln">   178</span>		wpid, err = wait4(pid, &amp;status, options, rusage)
+<a id="L179"></a><span class="ln">   179</span>		if wstatus != nil {
+<a id="L180"></a><span class="ln">   180</span>			*wstatus = WaitStatus(status)
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>		return
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	func Mkfifo(path string, mode uint32) (err error) {
+<a id="L186"></a><span class="ln">   186</span>		return Mknod(path, mode|S_IFIFO, 0)
+<a id="L187"></a><span class="ln">   187</span>	}
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// For testing: clients can set this flag to force</span>
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// creation of IPv6 sockets to return EAFNOSUPPORT.</span>
+<a id="L191"></a><span class="ln">   191</span>	var SocketDisableIPv6 bool
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	type Sockaddr interface {
+<a id="L194"></a><span class="ln">   194</span>		sockaddr() (ptr uintptr, len _Socklen, err error) <span class="comment">// lowercase; only we can define Sockaddrs</span>
+<a id="L195"></a><span class="ln">   195</span>	}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>	type SockaddrInet4 struct {
+<a id="L198"></a><span class="ln">   198</span>		Port int
+<a id="L199"></a><span class="ln">   199</span>		Addr [4]byte
+<a id="L200"></a><span class="ln">   200</span>		raw  RawSockaddrInet4
+<a id="L201"></a><span class="ln">   201</span>	}
+<a id="L202"></a><span class="ln">   202</span>	
+<a id="L203"></a><span class="ln">   203</span>	func (sa *SockaddrInet4) sockaddr() (uintptr, _Socklen, error) {
+<a id="L204"></a><span class="ln">   204</span>		if sa.Port &lt; 0 || sa.Port &gt; 0xFFFF {
+<a id="L205"></a><span class="ln">   205</span>			return 0, 0, EINVAL
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>		sa.raw.Family = AF_INET
+<a id="L208"></a><span class="ln">   208</span>		p := (*[2]byte)(unsafe.Pointer(&amp;sa.raw.Port))
+<a id="L209"></a><span class="ln">   209</span>		p[0] = byte(sa.Port &gt;&gt; 8)
+<a id="L210"></a><span class="ln">   210</span>		p[1] = byte(sa.Port)
+<a id="L211"></a><span class="ln">   211</span>		for i := 0; i &lt; len(sa.Addr); i++ {
+<a id="L212"></a><span class="ln">   212</span>			sa.raw.Addr[i] = sa.Addr[i]
+<a id="L213"></a><span class="ln">   213</span>		}
+<a id="L214"></a><span class="ln">   214</span>		return uintptr(unsafe.Pointer(&amp;sa.raw)), SizeofSockaddrInet4, nil
+<a id="L215"></a><span class="ln">   215</span>	}
+<a id="L216"></a><span class="ln">   216</span>	
+<a id="L217"></a><span class="ln">   217</span>	type SockaddrInet6 struct {
+<a id="L218"></a><span class="ln">   218</span>		Port   int
+<a id="L219"></a><span class="ln">   219</span>		ZoneId uint32
+<a id="L220"></a><span class="ln">   220</span>		Addr   [16]byte
+<a id="L221"></a><span class="ln">   221</span>		raw    RawSockaddrInet6
+<a id="L222"></a><span class="ln">   222</span>	}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	func (sa *SockaddrInet6) sockaddr() (uintptr, _Socklen, error) {
+<a id="L225"></a><span class="ln">   225</span>		if sa.Port &lt; 0 || sa.Port &gt; 0xFFFF {
+<a id="L226"></a><span class="ln">   226</span>			return 0, 0, EINVAL
+<a id="L227"></a><span class="ln">   227</span>		}
+<a id="L228"></a><span class="ln">   228</span>		sa.raw.Family = AF_INET6
+<a id="L229"></a><span class="ln">   229</span>		p := (*[2]byte)(unsafe.Pointer(&amp;sa.raw.Port))
+<a id="L230"></a><span class="ln">   230</span>		p[0] = byte(sa.Port &gt;&gt; 8)
+<a id="L231"></a><span class="ln">   231</span>		p[1] = byte(sa.Port)
+<a id="L232"></a><span class="ln">   232</span>		sa.raw.Scope_id = sa.ZoneId
+<a id="L233"></a><span class="ln">   233</span>		for i := 0; i &lt; len(sa.Addr); i++ {
+<a id="L234"></a><span class="ln">   234</span>			sa.raw.Addr[i] = sa.Addr[i]
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>		return uintptr(unsafe.Pointer(&amp;sa.raw)), SizeofSockaddrInet6, nil
+<a id="L237"></a><span class="ln">   237</span>	}
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	type SockaddrUnix struct {
+<a id="L240"></a><span class="ln">   240</span>		Name string
+<a id="L241"></a><span class="ln">   241</span>		raw  RawSockaddrUnix
+<a id="L242"></a><span class="ln">   242</span>	}
+<a id="L243"></a><span class="ln">   243</span>	
+<a id="L244"></a><span class="ln">   244</span>	func (sa *SockaddrUnix) sockaddr() (uintptr, _Socklen, error) {
+<a id="L245"></a><span class="ln">   245</span>		name := sa.Name
+<a id="L246"></a><span class="ln">   246</span>		n := len(name)
+<a id="L247"></a><span class="ln">   247</span>		if n &gt;= len(sa.raw.Path) || n == 0 {
+<a id="L248"></a><span class="ln">   248</span>			return 0, 0, EINVAL
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		sa.raw.Family = AF_UNIX
+<a id="L251"></a><span class="ln">   251</span>		for i := 0; i &lt; n; i++ {
+<a id="L252"></a><span class="ln">   252</span>			sa.raw.Path[i] = int8(name[i])
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>		<span class="comment">// length is family (uint16), name, NUL.</span>
+<a id="L255"></a><span class="ln">   255</span>		sl := 2 + _Socklen(n) + 1
+<a id="L256"></a><span class="ln">   256</span>		if sa.raw.Path[0] == &#39;@&#39; {
+<a id="L257"></a><span class="ln">   257</span>			sa.raw.Path[0] = 0
+<a id="L258"></a><span class="ln">   258</span>			<span class="comment">// Don&#39;t count trailing NUL for abstract address.</span>
+<a id="L259"></a><span class="ln">   259</span>			sl--
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>		return uintptr(unsafe.Pointer(&amp;sa.raw)), sl, nil
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	type SockaddrLinklayer struct {
+<a id="L266"></a><span class="ln">   266</span>		Protocol uint16
+<a id="L267"></a><span class="ln">   267</span>		Ifindex  int
+<a id="L268"></a><span class="ln">   268</span>		Hatype   uint16
+<a id="L269"></a><span class="ln">   269</span>		Pkttype  uint8
+<a id="L270"></a><span class="ln">   270</span>		Halen    uint8
+<a id="L271"></a><span class="ln">   271</span>		Addr     [8]byte
+<a id="L272"></a><span class="ln">   272</span>		raw      RawSockaddrLinklayer
+<a id="L273"></a><span class="ln">   273</span>	}
+<a id="L274"></a><span class="ln">   274</span>	
+<a id="L275"></a><span class="ln">   275</span>	func (sa *SockaddrLinklayer) sockaddr() (uintptr, _Socklen, error) {
+<a id="L276"></a><span class="ln">   276</span>		if sa.Ifindex &lt; 0 || sa.Ifindex &gt; 0x7fffffff {
+<a id="L277"></a><span class="ln">   277</span>			return 0, 0, EINVAL
+<a id="L278"></a><span class="ln">   278</span>		}
+<a id="L279"></a><span class="ln">   279</span>		sa.raw.Family = AF_PACKET
+<a id="L280"></a><span class="ln">   280</span>		sa.raw.Protocol = sa.Protocol
+<a id="L281"></a><span class="ln">   281</span>		sa.raw.Ifindex = int32(sa.Ifindex)
+<a id="L282"></a><span class="ln">   282</span>		sa.raw.Hatype = sa.Hatype
+<a id="L283"></a><span class="ln">   283</span>		sa.raw.Pkttype = sa.Pkttype
+<a id="L284"></a><span class="ln">   284</span>		sa.raw.Halen = sa.Halen
+<a id="L285"></a><span class="ln">   285</span>		for i := 0; i &lt; len(sa.Addr); i++ {
+<a id="L286"></a><span class="ln">   286</span>			sa.raw.Addr[i] = sa.Addr[i]
+<a id="L287"></a><span class="ln">   287</span>		}
+<a id="L288"></a><span class="ln">   288</span>		return uintptr(unsafe.Pointer(&amp;sa.raw)), SizeofSockaddrLinklayer, nil
+<a id="L289"></a><span class="ln">   289</span>	}
+<a id="L290"></a><span class="ln">   290</span>	
+<a id="L291"></a><span class="ln">   291</span>	type SockaddrNetlink struct {
+<a id="L292"></a><span class="ln">   292</span>		Family uint16
+<a id="L293"></a><span class="ln">   293</span>		Pad    uint16
+<a id="L294"></a><span class="ln">   294</span>		Pid    uint32
+<a id="L295"></a><span class="ln">   295</span>		Groups uint32
+<a id="L296"></a><span class="ln">   296</span>		raw    RawSockaddrNetlink
+<a id="L297"></a><span class="ln">   297</span>	}
+<a id="L298"></a><span class="ln">   298</span>	
+<a id="L299"></a><span class="ln">   299</span>	func (sa *SockaddrNetlink) sockaddr() (uintptr, _Socklen, error) {
+<a id="L300"></a><span class="ln">   300</span>		sa.raw.Family = AF_NETLINK
+<a id="L301"></a><span class="ln">   301</span>		sa.raw.Pad = sa.Pad
+<a id="L302"></a><span class="ln">   302</span>		sa.raw.Pid = sa.Pid
+<a id="L303"></a><span class="ln">   303</span>		sa.raw.Groups = sa.Groups
+<a id="L304"></a><span class="ln">   304</span>		return uintptr(unsafe.Pointer(&amp;sa.raw)), SizeofSockaddrNetlink, nil
+<a id="L305"></a><span class="ln">   305</span>	}
+<a id="L306"></a><span class="ln">   306</span>	
+<a id="L307"></a><span class="ln">   307</span>	func anyToSockaddr(rsa *RawSockaddrAny) (Sockaddr, error) {
+<a id="L308"></a><span class="ln">   308</span>		switch rsa.Addr.Family {
+<a id="L309"></a><span class="ln">   309</span>		case AF_NETLINK:
+<a id="L310"></a><span class="ln">   310</span>			pp := (*RawSockaddrNetlink)(unsafe.Pointer(rsa))
+<a id="L311"></a><span class="ln">   311</span>			sa := new(SockaddrNetlink)
+<a id="L312"></a><span class="ln">   312</span>			sa.Family = pp.Family
+<a id="L313"></a><span class="ln">   313</span>			sa.Pad = pp.Pad
+<a id="L314"></a><span class="ln">   314</span>			sa.Pid = pp.Pid
+<a id="L315"></a><span class="ln">   315</span>			sa.Groups = pp.Groups
+<a id="L316"></a><span class="ln">   316</span>			return sa, nil
+<a id="L317"></a><span class="ln">   317</span>	
+<a id="L318"></a><span class="ln">   318</span>		case AF_PACKET:
+<a id="L319"></a><span class="ln">   319</span>			pp := (*RawSockaddrLinklayer)(unsafe.Pointer(rsa))
+<a id="L320"></a><span class="ln">   320</span>			sa := new(SockaddrLinklayer)
+<a id="L321"></a><span class="ln">   321</span>			sa.Protocol = pp.Protocol
+<a id="L322"></a><span class="ln">   322</span>			sa.Ifindex = int(pp.Ifindex)
+<a id="L323"></a><span class="ln">   323</span>			sa.Hatype = pp.Hatype
+<a id="L324"></a><span class="ln">   324</span>			sa.Pkttype = pp.Pkttype
+<a id="L325"></a><span class="ln">   325</span>			sa.Halen = pp.Halen
+<a id="L326"></a><span class="ln">   326</span>			for i := 0; i &lt; len(sa.Addr); i++ {
+<a id="L327"></a><span class="ln">   327</span>				sa.Addr[i] = pp.Addr[i]
+<a id="L328"></a><span class="ln">   328</span>			}
+<a id="L329"></a><span class="ln">   329</span>			return sa, nil
+<a id="L330"></a><span class="ln">   330</span>	
+<a id="L331"></a><span class="ln">   331</span>		case AF_UNIX:
+<a id="L332"></a><span class="ln">   332</span>			pp := (*RawSockaddrUnix)(unsafe.Pointer(rsa))
+<a id="L333"></a><span class="ln">   333</span>			sa := new(SockaddrUnix)
+<a id="L334"></a><span class="ln">   334</span>			if pp.Path[0] == 0 {
+<a id="L335"></a><span class="ln">   335</span>				<span class="comment">// &#34;Abstract&#34; Unix domain socket.</span>
+<a id="L336"></a><span class="ln">   336</span>				<span class="comment">// Rewrite leading NUL as @ for textual display.</span>
+<a id="L337"></a><span class="ln">   337</span>				<span class="comment">// (This is the standard convention.)</span>
+<a id="L338"></a><span class="ln">   338</span>				<span class="comment">// Not friendly to overwrite in place,</span>
+<a id="L339"></a><span class="ln">   339</span>				<span class="comment">// but the callers below don&#39;t care.</span>
+<a id="L340"></a><span class="ln">   340</span>				pp.Path[0] = &#39;@&#39;
+<a id="L341"></a><span class="ln">   341</span>			}
+<a id="L342"></a><span class="ln">   342</span>	
+<a id="L343"></a><span class="ln">   343</span>			<span class="comment">// Assume path ends at NUL.</span>
+<a id="L344"></a><span class="ln">   344</span>			<span class="comment">// This is not technically the Linux semantics for</span>
+<a id="L345"></a><span class="ln">   345</span>			<span class="comment">// abstract Unix domain sockets--they are supposed</span>
+<a id="L346"></a><span class="ln">   346</span>			<span class="comment">// to be uninterpreted fixed-size binary blobs--but</span>
+<a id="L347"></a><span class="ln">   347</span>			<span class="comment">// everyone uses this convention.</span>
+<a id="L348"></a><span class="ln">   348</span>			n := 0
+<a id="L349"></a><span class="ln">   349</span>			for n &lt; len(pp.Path) &amp;&amp; pp.Path[n] != 0 {
+<a id="L350"></a><span class="ln">   350</span>				n++
+<a id="L351"></a><span class="ln">   351</span>			}
+<a id="L352"></a><span class="ln">   352</span>			bytes := (*[10000]byte)(unsafe.Pointer(&amp;pp.Path[0]))[0:n]
+<a id="L353"></a><span class="ln">   353</span>			sa.Name = string(bytes)
+<a id="L354"></a><span class="ln">   354</span>			return sa, nil
+<a id="L355"></a><span class="ln">   355</span>	
+<a id="L356"></a><span class="ln">   356</span>		case AF_INET:
+<a id="L357"></a><span class="ln">   357</span>			pp := (*RawSockaddrInet4)(unsafe.Pointer(rsa))
+<a id="L358"></a><span class="ln">   358</span>			sa := new(SockaddrInet4)
+<a id="L359"></a><span class="ln">   359</span>			p := (*[2]byte)(unsafe.Pointer(&amp;pp.Port))
+<a id="L360"></a><span class="ln">   360</span>			sa.Port = int(p[0])&lt;&lt;8 + int(p[1])
+<a id="L361"></a><span class="ln">   361</span>			for i := 0; i &lt; len(sa.Addr); i++ {
+<a id="L362"></a><span class="ln">   362</span>				sa.Addr[i] = pp.Addr[i]
+<a id="L363"></a><span class="ln">   363</span>			}
+<a id="L364"></a><span class="ln">   364</span>			return sa, nil
+<a id="L365"></a><span class="ln">   365</span>	
+<a id="L366"></a><span class="ln">   366</span>		case AF_INET6:
+<a id="L367"></a><span class="ln">   367</span>			pp := (*RawSockaddrInet6)(unsafe.Pointer(rsa))
+<a id="L368"></a><span class="ln">   368</span>			sa := new(SockaddrInet6)
+<a id="L369"></a><span class="ln">   369</span>			p := (*[2]byte)(unsafe.Pointer(&amp;pp.Port))
+<a id="L370"></a><span class="ln">   370</span>			sa.Port = int(p[0])&lt;&lt;8 + int(p[1])
+<a id="L371"></a><span class="ln">   371</span>			sa.ZoneId = pp.Scope_id
+<a id="L372"></a><span class="ln">   372</span>			for i := 0; i &lt; len(sa.Addr); i++ {
+<a id="L373"></a><span class="ln">   373</span>				sa.Addr[i] = pp.Addr[i]
+<a id="L374"></a><span class="ln">   374</span>			}
+<a id="L375"></a><span class="ln">   375</span>			return sa, nil
+<a id="L376"></a><span class="ln">   376</span>		}
+<a id="L377"></a><span class="ln">   377</span>		return nil, EAFNOSUPPORT
+<a id="L378"></a><span class="ln">   378</span>	}
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>	func Accept(fd int) (nfd int, sa Sockaddr, err error) {
+<a id="L381"></a><span class="ln">   381</span>		var rsa RawSockaddrAny
+<a id="L382"></a><span class="ln">   382</span>		var len _Socklen = SizeofSockaddrAny
+<a id="L383"></a><span class="ln">   383</span>		nfd, err = accept(fd, &amp;rsa, &amp;len)
+<a id="L384"></a><span class="ln">   384</span>		if err != nil {
+<a id="L385"></a><span class="ln">   385</span>			return
+<a id="L386"></a><span class="ln">   386</span>		}
+<a id="L387"></a><span class="ln">   387</span>		sa, err = anyToSockaddr(&amp;rsa)
+<a id="L388"></a><span class="ln">   388</span>		if err != nil {
+<a id="L389"></a><span class="ln">   389</span>			Close(nfd)
+<a id="L390"></a><span class="ln">   390</span>			nfd = 0
+<a id="L391"></a><span class="ln">   391</span>		}
+<a id="L392"></a><span class="ln">   392</span>		return
+<a id="L393"></a><span class="ln">   393</span>	}
+<a id="L394"></a><span class="ln">   394</span>	
+<a id="L395"></a><span class="ln">   395</span>	func Getsockname(fd int) (sa Sockaddr, err error) {
+<a id="L396"></a><span class="ln">   396</span>		var rsa RawSockaddrAny
+<a id="L397"></a><span class="ln">   397</span>		var len _Socklen = SizeofSockaddrAny
+<a id="L398"></a><span class="ln">   398</span>		if err = getsockname(fd, &amp;rsa, &amp;len); err != nil {
+<a id="L399"></a><span class="ln">   399</span>			return
+<a id="L400"></a><span class="ln">   400</span>		}
+<a id="L401"></a><span class="ln">   401</span>		return anyToSockaddr(&amp;rsa)
+<a id="L402"></a><span class="ln">   402</span>	}
+<a id="L403"></a><span class="ln">   403</span>	
+<a id="L404"></a><span class="ln">   404</span>	func Getpeername(fd int) (sa Sockaddr, err error) {
+<a id="L405"></a><span class="ln">   405</span>		var rsa RawSockaddrAny
+<a id="L406"></a><span class="ln">   406</span>		var len _Socklen = SizeofSockaddrAny
+<a id="L407"></a><span class="ln">   407</span>		if err = getpeername(fd, &amp;rsa, &amp;len); err != nil {
+<a id="L408"></a><span class="ln">   408</span>			return
+<a id="L409"></a><span class="ln">   409</span>		}
+<a id="L410"></a><span class="ln">   410</span>		return anyToSockaddr(&amp;rsa)
+<a id="L411"></a><span class="ln">   411</span>	}
+<a id="L412"></a><span class="ln">   412</span>	
+<a id="L413"></a><span class="ln">   413</span>	func Bind(fd int, sa Sockaddr) (err error) {
+<a id="L414"></a><span class="ln">   414</span>		ptr, n, err := sa.sockaddr()
+<a id="L415"></a><span class="ln">   415</span>		if err != nil {
+<a id="L416"></a><span class="ln">   416</span>			return err
+<a id="L417"></a><span class="ln">   417</span>		}
+<a id="L418"></a><span class="ln">   418</span>		return bind(fd, ptr, n)
+<a id="L419"></a><span class="ln">   419</span>	}
+<a id="L420"></a><span class="ln">   420</span>	
+<a id="L421"></a><span class="ln">   421</span>	func Connect(fd int, sa Sockaddr) (err error) {
+<a id="L422"></a><span class="ln">   422</span>		ptr, n, err := sa.sockaddr()
+<a id="L423"></a><span class="ln">   423</span>		if err != nil {
+<a id="L424"></a><span class="ln">   424</span>			return err
+<a id="L425"></a><span class="ln">   425</span>		}
+<a id="L426"></a><span class="ln">   426</span>		return connect(fd, ptr, n)
+<a id="L427"></a><span class="ln">   427</span>	}
+<a id="L428"></a><span class="ln">   428</span>	
+<a id="L429"></a><span class="ln">   429</span>	func Socket(domain, typ, proto int) (fd int, err error) {
+<a id="L430"></a><span class="ln">   430</span>		if domain == AF_INET6 &amp;&amp; SocketDisableIPv6 {
+<a id="L431"></a><span class="ln">   431</span>			return -1, EAFNOSUPPORT
+<a id="L432"></a><span class="ln">   432</span>		}
+<a id="L433"></a><span class="ln">   433</span>		fd, err = socket(domain, typ, proto)
+<a id="L434"></a><span class="ln">   434</span>		return
+<a id="L435"></a><span class="ln">   435</span>	}
+<a id="L436"></a><span class="ln">   436</span>	
+<a id="L437"></a><span class="ln">   437</span>	func Socketpair(domain, typ, proto int) (fd [2]int, err error) {
+<a id="L438"></a><span class="ln">   438</span>		err = socketpair(domain, typ, proto, &amp;fd)
+<a id="L439"></a><span class="ln">   439</span>		return
+<a id="L440"></a><span class="ln">   440</span>	}
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>	func GetsockoptInt(fd, level, opt int) (value int, err error) {
+<a id="L443"></a><span class="ln">   443</span>		var n int32
+<a id="L444"></a><span class="ln">   444</span>		vallen := _Socklen(4)
+<a id="L445"></a><span class="ln">   445</span>		err = getsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;n)), &amp;vallen)
+<a id="L446"></a><span class="ln">   446</span>		return int(n), err
+<a id="L447"></a><span class="ln">   447</span>	}
+<a id="L448"></a><span class="ln">   448</span>	
+<a id="L449"></a><span class="ln">   449</span>	func GetsockoptInet4Addr(fd, level, opt int) (value [4]byte, err error) {
+<a id="L450"></a><span class="ln">   450</span>		vallen := _Socklen(4)
+<a id="L451"></a><span class="ln">   451</span>		err = getsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;value[0])), &amp;vallen)
+<a id="L452"></a><span class="ln">   452</span>		return value, err
+<a id="L453"></a><span class="ln">   453</span>	}
+<a id="L454"></a><span class="ln">   454</span>	
+<a id="L455"></a><span class="ln">   455</span>	func GetsockoptIPMreq(fd, level, opt int) (*IPMreq, error) {
+<a id="L456"></a><span class="ln">   456</span>		var value IPMreq
+<a id="L457"></a><span class="ln">   457</span>		vallen := _Socklen(SizeofIPMreq)
+<a id="L458"></a><span class="ln">   458</span>		err := getsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;value)), &amp;vallen)
+<a id="L459"></a><span class="ln">   459</span>		return &amp;value, err
+<a id="L460"></a><span class="ln">   460</span>	}
+<a id="L461"></a><span class="ln">   461</span>	
+<a id="L462"></a><span class="ln">   462</span>	func GetsockoptIPMreqn(fd, level, opt int) (*IPMreqn, error) {
+<a id="L463"></a><span class="ln">   463</span>		var value IPMreqn
+<a id="L464"></a><span class="ln">   464</span>		vallen := _Socklen(SizeofIPMreqn)
+<a id="L465"></a><span class="ln">   465</span>		err := getsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;value)), &amp;vallen)
+<a id="L466"></a><span class="ln">   466</span>		return &amp;value, err
+<a id="L467"></a><span class="ln">   467</span>	}
+<a id="L468"></a><span class="ln">   468</span>	
+<a id="L469"></a><span class="ln">   469</span>	func GetsockoptIPv6Mreq(fd, level, opt int) (*IPv6Mreq, error) {
+<a id="L470"></a><span class="ln">   470</span>		var value IPv6Mreq
+<a id="L471"></a><span class="ln">   471</span>		vallen := _Socklen(SizeofIPv6Mreq)
+<a id="L472"></a><span class="ln">   472</span>		err := getsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;value)), &amp;vallen)
+<a id="L473"></a><span class="ln">   473</span>		return &amp;value, err
+<a id="L474"></a><span class="ln">   474</span>	}
+<a id="L475"></a><span class="ln">   475</span>	
+<a id="L476"></a><span class="ln">   476</span>	func SetsockoptInt(fd, level, opt int, value int) (err error) {
+<a id="L477"></a><span class="ln">   477</span>		var n = int32(value)
+<a id="L478"></a><span class="ln">   478</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;n)), 4)
+<a id="L479"></a><span class="ln">   479</span>	}
+<a id="L480"></a><span class="ln">   480</span>	
+<a id="L481"></a><span class="ln">   481</span>	func SetsockoptInet4Addr(fd, level, opt int, value [4]byte) (err error) {
+<a id="L482"></a><span class="ln">   482</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;value[0])), 4)
+<a id="L483"></a><span class="ln">   483</span>	}
+<a id="L484"></a><span class="ln">   484</span>	
+<a id="L485"></a><span class="ln">   485</span>	func SetsockoptTimeval(fd, level, opt int, tv *Timeval) (err error) {
+<a id="L486"></a><span class="ln">   486</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(tv)), unsafe.Sizeof(*tv))
+<a id="L487"></a><span class="ln">   487</span>	}
+<a id="L488"></a><span class="ln">   488</span>	
+<a id="L489"></a><span class="ln">   489</span>	func SetsockoptLinger(fd, level, opt int, l *Linger) (err error) {
+<a id="L490"></a><span class="ln">   490</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(l)), unsafe.Sizeof(*l))
+<a id="L491"></a><span class="ln">   491</span>	}
+<a id="L492"></a><span class="ln">   492</span>	
+<a id="L493"></a><span class="ln">   493</span>	func SetsockoptIPMreq(fd, level, opt int, mreq *IPMreq) (err error) {
+<a id="L494"></a><span class="ln">   494</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(mreq)), unsafe.Sizeof(*mreq))
+<a id="L495"></a><span class="ln">   495</span>	}
+<a id="L496"></a><span class="ln">   496</span>	
+<a id="L497"></a><span class="ln">   497</span>	func SetsockoptIPMreqn(fd, level, opt int, mreq *IPMreqn) (err error) {
+<a id="L498"></a><span class="ln">   498</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(mreq)), unsafe.Sizeof(*mreq))
+<a id="L499"></a><span class="ln">   499</span>	}
+<a id="L500"></a><span class="ln">   500</span>	
+<a id="L501"></a><span class="ln">   501</span>	func SetsockoptIPv6Mreq(fd, level, opt int, mreq *IPv6Mreq) (err error) {
+<a id="L502"></a><span class="ln">   502</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(mreq)), unsafe.Sizeof(*mreq))
+<a id="L503"></a><span class="ln">   503</span>	}
+<a id="L504"></a><span class="ln">   504</span>	
+<a id="L505"></a><span class="ln">   505</span>	func SetsockoptString(fd, level, opt int, s string) (err error) {
+<a id="L506"></a><span class="ln">   506</span>		return setsockopt(fd, level, opt, uintptr(unsafe.Pointer(&amp;[]byte(s)[0])), uintptr(len(s)))
+<a id="L507"></a><span class="ln">   507</span>	}
+<a id="L508"></a><span class="ln">   508</span>	
+<a id="L509"></a><span class="ln">   509</span>	func Recvfrom(fd int, p []byte, flags int) (n int, from Sockaddr, err error) {
+<a id="L510"></a><span class="ln">   510</span>		var rsa RawSockaddrAny
+<a id="L511"></a><span class="ln">   511</span>		var len _Socklen = SizeofSockaddrAny
+<a id="L512"></a><span class="ln">   512</span>		if n, err = recvfrom(fd, p, flags, &amp;rsa, &amp;len); err != nil {
+<a id="L513"></a><span class="ln">   513</span>			return
+<a id="L514"></a><span class="ln">   514</span>		}
+<a id="L515"></a><span class="ln">   515</span>		from, err = anyToSockaddr(&amp;rsa)
+<a id="L516"></a><span class="ln">   516</span>		return
+<a id="L517"></a><span class="ln">   517</span>	}
+<a id="L518"></a><span class="ln">   518</span>	
+<a id="L519"></a><span class="ln">   519</span>	func Sendto(fd int, p []byte, flags int, to Sockaddr) (err error) {
+<a id="L520"></a><span class="ln">   520</span>		ptr, n, err := to.sockaddr()
+<a id="L521"></a><span class="ln">   521</span>		if err != nil {
+<a id="L522"></a><span class="ln">   522</span>			return err
+<a id="L523"></a><span class="ln">   523</span>		}
+<a id="L524"></a><span class="ln">   524</span>		return sendto(fd, p, flags, ptr, n)
+<a id="L525"></a><span class="ln">   525</span>	}
+<a id="L526"></a><span class="ln">   526</span>	
+<a id="L527"></a><span class="ln">   527</span>	func Recvmsg(fd int, p, oob []byte, flags int) (n, oobn int, recvflags int, from Sockaddr, err error) {
+<a id="L528"></a><span class="ln">   528</span>		var msg Msghdr
+<a id="L529"></a><span class="ln">   529</span>		var rsa RawSockaddrAny
+<a id="L530"></a><span class="ln">   530</span>		msg.Name = (*byte)(unsafe.Pointer(&amp;rsa))
+<a id="L531"></a><span class="ln">   531</span>		msg.Namelen = uint32(SizeofSockaddrAny)
+<a id="L532"></a><span class="ln">   532</span>		var iov Iovec
+<a id="L533"></a><span class="ln">   533</span>		if len(p) &gt; 0 {
+<a id="L534"></a><span class="ln">   534</span>			iov.Base = (*byte)(unsafe.Pointer(&amp;p[0]))
+<a id="L535"></a><span class="ln">   535</span>			iov.SetLen(len(p))
+<a id="L536"></a><span class="ln">   536</span>		}
+<a id="L537"></a><span class="ln">   537</span>		var dummy byte
+<a id="L538"></a><span class="ln">   538</span>		if len(oob) &gt; 0 {
+<a id="L539"></a><span class="ln">   539</span>			<span class="comment">// receive at least one normal byte</span>
+<a id="L540"></a><span class="ln">   540</span>			if len(p) == 0 {
+<a id="L541"></a><span class="ln">   541</span>				iov.Base = &amp;dummy
+<a id="L542"></a><span class="ln">   542</span>				iov.SetLen(1)
+<a id="L543"></a><span class="ln">   543</span>			}
+<a id="L544"></a><span class="ln">   544</span>			msg.Control = (*byte)(unsafe.Pointer(&amp;oob[0]))
+<a id="L545"></a><span class="ln">   545</span>			msg.SetControllen(len(oob))
+<a id="L546"></a><span class="ln">   546</span>		}
+<a id="L547"></a><span class="ln">   547</span>		msg.Iov = &amp;iov
+<a id="L548"></a><span class="ln">   548</span>		msg.Iovlen = 1
+<a id="L549"></a><span class="ln">   549</span>		if n, err = recvmsg(fd, &amp;msg, flags); err != nil {
+<a id="L550"></a><span class="ln">   550</span>			return
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>		oobn = int(msg.Controllen)
+<a id="L553"></a><span class="ln">   553</span>		recvflags = int(msg.Flags)
+<a id="L554"></a><span class="ln">   554</span>		<span class="comment">// source address is only specified if the socket is unconnected</span>
+<a id="L555"></a><span class="ln">   555</span>		if rsa.Addr.Family != AF_UNSPEC {
+<a id="L556"></a><span class="ln">   556</span>			from, err = anyToSockaddr(&amp;rsa)
+<a id="L557"></a><span class="ln">   557</span>		}
+<a id="L558"></a><span class="ln">   558</span>		return
+<a id="L559"></a><span class="ln">   559</span>	}
+<a id="L560"></a><span class="ln">   560</span>	
+<a id="L561"></a><span class="ln">   561</span>	func Sendmsg(fd int, p, oob []byte, to Sockaddr, flags int) (err error) {
+<a id="L562"></a><span class="ln">   562</span>		var ptr uintptr
+<a id="L563"></a><span class="ln">   563</span>		var salen _Socklen
+<a id="L564"></a><span class="ln">   564</span>		if to != nil {
+<a id="L565"></a><span class="ln">   565</span>			var err error
+<a id="L566"></a><span class="ln">   566</span>			ptr, salen, err = to.sockaddr()
+<a id="L567"></a><span class="ln">   567</span>			if err != nil {
+<a id="L568"></a><span class="ln">   568</span>				return err
+<a id="L569"></a><span class="ln">   569</span>			}
+<a id="L570"></a><span class="ln">   570</span>		}
+<a id="L571"></a><span class="ln">   571</span>		var msg Msghdr
+<a id="L572"></a><span class="ln">   572</span>		msg.Name = (*byte)(unsafe.Pointer(ptr))
+<a id="L573"></a><span class="ln">   573</span>		msg.Namelen = uint32(salen)
+<a id="L574"></a><span class="ln">   574</span>		var iov Iovec
+<a id="L575"></a><span class="ln">   575</span>		if len(p) &gt; 0 {
+<a id="L576"></a><span class="ln">   576</span>			iov.Base = (*byte)(unsafe.Pointer(&amp;p[0]))
+<a id="L577"></a><span class="ln">   577</span>			iov.SetLen(len(p))
+<a id="L578"></a><span class="ln">   578</span>		}
+<a id="L579"></a><span class="ln">   579</span>		var dummy byte
+<a id="L580"></a><span class="ln">   580</span>		if len(oob) &gt; 0 {
+<a id="L581"></a><span class="ln">   581</span>			<span class="comment">// send at least one normal byte</span>
+<a id="L582"></a><span class="ln">   582</span>			if len(p) == 0 {
+<a id="L583"></a><span class="ln">   583</span>				iov.Base = &amp;dummy
+<a id="L584"></a><span class="ln">   584</span>				iov.SetLen(1)
+<a id="L585"></a><span class="ln">   585</span>			}
+<a id="L586"></a><span class="ln">   586</span>			msg.Control = (*byte)(unsafe.Pointer(&amp;oob[0]))
+<a id="L587"></a><span class="ln">   587</span>			msg.SetControllen(len(oob))
+<a id="L588"></a><span class="ln">   588</span>		}
+<a id="L589"></a><span class="ln">   589</span>		msg.Iov = &amp;iov
+<a id="L590"></a><span class="ln">   590</span>		msg.Iovlen = 1
+<a id="L591"></a><span class="ln">   591</span>		if err = sendmsg(fd, &amp;msg, flags); err != nil {
+<a id="L592"></a><span class="ln">   592</span>			return
+<a id="L593"></a><span class="ln">   593</span>		}
+<a id="L594"></a><span class="ln">   594</span>		return
+<a id="L595"></a><span class="ln">   595</span>	}
+<a id="L596"></a><span class="ln">   596</span>	
+<a id="L597"></a><span class="ln">   597</span>	<span class="comment">// BindToDevice binds the socket associated with fd to device.</span>
+<a id="L598"></a><span class="ln">   598</span>	func BindToDevice(fd int, device string) (err error) {
+<a id="L599"></a><span class="ln">   599</span>		return SetsockoptString(fd, SOL_SOCKET, SO_BINDTODEVICE, device)
+<a id="L600"></a><span class="ln">   600</span>	}
+<a id="L601"></a><span class="ln">   601</span>	
+<a id="L602"></a><span class="ln">   602</span>	<span class="comment">//sys	ptrace(request int, pid int, addr uintptr, data uintptr) (err error)</span>
+<a id="L603"></a><span class="ln">   603</span>	
+<a id="L604"></a><span class="ln">   604</span>	func ptracePeek(req int, pid int, addr uintptr, out []byte) (count int, err error) {
+<a id="L605"></a><span class="ln">   605</span>		<span class="comment">// The peek requests are machine-size oriented, so we wrap it</span>
+<a id="L606"></a><span class="ln">   606</span>		<span class="comment">// to retrieve arbitrary-length data.</span>
+<a id="L607"></a><span class="ln">   607</span>	
+<a id="L608"></a><span class="ln">   608</span>		<span class="comment">// The ptrace syscall differs from glibc&#39;s ptrace.</span>
+<a id="L609"></a><span class="ln">   609</span>		<span class="comment">// Peeks returns the word in *data, not as the return value.</span>
+<a id="L610"></a><span class="ln">   610</span>	
+<a id="L611"></a><span class="ln">   611</span>		var buf [sizeofPtr]byte
+<a id="L612"></a><span class="ln">   612</span>	
+<a id="L613"></a><span class="ln">   613</span>		<span class="comment">// Leading edge.  PEEKTEXT/PEEKDATA don&#39;t require aligned</span>
+<a id="L614"></a><span class="ln">   614</span>		<span class="comment">// access (PEEKUSER warns that it might), but if we don&#39;t</span>
+<a id="L615"></a><span class="ln">   615</span>		<span class="comment">// align our reads, we might straddle an unmapped page</span>
+<a id="L616"></a><span class="ln">   616</span>		<span class="comment">// boundary and not get the bytes leading up to the page</span>
+<a id="L617"></a><span class="ln">   617</span>		<span class="comment">// boundary.</span>
+<a id="L618"></a><span class="ln">   618</span>		n := 0
+<a id="L619"></a><span class="ln">   619</span>		if addr%sizeofPtr != 0 {
+<a id="L620"></a><span class="ln">   620</span>			err = ptrace(req, pid, addr-addr%sizeofPtr, uintptr(unsafe.Pointer(&amp;buf[0])))
+<a id="L621"></a><span class="ln">   621</span>			if err != nil {
+<a id="L622"></a><span class="ln">   622</span>				return 0, err
+<a id="L623"></a><span class="ln">   623</span>			}
+<a id="L624"></a><span class="ln">   624</span>			n += copy(out, buf[addr%sizeofPtr:])
+<a id="L625"></a><span class="ln">   625</span>			out = out[n:]
+<a id="L626"></a><span class="ln">   626</span>		}
+<a id="L627"></a><span class="ln">   627</span>	
+<a id="L628"></a><span class="ln">   628</span>		<span class="comment">// Remainder.</span>
+<a id="L629"></a><span class="ln">   629</span>		for len(out) &gt; 0 {
+<a id="L630"></a><span class="ln">   630</span>			<span class="comment">// We use an internal buffer to guarantee alignment.</span>
+<a id="L631"></a><span class="ln">   631</span>			<span class="comment">// It&#39;s not documented if this is necessary, but we&#39;re paranoid.</span>
+<a id="L632"></a><span class="ln">   632</span>			err = ptrace(req, pid, addr+uintptr(n), uintptr(unsafe.Pointer(&amp;buf[0])))
+<a id="L633"></a><span class="ln">   633</span>			if err != nil {
+<a id="L634"></a><span class="ln">   634</span>				return n, err
+<a id="L635"></a><span class="ln">   635</span>			}
+<a id="L636"></a><span class="ln">   636</span>			copied := copy(out, buf[0:])
+<a id="L637"></a><span class="ln">   637</span>			n += copied
+<a id="L638"></a><span class="ln">   638</span>			out = out[copied:]
+<a id="L639"></a><span class="ln">   639</span>		}
+<a id="L640"></a><span class="ln">   640</span>	
+<a id="L641"></a><span class="ln">   641</span>		return n, nil
+<a id="L642"></a><span class="ln">   642</span>	}
+<a id="L643"></a><span class="ln">   643</span>	
+<a id="L644"></a><span class="ln">   644</span>	func PtracePeekText(pid int, addr uintptr, out []byte) (count int, err error) {
+<a id="L645"></a><span class="ln">   645</span>		return ptracePeek(PTRACE_PEEKTEXT, pid, addr, out)
+<a id="L646"></a><span class="ln">   646</span>	}
+<a id="L647"></a><span class="ln">   647</span>	
+<a id="L648"></a><span class="ln">   648</span>	func PtracePeekData(pid int, addr uintptr, out []byte) (count int, err error) {
+<a id="L649"></a><span class="ln">   649</span>		return ptracePeek(PTRACE_PEEKDATA, pid, addr, out)
+<a id="L650"></a><span class="ln">   650</span>	}
+<a id="L651"></a><span class="ln">   651</span>	
+<a id="L652"></a><span class="ln">   652</span>	func ptracePoke(pokeReq int, peekReq int, pid int, addr uintptr, data []byte) (count int, err error) {
+<a id="L653"></a><span class="ln">   653</span>		<span class="comment">// As for ptracePeek, we need to align our accesses to deal</span>
+<a id="L654"></a><span class="ln">   654</span>		<span class="comment">// with the possibility of straddling an invalid page.</span>
+<a id="L655"></a><span class="ln">   655</span>	
+<a id="L656"></a><span class="ln">   656</span>		<span class="comment">// Leading edge.</span>
+<a id="L657"></a><span class="ln">   657</span>		n := 0
+<a id="L658"></a><span class="ln">   658</span>		if addr%sizeofPtr != 0 {
+<a id="L659"></a><span class="ln">   659</span>			var buf [sizeofPtr]byte
+<a id="L660"></a><span class="ln">   660</span>			err = ptrace(peekReq, pid, addr-addr%sizeofPtr, uintptr(unsafe.Pointer(&amp;buf[0])))
+<a id="L661"></a><span class="ln">   661</span>			if err != nil {
+<a id="L662"></a><span class="ln">   662</span>				return 0, err
+<a id="L663"></a><span class="ln">   663</span>			}
+<a id="L664"></a><span class="ln">   664</span>			n += copy(buf[addr%sizeofPtr:], data)
+<a id="L665"></a><span class="ln">   665</span>			word := *((*uintptr)(unsafe.Pointer(&amp;buf[0])))
+<a id="L666"></a><span class="ln">   666</span>			err = ptrace(pokeReq, pid, addr-addr%sizeofPtr, word)
+<a id="L667"></a><span class="ln">   667</span>			if err != nil {
+<a id="L668"></a><span class="ln">   668</span>				return 0, err
+<a id="L669"></a><span class="ln">   669</span>			}
+<a id="L670"></a><span class="ln">   670</span>			data = data[n:]
+<a id="L671"></a><span class="ln">   671</span>		}
+<a id="L672"></a><span class="ln">   672</span>	
+<a id="L673"></a><span class="ln">   673</span>		<span class="comment">// Interior.</span>
+<a id="L674"></a><span class="ln">   674</span>		for len(data) &gt; sizeofPtr {
+<a id="L675"></a><span class="ln">   675</span>			word := *((*uintptr)(unsafe.Pointer(&amp;data[0])))
+<a id="L676"></a><span class="ln">   676</span>			err = ptrace(pokeReq, pid, addr+uintptr(n), word)
+<a id="L677"></a><span class="ln">   677</span>			if err != nil {
+<a id="L678"></a><span class="ln">   678</span>				return n, err
+<a id="L679"></a><span class="ln">   679</span>			}
+<a id="L680"></a><span class="ln">   680</span>			n += sizeofPtr
+<a id="L681"></a><span class="ln">   681</span>			data = data[sizeofPtr:]
+<a id="L682"></a><span class="ln">   682</span>		}
+<a id="L683"></a><span class="ln">   683</span>	
+<a id="L684"></a><span class="ln">   684</span>		<span class="comment">// Trailing edge.</span>
+<a id="L685"></a><span class="ln">   685</span>		if len(data) &gt; 0 {
+<a id="L686"></a><span class="ln">   686</span>			var buf [sizeofPtr]byte
+<a id="L687"></a><span class="ln">   687</span>			err = ptrace(peekReq, pid, addr+uintptr(n), uintptr(unsafe.Pointer(&amp;buf[0])))
+<a id="L688"></a><span class="ln">   688</span>			if err != nil {
+<a id="L689"></a><span class="ln">   689</span>				return n, err
+<a id="L690"></a><span class="ln">   690</span>			}
+<a id="L691"></a><span class="ln">   691</span>			copy(buf[0:], data)
+<a id="L692"></a><span class="ln">   692</span>			word := *((*uintptr)(unsafe.Pointer(&amp;buf[0])))
+<a id="L693"></a><span class="ln">   693</span>			err = ptrace(pokeReq, pid, addr+uintptr(n), word)
+<a id="L694"></a><span class="ln">   694</span>			if err != nil {
+<a id="L695"></a><span class="ln">   695</span>				return n, err
+<a id="L696"></a><span class="ln">   696</span>			}
+<a id="L697"></a><span class="ln">   697</span>			n += len(data)
+<a id="L698"></a><span class="ln">   698</span>		}
+<a id="L699"></a><span class="ln">   699</span>	
+<a id="L700"></a><span class="ln">   700</span>		return n, nil
+<a id="L701"></a><span class="ln">   701</span>	}
+<a id="L702"></a><span class="ln">   702</span>	
+<a id="L703"></a><span class="ln">   703</span>	func PtracePokeText(pid int, addr uintptr, data []byte) (count int, err error) {
+<a id="L704"></a><span class="ln">   704</span>		return ptracePoke(PTRACE_POKETEXT, PTRACE_PEEKTEXT, pid, addr, data)
+<a id="L705"></a><span class="ln">   705</span>	}
+<a id="L706"></a><span class="ln">   706</span>	
+<a id="L707"></a><span class="ln">   707</span>	func PtracePokeData(pid int, addr uintptr, data []byte) (count int, err error) {
+<a id="L708"></a><span class="ln">   708</span>		return ptracePoke(PTRACE_POKEDATA, PTRACE_PEEKDATA, pid, addr, data)
+<a id="L709"></a><span class="ln">   709</span>	}
+<a id="L710"></a><span class="ln">   710</span>	
+<a id="L711"></a><span class="ln">   711</span>	func PtraceGetRegs(pid int, regsout *PtraceRegs) (err error) {
+<a id="L712"></a><span class="ln">   712</span>		return ptrace(PTRACE_GETREGS, pid, 0, uintptr(unsafe.Pointer(regsout)))
+<a id="L713"></a><span class="ln">   713</span>	}
+<a id="L714"></a><span class="ln">   714</span>	
+<a id="L715"></a><span class="ln">   715</span>	func PtraceSetRegs(pid int, regs *PtraceRegs) (err error) {
+<a id="L716"></a><span class="ln">   716</span>		return ptrace(PTRACE_SETREGS, pid, 0, uintptr(unsafe.Pointer(regs)))
+<a id="L717"></a><span class="ln">   717</span>	}
+<a id="L718"></a><span class="ln">   718</span>	
+<a id="L719"></a><span class="ln">   719</span>	func PtraceSetOptions(pid int, options int) (err error) {
+<a id="L720"></a><span class="ln">   720</span>		return ptrace(PTRACE_SETOPTIONS, pid, 0, uintptr(options))
+<a id="L721"></a><span class="ln">   721</span>	}
+<a id="L722"></a><span class="ln">   722</span>	
+<a id="L723"></a><span class="ln">   723</span>	func PtraceGetEventMsg(pid int) (msg uint, err error) {
+<a id="L724"></a><span class="ln">   724</span>		var data _C_long
+<a id="L725"></a><span class="ln">   725</span>		err = ptrace(PTRACE_GETEVENTMSG, pid, 0, uintptr(unsafe.Pointer(&amp;data)))
+<a id="L726"></a><span class="ln">   726</span>		msg = uint(data)
+<a id="L727"></a><span class="ln">   727</span>		return
+<a id="L728"></a><span class="ln">   728</span>	}
+<a id="L729"></a><span class="ln">   729</span>	
+<a id="L730"></a><span class="ln">   730</span>	func PtraceCont(pid int, signal int) (err error) {
+<a id="L731"></a><span class="ln">   731</span>		return ptrace(PTRACE_CONT, pid, 0, uintptr(signal))
+<a id="L732"></a><span class="ln">   732</span>	}
+<a id="L733"></a><span class="ln">   733</span>	
+<a id="L734"></a><span class="ln">   734</span>	func PtraceSingleStep(pid int) (err error) { return ptrace(PTRACE_SINGLESTEP, pid, 0, 0) }
+<a id="L735"></a><span class="ln">   735</span>	
+<a id="L736"></a><span class="ln">   736</span>	func PtraceAttach(pid int) (err error) { return ptrace(PTRACE_ATTACH, pid, 0, 0) }
+<a id="L737"></a><span class="ln">   737</span>	
+<a id="L738"></a><span class="ln">   738</span>	func PtraceDetach(pid int) (err error) { return ptrace(PTRACE_DETACH, pid, 0, 0) }
+<a id="L739"></a><span class="ln">   739</span>	
+<a id="L740"></a><span class="ln">   740</span>	<span class="comment">//sys	reboot(magic1 uint, magic2 uint, cmd int, arg string) (err error)</span>
+<a id="L741"></a><span class="ln">   741</span>	func Reboot(cmd int) (err error) {
+<a id="L742"></a><span class="ln">   742</span>		return reboot(LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, cmd, &#34;&#34;)
+<a id="L743"></a><span class="ln">   743</span>	}
+<a id="L744"></a><span class="ln">   744</span>	
+<a id="L745"></a><span class="ln">   745</span>	func clen(n []byte) int {
+<a id="L746"></a><span class="ln">   746</span>		for i := 0; i &lt; len(n); i++ {
+<a id="L747"></a><span class="ln">   747</span>			if n[i] == 0 {
+<a id="L748"></a><span class="ln">   748</span>				return i
+<a id="L749"></a><span class="ln">   749</span>			}
+<a id="L750"></a><span class="ln">   750</span>		}
+<a id="L751"></a><span class="ln">   751</span>		return len(n)
+<a id="L752"></a><span class="ln">   752</span>	}
+<a id="L753"></a><span class="ln">   753</span>	
+<a id="L754"></a><span class="ln">   754</span>	func ReadDirent(fd int, buf []byte) (n int, err error) {
+<a id="L755"></a><span class="ln">   755</span>		return Getdents(fd, buf)
+<a id="L756"></a><span class="ln">   756</span>	}
+<a id="L757"></a><span class="ln">   757</span>	
+<a id="L758"></a><span class="ln">   758</span>	func ParseDirent(buf []byte, max int, names []string) (consumed int, count int, newnames []string) {
+<a id="L759"></a><span class="ln">   759</span>		origlen := len(buf)
+<a id="L760"></a><span class="ln">   760</span>		count = 0
+<a id="L761"></a><span class="ln">   761</span>		for max != 0 &amp;&amp; len(buf) &gt; 0 {
+<a id="L762"></a><span class="ln">   762</span>			dirent := (*Dirent)(unsafe.Pointer(&amp;buf[0]))
+<a id="L763"></a><span class="ln">   763</span>			buf = buf[dirent.Reclen:]
+<a id="L764"></a><span class="ln">   764</span>			if dirent.Ino == 0 { <span class="comment">// File absent in directory.</span>
+<a id="L765"></a><span class="ln">   765</span>				continue
+<a id="L766"></a><span class="ln">   766</span>			}
+<a id="L767"></a><span class="ln">   767</span>			bytes := (*[10000]byte)(unsafe.Pointer(&amp;dirent.Name[0]))
+<a id="L768"></a><span class="ln">   768</span>			var name = string(bytes[0:clen(bytes[:])])
+<a id="L769"></a><span class="ln">   769</span>			if name == &#34;.&#34; || name == &#34;..&#34; { <span class="comment">// Useless names</span>
+<a id="L770"></a><span class="ln">   770</span>				continue
+<a id="L771"></a><span class="ln">   771</span>			}
+<a id="L772"></a><span class="ln">   772</span>			max--
+<a id="L773"></a><span class="ln">   773</span>			count++
+<a id="L774"></a><span class="ln">   774</span>			names = append(names, name)
+<a id="L775"></a><span class="ln">   775</span>		}
+<a id="L776"></a><span class="ln">   776</span>		return origlen - len(buf), count, names
+<a id="L777"></a><span class="ln">   777</span>	}
+<a id="L778"></a><span class="ln">   778</span>	
+<a id="L779"></a><span class="ln">   779</span>	<span class="comment">//sys	mount(source string, target string, fstype string, flags uintptr, data *byte) (err error)</span>
+<a id="L780"></a><span class="ln">   780</span>	func Mount(source string, target string, fstype string, flags uintptr, data string) (err error) {
+<a id="L781"></a><span class="ln">   781</span>		<span class="comment">// Certain file systems get rather angry and EINVAL if you give</span>
+<a id="L782"></a><span class="ln">   782</span>		<span class="comment">// them an empty string of data, rather than NULL.</span>
+<a id="L783"></a><span class="ln">   783</span>		if data == &#34;&#34; {
+<a id="L784"></a><span class="ln">   784</span>			return mount(source, target, fstype, flags, nil)
+<a id="L785"></a><span class="ln">   785</span>		}
+<a id="L786"></a><span class="ln">   786</span>		return mount(source, target, fstype, flags, StringBytePtr(data))
+<a id="L787"></a><span class="ln">   787</span>	}
+<a id="L788"></a><span class="ln">   788</span>	
+<a id="L789"></a><span class="ln">   789</span>	<span class="comment">// Sendto</span>
+<a id="L790"></a><span class="ln">   790</span>	<span class="comment">// Recvfrom</span>
+<a id="L791"></a><span class="ln">   791</span>	<span class="comment">// Socketpair</span>
+<a id="L792"></a><span class="ln">   792</span>	
+<a id="L793"></a><span class="ln">   793</span>	<span class="comment">/*
+</span><a id="L794"></a><span class="ln">   794</span>	<span class="comment"> * Direct access
+</span><a id="L795"></a><span class="ln">   795</span>	<span class="comment"> */</span>
+<a id="L796"></a><span class="ln">   796</span>	<span class="comment">//sys	Access(path string, mode uint32) (err error)</span>
+<a id="L797"></a><span class="ln">   797</span>	<span class="comment">//sys	Acct(path string) (err error)</span>
+<a id="L798"></a><span class="ln">   798</span>	<span class="comment">//sys	Adjtimex(buf *Timex) (state int, err error)</span>
+<a id="L799"></a><span class="ln">   799</span>	<span class="comment">//sys	Chdir(path string) (err error)</span>
+<a id="L800"></a><span class="ln">   800</span>	<span class="comment">//sys	Chmod(path string, mode uint32) (err error)</span>
+<a id="L801"></a><span class="ln">   801</span>	<span class="comment">//sys	Chroot(path string) (err error)</span>
+<a id="L802"></a><span class="ln">   802</span>	<span class="comment">//sys	Close(fd int) (err error)</span>
+<a id="L803"></a><span class="ln">   803</span>	<span class="comment">//sys	Creat(path string, mode uint32) (fd int, err error)</span>
+<a id="L804"></a><span class="ln">   804</span>	<span class="comment">//sysnb	Dup(oldfd int) (fd int, err error)</span>
+<a id="L805"></a><span class="ln">   805</span>	<span class="comment">//sysnb	Dup2(oldfd int, newfd int) (err error)</span>
+<a id="L806"></a><span class="ln">   806</span>	<span class="comment">//sysnb	EpollCreate(size int) (fd int, err error)</span>
+<a id="L807"></a><span class="ln">   807</span>	<span class="comment">//sysnb	EpollCreate1(flag int) (fd int, err error)</span>
+<a id="L808"></a><span class="ln">   808</span>	<span class="comment">//sysnb	EpollCtl(epfd int, op int, fd int, event *EpollEvent) (err error)</span>
+<a id="L809"></a><span class="ln">   809</span>	<span class="comment">//sys	EpollWait(epfd int, events []EpollEvent, msec int) (n int, err error)</span>
+<a id="L810"></a><span class="ln">   810</span>	<span class="comment">//sys	Exit(code int) = SYS_EXIT_GROUP</span>
+<a id="L811"></a><span class="ln">   811</span>	<span class="comment">//sys	Faccessat(dirfd int, path string, mode uint32, flags int) (err error)</span>
+<a id="L812"></a><span class="ln">   812</span>	<span class="comment">//sys	Fallocate(fd int, mode uint32, off int64, len int64) (err error)</span>
+<a id="L813"></a><span class="ln">   813</span>	<span class="comment">//sys	Fchdir(fd int) (err error)</span>
+<a id="L814"></a><span class="ln">   814</span>	<span class="comment">//sys	Fchmod(fd int, mode uint32) (err error)</span>
+<a id="L815"></a><span class="ln">   815</span>	<span class="comment">//sys	Fchmodat(dirfd int, path string, mode uint32, flags int) (err error)</span>
+<a id="L816"></a><span class="ln">   816</span>	<span class="comment">//sys	Fchownat(dirfd int, path string, uid int, gid int, flags int) (err error)</span>
+<a id="L817"></a><span class="ln">   817</span>	<span class="comment">//sys	fcntl(fd int, cmd int, arg int) (val int, err error)</span>
+<a id="L818"></a><span class="ln">   818</span>	<span class="comment">//sys	Fdatasync(fd int) (err error)</span>
+<a id="L819"></a><span class="ln">   819</span>	<span class="comment">//sys	Flock(fd int, how int) (err error)</span>
+<a id="L820"></a><span class="ln">   820</span>	<span class="comment">//sys	Fsync(fd int) (err error)</span>
+<a id="L821"></a><span class="ln">   821</span>	<span class="comment">//sys	Getdents(fd int, buf []byte) (n int, err error) = SYS_GETDENTS64</span>
+<a id="L822"></a><span class="ln">   822</span>	<span class="comment">//sysnb	Getpgid(pid int) (pgid int, err error)</span>
+<a id="L823"></a><span class="ln">   823</span>	<span class="comment">//sysnb	Getpgrp() (pid int)</span>
+<a id="L824"></a><span class="ln">   824</span>	<span class="comment">//sysnb	Getpid() (pid int)</span>
+<a id="L825"></a><span class="ln">   825</span>	<span class="comment">//sysnb	Getppid() (ppid int)</span>
+<a id="L826"></a><span class="ln">   826</span>	<span class="comment">//sysnb	Getrlimit(resource int, rlim *Rlimit) (err error)</span>
+<a id="L827"></a><span class="ln">   827</span>	<span class="comment">//sysnb	Getrusage(who int, rusage *Rusage) (err error)</span>
+<a id="L828"></a><span class="ln">   828</span>	<span class="comment">//sysnb	Gettid() (tid int)</span>
+<a id="L829"></a><span class="ln">   829</span>	<span class="comment">//sys	InotifyAddWatch(fd int, pathname string, mask uint32) (watchdesc int, err error)</span>
+<a id="L830"></a><span class="ln">   830</span>	<span class="comment">//sysnb	InotifyInit() (fd int, err error)</span>
+<a id="L831"></a><span class="ln">   831</span>	<span class="comment">//sysnb	InotifyInit1(flags int) (fd int, err error)</span>
+<a id="L832"></a><span class="ln">   832</span>	<span class="comment">//sysnb	InotifyRmWatch(fd int, watchdesc uint32) (success int, err error)</span>
+<a id="L833"></a><span class="ln">   833</span>	<span class="comment">//sysnb	Kill(pid int, sig Signal) (err error)</span>
+<a id="L834"></a><span class="ln">   834</span>	<span class="comment">//sys	Klogctl(typ int, buf []byte) (n int, err error) = SYS_SYSLOG</span>
+<a id="L835"></a><span class="ln">   835</span>	<span class="comment">//sys	Link(oldpath string, newpath string) (err error)</span>
+<a id="L836"></a><span class="ln">   836</span>	<span class="comment">//sys	Mkdir(path string, mode uint32) (err error)</span>
+<a id="L837"></a><span class="ln">   837</span>	<span class="comment">//sys	Mkdirat(dirfd int, path string, mode uint32) (err error)</span>
+<a id="L838"></a><span class="ln">   838</span>	<span class="comment">//sys	Mknod(path string, mode uint32, dev int) (err error)</span>
+<a id="L839"></a><span class="ln">   839</span>	<span class="comment">//sys	Mknodat(dirfd int, path string, mode uint32, dev int) (err error)</span>
+<a id="L840"></a><span class="ln">   840</span>	<span class="comment">//sys	Nanosleep(time *Timespec, leftover *Timespec) (err error)</span>
+<a id="L841"></a><span class="ln">   841</span>	<span class="comment">//sys	Pause() (err error)</span>
+<a id="L842"></a><span class="ln">   842</span>	<span class="comment">//sys	PivotRoot(newroot string, putold string) (err error) = SYS_PIVOT_ROOT</span>
+<a id="L843"></a><span class="ln">   843</span>	<span class="comment">//sys	Read(fd int, p []byte) (n int, err error)</span>
+<a id="L844"></a><span class="ln">   844</span>	<span class="comment">//sys	Readlink(path string, buf []byte) (n int, err error)</span>
+<a id="L845"></a><span class="ln">   845</span>	<span class="comment">//sys	Rename(oldpath string, newpath string) (err error)</span>
+<a id="L846"></a><span class="ln">   846</span>	<span class="comment">//sys	Renameat(olddirfd int, oldpath string, newdirfd int, newpath string) (err error)</span>
+<a id="L847"></a><span class="ln">   847</span>	<span class="comment">//sys	Rmdir(path string) (err error)</span>
+<a id="L848"></a><span class="ln">   848</span>	<span class="comment">//sys	Setdomainname(p []byte) (err error)</span>
+<a id="L849"></a><span class="ln">   849</span>	<span class="comment">//sys	Sethostname(p []byte) (err error)</span>
+<a id="L850"></a><span class="ln">   850</span>	<span class="comment">//sysnb	Setpgid(pid int, pgid int) (err error)</span>
+<a id="L851"></a><span class="ln">   851</span>	<span class="comment">//sysnb	Setrlimit(resource int, rlim *Rlimit) (err error)</span>
+<a id="L852"></a><span class="ln">   852</span>	<span class="comment">//sysnb	Setsid() (pid int, err error)</span>
+<a id="L853"></a><span class="ln">   853</span>	<span class="comment">//sysnb	Settimeofday(tv *Timeval) (err error)</span>
+<a id="L854"></a><span class="ln">   854</span>	<span class="comment">//sysnb	Setuid(uid int) (err error)</span>
+<a id="L855"></a><span class="ln">   855</span>	<span class="comment">//sys	Symlink(oldpath string, newpath string) (err error)</span>
+<a id="L856"></a><span class="ln">   856</span>	<span class="comment">//sys	Sync()</span>
+<a id="L857"></a><span class="ln">   857</span>	<span class="comment">//sysnb	Sysinfo(info *Sysinfo_t) (err error)</span>
+<a id="L858"></a><span class="ln">   858</span>	<span class="comment">//sys	Tee(rfd int, wfd int, len int, flags int) (n int64, err error)</span>
+<a id="L859"></a><span class="ln">   859</span>	<span class="comment">//sysnb	Tgkill(tgid int, tid int, sig Signal) (err error)</span>
+<a id="L860"></a><span class="ln">   860</span>	<span class="comment">//sysnb	Times(tms *Tms) (ticks uintptr, err error)</span>
+<a id="L861"></a><span class="ln">   861</span>	<span class="comment">//sysnb	Umask(mask int) (oldmask int)</span>
+<a id="L862"></a><span class="ln">   862</span>	<span class="comment">//sysnb	Uname(buf *Utsname) (err error)</span>
+<a id="L863"></a><span class="ln">   863</span>	<span class="comment">//sys	Unlink(path string) (err error)</span>
+<a id="L864"></a><span class="ln">   864</span>	<span class="comment">//sys	Unlinkat(dirfd int, path string) (err error)</span>
+<a id="L865"></a><span class="ln">   865</span>	<span class="comment">//sys	Unmount(target string, flags int) (err error) = SYS_UMOUNT2</span>
+<a id="L866"></a><span class="ln">   866</span>	<span class="comment">//sys	Unshare(flags int) (err error)</span>
+<a id="L867"></a><span class="ln">   867</span>	<span class="comment">//sys	Ustat(dev int, ubuf *Ustat_t) (err error)</span>
+<a id="L868"></a><span class="ln">   868</span>	<span class="comment">//sys	Utime(path string, buf *Utimbuf) (err error)</span>
+<a id="L869"></a><span class="ln">   869</span>	<span class="comment">//sys	Write(fd int, p []byte) (n int, err error)</span>
+<a id="L870"></a><span class="ln">   870</span>	<span class="comment">//sys	exitThread(code int) (err error) = SYS_EXIT</span>
+<a id="L871"></a><span class="ln">   871</span>	<span class="comment">//sys	read(fd int, p *byte, np int) (n int, err error)</span>
+<a id="L872"></a><span class="ln">   872</span>	<span class="comment">//sys	write(fd int, p *byte, np int) (n int, err error)</span>
+<a id="L873"></a><span class="ln">   873</span>	
+<a id="L874"></a><span class="ln">   874</span>	<span class="comment">// mmap varies by architecture; see syscall_linux_*.go.</span>
+<a id="L875"></a><span class="ln">   875</span>	<span class="comment">//sys	munmap(addr uintptr, length uintptr) (err error)</span>
+<a id="L876"></a><span class="ln">   876</span>	
+<a id="L877"></a><span class="ln">   877</span>	var mapper = &amp;mmapper{
+<a id="L878"></a><span class="ln">   878</span>		active: make(map[*byte][]byte),
+<a id="L879"></a><span class="ln">   879</span>		mmap:   mmap,
+<a id="L880"></a><span class="ln">   880</span>		munmap: munmap,
+<a id="L881"></a><span class="ln">   881</span>	}
+<a id="L882"></a><span class="ln">   882</span>	
+<a id="L883"></a><span class="ln">   883</span>	func Mmap(fd int, offset int64, length int, prot int, flags int) (data []byte, err error) {
+<a id="L884"></a><span class="ln">   884</span>		return mapper.Mmap(fd, offset, length, prot, flags)
+<a id="L885"></a><span class="ln">   885</span>	}
+<a id="L886"></a><span class="ln">   886</span>	
+<a id="L887"></a><span class="ln">   887</span>	func Munmap(b []byte) (err error) {
+<a id="L888"></a><span class="ln">   888</span>		return mapper.Munmap(b)
+<a id="L889"></a><span class="ln">   889</span>	}
+<a id="L890"></a><span class="ln">   890</span>	
+<a id="L891"></a><span class="ln">   891</span>	<span class="comment">//sys	Madvise(b []byte, advice int) (err error)</span>
+<a id="L892"></a><span class="ln">   892</span>	<span class="comment">//sys	Mprotect(b []byte, prot int) (err error)</span>
+<a id="L893"></a><span class="ln">   893</span>	<span class="comment">//sys	Mlock(b []byte) (err error)</span>
+<a id="L894"></a><span class="ln">   894</span>	<span class="comment">//sys	Munlock(b []byte) (err error)</span>
+<a id="L895"></a><span class="ln">   895</span>	<span class="comment">//sys	Mlockall(flags int) (err error)</span>
+<a id="L896"></a><span class="ln">   896</span>	<span class="comment">//sys	Munlockall() (err error)</span>
+<a id="L897"></a><span class="ln">   897</span>	
+<a id="L898"></a><span class="ln">   898</span>	<span class="comment">/*
+</span><a id="L899"></a><span class="ln">   899</span>	<span class="comment"> * Unimplemented
+</span><a id="L900"></a><span class="ln">   900</span>	<span class="comment"> */</span>
+<a id="L901"></a><span class="ln">   901</span>	<span class="comment">// AddKey</span>
+<a id="L902"></a><span class="ln">   902</span>	<span class="comment">// AfsSyscall</span>
+<a id="L903"></a><span class="ln">   903</span>	<span class="comment">// Alarm</span>
+<a id="L904"></a><span class="ln">   904</span>	<span class="comment">// ArchPrctl</span>
+<a id="L905"></a><span class="ln">   905</span>	<span class="comment">// Brk</span>
+<a id="L906"></a><span class="ln">   906</span>	<span class="comment">// Capget</span>
+<a id="L907"></a><span class="ln">   907</span>	<span class="comment">// Capset</span>
+<a id="L908"></a><span class="ln">   908</span>	<span class="comment">// ClockGetres</span>
+<a id="L909"></a><span class="ln">   909</span>	<span class="comment">// ClockGettime</span>
+<a id="L910"></a><span class="ln">   910</span>	<span class="comment">// ClockNanosleep</span>
+<a id="L911"></a><span class="ln">   911</span>	<span class="comment">// ClockSettime</span>
+<a id="L912"></a><span class="ln">   912</span>	<span class="comment">// Clone</span>
+<a id="L913"></a><span class="ln">   913</span>	<span class="comment">// CreateModule</span>
+<a id="L914"></a><span class="ln">   914</span>	<span class="comment">// DeleteModule</span>
+<a id="L915"></a><span class="ln">   915</span>	<span class="comment">// EpollCtlOld</span>
+<a id="L916"></a><span class="ln">   916</span>	<span class="comment">// EpollPwait</span>
+<a id="L917"></a><span class="ln">   917</span>	<span class="comment">// EpollWaitOld</span>
+<a id="L918"></a><span class="ln">   918</span>	<span class="comment">// Eventfd</span>
+<a id="L919"></a><span class="ln">   919</span>	<span class="comment">// Execve</span>
+<a id="L920"></a><span class="ln">   920</span>	<span class="comment">// Fadvise64</span>
+<a id="L921"></a><span class="ln">   921</span>	<span class="comment">// Fgetxattr</span>
+<a id="L922"></a><span class="ln">   922</span>	<span class="comment">// Flistxattr</span>
+<a id="L923"></a><span class="ln">   923</span>	<span class="comment">// Fork</span>
+<a id="L924"></a><span class="ln">   924</span>	<span class="comment">// Fremovexattr</span>
+<a id="L925"></a><span class="ln">   925</span>	<span class="comment">// Fsetxattr</span>
+<a id="L926"></a><span class="ln">   926</span>	<span class="comment">// Futex</span>
+<a id="L927"></a><span class="ln">   927</span>	<span class="comment">// GetKernelSyms</span>
+<a id="L928"></a><span class="ln">   928</span>	<span class="comment">// GetMempolicy</span>
+<a id="L929"></a><span class="ln">   929</span>	<span class="comment">// GetRobustList</span>
+<a id="L930"></a><span class="ln">   930</span>	<span class="comment">// GetThreadArea</span>
+<a id="L931"></a><span class="ln">   931</span>	<span class="comment">// Getitimer</span>
+<a id="L932"></a><span class="ln">   932</span>	<span class="comment">// Getpmsg</span>
+<a id="L933"></a><span class="ln">   933</span>	<span class="comment">// Getpriority</span>
+<a id="L934"></a><span class="ln">   934</span>	<span class="comment">// Getxattr</span>
+<a id="L935"></a><span class="ln">   935</span>	<span class="comment">// IoCancel</span>
+<a id="L936"></a><span class="ln">   936</span>	<span class="comment">// IoDestroy</span>
+<a id="L937"></a><span class="ln">   937</span>	<span class="comment">// IoGetevents</span>
+<a id="L938"></a><span class="ln">   938</span>	<span class="comment">// IoSetup</span>
+<a id="L939"></a><span class="ln">   939</span>	<span class="comment">// IoSubmit</span>
+<a id="L940"></a><span class="ln">   940</span>	<span class="comment">// Ioctl</span>
+<a id="L941"></a><span class="ln">   941</span>	<span class="comment">// IoprioGet</span>
+<a id="L942"></a><span class="ln">   942</span>	<span class="comment">// IoprioSet</span>
+<a id="L943"></a><span class="ln">   943</span>	<span class="comment">// KexecLoad</span>
+<a id="L944"></a><span class="ln">   944</span>	<span class="comment">// Keyctl</span>
+<a id="L945"></a><span class="ln">   945</span>	<span class="comment">// Lgetxattr</span>
+<a id="L946"></a><span class="ln">   946</span>	<span class="comment">// Listxattr</span>
+<a id="L947"></a><span class="ln">   947</span>	<span class="comment">// Llistxattr</span>
+<a id="L948"></a><span class="ln">   948</span>	<span class="comment">// LookupDcookie</span>
+<a id="L949"></a><span class="ln">   949</span>	<span class="comment">// Lremovexattr</span>
+<a id="L950"></a><span class="ln">   950</span>	<span class="comment">// Lsetxattr</span>
+<a id="L951"></a><span class="ln">   951</span>	<span class="comment">// Mbind</span>
+<a id="L952"></a><span class="ln">   952</span>	<span class="comment">// MigratePages</span>
+<a id="L953"></a><span class="ln">   953</span>	<span class="comment">// Mincore</span>
+<a id="L954"></a><span class="ln">   954</span>	<span class="comment">// ModifyLdt</span>
+<a id="L955"></a><span class="ln">   955</span>	<span class="comment">// Mount</span>
+<a id="L956"></a><span class="ln">   956</span>	<span class="comment">// MovePages</span>
+<a id="L957"></a><span class="ln">   957</span>	<span class="comment">// Mprotect</span>
+<a id="L958"></a><span class="ln">   958</span>	<span class="comment">// MqGetsetattr</span>
+<a id="L959"></a><span class="ln">   959</span>	<span class="comment">// MqNotify</span>
+<a id="L960"></a><span class="ln">   960</span>	<span class="comment">// MqOpen</span>
+<a id="L961"></a><span class="ln">   961</span>	<span class="comment">// MqTimedreceive</span>
+<a id="L962"></a><span class="ln">   962</span>	<span class="comment">// MqTimedsend</span>
+<a id="L963"></a><span class="ln">   963</span>	<span class="comment">// MqUnlink</span>
+<a id="L964"></a><span class="ln">   964</span>	<span class="comment">// Mremap</span>
+<a id="L965"></a><span class="ln">   965</span>	<span class="comment">// Msgctl</span>
+<a id="L966"></a><span class="ln">   966</span>	<span class="comment">// Msgget</span>
+<a id="L967"></a><span class="ln">   967</span>	<span class="comment">// Msgrcv</span>
+<a id="L968"></a><span class="ln">   968</span>	<span class="comment">// Msgsnd</span>
+<a id="L969"></a><span class="ln">   969</span>	<span class="comment">// Msync</span>
+<a id="L970"></a><span class="ln">   970</span>	<span class="comment">// Newfstatat</span>
+<a id="L971"></a><span class="ln">   971</span>	<span class="comment">// Nfsservctl</span>
+<a id="L972"></a><span class="ln">   972</span>	<span class="comment">// Personality</span>
+<a id="L973"></a><span class="ln">   973</span>	<span class="comment">// Poll</span>
+<a id="L974"></a><span class="ln">   974</span>	<span class="comment">// Ppoll</span>
+<a id="L975"></a><span class="ln">   975</span>	<span class="comment">// Prctl</span>
+<a id="L976"></a><span class="ln">   976</span>	<span class="comment">// Pselect6</span>
+<a id="L977"></a><span class="ln">   977</span>	<span class="comment">// Ptrace</span>
+<a id="L978"></a><span class="ln">   978</span>	<span class="comment">// Putpmsg</span>
+<a id="L979"></a><span class="ln">   979</span>	<span class="comment">// QueryModule</span>
+<a id="L980"></a><span class="ln">   980</span>	<span class="comment">// Quotactl</span>
+<a id="L981"></a><span class="ln">   981</span>	<span class="comment">// Readahead</span>
+<a id="L982"></a><span class="ln">   982</span>	<span class="comment">// Readv</span>
+<a id="L983"></a><span class="ln">   983</span>	<span class="comment">// RemapFilePages</span>
+<a id="L984"></a><span class="ln">   984</span>	<span class="comment">// Removexattr</span>
+<a id="L985"></a><span class="ln">   985</span>	<span class="comment">// RequestKey</span>
+<a id="L986"></a><span class="ln">   986</span>	<span class="comment">// RestartSyscall</span>
+<a id="L987"></a><span class="ln">   987</span>	<span class="comment">// RtSigaction</span>
+<a id="L988"></a><span class="ln">   988</span>	<span class="comment">// RtSigpending</span>
+<a id="L989"></a><span class="ln">   989</span>	<span class="comment">// RtSigprocmask</span>
+<a id="L990"></a><span class="ln">   990</span>	<span class="comment">// RtSigqueueinfo</span>
+<a id="L991"></a><span class="ln">   991</span>	<span class="comment">// RtSigreturn</span>
+<a id="L992"></a><span class="ln">   992</span>	<span class="comment">// RtSigsuspend</span>
+<a id="L993"></a><span class="ln">   993</span>	<span class="comment">// RtSigtimedwait</span>
+<a id="L994"></a><span class="ln">   994</span>	<span class="comment">// SchedGetPriorityMax</span>
+<a id="L995"></a><span class="ln">   995</span>	<span class="comment">// SchedGetPriorityMin</span>
+<a id="L996"></a><span class="ln">   996</span>	<span class="comment">// SchedGetaffinity</span>
+<a id="L997"></a><span class="ln">   997</span>	<span class="comment">// SchedGetparam</span>
+<a id="L998"></a><span class="ln">   998</span>	<span class="comment">// SchedGetscheduler</span>
+<a id="L999"></a><span class="ln">   999</span>	<span class="comment">// SchedRrGetInterval</span>
+<a id="L1000"></a><span class="ln">  1000</span>	<span class="comment">// SchedSetaffinity</span>
+<a id="L1001"></a><span class="ln">  1001</span>	<span class="comment">// SchedSetparam</span>
+<a id="L1002"></a><span class="ln">  1002</span>	<span class="comment">// SchedYield</span>
+<a id="L1003"></a><span class="ln">  1003</span>	<span class="comment">// Security</span>
+<a id="L1004"></a><span class="ln">  1004</span>	<span class="comment">// Semctl</span>
+<a id="L1005"></a><span class="ln">  1005</span>	<span class="comment">// Semget</span>
+<a id="L1006"></a><span class="ln">  1006</span>	<span class="comment">// Semop</span>
+<a id="L1007"></a><span class="ln">  1007</span>	<span class="comment">// Semtimedop</span>
+<a id="L1008"></a><span class="ln">  1008</span>	<span class="comment">// SetMempolicy</span>
+<a id="L1009"></a><span class="ln">  1009</span>	<span class="comment">// SetRobustList</span>
+<a id="L1010"></a><span class="ln">  1010</span>	<span class="comment">// SetThreadArea</span>
+<a id="L1011"></a><span class="ln">  1011</span>	<span class="comment">// SetTidAddress</span>
+<a id="L1012"></a><span class="ln">  1012</span>	<span class="comment">// Setpriority</span>
+<a id="L1013"></a><span class="ln">  1013</span>	<span class="comment">// Setxattr</span>
+<a id="L1014"></a><span class="ln">  1014</span>	<span class="comment">// Shmat</span>
+<a id="L1015"></a><span class="ln">  1015</span>	<span class="comment">// Shmctl</span>
+<a id="L1016"></a><span class="ln">  1016</span>	<span class="comment">// Shmdt</span>
+<a id="L1017"></a><span class="ln">  1017</span>	<span class="comment">// Shmget</span>
+<a id="L1018"></a><span class="ln">  1018</span>	<span class="comment">// Sigaltstack</span>
+<a id="L1019"></a><span class="ln">  1019</span>	<span class="comment">// Signalfd</span>
+<a id="L1020"></a><span class="ln">  1020</span>	<span class="comment">// Swapoff</span>
+<a id="L1021"></a><span class="ln">  1021</span>	<span class="comment">// Swapon</span>
+<a id="L1022"></a><span class="ln">  1022</span>	<span class="comment">// Sysfs</span>
+<a id="L1023"></a><span class="ln">  1023</span>	<span class="comment">// TimerCreate</span>
+<a id="L1024"></a><span class="ln">  1024</span>	<span class="comment">// TimerDelete</span>
+<a id="L1025"></a><span class="ln">  1025</span>	<span class="comment">// TimerGetoverrun</span>
+<a id="L1026"></a><span class="ln">  1026</span>	<span class="comment">// TimerGettime</span>
+<a id="L1027"></a><span class="ln">  1027</span>	<span class="comment">// TimerSettime</span>
+<a id="L1028"></a><span class="ln">  1028</span>	<span class="comment">// Timerfd</span>
+<a id="L1029"></a><span class="ln">  1029</span>	<span class="comment">// Tkill (obsolete)</span>
+<a id="L1030"></a><span class="ln">  1030</span>	<span class="comment">// Tuxcall</span>
+<a id="L1031"></a><span class="ln">  1031</span>	<span class="comment">// Umount2</span>
+<a id="L1032"></a><span class="ln">  1032</span>	<span class="comment">// Uselib</span>
+<a id="L1033"></a><span class="ln">  1033</span>	<span class="comment">// Utimensat</span>
+<a id="L1034"></a><span class="ln">  1034</span>	<span class="comment">// Vfork</span>
+<a id="L1035"></a><span class="ln">  1035</span>	<span class="comment">// Vhangup</span>
+<a id="L1036"></a><span class="ln">  1036</span>	<span class="comment">// Vmsplice</span>
+<a id="L1037"></a><span class="ln">  1037</span>	<span class="comment">// Vserver</span>
+<a id="L1038"></a><span class="ln">  1038</span>	<span class="comment">// Waitid</span>
+<a id="L1039"></a><span class="ln">  1039</span>	<span class="comment">// Writev</span>
+<a id="L1040"></a><span class="ln">  1040</span>	<span class="comment">// _Sysctl</span>
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/json/decode.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/json/decode.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Represents JSON data structure using native Go types: booleans, floats,</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// strings, arrays, and maps.</span>
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	package json
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;encoding/base64&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;errors&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;fmt&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;reflect&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;runtime&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;strconv&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;strings&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;unicode&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;unicode/utf16&#34;
+<a id="L20"></a><span class="ln">    20</span>		&#34;unicode/utf8&#34;
+<a id="L21"></a><span class="ln">    21</span>	)
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// Unmarshal parses the JSON-encoded data and stores the result</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// in the value pointed to by v.</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Unmarshal uses the inverse of the encodings that</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Marshal uses, allocating maps, slices, and pointers as necessary,</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// with the following additional rules:</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// To unmarshal JSON into a pointer, Unmarshal first handles the case of</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// the JSON being the JSON literal null.  In that case, Unmarshal sets</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// the pointer to nil.  Otherwise, Unmarshal unmarshals the JSON into</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// the value pointed at by the pointer.  If the pointer is nil, Unmarshal</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// allocates a new value for it to point to.</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// To unmarshal JSON into an interface value, Unmarshal unmarshals</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// the JSON into the concrete value contained in the interface value.</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// If the interface value is nil, that is, has no concrete value stored in it,</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Unmarshal stores one of these in the interface value:</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//	bool, for JSON booleans</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//	float64, for JSON numbers</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//	string, for JSON strings</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//	[]interface{}, for JSON arrays</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//	map[string]interface{}, for JSON objects</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//	nil for JSON null</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// If a JSON value is not appropriate for a given target type,</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// or if a JSON number overflows the target type, Unmarshal</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// skips that field and completes the unmarshalling as best it can.</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// If no more serious errors are encountered, Unmarshal returns</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// an UnmarshalTypeError describing the earliest such error.</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//</span>
+<a id="L54"></a><span class="ln">    54</span>	func Unmarshal(data []byte, v interface{}) error {
+<a id="L55"></a><span class="ln">    55</span>		d := new(decodeState).init(data)
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>		<span class="comment">// Quick check for well-formedness.</span>
+<a id="L58"></a><span class="ln">    58</span>		<span class="comment">// Avoids filling out half a data structure</span>
+<a id="L59"></a><span class="ln">    59</span>		<span class="comment">// before discovering a JSON syntax error.</span>
+<a id="L60"></a><span class="ln">    60</span>		err := checkValid(data, &amp;d.scan)
+<a id="L61"></a><span class="ln">    61</span>		if err != nil {
+<a id="L62"></a><span class="ln">    62</span>			return err
+<a id="L63"></a><span class="ln">    63</span>		}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>		return d.unmarshal(v)
+<a id="L66"></a><span class="ln">    66</span>	}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// Unmarshaler is the interface implemented by objects</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// that can unmarshal a JSON description of themselves.</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// The input can be assumed to be a valid JSON object</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// encoding.  UnmarshalJSON must copy the JSON data</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// if it wishes to retain the data after returning.</span>
+<a id="L73"></a><span class="ln">    73</span>	type Unmarshaler interface {
+<a id="L74"></a><span class="ln">    74</span>		UnmarshalJSON([]byte) error
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// An UnmarshalTypeError describes a JSON value that was</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// not appropriate for a value of a specific Go type.</span>
+<a id="L79"></a><span class="ln">    79</span>	type UnmarshalTypeError struct {
+<a id="L80"></a><span class="ln">    80</span>		Value string       <span class="comment">// description of JSON value - &#34;bool&#34;, &#34;array&#34;, &#34;number -5&#34;</span>
+<a id="L81"></a><span class="ln">    81</span>		Type  reflect.Type <span class="comment">// type of Go value it could not be assigned to</span>
+<a id="L82"></a><span class="ln">    82</span>	}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	func (e *UnmarshalTypeError) Error() string {
+<a id="L85"></a><span class="ln">    85</span>		return &#34;json: cannot unmarshal &#34; + e.Value + &#34; into Go value of type &#34; + e.Type.String()
+<a id="L86"></a><span class="ln">    86</span>	}
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// An UnmarshalFieldError describes a JSON object key that</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// led to an unexported (and therefore unwritable) struct field.</span>
+<a id="L90"></a><span class="ln">    90</span>	type UnmarshalFieldError struct {
+<a id="L91"></a><span class="ln">    91</span>		Key   string
+<a id="L92"></a><span class="ln">    92</span>		Type  reflect.Type
+<a id="L93"></a><span class="ln">    93</span>		Field reflect.StructField
+<a id="L94"></a><span class="ln">    94</span>	}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	func (e *UnmarshalFieldError) Error() string {
+<a id="L97"></a><span class="ln">    97</span>		return &#34;json: cannot unmarshal object key &#34; + strconv.Quote(e.Key) + &#34; into unexported field &#34; + e.Field.Name + &#34; of type &#34; + e.Type.String()
+<a id="L98"></a><span class="ln">    98</span>	}
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// An InvalidUnmarshalError describes an invalid argument passed to Unmarshal.</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// (The argument to Unmarshal must be a non-nil pointer.)</span>
+<a id="L102"></a><span class="ln">   102</span>	type InvalidUnmarshalError struct {
+<a id="L103"></a><span class="ln">   103</span>		Type reflect.Type
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	func (e *InvalidUnmarshalError) Error() string {
+<a id="L107"></a><span class="ln">   107</span>		if e.Type == nil {
+<a id="L108"></a><span class="ln">   108</span>			return &#34;json: Unmarshal(nil)&#34;
+<a id="L109"></a><span class="ln">   109</span>		}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>		if e.Type.Kind() != reflect.Ptr {
+<a id="L112"></a><span class="ln">   112</span>			return &#34;json: Unmarshal(non-pointer &#34; + e.Type.String() + &#34;)&#34;
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>		return &#34;json: Unmarshal(nil &#34; + e.Type.String() + &#34;)&#34;
+<a id="L115"></a><span class="ln">   115</span>	}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	func (d *decodeState) unmarshal(v interface{}) (err error) {
+<a id="L118"></a><span class="ln">   118</span>		defer func() {
+<a id="L119"></a><span class="ln">   119</span>			if r := recover(); r != nil {
+<a id="L120"></a><span class="ln">   120</span>				if _, ok := r.(runtime.Error); ok {
+<a id="L121"></a><span class="ln">   121</span>					panic(r)
+<a id="L122"></a><span class="ln">   122</span>				}
+<a id="L123"></a><span class="ln">   123</span>				err = r.(error)
+<a id="L124"></a><span class="ln">   124</span>			}
+<a id="L125"></a><span class="ln">   125</span>		}()
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>		rv := reflect.ValueOf(v)
+<a id="L128"></a><span class="ln">   128</span>		pv := rv
+<a id="L129"></a><span class="ln">   129</span>		if pv.Kind() != reflect.Ptr || pv.IsNil() {
+<a id="L130"></a><span class="ln">   130</span>			return &amp;InvalidUnmarshalError{reflect.TypeOf(v)}
+<a id="L131"></a><span class="ln">   131</span>		}
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>		d.scan.reset()
+<a id="L134"></a><span class="ln">   134</span>		<span class="comment">// We decode rv not pv.Elem because the Unmarshaler interface</span>
+<a id="L135"></a><span class="ln">   135</span>		<span class="comment">// test must be applied at the top level of the value.</span>
+<a id="L136"></a><span class="ln">   136</span>		d.value(rv)
+<a id="L137"></a><span class="ln">   137</span>		return d.savedError
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// decodeState represents the state while decoding a JSON value.</span>
+<a id="L141"></a><span class="ln">   141</span>	type decodeState struct {
+<a id="L142"></a><span class="ln">   142</span>		data       []byte
+<a id="L143"></a><span class="ln">   143</span>		off        int <span class="comment">// read offset in data</span>
+<a id="L144"></a><span class="ln">   144</span>		scan       scanner
+<a id="L145"></a><span class="ln">   145</span>		nextscan   scanner <span class="comment">// for calls to nextValue</span>
+<a id="L146"></a><span class="ln">   146</span>		savedError error
+<a id="L147"></a><span class="ln">   147</span>		tempstr    string <span class="comment">// scratch space to avoid some allocations</span>
+<a id="L148"></a><span class="ln">   148</span>	}
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// errPhase is used for errors that should not happen unless</span>
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// there is a bug in the JSON decoder or something is editing</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">// the data slice while the decoder executes.</span>
+<a id="L153"></a><span class="ln">   153</span>	var errPhase = errors.New(&#34;JSON decoder out of sync - data changing underfoot?&#34;)
+<a id="L154"></a><span class="ln">   154</span>	
+<a id="L155"></a><span class="ln">   155</span>	func (d *decodeState) init(data []byte) *decodeState {
+<a id="L156"></a><span class="ln">   156</span>		d.data = data
+<a id="L157"></a><span class="ln">   157</span>		d.off = 0
+<a id="L158"></a><span class="ln">   158</span>		d.savedError = nil
+<a id="L159"></a><span class="ln">   159</span>		return d
+<a id="L160"></a><span class="ln">   160</span>	}
+<a id="L161"></a><span class="ln">   161</span>	
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// error aborts the decoding by panicking with err.</span>
+<a id="L163"></a><span class="ln">   163</span>	func (d *decodeState) error(err error) {
+<a id="L164"></a><span class="ln">   164</span>		panic(err)
+<a id="L165"></a><span class="ln">   165</span>	}
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// saveError saves the first err it is called with,</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// for reporting at the end of the unmarshal.</span>
+<a id="L169"></a><span class="ln">   169</span>	func (d *decodeState) saveError(err error) {
+<a id="L170"></a><span class="ln">   170</span>		if d.savedError == nil {
+<a id="L171"></a><span class="ln">   171</span>			d.savedError = err
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>	}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// next cuts off and returns the next full JSON value in d.data[d.off:].</span>
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// The next value is known to be an object or array, not a literal.</span>
+<a id="L177"></a><span class="ln">   177</span>	func (d *decodeState) next() []byte {
+<a id="L178"></a><span class="ln">   178</span>		c := d.data[d.off]
+<a id="L179"></a><span class="ln">   179</span>		item, rest, err := nextValue(d.data[d.off:], &amp;d.nextscan)
+<a id="L180"></a><span class="ln">   180</span>		if err != nil {
+<a id="L181"></a><span class="ln">   181</span>			d.error(err)
+<a id="L182"></a><span class="ln">   182</span>		}
+<a id="L183"></a><span class="ln">   183</span>		d.off = len(d.data) - len(rest)
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>		<span class="comment">// Our scanner has seen the opening brace/bracket</span>
+<a id="L186"></a><span class="ln">   186</span>		<span class="comment">// and thinks we&#39;re still in the middle of the object.</span>
+<a id="L187"></a><span class="ln">   187</span>		<span class="comment">// invent a closing brace/bracket to get it out.</span>
+<a id="L188"></a><span class="ln">   188</span>		if c == &#39;{&#39; {
+<a id="L189"></a><span class="ln">   189</span>			d.scan.step(&amp;d.scan, &#39;}&#39;)
+<a id="L190"></a><span class="ln">   190</span>		} else {
+<a id="L191"></a><span class="ln">   191</span>			d.scan.step(&amp;d.scan, &#39;]&#39;)
+<a id="L192"></a><span class="ln">   192</span>		}
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>		return item
+<a id="L195"></a><span class="ln">   195</span>	}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>	<span class="comment">// scanWhile processes bytes in d.data[d.off:] until it</span>
+<a id="L198"></a><span class="ln">   198</span>	<span class="comment">// receives a scan code not equal to op.</span>
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// It updates d.off and returns the new scan code.</span>
+<a id="L200"></a><span class="ln">   200</span>	func (d *decodeState) scanWhile(op int) int {
+<a id="L201"></a><span class="ln">   201</span>		var newOp int
+<a id="L202"></a><span class="ln">   202</span>		for {
+<a id="L203"></a><span class="ln">   203</span>			if d.off &gt;= len(d.data) {
+<a id="L204"></a><span class="ln">   204</span>				newOp = d.scan.eof()
+<a id="L205"></a><span class="ln">   205</span>				d.off = len(d.data) + 1 <span class="comment">// mark processed EOF with len+1</span>
+<a id="L206"></a><span class="ln">   206</span>			} else {
+<a id="L207"></a><span class="ln">   207</span>				c := int(d.data[d.off])
+<a id="L208"></a><span class="ln">   208</span>				d.off++
+<a id="L209"></a><span class="ln">   209</span>				newOp = d.scan.step(&amp;d.scan, c)
+<a id="L210"></a><span class="ln">   210</span>			}
+<a id="L211"></a><span class="ln">   211</span>			if newOp != op {
+<a id="L212"></a><span class="ln">   212</span>				break
+<a id="L213"></a><span class="ln">   213</span>			}
+<a id="L214"></a><span class="ln">   214</span>		}
+<a id="L215"></a><span class="ln">   215</span>		return newOp
+<a id="L216"></a><span class="ln">   216</span>	}
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// value decodes a JSON value from d.data[d.off:] into the value.</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// it updates d.off to point past the decoded value.</span>
+<a id="L220"></a><span class="ln">   220</span>	func (d *decodeState) value(v reflect.Value) {
+<a id="L221"></a><span class="ln">   221</span>		if !v.IsValid() {
+<a id="L222"></a><span class="ln">   222</span>			_, rest, err := nextValue(d.data[d.off:], &amp;d.nextscan)
+<a id="L223"></a><span class="ln">   223</span>			if err != nil {
+<a id="L224"></a><span class="ln">   224</span>				d.error(err)
+<a id="L225"></a><span class="ln">   225</span>			}
+<a id="L226"></a><span class="ln">   226</span>			d.off = len(d.data) - len(rest)
+<a id="L227"></a><span class="ln">   227</span>	
+<a id="L228"></a><span class="ln">   228</span>			<span class="comment">// d.scan thinks we&#39;re still at the beginning of the item.</span>
+<a id="L229"></a><span class="ln">   229</span>			<span class="comment">// Feed in an empty string - the shortest, simplest value -</span>
+<a id="L230"></a><span class="ln">   230</span>			<span class="comment">// so that it knows we got to the end of the value.</span>
+<a id="L231"></a><span class="ln">   231</span>			if d.scan.redo {
+<a id="L232"></a><span class="ln">   232</span>				<span class="comment">// rewind.</span>
+<a id="L233"></a><span class="ln">   233</span>				d.scan.redo = false
+<a id="L234"></a><span class="ln">   234</span>				d.scan.step = stateBeginValue
+<a id="L235"></a><span class="ln">   235</span>			}
+<a id="L236"></a><span class="ln">   236</span>			d.scan.step(&amp;d.scan, &#39;&#34;&#39;)
+<a id="L237"></a><span class="ln">   237</span>			d.scan.step(&amp;d.scan, &#39;&#34;&#39;)
+<a id="L238"></a><span class="ln">   238</span>			return
+<a id="L239"></a><span class="ln">   239</span>		}
+<a id="L240"></a><span class="ln">   240</span>	
+<a id="L241"></a><span class="ln">   241</span>		switch op := d.scanWhile(scanSkipSpace); op {
+<a id="L242"></a><span class="ln">   242</span>		default:
+<a id="L243"></a><span class="ln">   243</span>			d.error(errPhase)
+<a id="L244"></a><span class="ln">   244</span>	
+<a id="L245"></a><span class="ln">   245</span>		case scanBeginArray:
+<a id="L246"></a><span class="ln">   246</span>			d.array(v)
+<a id="L247"></a><span class="ln">   247</span>	
+<a id="L248"></a><span class="ln">   248</span>		case scanBeginObject:
+<a id="L249"></a><span class="ln">   249</span>			d.object(v)
+<a id="L250"></a><span class="ln">   250</span>	
+<a id="L251"></a><span class="ln">   251</span>		case scanBeginLiteral:
+<a id="L252"></a><span class="ln">   252</span>			d.literal(v)
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	<span class="comment">// indirect walks down v allocating pointers as needed,</span>
+<a id="L257"></a><span class="ln">   257</span>	<span class="comment">// until it gets to a non-pointer.</span>
+<a id="L258"></a><span class="ln">   258</span>	<span class="comment">// if it encounters an Unmarshaler, indirect stops and returns that.</span>
+<a id="L259"></a><span class="ln">   259</span>	<span class="comment">// if decodingNull is true, indirect stops at the last pointer so it can be set to nil.</span>
+<a id="L260"></a><span class="ln">   260</span>	func (d *decodeState) indirect(v reflect.Value, decodingNull bool) (Unmarshaler, reflect.Value) {
+<a id="L261"></a><span class="ln">   261</span>		<span class="comment">// If v is a named type and is addressable,</span>
+<a id="L262"></a><span class="ln">   262</span>		<span class="comment">// start with its address, so that if the type has pointer methods,</span>
+<a id="L263"></a><span class="ln">   263</span>		<span class="comment">// we find them.</span>
+<a id="L264"></a><span class="ln">   264</span>		if v.Kind() != reflect.Ptr &amp;&amp; v.Type().Name() != &#34;&#34; &amp;&amp; v.CanAddr() {
+<a id="L265"></a><span class="ln">   265</span>			v = v.Addr()
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>		for {
+<a id="L268"></a><span class="ln">   268</span>			var isUnmarshaler bool
+<a id="L269"></a><span class="ln">   269</span>			if v.Type().NumMethod() &gt; 0 {
+<a id="L270"></a><span class="ln">   270</span>				<span class="comment">// Remember that this is an unmarshaler,</span>
+<a id="L271"></a><span class="ln">   271</span>				<span class="comment">// but wait to return it until after allocating</span>
+<a id="L272"></a><span class="ln">   272</span>				<span class="comment">// the pointer (if necessary).</span>
+<a id="L273"></a><span class="ln">   273</span>				_, isUnmarshaler = v.Interface().(Unmarshaler)
+<a id="L274"></a><span class="ln">   274</span>			}
+<a id="L275"></a><span class="ln">   275</span>	
+<a id="L276"></a><span class="ln">   276</span>			if iv := v; iv.Kind() == reflect.Interface &amp;&amp; !iv.IsNil() {
+<a id="L277"></a><span class="ln">   277</span>				v = iv.Elem()
+<a id="L278"></a><span class="ln">   278</span>				continue
+<a id="L279"></a><span class="ln">   279</span>			}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>			pv := v
+<a id="L282"></a><span class="ln">   282</span>			if pv.Kind() != reflect.Ptr {
+<a id="L283"></a><span class="ln">   283</span>				break
+<a id="L284"></a><span class="ln">   284</span>			}
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>			if pv.Elem().Kind() != reflect.Ptr &amp;&amp; decodingNull &amp;&amp; pv.CanSet() {
+<a id="L287"></a><span class="ln">   287</span>				return nil, pv
+<a id="L288"></a><span class="ln">   288</span>			}
+<a id="L289"></a><span class="ln">   289</span>			if pv.IsNil() {
+<a id="L290"></a><span class="ln">   290</span>				pv.Set(reflect.New(pv.Type().Elem()))
+<a id="L291"></a><span class="ln">   291</span>			}
+<a id="L292"></a><span class="ln">   292</span>			if isUnmarshaler {
+<a id="L293"></a><span class="ln">   293</span>				<span class="comment">// Using v.Interface().(Unmarshaler)</span>
+<a id="L294"></a><span class="ln">   294</span>				<span class="comment">// here means that we have to use a pointer</span>
+<a id="L295"></a><span class="ln">   295</span>				<span class="comment">// as the struct field.  We cannot use a value inside</span>
+<a id="L296"></a><span class="ln">   296</span>				<span class="comment">// a pointer to a struct, because in that case</span>
+<a id="L297"></a><span class="ln">   297</span>				<span class="comment">// v.Interface() is the value (x.f) not the pointer (&amp;x.f).</span>
+<a id="L298"></a><span class="ln">   298</span>				<span class="comment">// This is an unfortunate consequence of reflect.</span>
+<a id="L299"></a><span class="ln">   299</span>				<span class="comment">// An alternative would be to look up the</span>
+<a id="L300"></a><span class="ln">   300</span>				<span class="comment">// UnmarshalJSON method and return a FuncValue.</span>
+<a id="L301"></a><span class="ln">   301</span>				return v.Interface().(Unmarshaler), reflect.Value{}
+<a id="L302"></a><span class="ln">   302</span>			}
+<a id="L303"></a><span class="ln">   303</span>			v = pv.Elem()
+<a id="L304"></a><span class="ln">   304</span>		}
+<a id="L305"></a><span class="ln">   305</span>		return nil, v
+<a id="L306"></a><span class="ln">   306</span>	}
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>	<span class="comment">// array consumes an array from d.data[d.off-1:], decoding into the value v.</span>
+<a id="L309"></a><span class="ln">   309</span>	<span class="comment">// the first byte of the array (&#39;[&#39;) has been read already.</span>
+<a id="L310"></a><span class="ln">   310</span>	func (d *decodeState) array(v reflect.Value) {
+<a id="L311"></a><span class="ln">   311</span>		<span class="comment">// Check for unmarshaler.</span>
+<a id="L312"></a><span class="ln">   312</span>		unmarshaler, pv := d.indirect(v, false)
+<a id="L313"></a><span class="ln">   313</span>		if unmarshaler != nil {
+<a id="L314"></a><span class="ln">   314</span>			d.off--
+<a id="L315"></a><span class="ln">   315</span>			err := unmarshaler.UnmarshalJSON(d.next())
+<a id="L316"></a><span class="ln">   316</span>			if err != nil {
+<a id="L317"></a><span class="ln">   317</span>				d.error(err)
+<a id="L318"></a><span class="ln">   318</span>			}
+<a id="L319"></a><span class="ln">   319</span>			return
+<a id="L320"></a><span class="ln">   320</span>		}
+<a id="L321"></a><span class="ln">   321</span>		v = pv
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>		<span class="comment">// Check type of target.</span>
+<a id="L324"></a><span class="ln">   324</span>		switch v.Kind() {
+<a id="L325"></a><span class="ln">   325</span>		default:
+<a id="L326"></a><span class="ln">   326</span>			d.saveError(&amp;UnmarshalTypeError{&#34;array&#34;, v.Type()})
+<a id="L327"></a><span class="ln">   327</span>			d.off--
+<a id="L328"></a><span class="ln">   328</span>			d.next()
+<a id="L329"></a><span class="ln">   329</span>			return
+<a id="L330"></a><span class="ln">   330</span>		case reflect.Interface:
+<a id="L331"></a><span class="ln">   331</span>			<span class="comment">// Decoding into nil interface?  Switch to non-reflect code.</span>
+<a id="L332"></a><span class="ln">   332</span>			v.Set(reflect.ValueOf(d.arrayInterface()))
+<a id="L333"></a><span class="ln">   333</span>			return
+<a id="L334"></a><span class="ln">   334</span>		case reflect.Array:
+<a id="L335"></a><span class="ln">   335</span>		case reflect.Slice:
+<a id="L336"></a><span class="ln">   336</span>			break
+<a id="L337"></a><span class="ln">   337</span>		}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>		i := 0
+<a id="L340"></a><span class="ln">   340</span>		for {
+<a id="L341"></a><span class="ln">   341</span>			<span class="comment">// Look ahead for ] - can only happen on first iteration.</span>
+<a id="L342"></a><span class="ln">   342</span>			op := d.scanWhile(scanSkipSpace)
+<a id="L343"></a><span class="ln">   343</span>			if op == scanEndArray {
+<a id="L344"></a><span class="ln">   344</span>				break
+<a id="L345"></a><span class="ln">   345</span>			}
+<a id="L346"></a><span class="ln">   346</span>	
+<a id="L347"></a><span class="ln">   347</span>			<span class="comment">// Back up so d.value can have the byte we just read.</span>
+<a id="L348"></a><span class="ln">   348</span>			d.off--
+<a id="L349"></a><span class="ln">   349</span>			d.scan.undo(op)
+<a id="L350"></a><span class="ln">   350</span>	
+<a id="L351"></a><span class="ln">   351</span>			<span class="comment">// Get element of array, growing if necessary.</span>
+<a id="L352"></a><span class="ln">   352</span>			if v.Kind() == reflect.Slice {
+<a id="L353"></a><span class="ln">   353</span>				<span class="comment">// Grow slice if necessary</span>
+<a id="L354"></a><span class="ln">   354</span>				if i &gt;= v.Cap() {
+<a id="L355"></a><span class="ln">   355</span>					newcap := v.Cap() + v.Cap()/2
+<a id="L356"></a><span class="ln">   356</span>					if newcap &lt; 4 {
+<a id="L357"></a><span class="ln">   357</span>						newcap = 4
+<a id="L358"></a><span class="ln">   358</span>					}
+<a id="L359"></a><span class="ln">   359</span>					newv := reflect.MakeSlice(v.Type(), v.Len(), newcap)
+<a id="L360"></a><span class="ln">   360</span>					reflect.Copy(newv, v)
+<a id="L361"></a><span class="ln">   361</span>					v.Set(newv)
+<a id="L362"></a><span class="ln">   362</span>				}
+<a id="L363"></a><span class="ln">   363</span>				if i &gt;= v.Len() {
+<a id="L364"></a><span class="ln">   364</span>					v.SetLen(i + 1)
+<a id="L365"></a><span class="ln">   365</span>				}
+<a id="L366"></a><span class="ln">   366</span>			}
+<a id="L367"></a><span class="ln">   367</span>	
+<a id="L368"></a><span class="ln">   368</span>			if i &lt; v.Len() {
+<a id="L369"></a><span class="ln">   369</span>				<span class="comment">// Decode into element.</span>
+<a id="L370"></a><span class="ln">   370</span>				d.value(v.Index(i))
+<a id="L371"></a><span class="ln">   371</span>			} else {
+<a id="L372"></a><span class="ln">   372</span>				<span class="comment">// Ran out of fixed array: skip.</span>
+<a id="L373"></a><span class="ln">   373</span>				d.value(reflect.Value{})
+<a id="L374"></a><span class="ln">   374</span>			}
+<a id="L375"></a><span class="ln">   375</span>			i++
+<a id="L376"></a><span class="ln">   376</span>	
+<a id="L377"></a><span class="ln">   377</span>			<span class="comment">// Next token must be , or ].</span>
+<a id="L378"></a><span class="ln">   378</span>			op = d.scanWhile(scanSkipSpace)
+<a id="L379"></a><span class="ln">   379</span>			if op == scanEndArray {
+<a id="L380"></a><span class="ln">   380</span>				break
+<a id="L381"></a><span class="ln">   381</span>			}
+<a id="L382"></a><span class="ln">   382</span>			if op != scanArrayValue {
+<a id="L383"></a><span class="ln">   383</span>				d.error(errPhase)
+<a id="L384"></a><span class="ln">   384</span>			}
+<a id="L385"></a><span class="ln">   385</span>		}
+<a id="L386"></a><span class="ln">   386</span>	
+<a id="L387"></a><span class="ln">   387</span>		if i &lt; v.Len() {
+<a id="L388"></a><span class="ln">   388</span>			if v.Kind() == reflect.Array {
+<a id="L389"></a><span class="ln">   389</span>				<span class="comment">// Array.  Zero the rest.</span>
+<a id="L390"></a><span class="ln">   390</span>				z := reflect.Zero(v.Type().Elem())
+<a id="L391"></a><span class="ln">   391</span>				for ; i &lt; v.Len(); i++ {
+<a id="L392"></a><span class="ln">   392</span>					v.Index(i).Set(z)
+<a id="L393"></a><span class="ln">   393</span>				}
+<a id="L394"></a><span class="ln">   394</span>			} else {
+<a id="L395"></a><span class="ln">   395</span>				v.SetLen(i)
+<a id="L396"></a><span class="ln">   396</span>			}
+<a id="L397"></a><span class="ln">   397</span>		}
+<a id="L398"></a><span class="ln">   398</span>		if i == 0 &amp;&amp; v.Kind() == reflect.Slice {
+<a id="L399"></a><span class="ln">   399</span>			v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+<a id="L400"></a><span class="ln">   400</span>		}
+<a id="L401"></a><span class="ln">   401</span>	}
+<a id="L402"></a><span class="ln">   402</span>	
+<a id="L403"></a><span class="ln">   403</span>	<span class="comment">// object consumes an object from d.data[d.off-1:], decoding into the value v.</span>
+<a id="L404"></a><span class="ln">   404</span>	<span class="comment">// the first byte of the object (&#39;{&#39;) has been read already.</span>
+<a id="L405"></a><span class="ln">   405</span>	func (d *decodeState) object(v reflect.Value) {
+<a id="L406"></a><span class="ln">   406</span>		<span class="comment">// Check for unmarshaler.</span>
+<a id="L407"></a><span class="ln">   407</span>		unmarshaler, pv := d.indirect(v, false)
+<a id="L408"></a><span class="ln">   408</span>		if unmarshaler != nil {
+<a id="L409"></a><span class="ln">   409</span>			d.off--
+<a id="L410"></a><span class="ln">   410</span>			err := unmarshaler.UnmarshalJSON(d.next())
+<a id="L411"></a><span class="ln">   411</span>			if err != nil {
+<a id="L412"></a><span class="ln">   412</span>				d.error(err)
+<a id="L413"></a><span class="ln">   413</span>			}
+<a id="L414"></a><span class="ln">   414</span>			return
+<a id="L415"></a><span class="ln">   415</span>		}
+<a id="L416"></a><span class="ln">   416</span>		v = pv
+<a id="L417"></a><span class="ln">   417</span>	
+<a id="L418"></a><span class="ln">   418</span>		<span class="comment">// Decoding into nil interface?  Switch to non-reflect code.</span>
+<a id="L419"></a><span class="ln">   419</span>		iv := v
+<a id="L420"></a><span class="ln">   420</span>		if iv.Kind() == reflect.Interface {
+<a id="L421"></a><span class="ln">   421</span>			iv.Set(reflect.ValueOf(d.objectInterface()))
+<a id="L422"></a><span class="ln">   422</span>			return
+<a id="L423"></a><span class="ln">   423</span>		}
+<a id="L424"></a><span class="ln">   424</span>	
+<a id="L425"></a><span class="ln">   425</span>		<span class="comment">// Check type of target: struct or map[string]T</span>
+<a id="L426"></a><span class="ln">   426</span>		var (
+<a id="L427"></a><span class="ln">   427</span>			mv reflect.Value
+<a id="L428"></a><span class="ln">   428</span>			sv reflect.Value
+<a id="L429"></a><span class="ln">   429</span>		)
+<a id="L430"></a><span class="ln">   430</span>		switch v.Kind() {
+<a id="L431"></a><span class="ln">   431</span>		case reflect.Map:
+<a id="L432"></a><span class="ln">   432</span>			<span class="comment">// map must have string type</span>
+<a id="L433"></a><span class="ln">   433</span>			t := v.Type()
+<a id="L434"></a><span class="ln">   434</span>			if t.Key() != reflect.TypeOf(&#34;&#34;) {
+<a id="L435"></a><span class="ln">   435</span>				d.saveError(&amp;UnmarshalTypeError{&#34;object&#34;, v.Type()})
+<a id="L436"></a><span class="ln">   436</span>				break
+<a id="L437"></a><span class="ln">   437</span>			}
+<a id="L438"></a><span class="ln">   438</span>			mv = v
+<a id="L439"></a><span class="ln">   439</span>			if mv.IsNil() {
+<a id="L440"></a><span class="ln">   440</span>				mv.Set(reflect.MakeMap(t))
+<a id="L441"></a><span class="ln">   441</span>			}
+<a id="L442"></a><span class="ln">   442</span>		case reflect.Struct:
+<a id="L443"></a><span class="ln">   443</span>			sv = v
+<a id="L444"></a><span class="ln">   444</span>		default:
+<a id="L445"></a><span class="ln">   445</span>			d.saveError(&amp;UnmarshalTypeError{&#34;object&#34;, v.Type()})
+<a id="L446"></a><span class="ln">   446</span>		}
+<a id="L447"></a><span class="ln">   447</span>	
+<a id="L448"></a><span class="ln">   448</span>		if !mv.IsValid() &amp;&amp; !sv.IsValid() {
+<a id="L449"></a><span class="ln">   449</span>			d.off--
+<a id="L450"></a><span class="ln">   450</span>			d.next() <span class="comment">// skip over { } in input</span>
+<a id="L451"></a><span class="ln">   451</span>			return
+<a id="L452"></a><span class="ln">   452</span>		}
+<a id="L453"></a><span class="ln">   453</span>	
+<a id="L454"></a><span class="ln">   454</span>		var mapElem reflect.Value
+<a id="L455"></a><span class="ln">   455</span>	
+<a id="L456"></a><span class="ln">   456</span>		for {
+<a id="L457"></a><span class="ln">   457</span>			<span class="comment">// Read opening &#34; of string key or closing }.</span>
+<a id="L458"></a><span class="ln">   458</span>			op := d.scanWhile(scanSkipSpace)
+<a id="L459"></a><span class="ln">   459</span>			if op == scanEndObject {
+<a id="L460"></a><span class="ln">   460</span>				<span class="comment">// closing } - can only happen on first iteration.</span>
+<a id="L461"></a><span class="ln">   461</span>				break
+<a id="L462"></a><span class="ln">   462</span>			}
+<a id="L463"></a><span class="ln">   463</span>			if op != scanBeginLiteral {
+<a id="L464"></a><span class="ln">   464</span>				d.error(errPhase)
+<a id="L465"></a><span class="ln">   465</span>			}
+<a id="L466"></a><span class="ln">   466</span>	
+<a id="L467"></a><span class="ln">   467</span>			<span class="comment">// Read string key.</span>
+<a id="L468"></a><span class="ln">   468</span>			start := d.off - 1
+<a id="L469"></a><span class="ln">   469</span>			op = d.scanWhile(scanContinue)
+<a id="L470"></a><span class="ln">   470</span>			item := d.data[start : d.off-1]
+<a id="L471"></a><span class="ln">   471</span>			key, ok := unquote(item)
+<a id="L472"></a><span class="ln">   472</span>			if !ok {
+<a id="L473"></a><span class="ln">   473</span>				d.error(errPhase)
+<a id="L474"></a><span class="ln">   474</span>			}
+<a id="L475"></a><span class="ln">   475</span>	
+<a id="L476"></a><span class="ln">   476</span>			<span class="comment">// Figure out field corresponding to key.</span>
+<a id="L477"></a><span class="ln">   477</span>			var subv reflect.Value
+<a id="L478"></a><span class="ln">   478</span>			destring := false <span class="comment">// whether the value is wrapped in a string to be decoded first</span>
+<a id="L479"></a><span class="ln">   479</span>	
+<a id="L480"></a><span class="ln">   480</span>			if mv.IsValid() {
+<a id="L481"></a><span class="ln">   481</span>				elemType := mv.Type().Elem()
+<a id="L482"></a><span class="ln">   482</span>				if !mapElem.IsValid() {
+<a id="L483"></a><span class="ln">   483</span>					mapElem = reflect.New(elemType).Elem()
+<a id="L484"></a><span class="ln">   484</span>				} else {
+<a id="L485"></a><span class="ln">   485</span>					mapElem.Set(reflect.Zero(elemType))
+<a id="L486"></a><span class="ln">   486</span>				}
+<a id="L487"></a><span class="ln">   487</span>				subv = mapElem
+<a id="L488"></a><span class="ln">   488</span>			} else {
+<a id="L489"></a><span class="ln">   489</span>				var f reflect.StructField
+<a id="L490"></a><span class="ln">   490</span>				var ok bool
+<a id="L491"></a><span class="ln">   491</span>				st := sv.Type()
+<a id="L492"></a><span class="ln">   492</span>				for i := 0; i &lt; sv.NumField(); i++ {
+<a id="L493"></a><span class="ln">   493</span>					sf := st.Field(i)
+<a id="L494"></a><span class="ln">   494</span>					tag := sf.Tag.Get(&#34;json&#34;)
+<a id="L495"></a><span class="ln">   495</span>					if tag == &#34;-&#34; {
+<a id="L496"></a><span class="ln">   496</span>						<span class="comment">// Pretend this field doesn&#39;t exist.</span>
+<a id="L497"></a><span class="ln">   497</span>						continue
+<a id="L498"></a><span class="ln">   498</span>					}
+<a id="L499"></a><span class="ln">   499</span>					if sf.Anonymous {
+<a id="L500"></a><span class="ln">   500</span>						<span class="comment">// Pretend this field doesn&#39;t exist,</span>
+<a id="L501"></a><span class="ln">   501</span>						<span class="comment">// so that we can do a good job with</span>
+<a id="L502"></a><span class="ln">   502</span>						<span class="comment">// these in a later version.</span>
+<a id="L503"></a><span class="ln">   503</span>						continue
+<a id="L504"></a><span class="ln">   504</span>					}
+<a id="L505"></a><span class="ln">   505</span>					<span class="comment">// First, tag match</span>
+<a id="L506"></a><span class="ln">   506</span>					tagName, _ := parseTag(tag)
+<a id="L507"></a><span class="ln">   507</span>					if tagName == key {
+<a id="L508"></a><span class="ln">   508</span>						f = sf
+<a id="L509"></a><span class="ln">   509</span>						ok = true
+<a id="L510"></a><span class="ln">   510</span>						break <span class="comment">// no better match possible</span>
+<a id="L511"></a><span class="ln">   511</span>					}
+<a id="L512"></a><span class="ln">   512</span>					<span class="comment">// Second, exact field name match</span>
+<a id="L513"></a><span class="ln">   513</span>					if sf.Name == key {
+<a id="L514"></a><span class="ln">   514</span>						f = sf
+<a id="L515"></a><span class="ln">   515</span>						ok = true
+<a id="L516"></a><span class="ln">   516</span>					}
+<a id="L517"></a><span class="ln">   517</span>					<span class="comment">// Third, case-insensitive field name match,</span>
+<a id="L518"></a><span class="ln">   518</span>					<span class="comment">// but only if a better match hasn&#39;t already been seen</span>
+<a id="L519"></a><span class="ln">   519</span>					if !ok &amp;&amp; strings.EqualFold(sf.Name, key) {
+<a id="L520"></a><span class="ln">   520</span>						f = sf
+<a id="L521"></a><span class="ln">   521</span>						ok = true
+<a id="L522"></a><span class="ln">   522</span>					}
+<a id="L523"></a><span class="ln">   523</span>				}
+<a id="L524"></a><span class="ln">   524</span>	
+<a id="L525"></a><span class="ln">   525</span>				<span class="comment">// Extract value; name must be exported.</span>
+<a id="L526"></a><span class="ln">   526</span>				if ok {
+<a id="L527"></a><span class="ln">   527</span>					if f.PkgPath != &#34;&#34; {
+<a id="L528"></a><span class="ln">   528</span>						d.saveError(&amp;UnmarshalFieldError{key, st, f})
+<a id="L529"></a><span class="ln">   529</span>					} else {
+<a id="L530"></a><span class="ln">   530</span>						subv = sv.FieldByIndex(f.Index)
+<a id="L531"></a><span class="ln">   531</span>					}
+<a id="L532"></a><span class="ln">   532</span>					_, opts := parseTag(f.Tag.Get(&#34;json&#34;))
+<a id="L533"></a><span class="ln">   533</span>					destring = opts.Contains(&#34;string&#34;)
+<a id="L534"></a><span class="ln">   534</span>				}
+<a id="L535"></a><span class="ln">   535</span>			}
+<a id="L536"></a><span class="ln">   536</span>	
+<a id="L537"></a><span class="ln">   537</span>			<span class="comment">// Read : before value.</span>
+<a id="L538"></a><span class="ln">   538</span>			if op == scanSkipSpace {
+<a id="L539"></a><span class="ln">   539</span>				op = d.scanWhile(scanSkipSpace)
+<a id="L540"></a><span class="ln">   540</span>			}
+<a id="L541"></a><span class="ln">   541</span>			if op != scanObjectKey {
+<a id="L542"></a><span class="ln">   542</span>				d.error(errPhase)
+<a id="L543"></a><span class="ln">   543</span>			}
+<a id="L544"></a><span class="ln">   544</span>	
+<a id="L545"></a><span class="ln">   545</span>			<span class="comment">// Read value.</span>
+<a id="L546"></a><span class="ln">   546</span>			if destring {
+<a id="L547"></a><span class="ln">   547</span>				d.value(reflect.ValueOf(&amp;d.tempstr))
+<a id="L548"></a><span class="ln">   548</span>				d.literalStore([]byte(d.tempstr), subv, true)
+<a id="L549"></a><span class="ln">   549</span>			} else {
+<a id="L550"></a><span class="ln">   550</span>				d.value(subv)
+<a id="L551"></a><span class="ln">   551</span>			}
+<a id="L552"></a><span class="ln">   552</span>			<span class="comment">// Write value back to map;</span>
+<a id="L553"></a><span class="ln">   553</span>			<span class="comment">// if using struct, subv points into struct already.</span>
+<a id="L554"></a><span class="ln">   554</span>			if mv.IsValid() {
+<a id="L555"></a><span class="ln">   555</span>				mv.SetMapIndex(reflect.ValueOf(key), subv)
+<a id="L556"></a><span class="ln">   556</span>			}
+<a id="L557"></a><span class="ln">   557</span>	
+<a id="L558"></a><span class="ln">   558</span>			<span class="comment">// Next token must be , or }.</span>
+<a id="L559"></a><span class="ln">   559</span>			op = d.scanWhile(scanSkipSpace)
+<a id="L560"></a><span class="ln">   560</span>			if op == scanEndObject {
+<a id="L561"></a><span class="ln">   561</span>				break
+<a id="L562"></a><span class="ln">   562</span>			}
+<a id="L563"></a><span class="ln">   563</span>			if op != scanObjectValue {
+<a id="L564"></a><span class="ln">   564</span>				d.error(errPhase)
+<a id="L565"></a><span class="ln">   565</span>			}
+<a id="L566"></a><span class="ln">   566</span>		}
+<a id="L567"></a><span class="ln">   567</span>	}
+<a id="L568"></a><span class="ln">   568</span>	
+<a id="L569"></a><span class="ln">   569</span>	<span class="comment">// literal consumes a literal from d.data[d.off-1:], decoding into the value v.</span>
+<a id="L570"></a><span class="ln">   570</span>	<span class="comment">// The first byte of the literal has been read already</span>
+<a id="L571"></a><span class="ln">   571</span>	<span class="comment">// (that&#39;s how the caller knows it&#39;s a literal).</span>
+<a id="L572"></a><span class="ln">   572</span>	func (d *decodeState) literal(v reflect.Value) {
+<a id="L573"></a><span class="ln">   573</span>		<span class="comment">// All bytes inside literal return scanContinue op code.</span>
+<a id="L574"></a><span class="ln">   574</span>		start := d.off - 1
+<a id="L575"></a><span class="ln">   575</span>		op := d.scanWhile(scanContinue)
+<a id="L576"></a><span class="ln">   576</span>	
+<a id="L577"></a><span class="ln">   577</span>		<span class="comment">// Scan read one byte too far; back up.</span>
+<a id="L578"></a><span class="ln">   578</span>		d.off--
+<a id="L579"></a><span class="ln">   579</span>		d.scan.undo(op)
+<a id="L580"></a><span class="ln">   580</span>	
+<a id="L581"></a><span class="ln">   581</span>		d.literalStore(d.data[start:d.off], v, false)
+<a id="L582"></a><span class="ln">   582</span>	}
+<a id="L583"></a><span class="ln">   583</span>	
+<a id="L584"></a><span class="ln">   584</span>	<span class="comment">// literalStore decodes a literal stored in item into v.</span>
+<a id="L585"></a><span class="ln">   585</span>	<span class="comment">//</span>
+<a id="L586"></a><span class="ln">   586</span>	<span class="comment">// fromQuoted indicates whether this literal came from unwrapping a</span>
+<a id="L587"></a><span class="ln">   587</span>	<span class="comment">// string from the &#34;,string&#34; struct tag option. this is used only to</span>
+<a id="L588"></a><span class="ln">   588</span>	<span class="comment">// produce more helpful error messages.</span>
+<a id="L589"></a><span class="ln">   589</span>	func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool) {
+<a id="L590"></a><span class="ln">   590</span>		<span class="comment">// Check for unmarshaler.</span>
+<a id="L591"></a><span class="ln">   591</span>		wantptr := item[0] == &#39;n&#39; <span class="comment">// null</span>
+<a id="L592"></a><span class="ln">   592</span>		unmarshaler, pv := d.indirect(v, wantptr)
+<a id="L593"></a><span class="ln">   593</span>		if unmarshaler != nil {
+<a id="L594"></a><span class="ln">   594</span>			err := unmarshaler.UnmarshalJSON(item)
+<a id="L595"></a><span class="ln">   595</span>			if err != nil {
+<a id="L596"></a><span class="ln">   596</span>				d.error(err)
+<a id="L597"></a><span class="ln">   597</span>			}
+<a id="L598"></a><span class="ln">   598</span>			return
+<a id="L599"></a><span class="ln">   599</span>		}
+<a id="L600"></a><span class="ln">   600</span>		v = pv
+<a id="L601"></a><span class="ln">   601</span>	
+<a id="L602"></a><span class="ln">   602</span>		switch c := item[0]; c {
+<a id="L603"></a><span class="ln">   603</span>		case &#39;n&#39;: <span class="comment">// null</span>
+<a id="L604"></a><span class="ln">   604</span>			switch v.Kind() {
+<a id="L605"></a><span class="ln">   605</span>			default:
+<a id="L606"></a><span class="ln">   606</span>				d.saveError(&amp;UnmarshalTypeError{&#34;null&#34;, v.Type()})
+<a id="L607"></a><span class="ln">   607</span>			case reflect.Interface, reflect.Ptr, reflect.Map, reflect.Slice:
+<a id="L608"></a><span class="ln">   608</span>				v.Set(reflect.Zero(v.Type()))
+<a id="L609"></a><span class="ln">   609</span>			}
+<a id="L610"></a><span class="ln">   610</span>	
+<a id="L611"></a><span class="ln">   611</span>		case &#39;t&#39;, &#39;f&#39;: <span class="comment">// true, false</span>
+<a id="L612"></a><span class="ln">   612</span>			value := c == &#39;t&#39;
+<a id="L613"></a><span class="ln">   613</span>			switch v.Kind() {
+<a id="L614"></a><span class="ln">   614</span>			default:
+<a id="L615"></a><span class="ln">   615</span>				if fromQuoted {
+<a id="L616"></a><span class="ln">   616</span>					d.saveError(fmt.Errorf(&#34;json: invalid use of ,string struct tag, trying to unmarshal %q into %v&#34;, item, v.Type()))
+<a id="L617"></a><span class="ln">   617</span>				} else {
+<a id="L618"></a><span class="ln">   618</span>					d.saveError(&amp;UnmarshalTypeError{&#34;bool&#34;, v.Type()})
+<a id="L619"></a><span class="ln">   619</span>				}
+<a id="L620"></a><span class="ln">   620</span>			case reflect.Bool:
+<a id="L621"></a><span class="ln">   621</span>				v.SetBool(value)
+<a id="L622"></a><span class="ln">   622</span>			case reflect.Interface:
+<a id="L623"></a><span class="ln">   623</span>				v.Set(reflect.ValueOf(value))
+<a id="L624"></a><span class="ln">   624</span>			}
+<a id="L625"></a><span class="ln">   625</span>	
+<a id="L626"></a><span class="ln">   626</span>		case &#39;&#34;&#39;: <span class="comment">// string</span>
+<a id="L627"></a><span class="ln">   627</span>			s, ok := unquoteBytes(item)
+<a id="L628"></a><span class="ln">   628</span>			if !ok {
+<a id="L629"></a><span class="ln">   629</span>				if fromQuoted {
+<a id="L630"></a><span class="ln">   630</span>					d.error(fmt.Errorf(&#34;json: invalid use of ,string struct tag, trying to unmarshal %q into %v&#34;, item, v.Type()))
+<a id="L631"></a><span class="ln">   631</span>				} else {
+<a id="L632"></a><span class="ln">   632</span>					d.error(errPhase)
+<a id="L633"></a><span class="ln">   633</span>				}
+<a id="L634"></a><span class="ln">   634</span>			}
+<a id="L635"></a><span class="ln">   635</span>			switch v.Kind() {
+<a id="L636"></a><span class="ln">   636</span>			default:
+<a id="L637"></a><span class="ln">   637</span>				d.saveError(&amp;UnmarshalTypeError{&#34;string&#34;, v.Type()})
+<a id="L638"></a><span class="ln">   638</span>			case reflect.Slice:
+<a id="L639"></a><span class="ln">   639</span>				if v.Type() != byteSliceType {
+<a id="L640"></a><span class="ln">   640</span>					d.saveError(&amp;UnmarshalTypeError{&#34;string&#34;, v.Type()})
+<a id="L641"></a><span class="ln">   641</span>					break
+<a id="L642"></a><span class="ln">   642</span>				}
+<a id="L643"></a><span class="ln">   643</span>				b := make([]byte, base64.StdEncoding.DecodedLen(len(s)))
+<a id="L644"></a><span class="ln">   644</span>				n, err := base64.StdEncoding.Decode(b, s)
+<a id="L645"></a><span class="ln">   645</span>				if err != nil {
+<a id="L646"></a><span class="ln">   646</span>					d.saveError(err)
+<a id="L647"></a><span class="ln">   647</span>					break
+<a id="L648"></a><span class="ln">   648</span>				}
+<a id="L649"></a><span class="ln">   649</span>				v.Set(reflect.ValueOf(b[0:n]))
+<a id="L650"></a><span class="ln">   650</span>			case reflect.String:
+<a id="L651"></a><span class="ln">   651</span>				v.SetString(string(s))
+<a id="L652"></a><span class="ln">   652</span>			case reflect.Interface:
+<a id="L653"></a><span class="ln">   653</span>				v.Set(reflect.ValueOf(string(s)))
+<a id="L654"></a><span class="ln">   654</span>			}
+<a id="L655"></a><span class="ln">   655</span>	
+<a id="L656"></a><span class="ln">   656</span>		default: <span class="comment">// number</span>
+<a id="L657"></a><span class="ln">   657</span>			if c != &#39;-&#39; &amp;&amp; (c &lt; &#39;0&#39; || c &gt; &#39;9&#39;) {
+<a id="L658"></a><span class="ln">   658</span>				if fromQuoted {
+<a id="L659"></a><span class="ln">   659</span>					d.error(fmt.Errorf(&#34;json: invalid use of ,string struct tag, trying to unmarshal %q into %v&#34;, item, v.Type()))
+<a id="L660"></a><span class="ln">   660</span>				} else {
+<a id="L661"></a><span class="ln">   661</span>					d.error(errPhase)
+<a id="L662"></a><span class="ln">   662</span>				}
+<a id="L663"></a><span class="ln">   663</span>			}
+<a id="L664"></a><span class="ln">   664</span>			s := string(item)
+<a id="L665"></a><span class="ln">   665</span>			switch v.Kind() {
+<a id="L666"></a><span class="ln">   666</span>			default:
+<a id="L667"></a><span class="ln">   667</span>				if fromQuoted {
+<a id="L668"></a><span class="ln">   668</span>					d.error(fmt.Errorf(&#34;json: invalid use of ,string struct tag, trying to unmarshal %q into %v&#34;, item, v.Type()))
+<a id="L669"></a><span class="ln">   669</span>				} else {
+<a id="L670"></a><span class="ln">   670</span>					d.error(&amp;UnmarshalTypeError{&#34;number&#34;, v.Type()})
+<a id="L671"></a><span class="ln">   671</span>				}
+<a id="L672"></a><span class="ln">   672</span>			case reflect.Interface:
+<a id="L673"></a><span class="ln">   673</span>				n, err := strconv.ParseFloat(s, 64)
+<a id="L674"></a><span class="ln">   674</span>				if err != nil {
+<a id="L675"></a><span class="ln">   675</span>					d.saveError(&amp;UnmarshalTypeError{&#34;number &#34; + s, v.Type()})
+<a id="L676"></a><span class="ln">   676</span>					break
+<a id="L677"></a><span class="ln">   677</span>				}
+<a id="L678"></a><span class="ln">   678</span>				v.Set(reflect.ValueOf(n))
+<a id="L679"></a><span class="ln">   679</span>	
+<a id="L680"></a><span class="ln">   680</span>			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L681"></a><span class="ln">   681</span>				n, err := strconv.ParseInt(s, 10, 64)
+<a id="L682"></a><span class="ln">   682</span>				if err != nil || v.OverflowInt(n) {
+<a id="L683"></a><span class="ln">   683</span>					d.saveError(&amp;UnmarshalTypeError{&#34;number &#34; + s, v.Type()})
+<a id="L684"></a><span class="ln">   684</span>					break
+<a id="L685"></a><span class="ln">   685</span>				}
+<a id="L686"></a><span class="ln">   686</span>				v.SetInt(n)
+<a id="L687"></a><span class="ln">   687</span>	
+<a id="L688"></a><span class="ln">   688</span>			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L689"></a><span class="ln">   689</span>				n, err := strconv.ParseUint(s, 10, 64)
+<a id="L690"></a><span class="ln">   690</span>				if err != nil || v.OverflowUint(n) {
+<a id="L691"></a><span class="ln">   691</span>					d.saveError(&amp;UnmarshalTypeError{&#34;number &#34; + s, v.Type()})
+<a id="L692"></a><span class="ln">   692</span>					break
+<a id="L693"></a><span class="ln">   693</span>				}
+<a id="L694"></a><span class="ln">   694</span>				v.SetUint(n)
+<a id="L695"></a><span class="ln">   695</span>	
+<a id="L696"></a><span class="ln">   696</span>			case reflect.Float32, reflect.Float64:
+<a id="L697"></a><span class="ln">   697</span>				n, err := strconv.ParseFloat(s, v.Type().Bits())
+<a id="L698"></a><span class="ln">   698</span>				if err != nil || v.OverflowFloat(n) {
+<a id="L699"></a><span class="ln">   699</span>					d.saveError(&amp;UnmarshalTypeError{&#34;number &#34; + s, v.Type()})
+<a id="L700"></a><span class="ln">   700</span>					break
+<a id="L701"></a><span class="ln">   701</span>				}
+<a id="L702"></a><span class="ln">   702</span>				v.SetFloat(n)
+<a id="L703"></a><span class="ln">   703</span>			}
+<a id="L704"></a><span class="ln">   704</span>		}
+<a id="L705"></a><span class="ln">   705</span>	}
+<a id="L706"></a><span class="ln">   706</span>	
+<a id="L707"></a><span class="ln">   707</span>	<span class="comment">// The xxxInterface routines build up a value to be stored</span>
+<a id="L708"></a><span class="ln">   708</span>	<span class="comment">// in an empty interface.  They are not strictly necessary,</span>
+<a id="L709"></a><span class="ln">   709</span>	<span class="comment">// but they avoid the weight of reflection in this common case.</span>
+<a id="L710"></a><span class="ln">   710</span>	
+<a id="L711"></a><span class="ln">   711</span>	<span class="comment">// valueInterface is like value but returns interface{}</span>
+<a id="L712"></a><span class="ln">   712</span>	func (d *decodeState) valueInterface() interface{} {
+<a id="L713"></a><span class="ln">   713</span>		switch d.scanWhile(scanSkipSpace) {
+<a id="L714"></a><span class="ln">   714</span>		default:
+<a id="L715"></a><span class="ln">   715</span>			d.error(errPhase)
+<a id="L716"></a><span class="ln">   716</span>		case scanBeginArray:
+<a id="L717"></a><span class="ln">   717</span>			return d.arrayInterface()
+<a id="L718"></a><span class="ln">   718</span>		case scanBeginObject:
+<a id="L719"></a><span class="ln">   719</span>			return d.objectInterface()
+<a id="L720"></a><span class="ln">   720</span>		case scanBeginLiteral:
+<a id="L721"></a><span class="ln">   721</span>			return d.literalInterface()
+<a id="L722"></a><span class="ln">   722</span>		}
+<a id="L723"></a><span class="ln">   723</span>		panic(&#34;unreachable&#34;)
+<a id="L724"></a><span class="ln">   724</span>	}
+<a id="L725"></a><span class="ln">   725</span>	
+<a id="L726"></a><span class="ln">   726</span>	<span class="comment">// arrayInterface is like array but returns []interface{}.</span>
+<a id="L727"></a><span class="ln">   727</span>	func (d *decodeState) arrayInterface() []interface{} {
+<a id="L728"></a><span class="ln">   728</span>		var v []interface{}
+<a id="L729"></a><span class="ln">   729</span>		for {
+<a id="L730"></a><span class="ln">   730</span>			<span class="comment">// Look ahead for ] - can only happen on first iteration.</span>
+<a id="L731"></a><span class="ln">   731</span>			op := d.scanWhile(scanSkipSpace)
+<a id="L732"></a><span class="ln">   732</span>			if op == scanEndArray {
+<a id="L733"></a><span class="ln">   733</span>				break
+<a id="L734"></a><span class="ln">   734</span>			}
+<a id="L735"></a><span class="ln">   735</span>	
+<a id="L736"></a><span class="ln">   736</span>			<span class="comment">// Back up so d.value can have the byte we just read.</span>
+<a id="L737"></a><span class="ln">   737</span>			d.off--
+<a id="L738"></a><span class="ln">   738</span>			d.scan.undo(op)
+<a id="L739"></a><span class="ln">   739</span>	
+<a id="L740"></a><span class="ln">   740</span>			v = append(v, d.valueInterface())
+<a id="L741"></a><span class="ln">   741</span>	
+<a id="L742"></a><span class="ln">   742</span>			<span class="comment">// Next token must be , or ].</span>
+<a id="L743"></a><span class="ln">   743</span>			op = d.scanWhile(scanSkipSpace)
+<a id="L744"></a><span class="ln">   744</span>			if op == scanEndArray {
+<a id="L745"></a><span class="ln">   745</span>				break
+<a id="L746"></a><span class="ln">   746</span>			}
+<a id="L747"></a><span class="ln">   747</span>			if op != scanArrayValue {
+<a id="L748"></a><span class="ln">   748</span>				d.error(errPhase)
+<a id="L749"></a><span class="ln">   749</span>			}
+<a id="L750"></a><span class="ln">   750</span>		}
+<a id="L751"></a><span class="ln">   751</span>		return v
+<a id="L752"></a><span class="ln">   752</span>	}
+<a id="L753"></a><span class="ln">   753</span>	
+<a id="L754"></a><span class="ln">   754</span>	<span class="comment">// objectInterface is like object but returns map[string]interface{}.</span>
+<a id="L755"></a><span class="ln">   755</span>	func (d *decodeState) objectInterface() map[string]interface{} {
+<a id="L756"></a><span class="ln">   756</span>		m := make(map[string]interface{})
+<a id="L757"></a><span class="ln">   757</span>		for {
+<a id="L758"></a><span class="ln">   758</span>			<span class="comment">// Read opening &#34; of string key or closing }.</span>
+<a id="L759"></a><span class="ln">   759</span>			op := d.scanWhile(scanSkipSpace)
+<a id="L760"></a><span class="ln">   760</span>			if op == scanEndObject {
+<a id="L761"></a><span class="ln">   761</span>				<span class="comment">// closing } - can only happen on first iteration.</span>
+<a id="L762"></a><span class="ln">   762</span>				break
+<a id="L763"></a><span class="ln">   763</span>			}
+<a id="L764"></a><span class="ln">   764</span>			if op != scanBeginLiteral {
+<a id="L765"></a><span class="ln">   765</span>				d.error(errPhase)
+<a id="L766"></a><span class="ln">   766</span>			}
+<a id="L767"></a><span class="ln">   767</span>	
+<a id="L768"></a><span class="ln">   768</span>			<span class="comment">// Read string key.</span>
+<a id="L769"></a><span class="ln">   769</span>			start := d.off - 1
+<a id="L770"></a><span class="ln">   770</span>			op = d.scanWhile(scanContinue)
+<a id="L771"></a><span class="ln">   771</span>			item := d.data[start : d.off-1]
+<a id="L772"></a><span class="ln">   772</span>			key, ok := unquote(item)
+<a id="L773"></a><span class="ln">   773</span>			if !ok {
+<a id="L774"></a><span class="ln">   774</span>				d.error(errPhase)
+<a id="L775"></a><span class="ln">   775</span>			}
+<a id="L776"></a><span class="ln">   776</span>	
+<a id="L777"></a><span class="ln">   777</span>			<span class="comment">// Read : before value.</span>
+<a id="L778"></a><span class="ln">   778</span>			if op == scanSkipSpace {
+<a id="L779"></a><span class="ln">   779</span>				op = d.scanWhile(scanSkipSpace)
+<a id="L780"></a><span class="ln">   780</span>			}
+<a id="L781"></a><span class="ln">   781</span>			if op != scanObjectKey {
+<a id="L782"></a><span class="ln">   782</span>				d.error(errPhase)
+<a id="L783"></a><span class="ln">   783</span>			}
+<a id="L784"></a><span class="ln">   784</span>	
+<a id="L785"></a><span class="ln">   785</span>			<span class="comment">// Read value.</span>
+<a id="L786"></a><span class="ln">   786</span>			m[key] = d.valueInterface()
+<a id="L787"></a><span class="ln">   787</span>	
+<a id="L788"></a><span class="ln">   788</span>			<span class="comment">// Next token must be , or }.</span>
+<a id="L789"></a><span class="ln">   789</span>			op = d.scanWhile(scanSkipSpace)
+<a id="L790"></a><span class="ln">   790</span>			if op == scanEndObject {
+<a id="L791"></a><span class="ln">   791</span>				break
+<a id="L792"></a><span class="ln">   792</span>			}
+<a id="L793"></a><span class="ln">   793</span>			if op != scanObjectValue {
+<a id="L794"></a><span class="ln">   794</span>				d.error(errPhase)
+<a id="L795"></a><span class="ln">   795</span>			}
+<a id="L796"></a><span class="ln">   796</span>		}
+<a id="L797"></a><span class="ln">   797</span>		return m
+<a id="L798"></a><span class="ln">   798</span>	}
+<a id="L799"></a><span class="ln">   799</span>	
+<a id="L800"></a><span class="ln">   800</span>	<span class="comment">// literalInterface is like literal but returns an interface value.</span>
+<a id="L801"></a><span class="ln">   801</span>	func (d *decodeState) literalInterface() interface{} {
+<a id="L802"></a><span class="ln">   802</span>		<span class="comment">// All bytes inside literal return scanContinue op code.</span>
+<a id="L803"></a><span class="ln">   803</span>		start := d.off - 1
+<a id="L804"></a><span class="ln">   804</span>		op := d.scanWhile(scanContinue)
+<a id="L805"></a><span class="ln">   805</span>	
+<a id="L806"></a><span class="ln">   806</span>		<span class="comment">// Scan read one byte too far; back up.</span>
+<a id="L807"></a><span class="ln">   807</span>		d.off--
+<a id="L808"></a><span class="ln">   808</span>		d.scan.undo(op)
+<a id="L809"></a><span class="ln">   809</span>		item := d.data[start:d.off]
+<a id="L810"></a><span class="ln">   810</span>	
+<a id="L811"></a><span class="ln">   811</span>		switch c := item[0]; c {
+<a id="L812"></a><span class="ln">   812</span>		case &#39;n&#39;: <span class="comment">// null</span>
+<a id="L813"></a><span class="ln">   813</span>			return nil
+<a id="L814"></a><span class="ln">   814</span>	
+<a id="L815"></a><span class="ln">   815</span>		case &#39;t&#39;, &#39;f&#39;: <span class="comment">// true, false</span>
+<a id="L816"></a><span class="ln">   816</span>			return c == &#39;t&#39;
+<a id="L817"></a><span class="ln">   817</span>	
+<a id="L818"></a><span class="ln">   818</span>		case &#39;&#34;&#39;: <span class="comment">// string</span>
+<a id="L819"></a><span class="ln">   819</span>			s, ok := unquote(item)
+<a id="L820"></a><span class="ln">   820</span>			if !ok {
+<a id="L821"></a><span class="ln">   821</span>				d.error(errPhase)
+<a id="L822"></a><span class="ln">   822</span>			}
+<a id="L823"></a><span class="ln">   823</span>			return s
+<a id="L824"></a><span class="ln">   824</span>	
+<a id="L825"></a><span class="ln">   825</span>		default: <span class="comment">// number</span>
+<a id="L826"></a><span class="ln">   826</span>			if c != &#39;-&#39; &amp;&amp; (c &lt; &#39;0&#39; || c &gt; &#39;9&#39;) {
+<a id="L827"></a><span class="ln">   827</span>				d.error(errPhase)
+<a id="L828"></a><span class="ln">   828</span>			}
+<a id="L829"></a><span class="ln">   829</span>			n, err := strconv.ParseFloat(string(item), 64)
+<a id="L830"></a><span class="ln">   830</span>			if err != nil {
+<a id="L831"></a><span class="ln">   831</span>				d.saveError(&amp;UnmarshalTypeError{&#34;number &#34; + string(item), reflect.TypeOf(0.0)})
+<a id="L832"></a><span class="ln">   832</span>			}
+<a id="L833"></a><span class="ln">   833</span>			return n
+<a id="L834"></a><span class="ln">   834</span>		}
+<a id="L835"></a><span class="ln">   835</span>		panic(&#34;unreachable&#34;)
+<a id="L836"></a><span class="ln">   836</span>	}
+<a id="L837"></a><span class="ln">   837</span>	
+<a id="L838"></a><span class="ln">   838</span>	<span class="comment">// getu4 decodes \uXXXX from the beginning of s, returning the hex value,</span>
+<a id="L839"></a><span class="ln">   839</span>	<span class="comment">// or it returns -1.</span>
+<a id="L840"></a><span class="ln">   840</span>	func getu4(s []byte) rune {
+<a id="L841"></a><span class="ln">   841</span>		if len(s) &lt; 6 || s[0] != &#39;\\&#39; || s[1] != &#39;u&#39; {
+<a id="L842"></a><span class="ln">   842</span>			return -1
+<a id="L843"></a><span class="ln">   843</span>		}
+<a id="L844"></a><span class="ln">   844</span>		r, err := strconv.ParseUint(string(s[2:6]), 16, 64)
+<a id="L845"></a><span class="ln">   845</span>		if err != nil {
+<a id="L846"></a><span class="ln">   846</span>			return -1
+<a id="L847"></a><span class="ln">   847</span>		}
+<a id="L848"></a><span class="ln">   848</span>		return rune(r)
+<a id="L849"></a><span class="ln">   849</span>	}
+<a id="L850"></a><span class="ln">   850</span>	
+<a id="L851"></a><span class="ln">   851</span>	<span class="comment">// unquote converts a quoted JSON string literal s into an actual string t.</span>
+<a id="L852"></a><span class="ln">   852</span>	<span class="comment">// The rules are different than for Go, so cannot use strconv.Unquote.</span>
+<a id="L853"></a><span class="ln">   853</span>	func unquote(s []byte) (t string, ok bool) {
+<a id="L854"></a><span class="ln">   854</span>		s, ok = unquoteBytes(s)
+<a id="L855"></a><span class="ln">   855</span>		t = string(s)
+<a id="L856"></a><span class="ln">   856</span>		return
+<a id="L857"></a><span class="ln">   857</span>	}
+<a id="L858"></a><span class="ln">   858</span>	
+<a id="L859"></a><span class="ln">   859</span>	func unquoteBytes(s []byte) (t []byte, ok bool) {
+<a id="L860"></a><span class="ln">   860</span>		if len(s) &lt; 2 || s[0] != &#39;&#34;&#39; || s[len(s)-1] != &#39;&#34;&#39; {
+<a id="L861"></a><span class="ln">   861</span>			return
+<a id="L862"></a><span class="ln">   862</span>		}
+<a id="L863"></a><span class="ln">   863</span>		s = s[1 : len(s)-1]
+<a id="L864"></a><span class="ln">   864</span>	
+<a id="L865"></a><span class="ln">   865</span>		<span class="comment">// Check for unusual characters. If there are none,</span>
+<a id="L866"></a><span class="ln">   866</span>		<span class="comment">// then no unquoting is needed, so return a slice of the</span>
+<a id="L867"></a><span class="ln">   867</span>		<span class="comment">// original bytes.</span>
+<a id="L868"></a><span class="ln">   868</span>		r := 0
+<a id="L869"></a><span class="ln">   869</span>		for r &lt; len(s) {
+<a id="L870"></a><span class="ln">   870</span>			c := s[r]
+<a id="L871"></a><span class="ln">   871</span>			if c == &#39;\\&#39; || c == &#39;&#34;&#39; || c &lt; &#39; &#39; {
+<a id="L872"></a><span class="ln">   872</span>				break
+<a id="L873"></a><span class="ln">   873</span>			}
+<a id="L874"></a><span class="ln">   874</span>			if c &lt; utf8.RuneSelf {
+<a id="L875"></a><span class="ln">   875</span>				r++
+<a id="L876"></a><span class="ln">   876</span>				continue
+<a id="L877"></a><span class="ln">   877</span>			}
+<a id="L878"></a><span class="ln">   878</span>			rr, size := utf8.DecodeRune(s[r:])
+<a id="L879"></a><span class="ln">   879</span>			if rr == utf8.RuneError &amp;&amp; size == 1 {
+<a id="L880"></a><span class="ln">   880</span>				break
+<a id="L881"></a><span class="ln">   881</span>			}
+<a id="L882"></a><span class="ln">   882</span>			r += size
+<a id="L883"></a><span class="ln">   883</span>		}
+<a id="L884"></a><span class="ln">   884</span>		if r == len(s) {
+<a id="L885"></a><span class="ln">   885</span>			return s, true
+<a id="L886"></a><span class="ln">   886</span>		}
+<a id="L887"></a><span class="ln">   887</span>	
+<a id="L888"></a><span class="ln">   888</span>		b := make([]byte, len(s)+2*utf8.UTFMax)
+<a id="L889"></a><span class="ln">   889</span>		w := copy(b, s[0:r])
+<a id="L890"></a><span class="ln">   890</span>		for r &lt; len(s) {
+<a id="L891"></a><span class="ln">   891</span>			<span class="comment">// Out of room?  Can only happen if s is full of</span>
+<a id="L892"></a><span class="ln">   892</span>			<span class="comment">// malformed UTF-8 and we&#39;re replacing each</span>
+<a id="L893"></a><span class="ln">   893</span>			<span class="comment">// byte with RuneError.</span>
+<a id="L894"></a><span class="ln">   894</span>			if w &gt;= len(b)-2*utf8.UTFMax {
+<a id="L895"></a><span class="ln">   895</span>				nb := make([]byte, (len(b)+utf8.UTFMax)*2)
+<a id="L896"></a><span class="ln">   896</span>				copy(nb, b[0:w])
+<a id="L897"></a><span class="ln">   897</span>				b = nb
+<a id="L898"></a><span class="ln">   898</span>			}
+<a id="L899"></a><span class="ln">   899</span>			switch c := s[r]; {
+<a id="L900"></a><span class="ln">   900</span>			case c == &#39;\\&#39;:
+<a id="L901"></a><span class="ln">   901</span>				r++
+<a id="L902"></a><span class="ln">   902</span>				if r &gt;= len(s) {
+<a id="L903"></a><span class="ln">   903</span>					return
+<a id="L904"></a><span class="ln">   904</span>				}
+<a id="L905"></a><span class="ln">   905</span>				switch s[r] {
+<a id="L906"></a><span class="ln">   906</span>				default:
+<a id="L907"></a><span class="ln">   907</span>					return
+<a id="L908"></a><span class="ln">   908</span>				case &#39;&#34;&#39;, &#39;\\&#39;, &#39;/&#39;, &#39;\&#39;&#39;:
+<a id="L909"></a><span class="ln">   909</span>					b[w] = s[r]
+<a id="L910"></a><span class="ln">   910</span>					r++
+<a id="L911"></a><span class="ln">   911</span>					w++
+<a id="L912"></a><span class="ln">   912</span>				case &#39;b&#39;:
+<a id="L913"></a><span class="ln">   913</span>					b[w] = &#39;\b&#39;
+<a id="L914"></a><span class="ln">   914</span>					r++
+<a id="L915"></a><span class="ln">   915</span>					w++
+<a id="L916"></a><span class="ln">   916</span>				case &#39;f&#39;:
+<a id="L917"></a><span class="ln">   917</span>					b[w] = &#39;\f&#39;
+<a id="L918"></a><span class="ln">   918</span>					r++
+<a id="L919"></a><span class="ln">   919</span>					w++
+<a id="L920"></a><span class="ln">   920</span>				case &#39;n&#39;:
+<a id="L921"></a><span class="ln">   921</span>					b[w] = &#39;\n&#39;
+<a id="L922"></a><span class="ln">   922</span>					r++
+<a id="L923"></a><span class="ln">   923</span>					w++
+<a id="L924"></a><span class="ln">   924</span>				case &#39;r&#39;:
+<a id="L925"></a><span class="ln">   925</span>					b[w] = &#39;\r&#39;
+<a id="L926"></a><span class="ln">   926</span>					r++
+<a id="L927"></a><span class="ln">   927</span>					w++
+<a id="L928"></a><span class="ln">   928</span>				case &#39;t&#39;:
+<a id="L929"></a><span class="ln">   929</span>					b[w] = &#39;\t&#39;
+<a id="L930"></a><span class="ln">   930</span>					r++
+<a id="L931"></a><span class="ln">   931</span>					w++
+<a id="L932"></a><span class="ln">   932</span>				case &#39;u&#39;:
+<a id="L933"></a><span class="ln">   933</span>					r--
+<a id="L934"></a><span class="ln">   934</span>					rr := getu4(s[r:])
+<a id="L935"></a><span class="ln">   935</span>					if rr &lt; 0 {
+<a id="L936"></a><span class="ln">   936</span>						return
+<a id="L937"></a><span class="ln">   937</span>					}
+<a id="L938"></a><span class="ln">   938</span>					r += 6
+<a id="L939"></a><span class="ln">   939</span>					if utf16.IsSurrogate(rr) {
+<a id="L940"></a><span class="ln">   940</span>						rr1 := getu4(s[r:])
+<a id="L941"></a><span class="ln">   941</span>						if dec := utf16.DecodeRune(rr, rr1); dec != unicode.ReplacementChar {
+<a id="L942"></a><span class="ln">   942</span>							<span class="comment">// A valid pair; consume.</span>
+<a id="L943"></a><span class="ln">   943</span>							r += 6
+<a id="L944"></a><span class="ln">   944</span>							w += utf8.EncodeRune(b[w:], dec)
+<a id="L945"></a><span class="ln">   945</span>							break
+<a id="L946"></a><span class="ln">   946</span>						}
+<a id="L947"></a><span class="ln">   947</span>						<span class="comment">// Invalid surrogate; fall back to replacement rune.</span>
+<a id="L948"></a><span class="ln">   948</span>						rr = unicode.ReplacementChar
+<a id="L949"></a><span class="ln">   949</span>					}
+<a id="L950"></a><span class="ln">   950</span>					w += utf8.EncodeRune(b[w:], rr)
+<a id="L951"></a><span class="ln">   951</span>				}
+<a id="L952"></a><span class="ln">   952</span>	
+<a id="L953"></a><span class="ln">   953</span>			<span class="comment">// Quote, control characters are invalid.</span>
+<a id="L954"></a><span class="ln">   954</span>			case c == &#39;&#34;&#39;, c &lt; &#39; &#39;:
+<a id="L955"></a><span class="ln">   955</span>				return
+<a id="L956"></a><span class="ln">   956</span>	
+<a id="L957"></a><span class="ln">   957</span>			<span class="comment">// ASCII</span>
+<a id="L958"></a><span class="ln">   958</span>			case c &lt; utf8.RuneSelf:
+<a id="L959"></a><span class="ln">   959</span>				b[w] = c
+<a id="L960"></a><span class="ln">   960</span>				r++
+<a id="L961"></a><span class="ln">   961</span>				w++
+<a id="L962"></a><span class="ln">   962</span>	
+<a id="L963"></a><span class="ln">   963</span>			<span class="comment">// Coerce to well-formed UTF-8.</span>
+<a id="L964"></a><span class="ln">   964</span>			default:
+<a id="L965"></a><span class="ln">   965</span>				rr, size := utf8.DecodeRune(s[r:])
+<a id="L966"></a><span class="ln">   966</span>				r += size
+<a id="L967"></a><span class="ln">   967</span>				w += utf8.EncodeRune(b[w:], rr)
+<a id="L968"></a><span class="ln">   968</span>			}
+<a id="L969"></a><span class="ln">   969</span>		}
+<a id="L970"></a><span class="ln">   970</span>		return b[0:w], true
+<a id="L971"></a><span class="ln">   971</span>	}
+<a id="L972"></a><span class="ln">   972</span>	
+<a id="L973"></a><span class="ln">   973</span>	<span class="comment">// The following is issue 3069.</span>
+<a id="L974"></a><span class="ln">   974</span>	
+<a id="L975"></a><span class="ln">   975</span>	<span class="comment">// BUG(rsc): This package ignores anonymous (embedded) struct fields</span>
+<a id="L976"></a><span class="ln">   976</span>	<span class="comment">// during encoding and decoding.  A future version may assign meaning</span>
+<a id="L977"></a><span class="ln">   977</span>	<span class="comment">// to them.  To force an anonymous field to be ignored in all future</span>
+<a id="L978"></a><span class="ln">   978</span>	<span class="comment">// versions of this package, use an explicit `json:&#34;-&#34;` tag in the struct</span>
+<a id="L979"></a><span class="ln">   979</span>	<span class="comment">// definition.</span>
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

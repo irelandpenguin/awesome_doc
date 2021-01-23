@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/strconv/extfloat.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/strconv/extfloat.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package strconv
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;math&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// An extFloat represents an extended floating-point number, with more</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// precision than a float64. It does not try to save bits: the</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// number represented by the structure is mant*(2^exp), with a negative</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// sign if neg is true.</span>
+<a id="L13"></a><span class="ln">    13</span>	type extFloat struct {
+<a id="L14"></a><span class="ln">    14</span>		mant uint64
+<a id="L15"></a><span class="ln">    15</span>		exp  int
+<a id="L16"></a><span class="ln">    16</span>		neg  bool
+<a id="L17"></a><span class="ln">    17</span>	}
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Powers of ten taken from double-conversion library.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// http://code.google.com/p/double-conversion/</span>
+<a id="L21"></a><span class="ln">    21</span>	const (
+<a id="L22"></a><span class="ln">    22</span>		firstPowerOfTen = -348
+<a id="L23"></a><span class="ln">    23</span>		stepPowerOfTen  = 8
+<a id="L24"></a><span class="ln">    24</span>	)
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	var smallPowersOfTen = [...]extFloat{
+<a id="L27"></a><span class="ln">    27</span>		{1 &lt;&lt; 63, -63, false},        <span class="comment">// 1</span>
+<a id="L28"></a><span class="ln">    28</span>		{0xa &lt;&lt; 60, -60, false},      <span class="comment">// 1e1</span>
+<a id="L29"></a><span class="ln">    29</span>		{0x64 &lt;&lt; 57, -57, false},     <span class="comment">// 1e2</span>
+<a id="L30"></a><span class="ln">    30</span>		{0x3e8 &lt;&lt; 54, -54, false},    <span class="comment">// 1e3</span>
+<a id="L31"></a><span class="ln">    31</span>		{0x2710 &lt;&lt; 50, -50, false},   <span class="comment">// 1e4</span>
+<a id="L32"></a><span class="ln">    32</span>		{0x186a0 &lt;&lt; 47, -47, false},  <span class="comment">// 1e5</span>
+<a id="L33"></a><span class="ln">    33</span>		{0xf4240 &lt;&lt; 44, -44, false},  <span class="comment">// 1e6</span>
+<a id="L34"></a><span class="ln">    34</span>		{0x989680 &lt;&lt; 40, -40, false}, <span class="comment">// 1e7</span>
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	var powersOfTen = [...]extFloat{
+<a id="L38"></a><span class="ln">    38</span>		{0xfa8fd5a0081c0288, -1220, false}, <span class="comment">// 10^-348</span>
+<a id="L39"></a><span class="ln">    39</span>		{0xbaaee17fa23ebf76, -1193, false}, <span class="comment">// 10^-340</span>
+<a id="L40"></a><span class="ln">    40</span>		{0x8b16fb203055ac76, -1166, false}, <span class="comment">// 10^-332</span>
+<a id="L41"></a><span class="ln">    41</span>		{0xcf42894a5dce35ea, -1140, false}, <span class="comment">// 10^-324</span>
+<a id="L42"></a><span class="ln">    42</span>		{0x9a6bb0aa55653b2d, -1113, false}, <span class="comment">// 10^-316</span>
+<a id="L43"></a><span class="ln">    43</span>		{0xe61acf033d1a45df, -1087, false}, <span class="comment">// 10^-308</span>
+<a id="L44"></a><span class="ln">    44</span>		{0xab70fe17c79ac6ca, -1060, false}, <span class="comment">// 10^-300</span>
+<a id="L45"></a><span class="ln">    45</span>		{0xff77b1fcbebcdc4f, -1034, false}, <span class="comment">// 10^-292</span>
+<a id="L46"></a><span class="ln">    46</span>		{0xbe5691ef416bd60c, -1007, false}, <span class="comment">// 10^-284</span>
+<a id="L47"></a><span class="ln">    47</span>		{0x8dd01fad907ffc3c, -980, false},  <span class="comment">// 10^-276</span>
+<a id="L48"></a><span class="ln">    48</span>		{0xd3515c2831559a83, -954, false},  <span class="comment">// 10^-268</span>
+<a id="L49"></a><span class="ln">    49</span>		{0x9d71ac8fada6c9b5, -927, false},  <span class="comment">// 10^-260</span>
+<a id="L50"></a><span class="ln">    50</span>		{0xea9c227723ee8bcb, -901, false},  <span class="comment">// 10^-252</span>
+<a id="L51"></a><span class="ln">    51</span>		{0xaecc49914078536d, -874, false},  <span class="comment">// 10^-244</span>
+<a id="L52"></a><span class="ln">    52</span>		{0x823c12795db6ce57, -847, false},  <span class="comment">// 10^-236</span>
+<a id="L53"></a><span class="ln">    53</span>		{0xc21094364dfb5637, -821, false},  <span class="comment">// 10^-228</span>
+<a id="L54"></a><span class="ln">    54</span>		{0x9096ea6f3848984f, -794, false},  <span class="comment">// 10^-220</span>
+<a id="L55"></a><span class="ln">    55</span>		{0xd77485cb25823ac7, -768, false},  <span class="comment">// 10^-212</span>
+<a id="L56"></a><span class="ln">    56</span>		{0xa086cfcd97bf97f4, -741, false},  <span class="comment">// 10^-204</span>
+<a id="L57"></a><span class="ln">    57</span>		{0xef340a98172aace5, -715, false},  <span class="comment">// 10^-196</span>
+<a id="L58"></a><span class="ln">    58</span>		{0xb23867fb2a35b28e, -688, false},  <span class="comment">// 10^-188</span>
+<a id="L59"></a><span class="ln">    59</span>		{0x84c8d4dfd2c63f3b, -661, false},  <span class="comment">// 10^-180</span>
+<a id="L60"></a><span class="ln">    60</span>		{0xc5dd44271ad3cdba, -635, false},  <span class="comment">// 10^-172</span>
+<a id="L61"></a><span class="ln">    61</span>		{0x936b9fcebb25c996, -608, false},  <span class="comment">// 10^-164</span>
+<a id="L62"></a><span class="ln">    62</span>		{0xdbac6c247d62a584, -582, false},  <span class="comment">// 10^-156</span>
+<a id="L63"></a><span class="ln">    63</span>		{0xa3ab66580d5fdaf6, -555, false},  <span class="comment">// 10^-148</span>
+<a id="L64"></a><span class="ln">    64</span>		{0xf3e2f893dec3f126, -529, false},  <span class="comment">// 10^-140</span>
+<a id="L65"></a><span class="ln">    65</span>		{0xb5b5ada8aaff80b8, -502, false},  <span class="comment">// 10^-132</span>
+<a id="L66"></a><span class="ln">    66</span>		{0x87625f056c7c4a8b, -475, false},  <span class="comment">// 10^-124</span>
+<a id="L67"></a><span class="ln">    67</span>		{0xc9bcff6034c13053, -449, false},  <span class="comment">// 10^-116</span>
+<a id="L68"></a><span class="ln">    68</span>		{0x964e858c91ba2655, -422, false},  <span class="comment">// 10^-108</span>
+<a id="L69"></a><span class="ln">    69</span>		{0xdff9772470297ebd, -396, false},  <span class="comment">// 10^-100</span>
+<a id="L70"></a><span class="ln">    70</span>		{0xa6dfbd9fb8e5b88f, -369, false},  <span class="comment">// 10^-92</span>
+<a id="L71"></a><span class="ln">    71</span>		{0xf8a95fcf88747d94, -343, false},  <span class="comment">// 10^-84</span>
+<a id="L72"></a><span class="ln">    72</span>		{0xb94470938fa89bcf, -316, false},  <span class="comment">// 10^-76</span>
+<a id="L73"></a><span class="ln">    73</span>		{0x8a08f0f8bf0f156b, -289, false},  <span class="comment">// 10^-68</span>
+<a id="L74"></a><span class="ln">    74</span>		{0xcdb02555653131b6, -263, false},  <span class="comment">// 10^-60</span>
+<a id="L75"></a><span class="ln">    75</span>		{0x993fe2c6d07b7fac, -236, false},  <span class="comment">// 10^-52</span>
+<a id="L76"></a><span class="ln">    76</span>		{0xe45c10c42a2b3b06, -210, false},  <span class="comment">// 10^-44</span>
+<a id="L77"></a><span class="ln">    77</span>		{0xaa242499697392d3, -183, false},  <span class="comment">// 10^-36</span>
+<a id="L78"></a><span class="ln">    78</span>		{0xfd87b5f28300ca0e, -157, false},  <span class="comment">// 10^-28</span>
+<a id="L79"></a><span class="ln">    79</span>		{0xbce5086492111aeb, -130, false},  <span class="comment">// 10^-20</span>
+<a id="L80"></a><span class="ln">    80</span>		{0x8cbccc096f5088cc, -103, false},  <span class="comment">// 10^-12</span>
+<a id="L81"></a><span class="ln">    81</span>		{0xd1b71758e219652c, -77, false},   <span class="comment">// 10^-4</span>
+<a id="L82"></a><span class="ln">    82</span>		{0x9c40000000000000, -50, false},   <span class="comment">// 10^4</span>
+<a id="L83"></a><span class="ln">    83</span>		{0xe8d4a51000000000, -24, false},   <span class="comment">// 10^12</span>
+<a id="L84"></a><span class="ln">    84</span>		{0xad78ebc5ac620000, 3, false},     <span class="comment">// 10^20</span>
+<a id="L85"></a><span class="ln">    85</span>		{0x813f3978f8940984, 30, false},    <span class="comment">// 10^28</span>
+<a id="L86"></a><span class="ln">    86</span>		{0xc097ce7bc90715b3, 56, false},    <span class="comment">// 10^36</span>
+<a id="L87"></a><span class="ln">    87</span>		{0x8f7e32ce7bea5c70, 83, false},    <span class="comment">// 10^44</span>
+<a id="L88"></a><span class="ln">    88</span>		{0xd5d238a4abe98068, 109, false},   <span class="comment">// 10^52</span>
+<a id="L89"></a><span class="ln">    89</span>		{0x9f4f2726179a2245, 136, false},   <span class="comment">// 10^60</span>
+<a id="L90"></a><span class="ln">    90</span>		{0xed63a231d4c4fb27, 162, false},   <span class="comment">// 10^68</span>
+<a id="L91"></a><span class="ln">    91</span>		{0xb0de65388cc8ada8, 189, false},   <span class="comment">// 10^76</span>
+<a id="L92"></a><span class="ln">    92</span>		{0x83c7088e1aab65db, 216, false},   <span class="comment">// 10^84</span>
+<a id="L93"></a><span class="ln">    93</span>		{0xc45d1df942711d9a, 242, false},   <span class="comment">// 10^92</span>
+<a id="L94"></a><span class="ln">    94</span>		{0x924d692ca61be758, 269, false},   <span class="comment">// 10^100</span>
+<a id="L95"></a><span class="ln">    95</span>		{0xda01ee641a708dea, 295, false},   <span class="comment">// 10^108</span>
+<a id="L96"></a><span class="ln">    96</span>		{0xa26da3999aef774a, 322, false},   <span class="comment">// 10^116</span>
+<a id="L97"></a><span class="ln">    97</span>		{0xf209787bb47d6b85, 348, false},   <span class="comment">// 10^124</span>
+<a id="L98"></a><span class="ln">    98</span>		{0xb454e4a179dd1877, 375, false},   <span class="comment">// 10^132</span>
+<a id="L99"></a><span class="ln">    99</span>		{0x865b86925b9bc5c2, 402, false},   <span class="comment">// 10^140</span>
+<a id="L100"></a><span class="ln">   100</span>		{0xc83553c5c8965d3d, 428, false},   <span class="comment">// 10^148</span>
+<a id="L101"></a><span class="ln">   101</span>		{0x952ab45cfa97a0b3, 455, false},   <span class="comment">// 10^156</span>
+<a id="L102"></a><span class="ln">   102</span>		{0xde469fbd99a05fe3, 481, false},   <span class="comment">// 10^164</span>
+<a id="L103"></a><span class="ln">   103</span>		{0xa59bc234db398c25, 508, false},   <span class="comment">// 10^172</span>
+<a id="L104"></a><span class="ln">   104</span>		{0xf6c69a72a3989f5c, 534, false},   <span class="comment">// 10^180</span>
+<a id="L105"></a><span class="ln">   105</span>		{0xb7dcbf5354e9bece, 561, false},   <span class="comment">// 10^188</span>
+<a id="L106"></a><span class="ln">   106</span>		{0x88fcf317f22241e2, 588, false},   <span class="comment">// 10^196</span>
+<a id="L107"></a><span class="ln">   107</span>		{0xcc20ce9bd35c78a5, 614, false},   <span class="comment">// 10^204</span>
+<a id="L108"></a><span class="ln">   108</span>		{0x98165af37b2153df, 641, false},   <span class="comment">// 10^212</span>
+<a id="L109"></a><span class="ln">   109</span>		{0xe2a0b5dc971f303a, 667, false},   <span class="comment">// 10^220</span>
+<a id="L110"></a><span class="ln">   110</span>		{0xa8d9d1535ce3b396, 694, false},   <span class="comment">// 10^228</span>
+<a id="L111"></a><span class="ln">   111</span>		{0xfb9b7cd9a4a7443c, 720, false},   <span class="comment">// 10^236</span>
+<a id="L112"></a><span class="ln">   112</span>		{0xbb764c4ca7a44410, 747, false},   <span class="comment">// 10^244</span>
+<a id="L113"></a><span class="ln">   113</span>		{0x8bab8eefb6409c1a, 774, false},   <span class="comment">// 10^252</span>
+<a id="L114"></a><span class="ln">   114</span>		{0xd01fef10a657842c, 800, false},   <span class="comment">// 10^260</span>
+<a id="L115"></a><span class="ln">   115</span>		{0x9b10a4e5e9913129, 827, false},   <span class="comment">// 10^268</span>
+<a id="L116"></a><span class="ln">   116</span>		{0xe7109bfba19c0c9d, 853, false},   <span class="comment">// 10^276</span>
+<a id="L117"></a><span class="ln">   117</span>		{0xac2820d9623bf429, 880, false},   <span class="comment">// 10^284</span>
+<a id="L118"></a><span class="ln">   118</span>		{0x80444b5e7aa7cf85, 907, false},   <span class="comment">// 10^292</span>
+<a id="L119"></a><span class="ln">   119</span>		{0xbf21e44003acdd2d, 933, false},   <span class="comment">// 10^300</span>
+<a id="L120"></a><span class="ln">   120</span>		{0x8e679c2f5e44ff8f, 960, false},   <span class="comment">// 10^308</span>
+<a id="L121"></a><span class="ln">   121</span>		{0xd433179d9c8cb841, 986, false},   <span class="comment">// 10^316</span>
+<a id="L122"></a><span class="ln">   122</span>		{0x9e19db92b4e31ba9, 1013, false},  <span class="comment">// 10^324</span>
+<a id="L123"></a><span class="ln">   123</span>		{0xeb96bf6ebadf77d9, 1039, false},  <span class="comment">// 10^332</span>
+<a id="L124"></a><span class="ln">   124</span>		{0xaf87023b9bf0ee6b, 1066, false},  <span class="comment">// 10^340</span>
+<a id="L125"></a><span class="ln">   125</span>	}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// floatBits returns the bits of the float64 that best approximates</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// the extFloat passed as receiver. Overflow is set to true if</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// the resulting float64 is ±Inf.</span>
+<a id="L130"></a><span class="ln">   130</span>	func (f *extFloat) floatBits() (bits uint64, overflow bool) {
+<a id="L131"></a><span class="ln">   131</span>		flt := &amp;float64info
+<a id="L132"></a><span class="ln">   132</span>		f.Normalize()
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>		exp := f.exp + 63
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>		<span class="comment">// Exponent too small.</span>
+<a id="L137"></a><span class="ln">   137</span>		if exp &lt; flt.bias+1 {
+<a id="L138"></a><span class="ln">   138</span>			n := flt.bias + 1 - exp
+<a id="L139"></a><span class="ln">   139</span>			f.mant &gt;&gt;= uint(n)
+<a id="L140"></a><span class="ln">   140</span>			exp += n
+<a id="L141"></a><span class="ln">   141</span>		}
+<a id="L142"></a><span class="ln">   142</span>	
+<a id="L143"></a><span class="ln">   143</span>		<span class="comment">// Extract 1+flt.mantbits bits.</span>
+<a id="L144"></a><span class="ln">   144</span>		mant := f.mant &gt;&gt; (63 - flt.mantbits)
+<a id="L145"></a><span class="ln">   145</span>		if f.mant&amp;(1&lt;&lt;(62-flt.mantbits)) != 0 {
+<a id="L146"></a><span class="ln">   146</span>			<span class="comment">// Round up.</span>
+<a id="L147"></a><span class="ln">   147</span>			mant += 1
+<a id="L148"></a><span class="ln">   148</span>		}
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// Rounding might have added a bit; shift down.</span>
+<a id="L151"></a><span class="ln">   151</span>		if mant == 2&lt;&lt;flt.mantbits {
+<a id="L152"></a><span class="ln">   152</span>			mant &gt;&gt;= 1
+<a id="L153"></a><span class="ln">   153</span>			exp++
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// Infinities.</span>
+<a id="L157"></a><span class="ln">   157</span>		if exp-flt.bias &gt;= 1&lt;&lt;flt.expbits-1 {
+<a id="L158"></a><span class="ln">   158</span>			goto overflow
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		<span class="comment">// Denormalized?</span>
+<a id="L162"></a><span class="ln">   162</span>		if mant&amp;(1&lt;&lt;flt.mantbits) == 0 {
+<a id="L163"></a><span class="ln">   163</span>			exp = flt.bias
+<a id="L164"></a><span class="ln">   164</span>		}
+<a id="L165"></a><span class="ln">   165</span>		goto out
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>	overflow:
+<a id="L168"></a><span class="ln">   168</span>		<span class="comment">// ±Inf</span>
+<a id="L169"></a><span class="ln">   169</span>		mant = 0
+<a id="L170"></a><span class="ln">   170</span>		exp = 1&lt;&lt;flt.expbits - 1 + flt.bias
+<a id="L171"></a><span class="ln">   171</span>		overflow = true
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>	out:
+<a id="L174"></a><span class="ln">   174</span>		<span class="comment">// Assemble bits.</span>
+<a id="L175"></a><span class="ln">   175</span>		bits = mant &amp; (uint64(1)&lt;&lt;flt.mantbits - 1)
+<a id="L176"></a><span class="ln">   176</span>		bits |= uint64((exp-flt.bias)&amp;(1&lt;&lt;flt.expbits-1)) &lt;&lt; flt.mantbits
+<a id="L177"></a><span class="ln">   177</span>		if f.neg {
+<a id="L178"></a><span class="ln">   178</span>			bits |= 1 &lt;&lt; (flt.mantbits + flt.expbits)
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>		return
+<a id="L181"></a><span class="ln">   181</span>	}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>	<span class="comment">// Assign sets f to the value of x.</span>
+<a id="L184"></a><span class="ln">   184</span>	func (f *extFloat) Assign(x float64) {
+<a id="L185"></a><span class="ln">   185</span>		if x &lt; 0 {
+<a id="L186"></a><span class="ln">   186</span>			x = -x
+<a id="L187"></a><span class="ln">   187</span>			f.neg = true
+<a id="L188"></a><span class="ln">   188</span>		}
+<a id="L189"></a><span class="ln">   189</span>		x, f.exp = math.Frexp(x)
+<a id="L190"></a><span class="ln">   190</span>		f.mant = uint64(x * float64(1&lt;&lt;64))
+<a id="L191"></a><span class="ln">   191</span>		f.exp -= 64
+<a id="L192"></a><span class="ln">   192</span>	}
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>	<span class="comment">// AssignComputeBounds sets f to the value of x and returns</span>
+<a id="L195"></a><span class="ln">   195</span>	<span class="comment">// lower, upper such that any number in the closed interval</span>
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// [lower, upper] is converted back to x.</span>
+<a id="L197"></a><span class="ln">   197</span>	func (f *extFloat) AssignComputeBounds(x float64) (lower, upper extFloat) {
+<a id="L198"></a><span class="ln">   198</span>		<span class="comment">// Special cases.</span>
+<a id="L199"></a><span class="ln">   199</span>		bits := math.Float64bits(x)
+<a id="L200"></a><span class="ln">   200</span>		flt := &amp;float64info
+<a id="L201"></a><span class="ln">   201</span>		neg := bits&gt;&gt;(flt.expbits+flt.mantbits) != 0
+<a id="L202"></a><span class="ln">   202</span>		expBiased := int(bits&gt;&gt;flt.mantbits) &amp; (1&lt;&lt;flt.expbits - 1)
+<a id="L203"></a><span class="ln">   203</span>		mant := bits &amp; (uint64(1)&lt;&lt;flt.mantbits - 1)
+<a id="L204"></a><span class="ln">   204</span>	
+<a id="L205"></a><span class="ln">   205</span>		if expBiased == 0 {
+<a id="L206"></a><span class="ln">   206</span>			<span class="comment">// denormalized.</span>
+<a id="L207"></a><span class="ln">   207</span>			f.mant = mant
+<a id="L208"></a><span class="ln">   208</span>			f.exp = 1 + flt.bias - int(flt.mantbits)
+<a id="L209"></a><span class="ln">   209</span>		} else {
+<a id="L210"></a><span class="ln">   210</span>			f.mant = mant | 1&lt;&lt;flt.mantbits
+<a id="L211"></a><span class="ln">   211</span>			f.exp = expBiased + flt.bias - int(flt.mantbits)
+<a id="L212"></a><span class="ln">   212</span>		}
+<a id="L213"></a><span class="ln">   213</span>		f.neg = neg
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>		upper = extFloat{mant: 2*f.mant + 1, exp: f.exp - 1, neg: f.neg}
+<a id="L216"></a><span class="ln">   216</span>		if mant != 0 || expBiased == 1 {
+<a id="L217"></a><span class="ln">   217</span>			lower = extFloat{mant: 2*f.mant - 1, exp: f.exp - 1, neg: f.neg}
+<a id="L218"></a><span class="ln">   218</span>		} else {
+<a id="L219"></a><span class="ln">   219</span>			lower = extFloat{mant: 4*f.mant - 1, exp: f.exp - 2, neg: f.neg}
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>		return
+<a id="L222"></a><span class="ln">   222</span>	}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// Normalize normalizes f so that the highest bit of the mantissa is</span>
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">// set, and returns the number by which the mantissa was left-shifted.</span>
+<a id="L226"></a><span class="ln">   226</span>	func (f *extFloat) Normalize() uint {
+<a id="L227"></a><span class="ln">   227</span>		if f.mant == 0 {
+<a id="L228"></a><span class="ln">   228</span>			return 0
+<a id="L229"></a><span class="ln">   229</span>		}
+<a id="L230"></a><span class="ln">   230</span>		exp_before := f.exp
+<a id="L231"></a><span class="ln">   231</span>		for f.mant &lt; (1 &lt;&lt; 55) {
+<a id="L232"></a><span class="ln">   232</span>			f.mant &lt;&lt;= 8
+<a id="L233"></a><span class="ln">   233</span>			f.exp -= 8
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>		for f.mant &lt; (1 &lt;&lt; 63) {
+<a id="L236"></a><span class="ln">   236</span>			f.mant &lt;&lt;= 1
+<a id="L237"></a><span class="ln">   237</span>			f.exp -= 1
+<a id="L238"></a><span class="ln">   238</span>		}
+<a id="L239"></a><span class="ln">   239</span>		return uint(exp_before - f.exp)
+<a id="L240"></a><span class="ln">   240</span>	}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>	<span class="comment">// Multiply sets f to the product f*g: the result is correctly rounded,</span>
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// but not normalized.</span>
+<a id="L244"></a><span class="ln">   244</span>	func (f *extFloat) Multiply(g extFloat) {
+<a id="L245"></a><span class="ln">   245</span>		fhi, flo := f.mant&gt;&gt;32, uint64(uint32(f.mant))
+<a id="L246"></a><span class="ln">   246</span>		ghi, glo := g.mant&gt;&gt;32, uint64(uint32(g.mant))
+<a id="L247"></a><span class="ln">   247</span>	
+<a id="L248"></a><span class="ln">   248</span>		<span class="comment">// Cross products.</span>
+<a id="L249"></a><span class="ln">   249</span>		cross1 := fhi * glo
+<a id="L250"></a><span class="ln">   250</span>		cross2 := flo * ghi
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>		<span class="comment">// f.mant*g.mant is fhi*ghi &lt;&lt; 64 + (cross1+cross2) &lt;&lt; 32 + flo*glo</span>
+<a id="L253"></a><span class="ln">   253</span>		f.mant = fhi*ghi + (cross1 &gt;&gt; 32) + (cross2 &gt;&gt; 32)
+<a id="L254"></a><span class="ln">   254</span>		rem := uint64(uint32(cross1)) + uint64(uint32(cross2)) + ((flo * glo) &gt;&gt; 32)
+<a id="L255"></a><span class="ln">   255</span>		<span class="comment">// Round up.</span>
+<a id="L256"></a><span class="ln">   256</span>		rem += (1 &lt;&lt; 31)
+<a id="L257"></a><span class="ln">   257</span>	
+<a id="L258"></a><span class="ln">   258</span>		f.mant += (rem &gt;&gt; 32)
+<a id="L259"></a><span class="ln">   259</span>		f.exp = f.exp + g.exp + 64
+<a id="L260"></a><span class="ln">   260</span>	}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>	var uint64pow10 = [...]uint64{
+<a id="L263"></a><span class="ln">   263</span>		1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+<a id="L264"></a><span class="ln">   264</span>		1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+<a id="L265"></a><span class="ln">   265</span>	}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// AssignDecimal sets f to an approximate value of the decimal d. It</span>
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// returns true if the value represented by f is guaranteed to be the</span>
+<a id="L269"></a><span class="ln">   269</span>	<span class="comment">// best approximation of d after being rounded to a float64. </span>
+<a id="L270"></a><span class="ln">   270</span>	func (f *extFloat) AssignDecimal(d *decimal) (ok bool) {
+<a id="L271"></a><span class="ln">   271</span>		const uint64digits = 19
+<a id="L272"></a><span class="ln">   272</span>		const errorscale = 8
+<a id="L273"></a><span class="ln">   273</span>		mant10, digits := d.atou64()
+<a id="L274"></a><span class="ln">   274</span>		exp10 := d.dp - digits
+<a id="L275"></a><span class="ln">   275</span>		errors := 0 <span class="comment">// An upper bound for error, computed in errorscale*ulp.</span>
+<a id="L276"></a><span class="ln">   276</span>	
+<a id="L277"></a><span class="ln">   277</span>		if digits &lt; d.nd {
+<a id="L278"></a><span class="ln">   278</span>			<span class="comment">// the decimal number was truncated.</span>
+<a id="L279"></a><span class="ln">   279</span>			errors += errorscale / 2
+<a id="L280"></a><span class="ln">   280</span>		}
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>		f.mant = mant10
+<a id="L283"></a><span class="ln">   283</span>		f.exp = 0
+<a id="L284"></a><span class="ln">   284</span>		f.neg = d.neg
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>		<span class="comment">// Multiply by powers of ten.</span>
+<a id="L287"></a><span class="ln">   287</span>		i := (exp10 - firstPowerOfTen) / stepPowerOfTen
+<a id="L288"></a><span class="ln">   288</span>		if exp10 &lt; firstPowerOfTen || i &gt;= len(powersOfTen) {
+<a id="L289"></a><span class="ln">   289</span>			return false
+<a id="L290"></a><span class="ln">   290</span>		}
+<a id="L291"></a><span class="ln">   291</span>		adjExp := (exp10 - firstPowerOfTen) % stepPowerOfTen
+<a id="L292"></a><span class="ln">   292</span>	
+<a id="L293"></a><span class="ln">   293</span>		<span class="comment">// We multiply by exp%step</span>
+<a id="L294"></a><span class="ln">   294</span>		if digits+adjExp &lt;= uint64digits {
+<a id="L295"></a><span class="ln">   295</span>			<span class="comment">// We can multiply the mantissa</span>
+<a id="L296"></a><span class="ln">   296</span>			f.mant *= uint64(float64pow10[adjExp])
+<a id="L297"></a><span class="ln">   297</span>			f.Normalize()
+<a id="L298"></a><span class="ln">   298</span>		} else {
+<a id="L299"></a><span class="ln">   299</span>			f.Normalize()
+<a id="L300"></a><span class="ln">   300</span>			f.Multiply(smallPowersOfTen[adjExp])
+<a id="L301"></a><span class="ln">   301</span>			errors += errorscale / 2
+<a id="L302"></a><span class="ln">   302</span>		}
+<a id="L303"></a><span class="ln">   303</span>	
+<a id="L304"></a><span class="ln">   304</span>		<span class="comment">// We multiply by 10 to the exp - exp%step.</span>
+<a id="L305"></a><span class="ln">   305</span>		f.Multiply(powersOfTen[i])
+<a id="L306"></a><span class="ln">   306</span>		if errors &gt; 0 {
+<a id="L307"></a><span class="ln">   307</span>			errors += 1
+<a id="L308"></a><span class="ln">   308</span>		}
+<a id="L309"></a><span class="ln">   309</span>		errors += errorscale / 2
+<a id="L310"></a><span class="ln">   310</span>	
+<a id="L311"></a><span class="ln">   311</span>		<span class="comment">// Normalize</span>
+<a id="L312"></a><span class="ln">   312</span>		shift := f.Normalize()
+<a id="L313"></a><span class="ln">   313</span>		errors &lt;&lt;= shift
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>		<span class="comment">// Now f is a good approximation of the decimal.</span>
+<a id="L316"></a><span class="ln">   316</span>		<span class="comment">// Check whether the error is too large: that is, if the mantissa</span>
+<a id="L317"></a><span class="ln">   317</span>		<span class="comment">// is perturbated by the error, the resulting float64 will change.</span>
+<a id="L318"></a><span class="ln">   318</span>		<span class="comment">// The 64 bits mantissa is 1 + 52 bits for float64 + 11 extra bits.</span>
+<a id="L319"></a><span class="ln">   319</span>		<span class="comment">//</span>
+<a id="L320"></a><span class="ln">   320</span>		<span class="comment">// In many cases the approximation will be good enough.</span>
+<a id="L321"></a><span class="ln">   321</span>		const denormalExp = -1023 - 63
+<a id="L322"></a><span class="ln">   322</span>		flt := &amp;float64info
+<a id="L323"></a><span class="ln">   323</span>		var extrabits uint
+<a id="L324"></a><span class="ln">   324</span>		if f.exp &lt;= denormalExp {
+<a id="L325"></a><span class="ln">   325</span>			extrabits = uint(63 - flt.mantbits + 1 + uint(denormalExp-f.exp))
+<a id="L326"></a><span class="ln">   326</span>		} else {
+<a id="L327"></a><span class="ln">   327</span>			extrabits = uint(63 - flt.mantbits)
+<a id="L328"></a><span class="ln">   328</span>		}
+<a id="L329"></a><span class="ln">   329</span>	
+<a id="L330"></a><span class="ln">   330</span>		halfway := uint64(1) &lt;&lt; (extrabits - 1)
+<a id="L331"></a><span class="ln">   331</span>		mant_extra := f.mant &amp; (1&lt;&lt;extrabits - 1)
+<a id="L332"></a><span class="ln">   332</span>	
+<a id="L333"></a><span class="ln">   333</span>		<span class="comment">// Do a signed comparison here! If the error estimate could make</span>
+<a id="L334"></a><span class="ln">   334</span>		<span class="comment">// the mantissa round differently for the conversion to double,</span>
+<a id="L335"></a><span class="ln">   335</span>		<span class="comment">// then we can&#39;t give a definite answer.</span>
+<a id="L336"></a><span class="ln">   336</span>		if int64(halfway)-int64(errors) &lt; int64(mant_extra) &amp;&amp;
+<a id="L337"></a><span class="ln">   337</span>			int64(mant_extra) &lt; int64(halfway)+int64(errors) {
+<a id="L338"></a><span class="ln">   338</span>			return false
+<a id="L339"></a><span class="ln">   339</span>		}
+<a id="L340"></a><span class="ln">   340</span>		return true
+<a id="L341"></a><span class="ln">   341</span>	}
+<a id="L342"></a><span class="ln">   342</span>	
+<a id="L343"></a><span class="ln">   343</span>	<span class="comment">// Frexp10 is an analogue of math.Frexp for decimal powers. It scales</span>
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// f by an approximate power of ten 10^-exp, and returns exp10, so</span>
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// that f*10^exp10 has the same value as the old f, up to an ulp,</span>
+<a id="L346"></a><span class="ln">   346</span>	<span class="comment">// as well as the index of 10^-exp in the powersOfTen table.</span>
+<a id="L347"></a><span class="ln">   347</span>	<span class="comment">// The arguments expMin and expMax constrain the final value of the</span>
+<a id="L348"></a><span class="ln">   348</span>	<span class="comment">// binary exponent of f.</span>
+<a id="L349"></a><span class="ln">   349</span>	func (f *extFloat) frexp10(expMin, expMax int) (exp10, index int) {
+<a id="L350"></a><span class="ln">   350</span>		<span class="comment">// it is illegal to call this function with a too restrictive exponent range.</span>
+<a id="L351"></a><span class="ln">   351</span>		if expMax-expMin &lt;= 25 {
+<a id="L352"></a><span class="ln">   352</span>			panic(&#34;strconv: invalid exponent range&#34;)
+<a id="L353"></a><span class="ln">   353</span>		}
+<a id="L354"></a><span class="ln">   354</span>		<span class="comment">// Find power of ten such that x * 10^n has a binary exponent</span>
+<a id="L355"></a><span class="ln">   355</span>		<span class="comment">// between expMin and expMax</span>
+<a id="L356"></a><span class="ln">   356</span>		approxExp10 := -(f.exp + 100) * 28 / 93 <span class="comment">// log(10)/log(2) is close to 93/28.</span>
+<a id="L357"></a><span class="ln">   357</span>		i := (approxExp10 - firstPowerOfTen) / stepPowerOfTen
+<a id="L358"></a><span class="ln">   358</span>	Loop:
+<a id="L359"></a><span class="ln">   359</span>		for {
+<a id="L360"></a><span class="ln">   360</span>			exp := f.exp + powersOfTen[i].exp + 64
+<a id="L361"></a><span class="ln">   361</span>			switch {
+<a id="L362"></a><span class="ln">   362</span>			case exp &lt; expMin:
+<a id="L363"></a><span class="ln">   363</span>				i++
+<a id="L364"></a><span class="ln">   364</span>			case exp &gt; expMax:
+<a id="L365"></a><span class="ln">   365</span>				i--
+<a id="L366"></a><span class="ln">   366</span>			default:
+<a id="L367"></a><span class="ln">   367</span>				break Loop
+<a id="L368"></a><span class="ln">   368</span>			}
+<a id="L369"></a><span class="ln">   369</span>		}
+<a id="L370"></a><span class="ln">   370</span>		<span class="comment">// Apply the desired decimal shift on f. It will have exponent</span>
+<a id="L371"></a><span class="ln">   371</span>		<span class="comment">// in the desired range. This is multiplication by 10^-exp10.</span>
+<a id="L372"></a><span class="ln">   372</span>		f.Multiply(powersOfTen[i])
+<a id="L373"></a><span class="ln">   373</span>	
+<a id="L374"></a><span class="ln">   374</span>		return -(firstPowerOfTen + i*stepPowerOfTen), i
+<a id="L375"></a><span class="ln">   375</span>	}
+<a id="L376"></a><span class="ln">   376</span>	
+<a id="L377"></a><span class="ln">   377</span>	<span class="comment">// frexp10Many applies a common shift by a power of ten to a, b, c.</span>
+<a id="L378"></a><span class="ln">   378</span>	func frexp10Many(expMin, expMax int, a, b, c *extFloat) (exp10 int) {
+<a id="L379"></a><span class="ln">   379</span>		exp10, i := c.frexp10(expMin, expMax)
+<a id="L380"></a><span class="ln">   380</span>		a.Multiply(powersOfTen[i])
+<a id="L381"></a><span class="ln">   381</span>		b.Multiply(powersOfTen[i])
+<a id="L382"></a><span class="ln">   382</span>		return
+<a id="L383"></a><span class="ln">   383</span>	}
+<a id="L384"></a><span class="ln">   384</span>	
+<a id="L385"></a><span class="ln">   385</span>	<span class="comment">// ShortestDecimal stores in d the shortest decimal representation of f</span>
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// which belongs to the open interval (lower, upper), where f is supposed</span>
+<a id="L387"></a><span class="ln">   387</span>	<span class="comment">// to lie. It returns false whenever the result is unsure. The implementation</span>
+<a id="L388"></a><span class="ln">   388</span>	<span class="comment">// uses the Grisu3 algorithm.</span>
+<a id="L389"></a><span class="ln">   389</span>	func (f *extFloat) ShortestDecimal(d *decimal, lower, upper *extFloat) bool {
+<a id="L390"></a><span class="ln">   390</span>		if f.mant == 0 {
+<a id="L391"></a><span class="ln">   391</span>			d.d[0] = &#39;0&#39;
+<a id="L392"></a><span class="ln">   392</span>			d.nd = 1
+<a id="L393"></a><span class="ln">   393</span>			d.dp = 0
+<a id="L394"></a><span class="ln">   394</span>			d.neg = f.neg
+<a id="L395"></a><span class="ln">   395</span>		}
+<a id="L396"></a><span class="ln">   396</span>		const minExp = -60
+<a id="L397"></a><span class="ln">   397</span>		const maxExp = -32
+<a id="L398"></a><span class="ln">   398</span>		upper.Normalize()
+<a id="L399"></a><span class="ln">   399</span>		<span class="comment">// Uniformize exponents.</span>
+<a id="L400"></a><span class="ln">   400</span>		if f.exp &gt; upper.exp {
+<a id="L401"></a><span class="ln">   401</span>			f.mant &lt;&lt;= uint(f.exp - upper.exp)
+<a id="L402"></a><span class="ln">   402</span>			f.exp = upper.exp
+<a id="L403"></a><span class="ln">   403</span>		}
+<a id="L404"></a><span class="ln">   404</span>		if lower.exp &gt; upper.exp {
+<a id="L405"></a><span class="ln">   405</span>			lower.mant &lt;&lt;= uint(lower.exp - upper.exp)
+<a id="L406"></a><span class="ln">   406</span>			lower.exp = upper.exp
+<a id="L407"></a><span class="ln">   407</span>		}
+<a id="L408"></a><span class="ln">   408</span>	
+<a id="L409"></a><span class="ln">   409</span>		exp10 := frexp10Many(minExp, maxExp, lower, f, upper)
+<a id="L410"></a><span class="ln">   410</span>		<span class="comment">// Take a safety margin due to rounding in frexp10Many, but we lose precision.</span>
+<a id="L411"></a><span class="ln">   411</span>		upper.mant++
+<a id="L412"></a><span class="ln">   412</span>		lower.mant--
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>		<span class="comment">// The shortest representation of f is either rounded up or down, but</span>
+<a id="L415"></a><span class="ln">   415</span>		<span class="comment">// in any case, it is a truncation of upper.</span>
+<a id="L416"></a><span class="ln">   416</span>		shift := uint(-upper.exp)
+<a id="L417"></a><span class="ln">   417</span>		integer := uint32(upper.mant &gt;&gt; shift)
+<a id="L418"></a><span class="ln">   418</span>		fraction := upper.mant - (uint64(integer) &lt;&lt; shift)
+<a id="L419"></a><span class="ln">   419</span>	
+<a id="L420"></a><span class="ln">   420</span>		<span class="comment">// How far we can go down from upper until the result is wrong.</span>
+<a id="L421"></a><span class="ln">   421</span>		allowance := upper.mant - lower.mant
+<a id="L422"></a><span class="ln">   422</span>		<span class="comment">// How far we should go to get a very precise result.</span>
+<a id="L423"></a><span class="ln">   423</span>		targetDiff := upper.mant - f.mant
+<a id="L424"></a><span class="ln">   424</span>	
+<a id="L425"></a><span class="ln">   425</span>		<span class="comment">// Count integral digits: there are at most 10.</span>
+<a id="L426"></a><span class="ln">   426</span>		var integerDigits int
+<a id="L427"></a><span class="ln">   427</span>		for i, pow := range uint64pow10 {
+<a id="L428"></a><span class="ln">   428</span>			if uint64(integer) &gt;= pow {
+<a id="L429"></a><span class="ln">   429</span>				integerDigits = i + 1
+<a id="L430"></a><span class="ln">   430</span>			}
+<a id="L431"></a><span class="ln">   431</span>		}
+<a id="L432"></a><span class="ln">   432</span>		for i := 0; i &lt; integerDigits; i++ {
+<a id="L433"></a><span class="ln">   433</span>			pow := uint64pow10[integerDigits-i-1]
+<a id="L434"></a><span class="ln">   434</span>			digit := integer / uint32(pow)
+<a id="L435"></a><span class="ln">   435</span>			d.d[i] = byte(digit + &#39;0&#39;)
+<a id="L436"></a><span class="ln">   436</span>			integer -= digit * uint32(pow)
+<a id="L437"></a><span class="ln">   437</span>			<span class="comment">// evaluate whether we should stop.</span>
+<a id="L438"></a><span class="ln">   438</span>			if currentDiff := uint64(integer)&lt;&lt;shift + fraction; currentDiff &lt; allowance {
+<a id="L439"></a><span class="ln">   439</span>				d.nd = i + 1
+<a id="L440"></a><span class="ln">   440</span>				d.dp = integerDigits + exp10
+<a id="L441"></a><span class="ln">   441</span>				d.neg = f.neg
+<a id="L442"></a><span class="ln">   442</span>				<span class="comment">// Sometimes allowance is so large the last digit might need to be</span>
+<a id="L443"></a><span class="ln">   443</span>				<span class="comment">// decremented to get closer to f.</span>
+<a id="L444"></a><span class="ln">   444</span>				return adjustLastDigit(d, currentDiff, targetDiff, allowance, pow&lt;&lt;shift, 2)
+<a id="L445"></a><span class="ln">   445</span>			}
+<a id="L446"></a><span class="ln">   446</span>		}
+<a id="L447"></a><span class="ln">   447</span>		d.nd = integerDigits
+<a id="L448"></a><span class="ln">   448</span>		d.dp = d.nd + exp10
+<a id="L449"></a><span class="ln">   449</span>		d.neg = f.neg
+<a id="L450"></a><span class="ln">   450</span>	
+<a id="L451"></a><span class="ln">   451</span>		<span class="comment">// Compute digits of the fractional part. At each step fraction does not</span>
+<a id="L452"></a><span class="ln">   452</span>		<span class="comment">// overflow. The choice of minExp implies that fraction is less than 2^60.</span>
+<a id="L453"></a><span class="ln">   453</span>		var digit int
+<a id="L454"></a><span class="ln">   454</span>		multiplier := uint64(1)
+<a id="L455"></a><span class="ln">   455</span>		for {
+<a id="L456"></a><span class="ln">   456</span>			fraction *= 10
+<a id="L457"></a><span class="ln">   457</span>			multiplier *= 10
+<a id="L458"></a><span class="ln">   458</span>			digit = int(fraction &gt;&gt; shift)
+<a id="L459"></a><span class="ln">   459</span>			d.d[d.nd] = byte(digit + &#39;0&#39;)
+<a id="L460"></a><span class="ln">   460</span>			d.nd++
+<a id="L461"></a><span class="ln">   461</span>			fraction -= uint64(digit) &lt;&lt; shift
+<a id="L462"></a><span class="ln">   462</span>			if fraction &lt; allowance*multiplier {
+<a id="L463"></a><span class="ln">   463</span>				<span class="comment">// We are in the admissible range. Note that if allowance is about to</span>
+<a id="L464"></a><span class="ln">   464</span>				<span class="comment">// overflow, that is, allowance &gt; 2^64/10, the condition is automatically</span>
+<a id="L465"></a><span class="ln">   465</span>				<span class="comment">// true due to the limited range of fraction.</span>
+<a id="L466"></a><span class="ln">   466</span>				return adjustLastDigit(d,
+<a id="L467"></a><span class="ln">   467</span>					fraction, targetDiff*multiplier, allowance*multiplier,
+<a id="L468"></a><span class="ln">   468</span>					1&lt;&lt;shift, multiplier*2)
+<a id="L469"></a><span class="ln">   469</span>			}
+<a id="L470"></a><span class="ln">   470</span>		}
+<a id="L471"></a><span class="ln">   471</span>		return false
+<a id="L472"></a><span class="ln">   472</span>	}
+<a id="L473"></a><span class="ln">   473</span>	
+<a id="L474"></a><span class="ln">   474</span>	<span class="comment">// adjustLastDigit modifies d = x-currentDiff*ε, to get closest to </span>
+<a id="L475"></a><span class="ln">   475</span>	<span class="comment">// d = x-targetDiff*ε, without becoming smaller than x-maxDiff*ε.</span>
+<a id="L476"></a><span class="ln">   476</span>	<span class="comment">// It assumes that a decimal digit is worth ulpDecimal*ε, and that</span>
+<a id="L477"></a><span class="ln">   477</span>	<span class="comment">// all data is known with a error estimate of ulpBinary*ε.</span>
+<a id="L478"></a><span class="ln">   478</span>	func adjustLastDigit(d *decimal, currentDiff, targetDiff, maxDiff, ulpDecimal, ulpBinary uint64) bool {
+<a id="L479"></a><span class="ln">   479</span>		if ulpDecimal &lt; 2*ulpBinary {
+<a id="L480"></a><span class="ln">   480</span>			<span class="comment">// Approximation is too wide.</span>
+<a id="L481"></a><span class="ln">   481</span>			return false
+<a id="L482"></a><span class="ln">   482</span>		}
+<a id="L483"></a><span class="ln">   483</span>		for currentDiff+ulpDecimal/2+ulpBinary &lt; targetDiff {
+<a id="L484"></a><span class="ln">   484</span>			d.d[d.nd-1]--
+<a id="L485"></a><span class="ln">   485</span>			currentDiff += ulpDecimal
+<a id="L486"></a><span class="ln">   486</span>		}
+<a id="L487"></a><span class="ln">   487</span>		if currentDiff+ulpDecimal &lt;= targetDiff+ulpDecimal/2+ulpBinary {
+<a id="L488"></a><span class="ln">   488</span>			<span class="comment">// we have two choices, and don&#39;t know what to do.</span>
+<a id="L489"></a><span class="ln">   489</span>			return false
+<a id="L490"></a><span class="ln">   490</span>		}
+<a id="L491"></a><span class="ln">   491</span>		if currentDiff &lt; ulpBinary || currentDiff &gt; maxDiff-ulpBinary {
+<a id="L492"></a><span class="ln">   492</span>			<span class="comment">// we went too far</span>
+<a id="L493"></a><span class="ln">   493</span>			return false
+<a id="L494"></a><span class="ln">   494</span>		}
+<a id="L495"></a><span class="ln">   495</span>		if d.nd == 1 &amp;&amp; d.d[0] == &#39;0&#39; {
+<a id="L496"></a><span class="ln">   496</span>			<span class="comment">// the number has actually reached zero.</span>
+<a id="L497"></a><span class="ln">   497</span>			d.nd = 0
+<a id="L498"></a><span class="ln">   498</span>			d.dp = 0
+<a id="L499"></a><span class="ln">   499</span>		}
+<a id="L500"></a><span class="ln">   500</span>		return true
+<a id="L501"></a><span class="ln">   501</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

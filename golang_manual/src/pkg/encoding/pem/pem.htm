@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/pem/pem.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/pem/pem.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package pem implements the PEM data encoding, which originated in Privacy</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// Enhanced Mail. The most common use of PEM encoding today is in TLS keys and</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// certificates. See RFC 1421.</span>
+<a id="L8"></a><span class="ln">     8</span>	package pem
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;bytes&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;encoding/base64&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;io&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// A Block represents a PEM encoded structure.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">//</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// The encoded form is:</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//    -----BEGIN Type-----</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//    Headers</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//    base64-encoded Bytes</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//    -----END Type-----</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// where Headers is a possibly empty sequence of Key: Value lines.</span>
+<a id="L24"></a><span class="ln">    24</span>	type Block struct {
+<a id="L25"></a><span class="ln">    25</span>		Type    string            <span class="comment">// The type, taken from the preamble (i.e. &#34;RSA PRIVATE KEY&#34;).</span>
+<a id="L26"></a><span class="ln">    26</span>		Headers map[string]string <span class="comment">// Optional headers.</span>
+<a id="L27"></a><span class="ln">    27</span>		Bytes   []byte            <span class="comment">// The decoded bytes of the contents. Typically a DER encoded ASN.1 structure.</span>
+<a id="L28"></a><span class="ln">    28</span>	}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// getLine results the first \r\n or \n delineated line from the given byte</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// array. The line does not include trailing whitespace or the trailing new</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// line bytes. The remainder of the byte array (also not including the new line</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// bytes) is also returned and this will always be smaller than the original</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// argument.</span>
+<a id="L35"></a><span class="ln">    35</span>	func getLine(data []byte) (line, rest []byte) {
+<a id="L36"></a><span class="ln">    36</span>		i := bytes.Index(data, []byte{&#39;\n&#39;})
+<a id="L37"></a><span class="ln">    37</span>		var j int
+<a id="L38"></a><span class="ln">    38</span>		if i &lt; 0 {
+<a id="L39"></a><span class="ln">    39</span>			i = len(data)
+<a id="L40"></a><span class="ln">    40</span>			j = i
+<a id="L41"></a><span class="ln">    41</span>		} else {
+<a id="L42"></a><span class="ln">    42</span>			j = i + 1
+<a id="L43"></a><span class="ln">    43</span>			if i &gt; 0 &amp;&amp; data[i-1] == &#39;\r&#39; {
+<a id="L44"></a><span class="ln">    44</span>				i--
+<a id="L45"></a><span class="ln">    45</span>			}
+<a id="L46"></a><span class="ln">    46</span>		}
+<a id="L47"></a><span class="ln">    47</span>		return bytes.TrimRight(data[0:i], &#34; \t&#34;), data[j:]
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// removeWhitespace returns a copy of its input with all spaces, tab and</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// newline characters removed.</span>
+<a id="L52"></a><span class="ln">    52</span>	func removeWhitespace(data []byte) []byte {
+<a id="L53"></a><span class="ln">    53</span>		result := make([]byte, len(data))
+<a id="L54"></a><span class="ln">    54</span>		n := 0
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>		for _, b := range data {
+<a id="L57"></a><span class="ln">    57</span>			if b == &#39; &#39; || b == &#39;\t&#39; || b == &#39;\r&#39; || b == &#39;\n&#39; {
+<a id="L58"></a><span class="ln">    58</span>				continue
+<a id="L59"></a><span class="ln">    59</span>			}
+<a id="L60"></a><span class="ln">    60</span>			result[n] = b
+<a id="L61"></a><span class="ln">    61</span>			n++
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>		return result[0:n]
+<a id="L65"></a><span class="ln">    65</span>	}
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	var pemStart = []byte(&#34;\n-----BEGIN &#34;)
+<a id="L68"></a><span class="ln">    68</span>	var pemEnd = []byte(&#34;\n-----END &#34;)
+<a id="L69"></a><span class="ln">    69</span>	var pemEndOfLine = []byte(&#34;-----&#34;)
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// Decode will find the next PEM formatted block (certificate, private key</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// etc) in the input. It returns that block and the remainder of the input. If</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// no PEM data is found, p is nil and the whole of the input is returned in</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// rest.</span>
+<a id="L75"></a><span class="ln">    75</span>	func Decode(data []byte) (p *Block, rest []byte) {
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">// pemStart begins with a newline. However, at the very beginning of</span>
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">// the byte array, we&#39;ll accept the start string without it.</span>
+<a id="L78"></a><span class="ln">    78</span>		rest = data
+<a id="L79"></a><span class="ln">    79</span>		if bytes.HasPrefix(data, pemStart[1:]) {
+<a id="L80"></a><span class="ln">    80</span>			rest = rest[len(pemStart)-1 : len(data)]
+<a id="L81"></a><span class="ln">    81</span>		} else if i := bytes.Index(data, pemStart); i &gt;= 0 {
+<a id="L82"></a><span class="ln">    82</span>			rest = rest[i+len(pemStart) : len(data)]
+<a id="L83"></a><span class="ln">    83</span>		} else {
+<a id="L84"></a><span class="ln">    84</span>			return nil, data
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>		typeLine, rest := getLine(rest)
+<a id="L88"></a><span class="ln">    88</span>		if !bytes.HasSuffix(typeLine, pemEndOfLine) {
+<a id="L89"></a><span class="ln">    89</span>			return decodeError(data, rest)
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>		typeLine = typeLine[0 : len(typeLine)-len(pemEndOfLine)]
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>		p = &amp;Block{
+<a id="L94"></a><span class="ln">    94</span>			Headers: make(map[string]string),
+<a id="L95"></a><span class="ln">    95</span>			Type:    string(typeLine),
+<a id="L96"></a><span class="ln">    96</span>		}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>		for {
+<a id="L99"></a><span class="ln">    99</span>			<span class="comment">// This loop terminates because getLine&#39;s second result is</span>
+<a id="L100"></a><span class="ln">   100</span>			<span class="comment">// always smaller than its argument.</span>
+<a id="L101"></a><span class="ln">   101</span>			if len(rest) == 0 {
+<a id="L102"></a><span class="ln">   102</span>				return nil, data
+<a id="L103"></a><span class="ln">   103</span>			}
+<a id="L104"></a><span class="ln">   104</span>			line, next := getLine(rest)
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>			i := bytes.Index(line, []byte{&#39;:&#39;})
+<a id="L107"></a><span class="ln">   107</span>			if i == -1 {
+<a id="L108"></a><span class="ln">   108</span>				break
+<a id="L109"></a><span class="ln">   109</span>			}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>			<span class="comment">// TODO(agl): need to cope with values that spread across lines.</span>
+<a id="L112"></a><span class="ln">   112</span>			key, val := line[0:i], line[i+1:]
+<a id="L113"></a><span class="ln">   113</span>			key = bytes.TrimSpace(key)
+<a id="L114"></a><span class="ln">   114</span>			val = bytes.TrimSpace(val)
+<a id="L115"></a><span class="ln">   115</span>			p.Headers[string(key)] = string(val)
+<a id="L116"></a><span class="ln">   116</span>			rest = next
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>		i := bytes.Index(rest, pemEnd)
+<a id="L120"></a><span class="ln">   120</span>		if i &lt; 0 {
+<a id="L121"></a><span class="ln">   121</span>			return decodeError(data, rest)
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>		base64Data := removeWhitespace(rest[0:i])
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>		p.Bytes = make([]byte, base64.StdEncoding.DecodedLen(len(base64Data)))
+<a id="L126"></a><span class="ln">   126</span>		n, err := base64.StdEncoding.Decode(p.Bytes, base64Data)
+<a id="L127"></a><span class="ln">   127</span>		if err != nil {
+<a id="L128"></a><span class="ln">   128</span>			return decodeError(data, rest)
+<a id="L129"></a><span class="ln">   129</span>		}
+<a id="L130"></a><span class="ln">   130</span>		p.Bytes = p.Bytes[0:n]
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>		_, rest = getLine(rest[i+len(pemEnd):])
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>		return
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	func decodeError(data, rest []byte) (*Block, []byte) {
+<a id="L138"></a><span class="ln">   138</span>		<span class="comment">// If we get here then we have rejected a likely looking, but</span>
+<a id="L139"></a><span class="ln">   139</span>		<span class="comment">// ultimately invalid PEM block. We need to start over from a new</span>
+<a id="L140"></a><span class="ln">   140</span>		<span class="comment">// position.  We have consumed the preamble line and will have consumed</span>
+<a id="L141"></a><span class="ln">   141</span>		<span class="comment">// any lines which could be header lines. However, a valid preamble</span>
+<a id="L142"></a><span class="ln">   142</span>		<span class="comment">// line is not a valid header line, therefore we cannot have consumed</span>
+<a id="L143"></a><span class="ln">   143</span>		<span class="comment">// the preamble line for the any subsequent block. Thus, we will always</span>
+<a id="L144"></a><span class="ln">   144</span>		<span class="comment">// find any valid block, no matter what bytes precede it.</span>
+<a id="L145"></a><span class="ln">   145</span>		<span class="comment">//</span>
+<a id="L146"></a><span class="ln">   146</span>		<span class="comment">// For example, if the input is</span>
+<a id="L147"></a><span class="ln">   147</span>		<span class="comment">//</span>
+<a id="L148"></a><span class="ln">   148</span>		<span class="comment">//    -----BEGIN MALFORMED BLOCK-----</span>
+<a id="L149"></a><span class="ln">   149</span>		<span class="comment">//    junk that may look like header lines</span>
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">//   or data lines, but no END line</span>
+<a id="L151"></a><span class="ln">   151</span>		<span class="comment">//</span>
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">//    -----BEGIN ACTUAL BLOCK-----</span>
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">//    realdata</span>
+<a id="L154"></a><span class="ln">   154</span>		<span class="comment">//    -----END ACTUAL BLOCK-----</span>
+<a id="L155"></a><span class="ln">   155</span>		<span class="comment">//</span>
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// we&#39;ve failed to parse using the first BEGIN line</span>
+<a id="L157"></a><span class="ln">   157</span>		<span class="comment">// and now will try again, using the second BEGIN line.</span>
+<a id="L158"></a><span class="ln">   158</span>		p, rest := Decode(rest)
+<a id="L159"></a><span class="ln">   159</span>		if p == nil {
+<a id="L160"></a><span class="ln">   160</span>			rest = data
+<a id="L161"></a><span class="ln">   161</span>		}
+<a id="L162"></a><span class="ln">   162</span>		return p, rest
+<a id="L163"></a><span class="ln">   163</span>	}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>	const pemLineLength = 64
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>	type lineBreaker struct {
+<a id="L168"></a><span class="ln">   168</span>		line [pemLineLength]byte
+<a id="L169"></a><span class="ln">   169</span>		used int
+<a id="L170"></a><span class="ln">   170</span>		out  io.Writer
+<a id="L171"></a><span class="ln">   171</span>	}
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>	func (l *lineBreaker) Write(b []byte) (n int, err error) {
+<a id="L174"></a><span class="ln">   174</span>		if l.used+len(b) &lt; pemLineLength {
+<a id="L175"></a><span class="ln">   175</span>			copy(l.line[l.used:], b)
+<a id="L176"></a><span class="ln">   176</span>			l.used += len(b)
+<a id="L177"></a><span class="ln">   177</span>			return len(b), nil
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>	
+<a id="L180"></a><span class="ln">   180</span>		n, err = l.out.Write(l.line[0:l.used])
+<a id="L181"></a><span class="ln">   181</span>		if err != nil {
+<a id="L182"></a><span class="ln">   182</span>			return
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>		excess := pemLineLength - l.used
+<a id="L185"></a><span class="ln">   185</span>		l.used = 0
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>		n, err = l.out.Write(b[0:excess])
+<a id="L188"></a><span class="ln">   188</span>		if err != nil {
+<a id="L189"></a><span class="ln">   189</span>			return
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>	
+<a id="L192"></a><span class="ln">   192</span>		n, err = l.out.Write([]byte{&#39;\n&#39;})
+<a id="L193"></a><span class="ln">   193</span>		if err != nil {
+<a id="L194"></a><span class="ln">   194</span>			return
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>		return l.Write(b[excess:])
+<a id="L198"></a><span class="ln">   198</span>	}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>	func (l *lineBreaker) Close() (err error) {
+<a id="L201"></a><span class="ln">   201</span>		if l.used &gt; 0 {
+<a id="L202"></a><span class="ln">   202</span>			_, err = l.out.Write(l.line[0:l.used])
+<a id="L203"></a><span class="ln">   203</span>			if err != nil {
+<a id="L204"></a><span class="ln">   204</span>				return
+<a id="L205"></a><span class="ln">   205</span>			}
+<a id="L206"></a><span class="ln">   206</span>			_, err = l.out.Write([]byte{&#39;\n&#39;})
+<a id="L207"></a><span class="ln">   207</span>		}
+<a id="L208"></a><span class="ln">   208</span>	
+<a id="L209"></a><span class="ln">   209</span>		return
+<a id="L210"></a><span class="ln">   210</span>	}
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>	func Encode(out io.Writer, b *Block) (err error) {
+<a id="L213"></a><span class="ln">   213</span>		_, err = out.Write(pemStart[1:])
+<a id="L214"></a><span class="ln">   214</span>		if err != nil {
+<a id="L215"></a><span class="ln">   215</span>			return
+<a id="L216"></a><span class="ln">   216</span>		}
+<a id="L217"></a><span class="ln">   217</span>		_, err = out.Write([]byte(b.Type + &#34;-----\n&#34;))
+<a id="L218"></a><span class="ln">   218</span>		if err != nil {
+<a id="L219"></a><span class="ln">   219</span>			return
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>		if len(b.Headers) &gt; 0 {
+<a id="L223"></a><span class="ln">   223</span>			for k, v := range b.Headers {
+<a id="L224"></a><span class="ln">   224</span>				_, err = out.Write([]byte(k + &#34;: &#34; + v + &#34;\n&#34;))
+<a id="L225"></a><span class="ln">   225</span>				if err != nil {
+<a id="L226"></a><span class="ln">   226</span>					return
+<a id="L227"></a><span class="ln">   227</span>				}
+<a id="L228"></a><span class="ln">   228</span>			}
+<a id="L229"></a><span class="ln">   229</span>			_, err = out.Write([]byte{&#39;\n&#39;})
+<a id="L230"></a><span class="ln">   230</span>			if err != nil {
+<a id="L231"></a><span class="ln">   231</span>				return
+<a id="L232"></a><span class="ln">   232</span>			}
+<a id="L233"></a><span class="ln">   233</span>		}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>		var breaker lineBreaker
+<a id="L236"></a><span class="ln">   236</span>		breaker.out = out
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>		b64 := base64.NewEncoder(base64.StdEncoding, &amp;breaker)
+<a id="L239"></a><span class="ln">   239</span>		_, err = b64.Write(b.Bytes)
+<a id="L240"></a><span class="ln">   240</span>		if err != nil {
+<a id="L241"></a><span class="ln">   241</span>			return
+<a id="L242"></a><span class="ln">   242</span>		}
+<a id="L243"></a><span class="ln">   243</span>		b64.Close()
+<a id="L244"></a><span class="ln">   244</span>		breaker.Close()
+<a id="L245"></a><span class="ln">   245</span>	
+<a id="L246"></a><span class="ln">   246</span>		_, err = out.Write(pemEnd[1:])
+<a id="L247"></a><span class="ln">   247</span>		if err != nil {
+<a id="L248"></a><span class="ln">   248</span>			return
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		_, err = out.Write([]byte(b.Type + &#34;-----\n&#34;))
+<a id="L251"></a><span class="ln">   251</span>		return
+<a id="L252"></a><span class="ln">   252</span>	}
+<a id="L253"></a><span class="ln">   253</span>	
+<a id="L254"></a><span class="ln">   254</span>	func EncodeToMemory(b *Block) []byte {
+<a id="L255"></a><span class="ln">   255</span>		var buf bytes.Buffer
+<a id="L256"></a><span class="ln">   256</span>		Encode(&amp;buf, b)
+<a id="L257"></a><span class="ln">   257</span>		return buf.Bytes()
+<a id="L258"></a><span class="ln">   258</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

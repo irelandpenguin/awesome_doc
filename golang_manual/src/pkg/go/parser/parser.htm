@@ -1,0 +1,2410 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/parser/parser.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/parser/parser.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package parser implements a parser for Go source files. Input may be</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// provided in a variety of forms (see the various Parse* functions); the</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// output is an abstract syntax tree (AST) representing the Go source. The</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// parser is invoked through one of the Parse* functions.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//</span>
+<a id="L10"></a><span class="ln">    10</span>	package parser
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	import (
+<a id="L13"></a><span class="ln">    13</span>		&#34;fmt&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;go/ast&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;go/scanner&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;go/token&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;strconv&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;strings&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;unicode&#34;
+<a id="L20"></a><span class="ln">    20</span>	)
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// The parser structure holds the parser&#39;s internal state.</span>
+<a id="L23"></a><span class="ln">    23</span>	type parser struct {
+<a id="L24"></a><span class="ln">    24</span>		file    *token.File
+<a id="L25"></a><span class="ln">    25</span>		errors  scanner.ErrorList
+<a id="L26"></a><span class="ln">    26</span>		scanner scanner.Scanner
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// Tracing/debugging</span>
+<a id="L29"></a><span class="ln">    29</span>		mode   Mode <span class="comment">// parsing mode</span>
+<a id="L30"></a><span class="ln">    30</span>		trace  bool <span class="comment">// == (mode &amp; Trace != 0)</span>
+<a id="L31"></a><span class="ln">    31</span>		indent uint <span class="comment">// indentation used for tracing output</span>
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">// Comments</span>
+<a id="L34"></a><span class="ln">    34</span>		comments    []*ast.CommentGroup
+<a id="L35"></a><span class="ln">    35</span>		leadComment *ast.CommentGroup <span class="comment">// last lead comment</span>
+<a id="L36"></a><span class="ln">    36</span>		lineComment *ast.CommentGroup <span class="comment">// last line comment</span>
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>		<span class="comment">// Next token</span>
+<a id="L39"></a><span class="ln">    39</span>		pos token.Pos   <span class="comment">// token position</span>
+<a id="L40"></a><span class="ln">    40</span>		tok token.Token <span class="comment">// one token look-ahead</span>
+<a id="L41"></a><span class="ln">    41</span>		lit string      <span class="comment">// token literal</span>
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>		<span class="comment">// Error recovery</span>
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">// (used to limit the number of calls to syncXXX functions</span>
+<a id="L45"></a><span class="ln">    45</span>		<span class="comment">// w/o making scanning progress - avoids potential endless</span>
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// loops across multiple parser functions during error recovery)</span>
+<a id="L47"></a><span class="ln">    47</span>		syncPos token.Pos <span class="comment">// last synchronization position</span>
+<a id="L48"></a><span class="ln">    48</span>		syncCnt int       <span class="comment">// number of calls to syncXXX without progress</span>
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>		<span class="comment">// Non-syntactic parser control</span>
+<a id="L51"></a><span class="ln">    51</span>		exprLev int <span class="comment">// &lt; 0: in control clause, &gt;= 0: in expression</span>
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>		<span class="comment">// Ordinary identifier scopes</span>
+<a id="L54"></a><span class="ln">    54</span>		pkgScope   *ast.Scope        <span class="comment">// pkgScope.Outer == nil</span>
+<a id="L55"></a><span class="ln">    55</span>		topScope   *ast.Scope        <span class="comment">// top-most scope; may be pkgScope</span>
+<a id="L56"></a><span class="ln">    56</span>		unresolved []*ast.Ident      <span class="comment">// unresolved identifiers</span>
+<a id="L57"></a><span class="ln">    57</span>		imports    []*ast.ImportSpec <span class="comment">// list of imports</span>
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>		<span class="comment">// Label scope</span>
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// (maintained by open/close LabelScope)</span>
+<a id="L61"></a><span class="ln">    61</span>		labelScope  *ast.Scope     <span class="comment">// label scope for current function</span>
+<a id="L62"></a><span class="ln">    62</span>		targetStack [][]*ast.Ident <span class="comment">// stack of unresolved labels</span>
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	func (p *parser) init(fset *token.FileSet, filename string, src []byte, mode Mode) {
+<a id="L66"></a><span class="ln">    66</span>		p.file = fset.AddFile(filename, fset.Base(), len(src))
+<a id="L67"></a><span class="ln">    67</span>		var m scanner.Mode
+<a id="L68"></a><span class="ln">    68</span>		if mode&amp;ParseComments != 0 {
+<a id="L69"></a><span class="ln">    69</span>			m = scanner.ScanComments
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>		eh := func(pos token.Position, msg string) { p.errors.Add(pos, msg) }
+<a id="L72"></a><span class="ln">    72</span>		p.scanner.Init(p.file, src, eh, m)
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>		p.mode = mode
+<a id="L75"></a><span class="ln">    75</span>		p.trace = mode&amp;Trace != 0 <span class="comment">// for convenience (p.trace is used frequently)</span>
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>		p.next()
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// set up the pkgScope here (as opposed to in parseFile) because</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// there are other parser entry points (ParseExpr, etc.)</span>
+<a id="L81"></a><span class="ln">    81</span>		p.openScope()
+<a id="L82"></a><span class="ln">    82</span>		p.pkgScope = p.topScope
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>		<span class="comment">// for the same reason, set up a label scope</span>
+<a id="L85"></a><span class="ln">    85</span>		p.openLabelScope()
+<a id="L86"></a><span class="ln">    86</span>	}
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// Scoping support</span>
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	func (p *parser) openScope() {
+<a id="L92"></a><span class="ln">    92</span>		p.topScope = ast.NewScope(p.topScope)
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	func (p *parser) closeScope() {
+<a id="L96"></a><span class="ln">    96</span>		p.topScope = p.topScope.Outer
+<a id="L97"></a><span class="ln">    97</span>	}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	func (p *parser) openLabelScope() {
+<a id="L100"></a><span class="ln">   100</span>		p.labelScope = ast.NewScope(p.labelScope)
+<a id="L101"></a><span class="ln">   101</span>		p.targetStack = append(p.targetStack, nil)
+<a id="L102"></a><span class="ln">   102</span>	}
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	func (p *parser) closeLabelScope() {
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// resolve labels</span>
+<a id="L106"></a><span class="ln">   106</span>		n := len(p.targetStack) - 1
+<a id="L107"></a><span class="ln">   107</span>		scope := p.labelScope
+<a id="L108"></a><span class="ln">   108</span>		for _, ident := range p.targetStack[n] {
+<a id="L109"></a><span class="ln">   109</span>			ident.Obj = scope.Lookup(ident.Name)
+<a id="L110"></a><span class="ln">   110</span>			if ident.Obj == nil &amp;&amp; p.mode&amp;DeclarationErrors != 0 {
+<a id="L111"></a><span class="ln">   111</span>				p.error(ident.Pos(), fmt.Sprintf(&#34;label %s undefined&#34;, ident.Name))
+<a id="L112"></a><span class="ln">   112</span>			}
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>		<span class="comment">// pop label scope</span>
+<a id="L115"></a><span class="ln">   115</span>		p.targetStack = p.targetStack[0:n]
+<a id="L116"></a><span class="ln">   116</span>		p.labelScope = p.labelScope.Outer
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	func (p *parser) declare(decl, data interface{}, scope *ast.Scope, kind ast.ObjKind, idents ...*ast.Ident) {
+<a id="L120"></a><span class="ln">   120</span>		for _, ident := range idents {
+<a id="L121"></a><span class="ln">   121</span>			assert(ident.Obj == nil, &#34;identifier already declared or resolved&#34;)
+<a id="L122"></a><span class="ln">   122</span>			obj := ast.NewObj(kind, ident.Name)
+<a id="L123"></a><span class="ln">   123</span>			<span class="comment">// remember the corresponding declaration for redeclaration</span>
+<a id="L124"></a><span class="ln">   124</span>			<span class="comment">// errors and global variable resolution/typechecking phase</span>
+<a id="L125"></a><span class="ln">   125</span>			obj.Decl = decl
+<a id="L126"></a><span class="ln">   126</span>			obj.Data = data
+<a id="L127"></a><span class="ln">   127</span>			ident.Obj = obj
+<a id="L128"></a><span class="ln">   128</span>			if ident.Name != &#34;_&#34; {
+<a id="L129"></a><span class="ln">   129</span>				if alt := scope.Insert(obj); alt != nil &amp;&amp; p.mode&amp;DeclarationErrors != 0 {
+<a id="L130"></a><span class="ln">   130</span>					prevDecl := &#34;&#34;
+<a id="L131"></a><span class="ln">   131</span>					if pos := alt.Pos(); pos.IsValid() {
+<a id="L132"></a><span class="ln">   132</span>						prevDecl = fmt.Sprintf(&#34;\n\tprevious declaration at %s&#34;, p.file.Position(pos))
+<a id="L133"></a><span class="ln">   133</span>					}
+<a id="L134"></a><span class="ln">   134</span>					p.error(ident.Pos(), fmt.Sprintf(&#34;%s redeclared in this block%s&#34;, ident.Name, prevDecl))
+<a id="L135"></a><span class="ln">   135</span>				}
+<a id="L136"></a><span class="ln">   136</span>			}
+<a id="L137"></a><span class="ln">   137</span>		}
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	func (p *parser) shortVarDecl(decl *ast.AssignStmt, list []ast.Expr) {
+<a id="L141"></a><span class="ln">   141</span>		<span class="comment">// Go spec: A short variable declaration may redeclare variables</span>
+<a id="L142"></a><span class="ln">   142</span>		<span class="comment">// provided they were originally declared in the same block with</span>
+<a id="L143"></a><span class="ln">   143</span>		<span class="comment">// the same type, and at least one of the non-blank variables is new.</span>
+<a id="L144"></a><span class="ln">   144</span>		n := 0 <span class="comment">// number of new variables</span>
+<a id="L145"></a><span class="ln">   145</span>		for _, x := range list {
+<a id="L146"></a><span class="ln">   146</span>			if ident, isIdent := x.(*ast.Ident); isIdent {
+<a id="L147"></a><span class="ln">   147</span>				assert(ident.Obj == nil, &#34;identifier already declared or resolved&#34;)
+<a id="L148"></a><span class="ln">   148</span>				obj := ast.NewObj(ast.Var, ident.Name)
+<a id="L149"></a><span class="ln">   149</span>				<span class="comment">// remember corresponding assignment for other tools</span>
+<a id="L150"></a><span class="ln">   150</span>				obj.Decl = decl
+<a id="L151"></a><span class="ln">   151</span>				ident.Obj = obj
+<a id="L152"></a><span class="ln">   152</span>				if ident.Name != &#34;_&#34; {
+<a id="L153"></a><span class="ln">   153</span>					if alt := p.topScope.Insert(obj); alt != nil {
+<a id="L154"></a><span class="ln">   154</span>						ident.Obj = alt <span class="comment">// redeclaration</span>
+<a id="L155"></a><span class="ln">   155</span>					} else {
+<a id="L156"></a><span class="ln">   156</span>						n++ <span class="comment">// new declaration</span>
+<a id="L157"></a><span class="ln">   157</span>					}
+<a id="L158"></a><span class="ln">   158</span>				}
+<a id="L159"></a><span class="ln">   159</span>			} else {
+<a id="L160"></a><span class="ln">   160</span>				p.errorExpected(x.Pos(), &#34;identifier&#34;)
+<a id="L161"></a><span class="ln">   161</span>			}
+<a id="L162"></a><span class="ln">   162</span>		}
+<a id="L163"></a><span class="ln">   163</span>		if n == 0 &amp;&amp; p.mode&amp;DeclarationErrors != 0 {
+<a id="L164"></a><span class="ln">   164</span>			p.error(list[0].Pos(), &#34;no new variables on left side of :=&#34;)
+<a id="L165"></a><span class="ln">   165</span>		}
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// The unresolved object is a sentinel to mark identifiers that have been added</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// to the list of unresolved identifiers. The sentinel is only used for verifying</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// internal consistency.</span>
+<a id="L171"></a><span class="ln">   171</span>	var unresolved = new(ast.Object)
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>	func (p *parser) resolve(x ast.Expr) {
+<a id="L174"></a><span class="ln">   174</span>		<span class="comment">// nothing to do if x is not an identifier or the blank identifier</span>
+<a id="L175"></a><span class="ln">   175</span>		ident, _ := x.(*ast.Ident)
+<a id="L176"></a><span class="ln">   176</span>		if ident == nil {
+<a id="L177"></a><span class="ln">   177</span>			return
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>		assert(ident.Obj == nil, &#34;identifier already declared or resolved&#34;)
+<a id="L180"></a><span class="ln">   180</span>		if ident.Name == &#34;_&#34; {
+<a id="L181"></a><span class="ln">   181</span>			return
+<a id="L182"></a><span class="ln">   182</span>		}
+<a id="L183"></a><span class="ln">   183</span>		<span class="comment">// try to resolve the identifier</span>
+<a id="L184"></a><span class="ln">   184</span>		for s := p.topScope; s != nil; s = s.Outer {
+<a id="L185"></a><span class="ln">   185</span>			if obj := s.Lookup(ident.Name); obj != nil {
+<a id="L186"></a><span class="ln">   186</span>				ident.Obj = obj
+<a id="L187"></a><span class="ln">   187</span>				return
+<a id="L188"></a><span class="ln">   188</span>			}
+<a id="L189"></a><span class="ln">   189</span>		}
+<a id="L190"></a><span class="ln">   190</span>		<span class="comment">// all local scopes are known, so any unresolved identifier</span>
+<a id="L191"></a><span class="ln">   191</span>		<span class="comment">// must be found either in the file scope, package scope</span>
+<a id="L192"></a><span class="ln">   192</span>		<span class="comment">// (perhaps in another file), or universe scope --- collect</span>
+<a id="L193"></a><span class="ln">   193</span>		<span class="comment">// them so that they can be resolved later</span>
+<a id="L194"></a><span class="ln">   194</span>		ident.Obj = unresolved
+<a id="L195"></a><span class="ln">   195</span>		p.unresolved = append(p.unresolved, ident)
+<a id="L196"></a><span class="ln">   196</span>	}
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// Parsing support</span>
+<a id="L200"></a><span class="ln">   200</span>	
+<a id="L201"></a><span class="ln">   201</span>	func (p *parser) printTrace(a ...interface{}) {
+<a id="L202"></a><span class="ln">   202</span>		const dots = &#34;. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . &#34; +
+<a id="L203"></a><span class="ln">   203</span>			&#34;. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . &#34;
+<a id="L204"></a><span class="ln">   204</span>		const n = uint(len(dots))
+<a id="L205"></a><span class="ln">   205</span>		pos := p.file.Position(p.pos)
+<a id="L206"></a><span class="ln">   206</span>		fmt.Printf(&#34;%5d:%3d: &#34;, pos.Line, pos.Column)
+<a id="L207"></a><span class="ln">   207</span>		i := 2 * p.indent
+<a id="L208"></a><span class="ln">   208</span>		for ; i &gt; n; i -= n {
+<a id="L209"></a><span class="ln">   209</span>			fmt.Print(dots)
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>		fmt.Print(dots[0:i])
+<a id="L212"></a><span class="ln">   212</span>		fmt.Println(a...)
+<a id="L213"></a><span class="ln">   213</span>	}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>	func trace(p *parser, msg string) *parser {
+<a id="L216"></a><span class="ln">   216</span>		p.printTrace(msg, &#34;(&#34;)
+<a id="L217"></a><span class="ln">   217</span>		p.indent++
+<a id="L218"></a><span class="ln">   218</span>		return p
+<a id="L219"></a><span class="ln">   219</span>	}
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// Usage pattern: defer un(trace(p, &#34;...&#34;));</span>
+<a id="L222"></a><span class="ln">   222</span>	func un(p *parser) {
+<a id="L223"></a><span class="ln">   223</span>		p.indent--
+<a id="L224"></a><span class="ln">   224</span>		p.printTrace(&#34;)&#34;)
+<a id="L225"></a><span class="ln">   225</span>	}
+<a id="L226"></a><span class="ln">   226</span>	
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">// Advance to the next token.</span>
+<a id="L228"></a><span class="ln">   228</span>	func (p *parser) next0() {
+<a id="L229"></a><span class="ln">   229</span>		<span class="comment">// Because of one-token look-ahead, print the previous token</span>
+<a id="L230"></a><span class="ln">   230</span>		<span class="comment">// when tracing as it provides a more readable output. The</span>
+<a id="L231"></a><span class="ln">   231</span>		<span class="comment">// very first token (!p.pos.IsValid()) is not initialized</span>
+<a id="L232"></a><span class="ln">   232</span>		<span class="comment">// (it is token.ILLEGAL), so don&#39;t print it .</span>
+<a id="L233"></a><span class="ln">   233</span>		if p.trace &amp;&amp; p.pos.IsValid() {
+<a id="L234"></a><span class="ln">   234</span>			s := p.tok.String()
+<a id="L235"></a><span class="ln">   235</span>			switch {
+<a id="L236"></a><span class="ln">   236</span>			case p.tok.IsLiteral():
+<a id="L237"></a><span class="ln">   237</span>				p.printTrace(s, p.lit)
+<a id="L238"></a><span class="ln">   238</span>			case p.tok.IsOperator(), p.tok.IsKeyword():
+<a id="L239"></a><span class="ln">   239</span>				p.printTrace(&#34;\&#34;&#34; + s + &#34;\&#34;&#34;)
+<a id="L240"></a><span class="ln">   240</span>			default:
+<a id="L241"></a><span class="ln">   241</span>				p.printTrace(s)
+<a id="L242"></a><span class="ln">   242</span>			}
+<a id="L243"></a><span class="ln">   243</span>		}
+<a id="L244"></a><span class="ln">   244</span>	
+<a id="L245"></a><span class="ln">   245</span>		p.pos, p.tok, p.lit = p.scanner.Scan()
+<a id="L246"></a><span class="ln">   246</span>	}
+<a id="L247"></a><span class="ln">   247</span>	
+<a id="L248"></a><span class="ln">   248</span>	<span class="comment">// Consume a comment and return it and the line on which it ends.</span>
+<a id="L249"></a><span class="ln">   249</span>	func (p *parser) consumeComment() (comment *ast.Comment, endline int) {
+<a id="L250"></a><span class="ln">   250</span>		<span class="comment">// /*-style comments may end on a different line than where they start.</span>
+<a id="L251"></a><span class="ln">   251</span>		<span class="comment">// Scan the comment for &#39;\n&#39; chars and adjust endline accordingly.</span>
+<a id="L252"></a><span class="ln">   252</span>		endline = p.file.Line(p.pos)
+<a id="L253"></a><span class="ln">   253</span>		if p.lit[1] == &#39;*&#39; {
+<a id="L254"></a><span class="ln">   254</span>			<span class="comment">// don&#39;t use range here - no need to decode Unicode code points</span>
+<a id="L255"></a><span class="ln">   255</span>			for i := 0; i &lt; len(p.lit); i++ {
+<a id="L256"></a><span class="ln">   256</span>				if p.lit[i] == &#39;\n&#39; {
+<a id="L257"></a><span class="ln">   257</span>					endline++
+<a id="L258"></a><span class="ln">   258</span>				}
+<a id="L259"></a><span class="ln">   259</span>			}
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>		comment = &amp;ast.Comment{Slash: p.pos, Text: p.lit}
+<a id="L263"></a><span class="ln">   263</span>		p.next0()
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>		return
+<a id="L266"></a><span class="ln">   266</span>	}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// Consume a group of adjacent comments, add it to the parser&#39;s</span>
+<a id="L269"></a><span class="ln">   269</span>	<span class="comment">// comments list, and return it together with the line at which</span>
+<a id="L270"></a><span class="ln">   270</span>	<span class="comment">// the last comment in the group ends. An empty line or non-comment</span>
+<a id="L271"></a><span class="ln">   271</span>	<span class="comment">// token terminates a comment group.</span>
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">//</span>
+<a id="L273"></a><span class="ln">   273</span>	func (p *parser) consumeCommentGroup() (comments *ast.CommentGroup, endline int) {
+<a id="L274"></a><span class="ln">   274</span>		var list []*ast.Comment
+<a id="L275"></a><span class="ln">   275</span>		endline = p.file.Line(p.pos)
+<a id="L276"></a><span class="ln">   276</span>		for p.tok == token.COMMENT &amp;&amp; endline+1 &gt;= p.file.Line(p.pos) {
+<a id="L277"></a><span class="ln">   277</span>			var comment *ast.Comment
+<a id="L278"></a><span class="ln">   278</span>			comment, endline = p.consumeComment()
+<a id="L279"></a><span class="ln">   279</span>			list = append(list, comment)
+<a id="L280"></a><span class="ln">   280</span>		}
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>		<span class="comment">// add comment group to the comments list</span>
+<a id="L283"></a><span class="ln">   283</span>		comments = &amp;ast.CommentGroup{List: list}
+<a id="L284"></a><span class="ln">   284</span>		p.comments = append(p.comments, comments)
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>		return
+<a id="L287"></a><span class="ln">   287</span>	}
+<a id="L288"></a><span class="ln">   288</span>	
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// Advance to the next non-comment token. In the process, collect</span>
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">// any comment groups encountered, and remember the last lead and</span>
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// and line comments.</span>
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">//</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// A lead comment is a comment group that starts and ends in a</span>
+<a id="L294"></a><span class="ln">   294</span>	<span class="comment">// line without any other tokens and that is followed by a non-comment</span>
+<a id="L295"></a><span class="ln">   295</span>	<span class="comment">// token on the line immediately after the comment group.</span>
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">//</span>
+<a id="L297"></a><span class="ln">   297</span>	<span class="comment">// A line comment is a comment group that follows a non-comment</span>
+<a id="L298"></a><span class="ln">   298</span>	<span class="comment">// token on the same line, and that has no tokens after it on the line</span>
+<a id="L299"></a><span class="ln">   299</span>	<span class="comment">// where it ends.</span>
+<a id="L300"></a><span class="ln">   300</span>	<span class="comment">//</span>
+<a id="L301"></a><span class="ln">   301</span>	<span class="comment">// Lead and line comments may be considered documentation that is</span>
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">// stored in the AST.</span>
+<a id="L303"></a><span class="ln">   303</span>	<span class="comment">//</span>
+<a id="L304"></a><span class="ln">   304</span>	func (p *parser) next() {
+<a id="L305"></a><span class="ln">   305</span>		p.leadComment = nil
+<a id="L306"></a><span class="ln">   306</span>		p.lineComment = nil
+<a id="L307"></a><span class="ln">   307</span>		line := p.file.Line(p.pos) <span class="comment">// current line</span>
+<a id="L308"></a><span class="ln">   308</span>		p.next0()
+<a id="L309"></a><span class="ln">   309</span>	
+<a id="L310"></a><span class="ln">   310</span>		if p.tok == token.COMMENT {
+<a id="L311"></a><span class="ln">   311</span>			var comment *ast.CommentGroup
+<a id="L312"></a><span class="ln">   312</span>			var endline int
+<a id="L313"></a><span class="ln">   313</span>	
+<a id="L314"></a><span class="ln">   314</span>			if p.file.Line(p.pos) == line {
+<a id="L315"></a><span class="ln">   315</span>				<span class="comment">// The comment is on same line as the previous token; it</span>
+<a id="L316"></a><span class="ln">   316</span>				<span class="comment">// cannot be a lead comment but may be a line comment.</span>
+<a id="L317"></a><span class="ln">   317</span>				comment, endline = p.consumeCommentGroup()
+<a id="L318"></a><span class="ln">   318</span>				if p.file.Line(p.pos) != endline {
+<a id="L319"></a><span class="ln">   319</span>					<span class="comment">// The next token is on a different line, thus</span>
+<a id="L320"></a><span class="ln">   320</span>					<span class="comment">// the last comment group is a line comment.</span>
+<a id="L321"></a><span class="ln">   321</span>					p.lineComment = comment
+<a id="L322"></a><span class="ln">   322</span>				}
+<a id="L323"></a><span class="ln">   323</span>			}
+<a id="L324"></a><span class="ln">   324</span>	
+<a id="L325"></a><span class="ln">   325</span>			<span class="comment">// consume successor comments, if any</span>
+<a id="L326"></a><span class="ln">   326</span>			endline = -1
+<a id="L327"></a><span class="ln">   327</span>			for p.tok == token.COMMENT {
+<a id="L328"></a><span class="ln">   328</span>				comment, endline = p.consumeCommentGroup()
+<a id="L329"></a><span class="ln">   329</span>			}
+<a id="L330"></a><span class="ln">   330</span>	
+<a id="L331"></a><span class="ln">   331</span>			if endline+1 == p.file.Line(p.pos) {
+<a id="L332"></a><span class="ln">   332</span>				<span class="comment">// The next token is following on the line immediately after the</span>
+<a id="L333"></a><span class="ln">   333</span>				<span class="comment">// comment group, thus the last comment group is a lead comment.</span>
+<a id="L334"></a><span class="ln">   334</span>				p.leadComment = comment
+<a id="L335"></a><span class="ln">   335</span>			}
+<a id="L336"></a><span class="ln">   336</span>		}
+<a id="L337"></a><span class="ln">   337</span>	}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>	func (p *parser) error(pos token.Pos, msg string) {
+<a id="L340"></a><span class="ln">   340</span>		p.errors.Add(p.file.Position(pos), msg)
+<a id="L341"></a><span class="ln">   341</span>	}
+<a id="L342"></a><span class="ln">   342</span>	
+<a id="L343"></a><span class="ln">   343</span>	func (p *parser) errorExpected(pos token.Pos, msg string) {
+<a id="L344"></a><span class="ln">   344</span>		msg = &#34;expected &#34; + msg
+<a id="L345"></a><span class="ln">   345</span>		if pos == p.pos {
+<a id="L346"></a><span class="ln">   346</span>			<span class="comment">// the error happened at the current position;</span>
+<a id="L347"></a><span class="ln">   347</span>			<span class="comment">// make the error message more specific</span>
+<a id="L348"></a><span class="ln">   348</span>			if p.tok == token.SEMICOLON &amp;&amp; p.lit == &#34;\n&#34; {
+<a id="L349"></a><span class="ln">   349</span>				msg += &#34;, found newline&#34;
+<a id="L350"></a><span class="ln">   350</span>			} else {
+<a id="L351"></a><span class="ln">   351</span>				msg += &#34;, found &#39;&#34; + p.tok.String() + &#34;&#39;&#34;
+<a id="L352"></a><span class="ln">   352</span>				if p.tok.IsLiteral() {
+<a id="L353"></a><span class="ln">   353</span>					msg += &#34; &#34; + p.lit
+<a id="L354"></a><span class="ln">   354</span>				}
+<a id="L355"></a><span class="ln">   355</span>			}
+<a id="L356"></a><span class="ln">   356</span>		}
+<a id="L357"></a><span class="ln">   357</span>		p.error(pos, msg)
+<a id="L358"></a><span class="ln">   358</span>	}
+<a id="L359"></a><span class="ln">   359</span>	
+<a id="L360"></a><span class="ln">   360</span>	func (p *parser) expect(tok token.Token) token.Pos {
+<a id="L361"></a><span class="ln">   361</span>		pos := p.pos
+<a id="L362"></a><span class="ln">   362</span>		if p.tok != tok {
+<a id="L363"></a><span class="ln">   363</span>			p.errorExpected(pos, &#34;&#39;&#34;+tok.String()+&#34;&#39;&#34;)
+<a id="L364"></a><span class="ln">   364</span>		}
+<a id="L365"></a><span class="ln">   365</span>		p.next() <span class="comment">// make progress</span>
+<a id="L366"></a><span class="ln">   366</span>		return pos
+<a id="L367"></a><span class="ln">   367</span>	}
+<a id="L368"></a><span class="ln">   368</span>	
+<a id="L369"></a><span class="ln">   369</span>	<span class="comment">// expectClosing is like expect but provides a better error message</span>
+<a id="L370"></a><span class="ln">   370</span>	<span class="comment">// for the common case of a missing comma before a newline.</span>
+<a id="L371"></a><span class="ln">   371</span>	<span class="comment">//</span>
+<a id="L372"></a><span class="ln">   372</span>	func (p *parser) expectClosing(tok token.Token, context string) token.Pos {
+<a id="L373"></a><span class="ln">   373</span>		if p.tok != tok &amp;&amp; p.tok == token.SEMICOLON &amp;&amp; p.lit == &#34;\n&#34; {
+<a id="L374"></a><span class="ln">   374</span>			p.error(p.pos, &#34;missing &#39;,&#39; before newline in &#34;+context)
+<a id="L375"></a><span class="ln">   375</span>			p.next()
+<a id="L376"></a><span class="ln">   376</span>		}
+<a id="L377"></a><span class="ln">   377</span>		return p.expect(tok)
+<a id="L378"></a><span class="ln">   378</span>	}
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>	func (p *parser) expectSemi() {
+<a id="L381"></a><span class="ln">   381</span>		<span class="comment">// semicolon is optional before a closing &#39;)&#39; or &#39;}&#39;</span>
+<a id="L382"></a><span class="ln">   382</span>		if p.tok != token.RPAREN &amp;&amp; p.tok != token.RBRACE {
+<a id="L383"></a><span class="ln">   383</span>			if p.tok == token.SEMICOLON {
+<a id="L384"></a><span class="ln">   384</span>				p.next()
+<a id="L385"></a><span class="ln">   385</span>			} else {
+<a id="L386"></a><span class="ln">   386</span>				p.errorExpected(p.pos, &#34;&#39;;&#39;&#34;)
+<a id="L387"></a><span class="ln">   387</span>				syncStmt(p)
+<a id="L388"></a><span class="ln">   388</span>			}
+<a id="L389"></a><span class="ln">   389</span>		}
+<a id="L390"></a><span class="ln">   390</span>	}
+<a id="L391"></a><span class="ln">   391</span>	
+<a id="L392"></a><span class="ln">   392</span>	func (p *parser) atComma(context string) bool {
+<a id="L393"></a><span class="ln">   393</span>		if p.tok == token.COMMA {
+<a id="L394"></a><span class="ln">   394</span>			return true
+<a id="L395"></a><span class="ln">   395</span>		}
+<a id="L396"></a><span class="ln">   396</span>		if p.tok == token.SEMICOLON &amp;&amp; p.lit == &#34;\n&#34; {
+<a id="L397"></a><span class="ln">   397</span>			p.error(p.pos, &#34;missing &#39;,&#39; before newline in &#34;+context)
+<a id="L398"></a><span class="ln">   398</span>			return true <span class="comment">// &#34;insert&#34; the comma and continue</span>
+<a id="L399"></a><span class="ln">   399</span>	
+<a id="L400"></a><span class="ln">   400</span>		}
+<a id="L401"></a><span class="ln">   401</span>		return false
+<a id="L402"></a><span class="ln">   402</span>	}
+<a id="L403"></a><span class="ln">   403</span>	
+<a id="L404"></a><span class="ln">   404</span>	func assert(cond bool, msg string) {
+<a id="L405"></a><span class="ln">   405</span>		if !cond {
+<a id="L406"></a><span class="ln">   406</span>			panic(&#34;go/parser internal error: &#34; + msg)
+<a id="L407"></a><span class="ln">   407</span>		}
+<a id="L408"></a><span class="ln">   408</span>	}
+<a id="L409"></a><span class="ln">   409</span>	
+<a id="L410"></a><span class="ln">   410</span>	<span class="comment">// syncStmt advances to the next statement.</span>
+<a id="L411"></a><span class="ln">   411</span>	<span class="comment">// Used for synchronization after an error.</span>
+<a id="L412"></a><span class="ln">   412</span>	<span class="comment">//</span>
+<a id="L413"></a><span class="ln">   413</span>	func syncStmt(p *parser) {
+<a id="L414"></a><span class="ln">   414</span>		for {
+<a id="L415"></a><span class="ln">   415</span>			switch p.tok {
+<a id="L416"></a><span class="ln">   416</span>			case token.BREAK, token.CONST, token.CONTINUE, token.DEFER,
+<a id="L417"></a><span class="ln">   417</span>				token.FALLTHROUGH, token.FOR, token.GO, token.GOTO,
+<a id="L418"></a><span class="ln">   418</span>				token.IF, token.RETURN, token.SELECT, token.SWITCH,
+<a id="L419"></a><span class="ln">   419</span>				token.TYPE, token.VAR:
+<a id="L420"></a><span class="ln">   420</span>				<span class="comment">// Return only if parser made some progress since last</span>
+<a id="L421"></a><span class="ln">   421</span>				<span class="comment">// sync or if it has not reached 10 sync calls without</span>
+<a id="L422"></a><span class="ln">   422</span>				<span class="comment">// progress. Otherwise consume at least one token to</span>
+<a id="L423"></a><span class="ln">   423</span>				<span class="comment">// avoid an endless parser loop (it is possible that</span>
+<a id="L424"></a><span class="ln">   424</span>				<span class="comment">// both parseOperand and parseStmt call syncStmt and</span>
+<a id="L425"></a><span class="ln">   425</span>				<span class="comment">// correctly do not advance, thus the need for the</span>
+<a id="L426"></a><span class="ln">   426</span>				<span class="comment">// invocation limit p.syncCnt).</span>
+<a id="L427"></a><span class="ln">   427</span>				if p.pos == p.syncPos &amp;&amp; p.syncCnt &lt; 10 {
+<a id="L428"></a><span class="ln">   428</span>					p.syncCnt++
+<a id="L429"></a><span class="ln">   429</span>					return
+<a id="L430"></a><span class="ln">   430</span>				}
+<a id="L431"></a><span class="ln">   431</span>				if p.pos &gt; p.syncPos {
+<a id="L432"></a><span class="ln">   432</span>					p.syncPos = p.pos
+<a id="L433"></a><span class="ln">   433</span>					p.syncCnt = 0
+<a id="L434"></a><span class="ln">   434</span>					return
+<a id="L435"></a><span class="ln">   435</span>				}
+<a id="L436"></a><span class="ln">   436</span>				<span class="comment">// Reaching here indicates a parser bug, likely an</span>
+<a id="L437"></a><span class="ln">   437</span>				<span class="comment">// incorrect token list in this function, but it only</span>
+<a id="L438"></a><span class="ln">   438</span>				<span class="comment">// leads to skipping of possibly correct code if a</span>
+<a id="L439"></a><span class="ln">   439</span>				<span class="comment">// previous error is present, and thus is preferred</span>
+<a id="L440"></a><span class="ln">   440</span>				<span class="comment">// over a non-terminating parse.</span>
+<a id="L441"></a><span class="ln">   441</span>			case token.EOF:
+<a id="L442"></a><span class="ln">   442</span>				return
+<a id="L443"></a><span class="ln">   443</span>			}
+<a id="L444"></a><span class="ln">   444</span>			p.next()
+<a id="L445"></a><span class="ln">   445</span>		}
+<a id="L446"></a><span class="ln">   446</span>	}
+<a id="L447"></a><span class="ln">   447</span>	
+<a id="L448"></a><span class="ln">   448</span>	<span class="comment">// syncDecl advances to the next declaration.</span>
+<a id="L449"></a><span class="ln">   449</span>	<span class="comment">// Used for synchronization after an error.</span>
+<a id="L450"></a><span class="ln">   450</span>	<span class="comment">//</span>
+<a id="L451"></a><span class="ln">   451</span>	func syncDecl(p *parser) {
+<a id="L452"></a><span class="ln">   452</span>		for {
+<a id="L453"></a><span class="ln">   453</span>			switch p.tok {
+<a id="L454"></a><span class="ln">   454</span>			case token.CONST, token.TYPE, token.VAR:
+<a id="L455"></a><span class="ln">   455</span>				<span class="comment">// see comments in syncStmt</span>
+<a id="L456"></a><span class="ln">   456</span>				if p.pos == p.syncPos &amp;&amp; p.syncCnt &lt; 10 {
+<a id="L457"></a><span class="ln">   457</span>					p.syncCnt++
+<a id="L458"></a><span class="ln">   458</span>					return
+<a id="L459"></a><span class="ln">   459</span>				}
+<a id="L460"></a><span class="ln">   460</span>				if p.pos &gt; p.syncPos {
+<a id="L461"></a><span class="ln">   461</span>					p.syncPos = p.pos
+<a id="L462"></a><span class="ln">   462</span>					p.syncCnt = 0
+<a id="L463"></a><span class="ln">   463</span>					return
+<a id="L464"></a><span class="ln">   464</span>				}
+<a id="L465"></a><span class="ln">   465</span>			case token.EOF:
+<a id="L466"></a><span class="ln">   466</span>				return
+<a id="L467"></a><span class="ln">   467</span>			}
+<a id="L468"></a><span class="ln">   468</span>			p.next()
+<a id="L469"></a><span class="ln">   469</span>		}
+<a id="L470"></a><span class="ln">   470</span>	}
+<a id="L471"></a><span class="ln">   471</span>	
+<a id="L472"></a><span class="ln">   472</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L473"></a><span class="ln">   473</span>	<span class="comment">// Identifiers</span>
+<a id="L474"></a><span class="ln">   474</span>	
+<a id="L475"></a><span class="ln">   475</span>	func (p *parser) parseIdent() *ast.Ident {
+<a id="L476"></a><span class="ln">   476</span>		pos := p.pos
+<a id="L477"></a><span class="ln">   477</span>		name := &#34;_&#34;
+<a id="L478"></a><span class="ln">   478</span>		if p.tok == token.IDENT {
+<a id="L479"></a><span class="ln">   479</span>			name = p.lit
+<a id="L480"></a><span class="ln">   480</span>			p.next()
+<a id="L481"></a><span class="ln">   481</span>		} else {
+<a id="L482"></a><span class="ln">   482</span>			p.expect(token.IDENT) <span class="comment">// use expect() error handling</span>
+<a id="L483"></a><span class="ln">   483</span>		}
+<a id="L484"></a><span class="ln">   484</span>		return &amp;ast.Ident{NamePos: pos, Name: name}
+<a id="L485"></a><span class="ln">   485</span>	}
+<a id="L486"></a><span class="ln">   486</span>	
+<a id="L487"></a><span class="ln">   487</span>	func (p *parser) parseIdentList() (list []*ast.Ident) {
+<a id="L488"></a><span class="ln">   488</span>		if p.trace {
+<a id="L489"></a><span class="ln">   489</span>			defer un(trace(p, &#34;IdentList&#34;))
+<a id="L490"></a><span class="ln">   490</span>		}
+<a id="L491"></a><span class="ln">   491</span>	
+<a id="L492"></a><span class="ln">   492</span>		list = append(list, p.parseIdent())
+<a id="L493"></a><span class="ln">   493</span>		for p.tok == token.COMMA {
+<a id="L494"></a><span class="ln">   494</span>			p.next()
+<a id="L495"></a><span class="ln">   495</span>			list = append(list, p.parseIdent())
+<a id="L496"></a><span class="ln">   496</span>		}
+<a id="L497"></a><span class="ln">   497</span>	
+<a id="L498"></a><span class="ln">   498</span>		return
+<a id="L499"></a><span class="ln">   499</span>	}
+<a id="L500"></a><span class="ln">   500</span>	
+<a id="L501"></a><span class="ln">   501</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L502"></a><span class="ln">   502</span>	<span class="comment">// Common productions</span>
+<a id="L503"></a><span class="ln">   503</span>	
+<a id="L504"></a><span class="ln">   504</span>	<span class="comment">// If lhs is set, result list elements which are identifiers are not resolved.</span>
+<a id="L505"></a><span class="ln">   505</span>	func (p *parser) parseExprList(lhs bool) (list []ast.Expr) {
+<a id="L506"></a><span class="ln">   506</span>		if p.trace {
+<a id="L507"></a><span class="ln">   507</span>			defer un(trace(p, &#34;ExpressionList&#34;))
+<a id="L508"></a><span class="ln">   508</span>		}
+<a id="L509"></a><span class="ln">   509</span>	
+<a id="L510"></a><span class="ln">   510</span>		list = append(list, p.checkExpr(p.parseExpr(lhs)))
+<a id="L511"></a><span class="ln">   511</span>		for p.tok == token.COMMA {
+<a id="L512"></a><span class="ln">   512</span>			p.next()
+<a id="L513"></a><span class="ln">   513</span>			list = append(list, p.checkExpr(p.parseExpr(lhs)))
+<a id="L514"></a><span class="ln">   514</span>		}
+<a id="L515"></a><span class="ln">   515</span>	
+<a id="L516"></a><span class="ln">   516</span>		return
+<a id="L517"></a><span class="ln">   517</span>	}
+<a id="L518"></a><span class="ln">   518</span>	
+<a id="L519"></a><span class="ln">   519</span>	func (p *parser) parseLhsList() []ast.Expr {
+<a id="L520"></a><span class="ln">   520</span>		list := p.parseExprList(true)
+<a id="L521"></a><span class="ln">   521</span>		switch p.tok {
+<a id="L522"></a><span class="ln">   522</span>		case token.DEFINE:
+<a id="L523"></a><span class="ln">   523</span>			<span class="comment">// lhs of a short variable declaration</span>
+<a id="L524"></a><span class="ln">   524</span>			<span class="comment">// but doesn&#39;t enter scope until later:</span>
+<a id="L525"></a><span class="ln">   525</span>			<span class="comment">// caller must call p.shortVarDecl(p.makeIdentList(list))</span>
+<a id="L526"></a><span class="ln">   526</span>			<span class="comment">// at appropriate time.</span>
+<a id="L527"></a><span class="ln">   527</span>		case token.COLON:
+<a id="L528"></a><span class="ln">   528</span>			<span class="comment">// lhs of a label declaration or a communication clause of a select</span>
+<a id="L529"></a><span class="ln">   529</span>			<span class="comment">// statement (parseLhsList is not called when parsing the case clause</span>
+<a id="L530"></a><span class="ln">   530</span>			<span class="comment">// of a switch statement):</span>
+<a id="L531"></a><span class="ln">   531</span>			<span class="comment">// - labels are declared by the caller of parseLhsList</span>
+<a id="L532"></a><span class="ln">   532</span>			<span class="comment">// - for communication clauses, if there is a stand-alone identifier</span>
+<a id="L533"></a><span class="ln">   533</span>			<span class="comment">//   followed by a colon, we have a syntax error; there is no need</span>
+<a id="L534"></a><span class="ln">   534</span>			<span class="comment">//   to resolve the identifier in that case</span>
+<a id="L535"></a><span class="ln">   535</span>		default:
+<a id="L536"></a><span class="ln">   536</span>			<span class="comment">// identifiers must be declared elsewhere</span>
+<a id="L537"></a><span class="ln">   537</span>			for _, x := range list {
+<a id="L538"></a><span class="ln">   538</span>				p.resolve(x)
+<a id="L539"></a><span class="ln">   539</span>			}
+<a id="L540"></a><span class="ln">   540</span>		}
+<a id="L541"></a><span class="ln">   541</span>		return list
+<a id="L542"></a><span class="ln">   542</span>	}
+<a id="L543"></a><span class="ln">   543</span>	
+<a id="L544"></a><span class="ln">   544</span>	func (p *parser) parseRhsList() []ast.Expr {
+<a id="L545"></a><span class="ln">   545</span>		return p.parseExprList(false)
+<a id="L546"></a><span class="ln">   546</span>	}
+<a id="L547"></a><span class="ln">   547</span>	
+<a id="L548"></a><span class="ln">   548</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L549"></a><span class="ln">   549</span>	<span class="comment">// Types</span>
+<a id="L550"></a><span class="ln">   550</span>	
+<a id="L551"></a><span class="ln">   551</span>	func (p *parser) parseType() ast.Expr {
+<a id="L552"></a><span class="ln">   552</span>		if p.trace {
+<a id="L553"></a><span class="ln">   553</span>			defer un(trace(p, &#34;Type&#34;))
+<a id="L554"></a><span class="ln">   554</span>		}
+<a id="L555"></a><span class="ln">   555</span>	
+<a id="L556"></a><span class="ln">   556</span>		typ := p.tryType()
+<a id="L557"></a><span class="ln">   557</span>	
+<a id="L558"></a><span class="ln">   558</span>		if typ == nil {
+<a id="L559"></a><span class="ln">   559</span>			pos := p.pos
+<a id="L560"></a><span class="ln">   560</span>			p.errorExpected(pos, &#34;type&#34;)
+<a id="L561"></a><span class="ln">   561</span>			p.next() <span class="comment">// make progress</span>
+<a id="L562"></a><span class="ln">   562</span>			return &amp;ast.BadExpr{From: pos, To: p.pos}
+<a id="L563"></a><span class="ln">   563</span>		}
+<a id="L564"></a><span class="ln">   564</span>	
+<a id="L565"></a><span class="ln">   565</span>		return typ
+<a id="L566"></a><span class="ln">   566</span>	}
+<a id="L567"></a><span class="ln">   567</span>	
+<a id="L568"></a><span class="ln">   568</span>	<span class="comment">// If the result is an identifier, it is not resolved.</span>
+<a id="L569"></a><span class="ln">   569</span>	func (p *parser) parseTypeName() ast.Expr {
+<a id="L570"></a><span class="ln">   570</span>		if p.trace {
+<a id="L571"></a><span class="ln">   571</span>			defer un(trace(p, &#34;TypeName&#34;))
+<a id="L572"></a><span class="ln">   572</span>		}
+<a id="L573"></a><span class="ln">   573</span>	
+<a id="L574"></a><span class="ln">   574</span>		ident := p.parseIdent()
+<a id="L575"></a><span class="ln">   575</span>		<span class="comment">// don&#39;t resolve ident yet - it may be a parameter or field name</span>
+<a id="L576"></a><span class="ln">   576</span>	
+<a id="L577"></a><span class="ln">   577</span>		if p.tok == token.PERIOD {
+<a id="L578"></a><span class="ln">   578</span>			<span class="comment">// ident is a package name</span>
+<a id="L579"></a><span class="ln">   579</span>			p.next()
+<a id="L580"></a><span class="ln">   580</span>			p.resolve(ident)
+<a id="L581"></a><span class="ln">   581</span>			sel := p.parseIdent()
+<a id="L582"></a><span class="ln">   582</span>			return &amp;ast.SelectorExpr{X: ident, Sel: sel}
+<a id="L583"></a><span class="ln">   583</span>		}
+<a id="L584"></a><span class="ln">   584</span>	
+<a id="L585"></a><span class="ln">   585</span>		return ident
+<a id="L586"></a><span class="ln">   586</span>	}
+<a id="L587"></a><span class="ln">   587</span>	
+<a id="L588"></a><span class="ln">   588</span>	func (p *parser) parseArrayType(ellipsisOk bool) ast.Expr {
+<a id="L589"></a><span class="ln">   589</span>		if p.trace {
+<a id="L590"></a><span class="ln">   590</span>			defer un(trace(p, &#34;ArrayType&#34;))
+<a id="L591"></a><span class="ln">   591</span>		}
+<a id="L592"></a><span class="ln">   592</span>	
+<a id="L593"></a><span class="ln">   593</span>		lbrack := p.expect(token.LBRACK)
+<a id="L594"></a><span class="ln">   594</span>		var len ast.Expr
+<a id="L595"></a><span class="ln">   595</span>		if ellipsisOk &amp;&amp; p.tok == token.ELLIPSIS {
+<a id="L596"></a><span class="ln">   596</span>			len = &amp;ast.Ellipsis{Ellipsis: p.pos}
+<a id="L597"></a><span class="ln">   597</span>			p.next()
+<a id="L598"></a><span class="ln">   598</span>		} else if p.tok != token.RBRACK {
+<a id="L599"></a><span class="ln">   599</span>			len = p.parseRhs()
+<a id="L600"></a><span class="ln">   600</span>		}
+<a id="L601"></a><span class="ln">   601</span>		p.expect(token.RBRACK)
+<a id="L602"></a><span class="ln">   602</span>		elt := p.parseType()
+<a id="L603"></a><span class="ln">   603</span>	
+<a id="L604"></a><span class="ln">   604</span>		return &amp;ast.ArrayType{Lbrack: lbrack, Len: len, Elt: elt}
+<a id="L605"></a><span class="ln">   605</span>	}
+<a id="L606"></a><span class="ln">   606</span>	
+<a id="L607"></a><span class="ln">   607</span>	func (p *parser) makeIdentList(list []ast.Expr) []*ast.Ident {
+<a id="L608"></a><span class="ln">   608</span>		idents := make([]*ast.Ident, len(list))
+<a id="L609"></a><span class="ln">   609</span>		for i, x := range list {
+<a id="L610"></a><span class="ln">   610</span>			ident, isIdent := x.(*ast.Ident)
+<a id="L611"></a><span class="ln">   611</span>			if !isIdent {
+<a id="L612"></a><span class="ln">   612</span>				if _, isBad := x.(*ast.BadExpr); !isBad {
+<a id="L613"></a><span class="ln">   613</span>					<span class="comment">// only report error if it&#39;s a new one</span>
+<a id="L614"></a><span class="ln">   614</span>					p.errorExpected(x.Pos(), &#34;identifier&#34;)
+<a id="L615"></a><span class="ln">   615</span>				}
+<a id="L616"></a><span class="ln">   616</span>				ident = &amp;ast.Ident{NamePos: x.Pos(), Name: &#34;_&#34;}
+<a id="L617"></a><span class="ln">   617</span>			}
+<a id="L618"></a><span class="ln">   618</span>			idents[i] = ident
+<a id="L619"></a><span class="ln">   619</span>		}
+<a id="L620"></a><span class="ln">   620</span>		return idents
+<a id="L621"></a><span class="ln">   621</span>	}
+<a id="L622"></a><span class="ln">   622</span>	
+<a id="L623"></a><span class="ln">   623</span>	func (p *parser) parseFieldDecl(scope *ast.Scope) *ast.Field {
+<a id="L624"></a><span class="ln">   624</span>		if p.trace {
+<a id="L625"></a><span class="ln">   625</span>			defer un(trace(p, &#34;FieldDecl&#34;))
+<a id="L626"></a><span class="ln">   626</span>		}
+<a id="L627"></a><span class="ln">   627</span>	
+<a id="L628"></a><span class="ln">   628</span>		doc := p.leadComment
+<a id="L629"></a><span class="ln">   629</span>	
+<a id="L630"></a><span class="ln">   630</span>		<span class="comment">// fields</span>
+<a id="L631"></a><span class="ln">   631</span>		list, typ := p.parseVarList(false)
+<a id="L632"></a><span class="ln">   632</span>	
+<a id="L633"></a><span class="ln">   633</span>		<span class="comment">// optional tag</span>
+<a id="L634"></a><span class="ln">   634</span>		var tag *ast.BasicLit
+<a id="L635"></a><span class="ln">   635</span>		if p.tok == token.STRING {
+<a id="L636"></a><span class="ln">   636</span>			tag = &amp;ast.BasicLit{ValuePos: p.pos, Kind: p.tok, Value: p.lit}
+<a id="L637"></a><span class="ln">   637</span>			p.next()
+<a id="L638"></a><span class="ln">   638</span>		}
+<a id="L639"></a><span class="ln">   639</span>	
+<a id="L640"></a><span class="ln">   640</span>		<span class="comment">// analyze case</span>
+<a id="L641"></a><span class="ln">   641</span>		var idents []*ast.Ident
+<a id="L642"></a><span class="ln">   642</span>		if typ != nil {
+<a id="L643"></a><span class="ln">   643</span>			<span class="comment">// IdentifierList Type</span>
+<a id="L644"></a><span class="ln">   644</span>			idents = p.makeIdentList(list)
+<a id="L645"></a><span class="ln">   645</span>		} else {
+<a id="L646"></a><span class="ln">   646</span>			<span class="comment">// [&#34;*&#34;] TypeName (AnonymousField)</span>
+<a id="L647"></a><span class="ln">   647</span>			typ = list[0] <span class="comment">// we always have at least one element</span>
+<a id="L648"></a><span class="ln">   648</span>			p.resolve(typ)
+<a id="L649"></a><span class="ln">   649</span>			if n := len(list); n &gt; 1 || !isTypeName(deref(typ)) {
+<a id="L650"></a><span class="ln">   650</span>				pos := typ.Pos()
+<a id="L651"></a><span class="ln">   651</span>				p.errorExpected(pos, &#34;anonymous field&#34;)
+<a id="L652"></a><span class="ln">   652</span>				typ = &amp;ast.BadExpr{From: pos, To: list[n-1].End()}
+<a id="L653"></a><span class="ln">   653</span>			}
+<a id="L654"></a><span class="ln">   654</span>		}
+<a id="L655"></a><span class="ln">   655</span>	
+<a id="L656"></a><span class="ln">   656</span>		p.expectSemi() <span class="comment">// call before accessing p.linecomment</span>
+<a id="L657"></a><span class="ln">   657</span>	
+<a id="L658"></a><span class="ln">   658</span>		field := &amp;ast.Field{Doc: doc, Names: idents, Type: typ, Tag: tag, Comment: p.lineComment}
+<a id="L659"></a><span class="ln">   659</span>		p.declare(field, nil, scope, ast.Var, idents...)
+<a id="L660"></a><span class="ln">   660</span>	
+<a id="L661"></a><span class="ln">   661</span>		return field
+<a id="L662"></a><span class="ln">   662</span>	}
+<a id="L663"></a><span class="ln">   663</span>	
+<a id="L664"></a><span class="ln">   664</span>	func (p *parser) parseStructType() *ast.StructType {
+<a id="L665"></a><span class="ln">   665</span>		if p.trace {
+<a id="L666"></a><span class="ln">   666</span>			defer un(trace(p, &#34;StructType&#34;))
+<a id="L667"></a><span class="ln">   667</span>		}
+<a id="L668"></a><span class="ln">   668</span>	
+<a id="L669"></a><span class="ln">   669</span>		pos := p.expect(token.STRUCT)
+<a id="L670"></a><span class="ln">   670</span>		lbrace := p.expect(token.LBRACE)
+<a id="L671"></a><span class="ln">   671</span>		scope := ast.NewScope(nil) <span class="comment">// struct scope</span>
+<a id="L672"></a><span class="ln">   672</span>		var list []*ast.Field
+<a id="L673"></a><span class="ln">   673</span>		for p.tok == token.IDENT || p.tok == token.MUL || p.tok == token.LPAREN {
+<a id="L674"></a><span class="ln">   674</span>			<span class="comment">// a field declaration cannot start with a &#39;(&#39; but we accept</span>
+<a id="L675"></a><span class="ln">   675</span>			<span class="comment">// it here for more robust parsing and better error messages</span>
+<a id="L676"></a><span class="ln">   676</span>			<span class="comment">// (parseFieldDecl will check and complain if necessary)</span>
+<a id="L677"></a><span class="ln">   677</span>			list = append(list, p.parseFieldDecl(scope))
+<a id="L678"></a><span class="ln">   678</span>		}
+<a id="L679"></a><span class="ln">   679</span>		rbrace := p.expect(token.RBRACE)
+<a id="L680"></a><span class="ln">   680</span>	
+<a id="L681"></a><span class="ln">   681</span>		return &amp;ast.StructType{
+<a id="L682"></a><span class="ln">   682</span>			Struct: pos,
+<a id="L683"></a><span class="ln">   683</span>			Fields: &amp;ast.FieldList{
+<a id="L684"></a><span class="ln">   684</span>				Opening: lbrace,
+<a id="L685"></a><span class="ln">   685</span>				List:    list,
+<a id="L686"></a><span class="ln">   686</span>				Closing: rbrace,
+<a id="L687"></a><span class="ln">   687</span>			},
+<a id="L688"></a><span class="ln">   688</span>		}
+<a id="L689"></a><span class="ln">   689</span>	}
+<a id="L690"></a><span class="ln">   690</span>	
+<a id="L691"></a><span class="ln">   691</span>	func (p *parser) parsePointerType() *ast.StarExpr {
+<a id="L692"></a><span class="ln">   692</span>		if p.trace {
+<a id="L693"></a><span class="ln">   693</span>			defer un(trace(p, &#34;PointerType&#34;))
+<a id="L694"></a><span class="ln">   694</span>		}
+<a id="L695"></a><span class="ln">   695</span>	
+<a id="L696"></a><span class="ln">   696</span>		star := p.expect(token.MUL)
+<a id="L697"></a><span class="ln">   697</span>		base := p.parseType()
+<a id="L698"></a><span class="ln">   698</span>	
+<a id="L699"></a><span class="ln">   699</span>		return &amp;ast.StarExpr{Star: star, X: base}
+<a id="L700"></a><span class="ln">   700</span>	}
+<a id="L701"></a><span class="ln">   701</span>	
+<a id="L702"></a><span class="ln">   702</span>	func (p *parser) tryVarType(isParam bool) ast.Expr {
+<a id="L703"></a><span class="ln">   703</span>		if isParam &amp;&amp; p.tok == token.ELLIPSIS {
+<a id="L704"></a><span class="ln">   704</span>			pos := p.pos
+<a id="L705"></a><span class="ln">   705</span>			p.next()
+<a id="L706"></a><span class="ln">   706</span>			typ := p.tryIdentOrType(isParam) <span class="comment">// don&#39;t use parseType so we can provide better error message</span>
+<a id="L707"></a><span class="ln">   707</span>			if typ == nil {
+<a id="L708"></a><span class="ln">   708</span>				p.error(pos, &#34;&#39;...&#39; parameter is missing type&#34;)
+<a id="L709"></a><span class="ln">   709</span>				typ = &amp;ast.BadExpr{From: pos, To: p.pos}
+<a id="L710"></a><span class="ln">   710</span>			}
+<a id="L711"></a><span class="ln">   711</span>			return &amp;ast.Ellipsis{Ellipsis: pos, Elt: typ}
+<a id="L712"></a><span class="ln">   712</span>		}
+<a id="L713"></a><span class="ln">   713</span>		return p.tryIdentOrType(false)
+<a id="L714"></a><span class="ln">   714</span>	}
+<a id="L715"></a><span class="ln">   715</span>	
+<a id="L716"></a><span class="ln">   716</span>	func (p *parser) parseVarType(isParam bool) ast.Expr {
+<a id="L717"></a><span class="ln">   717</span>		typ := p.tryVarType(isParam)
+<a id="L718"></a><span class="ln">   718</span>		if typ == nil {
+<a id="L719"></a><span class="ln">   719</span>			pos := p.pos
+<a id="L720"></a><span class="ln">   720</span>			p.errorExpected(pos, &#34;type&#34;)
+<a id="L721"></a><span class="ln">   721</span>			p.next() <span class="comment">// make progress</span>
+<a id="L722"></a><span class="ln">   722</span>			typ = &amp;ast.BadExpr{From: pos, To: p.pos}
+<a id="L723"></a><span class="ln">   723</span>		}
+<a id="L724"></a><span class="ln">   724</span>		return typ
+<a id="L725"></a><span class="ln">   725</span>	}
+<a id="L726"></a><span class="ln">   726</span>	
+<a id="L727"></a><span class="ln">   727</span>	func (p *parser) parseVarList(isParam bool) (list []ast.Expr, typ ast.Expr) {
+<a id="L728"></a><span class="ln">   728</span>		if p.trace {
+<a id="L729"></a><span class="ln">   729</span>			defer un(trace(p, &#34;VarList&#34;))
+<a id="L730"></a><span class="ln">   730</span>		}
+<a id="L731"></a><span class="ln">   731</span>	
+<a id="L732"></a><span class="ln">   732</span>		<span class="comment">// a list of identifiers looks like a list of type names</span>
+<a id="L733"></a><span class="ln">   733</span>		<span class="comment">//</span>
+<a id="L734"></a><span class="ln">   734</span>		<span class="comment">// parse/tryVarType accepts any type (including parenthesized</span>
+<a id="L735"></a><span class="ln">   735</span>		<span class="comment">// ones) even though the syntax does not permit them here: we</span>
+<a id="L736"></a><span class="ln">   736</span>		<span class="comment">// accept them all for more robust parsing and complain later</span>
+<a id="L737"></a><span class="ln">   737</span>		for typ := p.parseVarType(isParam); typ != nil; {
+<a id="L738"></a><span class="ln">   738</span>			list = append(list, typ)
+<a id="L739"></a><span class="ln">   739</span>			if p.tok != token.COMMA {
+<a id="L740"></a><span class="ln">   740</span>				break
+<a id="L741"></a><span class="ln">   741</span>			}
+<a id="L742"></a><span class="ln">   742</span>			p.next()
+<a id="L743"></a><span class="ln">   743</span>			typ = p.tryVarType(isParam) <span class="comment">// maybe nil as in: func f(int,) {}</span>
+<a id="L744"></a><span class="ln">   744</span>		}
+<a id="L745"></a><span class="ln">   745</span>	
+<a id="L746"></a><span class="ln">   746</span>		<span class="comment">// if we had a list of identifiers, it must be followed by a type</span>
+<a id="L747"></a><span class="ln">   747</span>		if typ = p.tryVarType(isParam); typ != nil {
+<a id="L748"></a><span class="ln">   748</span>			p.resolve(typ)
+<a id="L749"></a><span class="ln">   749</span>		}
+<a id="L750"></a><span class="ln">   750</span>	
+<a id="L751"></a><span class="ln">   751</span>		return
+<a id="L752"></a><span class="ln">   752</span>	}
+<a id="L753"></a><span class="ln">   753</span>	
+<a id="L754"></a><span class="ln">   754</span>	func (p *parser) parseParameterList(scope *ast.Scope, ellipsisOk bool) (params []*ast.Field) {
+<a id="L755"></a><span class="ln">   755</span>		if p.trace {
+<a id="L756"></a><span class="ln">   756</span>			defer un(trace(p, &#34;ParameterList&#34;))
+<a id="L757"></a><span class="ln">   757</span>		}
+<a id="L758"></a><span class="ln">   758</span>	
+<a id="L759"></a><span class="ln">   759</span>		list, typ := p.parseVarList(ellipsisOk)
+<a id="L760"></a><span class="ln">   760</span>		if typ != nil {
+<a id="L761"></a><span class="ln">   761</span>			<span class="comment">// IdentifierList Type</span>
+<a id="L762"></a><span class="ln">   762</span>			idents := p.makeIdentList(list)
+<a id="L763"></a><span class="ln">   763</span>			field := &amp;ast.Field{Names: idents, Type: typ}
+<a id="L764"></a><span class="ln">   764</span>			params = append(params, field)
+<a id="L765"></a><span class="ln">   765</span>			<span class="comment">// Go spec: The scope of an identifier denoting a function</span>
+<a id="L766"></a><span class="ln">   766</span>			<span class="comment">// parameter or result variable is the function body.</span>
+<a id="L767"></a><span class="ln">   767</span>			p.declare(field, nil, scope, ast.Var, idents...)
+<a id="L768"></a><span class="ln">   768</span>			if p.tok == token.COMMA {
+<a id="L769"></a><span class="ln">   769</span>				p.next()
+<a id="L770"></a><span class="ln">   770</span>			}
+<a id="L771"></a><span class="ln">   771</span>	
+<a id="L772"></a><span class="ln">   772</span>			for p.tok != token.RPAREN &amp;&amp; p.tok != token.EOF {
+<a id="L773"></a><span class="ln">   773</span>				idents := p.parseIdentList()
+<a id="L774"></a><span class="ln">   774</span>				typ := p.parseVarType(ellipsisOk)
+<a id="L775"></a><span class="ln">   775</span>				field := &amp;ast.Field{Names: idents, Type: typ}
+<a id="L776"></a><span class="ln">   776</span>				params = append(params, field)
+<a id="L777"></a><span class="ln">   777</span>				<span class="comment">// Go spec: The scope of an identifier denoting a function</span>
+<a id="L778"></a><span class="ln">   778</span>				<span class="comment">// parameter or result variable is the function body.</span>
+<a id="L779"></a><span class="ln">   779</span>				p.declare(field, nil, scope, ast.Var, idents...)
+<a id="L780"></a><span class="ln">   780</span>				if !p.atComma(&#34;parameter list&#34;) {
+<a id="L781"></a><span class="ln">   781</span>					break
+<a id="L782"></a><span class="ln">   782</span>				}
+<a id="L783"></a><span class="ln">   783</span>				p.next()
+<a id="L784"></a><span class="ln">   784</span>			}
+<a id="L785"></a><span class="ln">   785</span>	
+<a id="L786"></a><span class="ln">   786</span>		} else {
+<a id="L787"></a><span class="ln">   787</span>			<span class="comment">// Type { &#34;,&#34; Type } (anonymous parameters)</span>
+<a id="L788"></a><span class="ln">   788</span>			params = make([]*ast.Field, len(list))
+<a id="L789"></a><span class="ln">   789</span>			for i, x := range list {
+<a id="L790"></a><span class="ln">   790</span>				p.resolve(x)
+<a id="L791"></a><span class="ln">   791</span>				params[i] = &amp;ast.Field{Type: x}
+<a id="L792"></a><span class="ln">   792</span>			}
+<a id="L793"></a><span class="ln">   793</span>		}
+<a id="L794"></a><span class="ln">   794</span>	
+<a id="L795"></a><span class="ln">   795</span>		return
+<a id="L796"></a><span class="ln">   796</span>	}
+<a id="L797"></a><span class="ln">   797</span>	
+<a id="L798"></a><span class="ln">   798</span>	func (p *parser) parseParameters(scope *ast.Scope, ellipsisOk bool) *ast.FieldList {
+<a id="L799"></a><span class="ln">   799</span>		if p.trace {
+<a id="L800"></a><span class="ln">   800</span>			defer un(trace(p, &#34;Parameters&#34;))
+<a id="L801"></a><span class="ln">   801</span>		}
+<a id="L802"></a><span class="ln">   802</span>	
+<a id="L803"></a><span class="ln">   803</span>		var params []*ast.Field
+<a id="L804"></a><span class="ln">   804</span>		lparen := p.expect(token.LPAREN)
+<a id="L805"></a><span class="ln">   805</span>		if p.tok != token.RPAREN {
+<a id="L806"></a><span class="ln">   806</span>			params = p.parseParameterList(scope, ellipsisOk)
+<a id="L807"></a><span class="ln">   807</span>		}
+<a id="L808"></a><span class="ln">   808</span>		rparen := p.expect(token.RPAREN)
+<a id="L809"></a><span class="ln">   809</span>	
+<a id="L810"></a><span class="ln">   810</span>		return &amp;ast.FieldList{Opening: lparen, List: params, Closing: rparen}
+<a id="L811"></a><span class="ln">   811</span>	}
+<a id="L812"></a><span class="ln">   812</span>	
+<a id="L813"></a><span class="ln">   813</span>	func (p *parser) parseResult(scope *ast.Scope) *ast.FieldList {
+<a id="L814"></a><span class="ln">   814</span>		if p.trace {
+<a id="L815"></a><span class="ln">   815</span>			defer un(trace(p, &#34;Result&#34;))
+<a id="L816"></a><span class="ln">   816</span>		}
+<a id="L817"></a><span class="ln">   817</span>	
+<a id="L818"></a><span class="ln">   818</span>		if p.tok == token.LPAREN {
+<a id="L819"></a><span class="ln">   819</span>			return p.parseParameters(scope, false)
+<a id="L820"></a><span class="ln">   820</span>		}
+<a id="L821"></a><span class="ln">   821</span>	
+<a id="L822"></a><span class="ln">   822</span>		typ := p.tryType()
+<a id="L823"></a><span class="ln">   823</span>		if typ != nil {
+<a id="L824"></a><span class="ln">   824</span>			list := make([]*ast.Field, 1)
+<a id="L825"></a><span class="ln">   825</span>			list[0] = &amp;ast.Field{Type: typ}
+<a id="L826"></a><span class="ln">   826</span>			return &amp;ast.FieldList{List: list}
+<a id="L827"></a><span class="ln">   827</span>		}
+<a id="L828"></a><span class="ln">   828</span>	
+<a id="L829"></a><span class="ln">   829</span>		return nil
+<a id="L830"></a><span class="ln">   830</span>	}
+<a id="L831"></a><span class="ln">   831</span>	
+<a id="L832"></a><span class="ln">   832</span>	func (p *parser) parseSignature(scope *ast.Scope) (params, results *ast.FieldList) {
+<a id="L833"></a><span class="ln">   833</span>		if p.trace {
+<a id="L834"></a><span class="ln">   834</span>			defer un(trace(p, &#34;Signature&#34;))
+<a id="L835"></a><span class="ln">   835</span>		}
+<a id="L836"></a><span class="ln">   836</span>	
+<a id="L837"></a><span class="ln">   837</span>		params = p.parseParameters(scope, true)
+<a id="L838"></a><span class="ln">   838</span>		results = p.parseResult(scope)
+<a id="L839"></a><span class="ln">   839</span>	
+<a id="L840"></a><span class="ln">   840</span>		return
+<a id="L841"></a><span class="ln">   841</span>	}
+<a id="L842"></a><span class="ln">   842</span>	
+<a id="L843"></a><span class="ln">   843</span>	func (p *parser) parseFuncType() (*ast.FuncType, *ast.Scope) {
+<a id="L844"></a><span class="ln">   844</span>		if p.trace {
+<a id="L845"></a><span class="ln">   845</span>			defer un(trace(p, &#34;FuncType&#34;))
+<a id="L846"></a><span class="ln">   846</span>		}
+<a id="L847"></a><span class="ln">   847</span>	
+<a id="L848"></a><span class="ln">   848</span>		pos := p.expect(token.FUNC)
+<a id="L849"></a><span class="ln">   849</span>		scope := ast.NewScope(p.topScope) <span class="comment">// function scope</span>
+<a id="L850"></a><span class="ln">   850</span>		params, results := p.parseSignature(scope)
+<a id="L851"></a><span class="ln">   851</span>	
+<a id="L852"></a><span class="ln">   852</span>		return &amp;ast.FuncType{Func: pos, Params: params, Results: results}, scope
+<a id="L853"></a><span class="ln">   853</span>	}
+<a id="L854"></a><span class="ln">   854</span>	
+<a id="L855"></a><span class="ln">   855</span>	func (p *parser) parseMethodSpec(scope *ast.Scope) *ast.Field {
+<a id="L856"></a><span class="ln">   856</span>		if p.trace {
+<a id="L857"></a><span class="ln">   857</span>			defer un(trace(p, &#34;MethodSpec&#34;))
+<a id="L858"></a><span class="ln">   858</span>		}
+<a id="L859"></a><span class="ln">   859</span>	
+<a id="L860"></a><span class="ln">   860</span>		doc := p.leadComment
+<a id="L861"></a><span class="ln">   861</span>		var idents []*ast.Ident
+<a id="L862"></a><span class="ln">   862</span>		var typ ast.Expr
+<a id="L863"></a><span class="ln">   863</span>		x := p.parseTypeName()
+<a id="L864"></a><span class="ln">   864</span>		if ident, isIdent := x.(*ast.Ident); isIdent &amp;&amp; p.tok == token.LPAREN {
+<a id="L865"></a><span class="ln">   865</span>			<span class="comment">// method</span>
+<a id="L866"></a><span class="ln">   866</span>			idents = []*ast.Ident{ident}
+<a id="L867"></a><span class="ln">   867</span>			scope := ast.NewScope(nil) <span class="comment">// method scope</span>
+<a id="L868"></a><span class="ln">   868</span>			params, results := p.parseSignature(scope)
+<a id="L869"></a><span class="ln">   869</span>			typ = &amp;ast.FuncType{Func: token.NoPos, Params: params, Results: results}
+<a id="L870"></a><span class="ln">   870</span>		} else {
+<a id="L871"></a><span class="ln">   871</span>			<span class="comment">// embedded interface</span>
+<a id="L872"></a><span class="ln">   872</span>			typ = x
+<a id="L873"></a><span class="ln">   873</span>			p.resolve(typ)
+<a id="L874"></a><span class="ln">   874</span>		}
+<a id="L875"></a><span class="ln">   875</span>		p.expectSemi() <span class="comment">// call before accessing p.linecomment</span>
+<a id="L876"></a><span class="ln">   876</span>	
+<a id="L877"></a><span class="ln">   877</span>		spec := &amp;ast.Field{Doc: doc, Names: idents, Type: typ, Comment: p.lineComment}
+<a id="L878"></a><span class="ln">   878</span>		p.declare(spec, nil, scope, ast.Fun, idents...)
+<a id="L879"></a><span class="ln">   879</span>	
+<a id="L880"></a><span class="ln">   880</span>		return spec
+<a id="L881"></a><span class="ln">   881</span>	}
+<a id="L882"></a><span class="ln">   882</span>	
+<a id="L883"></a><span class="ln">   883</span>	func (p *parser) parseInterfaceType() *ast.InterfaceType {
+<a id="L884"></a><span class="ln">   884</span>		if p.trace {
+<a id="L885"></a><span class="ln">   885</span>			defer un(trace(p, &#34;InterfaceType&#34;))
+<a id="L886"></a><span class="ln">   886</span>		}
+<a id="L887"></a><span class="ln">   887</span>	
+<a id="L888"></a><span class="ln">   888</span>		pos := p.expect(token.INTERFACE)
+<a id="L889"></a><span class="ln">   889</span>		lbrace := p.expect(token.LBRACE)
+<a id="L890"></a><span class="ln">   890</span>		scope := ast.NewScope(nil) <span class="comment">// interface scope</span>
+<a id="L891"></a><span class="ln">   891</span>		var list []*ast.Field
+<a id="L892"></a><span class="ln">   892</span>		for p.tok == token.IDENT {
+<a id="L893"></a><span class="ln">   893</span>			list = append(list, p.parseMethodSpec(scope))
+<a id="L894"></a><span class="ln">   894</span>		}
+<a id="L895"></a><span class="ln">   895</span>		rbrace := p.expect(token.RBRACE)
+<a id="L896"></a><span class="ln">   896</span>	
+<a id="L897"></a><span class="ln">   897</span>		return &amp;ast.InterfaceType{
+<a id="L898"></a><span class="ln">   898</span>			Interface: pos,
+<a id="L899"></a><span class="ln">   899</span>			Methods: &amp;ast.FieldList{
+<a id="L900"></a><span class="ln">   900</span>				Opening: lbrace,
+<a id="L901"></a><span class="ln">   901</span>				List:    list,
+<a id="L902"></a><span class="ln">   902</span>				Closing: rbrace,
+<a id="L903"></a><span class="ln">   903</span>			},
+<a id="L904"></a><span class="ln">   904</span>		}
+<a id="L905"></a><span class="ln">   905</span>	}
+<a id="L906"></a><span class="ln">   906</span>	
+<a id="L907"></a><span class="ln">   907</span>	func (p *parser) parseMapType() *ast.MapType {
+<a id="L908"></a><span class="ln">   908</span>		if p.trace {
+<a id="L909"></a><span class="ln">   909</span>			defer un(trace(p, &#34;MapType&#34;))
+<a id="L910"></a><span class="ln">   910</span>		}
+<a id="L911"></a><span class="ln">   911</span>	
+<a id="L912"></a><span class="ln">   912</span>		pos := p.expect(token.MAP)
+<a id="L913"></a><span class="ln">   913</span>		p.expect(token.LBRACK)
+<a id="L914"></a><span class="ln">   914</span>		key := p.parseType()
+<a id="L915"></a><span class="ln">   915</span>		p.expect(token.RBRACK)
+<a id="L916"></a><span class="ln">   916</span>		value := p.parseType()
+<a id="L917"></a><span class="ln">   917</span>	
+<a id="L918"></a><span class="ln">   918</span>		return &amp;ast.MapType{Map: pos, Key: key, Value: value}
+<a id="L919"></a><span class="ln">   919</span>	}
+<a id="L920"></a><span class="ln">   920</span>	
+<a id="L921"></a><span class="ln">   921</span>	func (p *parser) parseChanType() *ast.ChanType {
+<a id="L922"></a><span class="ln">   922</span>		if p.trace {
+<a id="L923"></a><span class="ln">   923</span>			defer un(trace(p, &#34;ChanType&#34;))
+<a id="L924"></a><span class="ln">   924</span>		}
+<a id="L925"></a><span class="ln">   925</span>	
+<a id="L926"></a><span class="ln">   926</span>		pos := p.pos
+<a id="L927"></a><span class="ln">   927</span>		dir := ast.SEND | ast.RECV
+<a id="L928"></a><span class="ln">   928</span>		if p.tok == token.CHAN {
+<a id="L929"></a><span class="ln">   929</span>			p.next()
+<a id="L930"></a><span class="ln">   930</span>			if p.tok == token.ARROW {
+<a id="L931"></a><span class="ln">   931</span>				p.next()
+<a id="L932"></a><span class="ln">   932</span>				dir = ast.SEND
+<a id="L933"></a><span class="ln">   933</span>			}
+<a id="L934"></a><span class="ln">   934</span>		} else {
+<a id="L935"></a><span class="ln">   935</span>			p.expect(token.ARROW)
+<a id="L936"></a><span class="ln">   936</span>			p.expect(token.CHAN)
+<a id="L937"></a><span class="ln">   937</span>			dir = ast.RECV
+<a id="L938"></a><span class="ln">   938</span>		}
+<a id="L939"></a><span class="ln">   939</span>		value := p.parseType()
+<a id="L940"></a><span class="ln">   940</span>	
+<a id="L941"></a><span class="ln">   941</span>		return &amp;ast.ChanType{Begin: pos, Dir: dir, Value: value}
+<a id="L942"></a><span class="ln">   942</span>	}
+<a id="L943"></a><span class="ln">   943</span>	
+<a id="L944"></a><span class="ln">   944</span>	<span class="comment">// If the result is an identifier, it is not resolved.</span>
+<a id="L945"></a><span class="ln">   945</span>	func (p *parser) tryIdentOrType(ellipsisOk bool) ast.Expr {
+<a id="L946"></a><span class="ln">   946</span>		switch p.tok {
+<a id="L947"></a><span class="ln">   947</span>		case token.IDENT:
+<a id="L948"></a><span class="ln">   948</span>			return p.parseTypeName()
+<a id="L949"></a><span class="ln">   949</span>		case token.LBRACK:
+<a id="L950"></a><span class="ln">   950</span>			return p.parseArrayType(ellipsisOk)
+<a id="L951"></a><span class="ln">   951</span>		case token.STRUCT:
+<a id="L952"></a><span class="ln">   952</span>			return p.parseStructType()
+<a id="L953"></a><span class="ln">   953</span>		case token.MUL:
+<a id="L954"></a><span class="ln">   954</span>			return p.parsePointerType()
+<a id="L955"></a><span class="ln">   955</span>		case token.FUNC:
+<a id="L956"></a><span class="ln">   956</span>			typ, _ := p.parseFuncType()
+<a id="L957"></a><span class="ln">   957</span>			return typ
+<a id="L958"></a><span class="ln">   958</span>		case token.INTERFACE:
+<a id="L959"></a><span class="ln">   959</span>			return p.parseInterfaceType()
+<a id="L960"></a><span class="ln">   960</span>		case token.MAP:
+<a id="L961"></a><span class="ln">   961</span>			return p.parseMapType()
+<a id="L962"></a><span class="ln">   962</span>		case token.CHAN, token.ARROW:
+<a id="L963"></a><span class="ln">   963</span>			return p.parseChanType()
+<a id="L964"></a><span class="ln">   964</span>		case token.LPAREN:
+<a id="L965"></a><span class="ln">   965</span>			lparen := p.pos
+<a id="L966"></a><span class="ln">   966</span>			p.next()
+<a id="L967"></a><span class="ln">   967</span>			typ := p.parseType()
+<a id="L968"></a><span class="ln">   968</span>			rparen := p.expect(token.RPAREN)
+<a id="L969"></a><span class="ln">   969</span>			return &amp;ast.ParenExpr{Lparen: lparen, X: typ, Rparen: rparen}
+<a id="L970"></a><span class="ln">   970</span>		}
+<a id="L971"></a><span class="ln">   971</span>	
+<a id="L972"></a><span class="ln">   972</span>		<span class="comment">// no type found</span>
+<a id="L973"></a><span class="ln">   973</span>		return nil
+<a id="L974"></a><span class="ln">   974</span>	}
+<a id="L975"></a><span class="ln">   975</span>	
+<a id="L976"></a><span class="ln">   976</span>	func (p *parser) tryType() ast.Expr {
+<a id="L977"></a><span class="ln">   977</span>		typ := p.tryIdentOrType(false)
+<a id="L978"></a><span class="ln">   978</span>		if typ != nil {
+<a id="L979"></a><span class="ln">   979</span>			p.resolve(typ)
+<a id="L980"></a><span class="ln">   980</span>		}
+<a id="L981"></a><span class="ln">   981</span>		return typ
+<a id="L982"></a><span class="ln">   982</span>	}
+<a id="L983"></a><span class="ln">   983</span>	
+<a id="L984"></a><span class="ln">   984</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L985"></a><span class="ln">   985</span>	<span class="comment">// Blocks</span>
+<a id="L986"></a><span class="ln">   986</span>	
+<a id="L987"></a><span class="ln">   987</span>	func (p *parser) parseStmtList() (list []ast.Stmt) {
+<a id="L988"></a><span class="ln">   988</span>		if p.trace {
+<a id="L989"></a><span class="ln">   989</span>			defer un(trace(p, &#34;StatementList&#34;))
+<a id="L990"></a><span class="ln">   990</span>		}
+<a id="L991"></a><span class="ln">   991</span>	
+<a id="L992"></a><span class="ln">   992</span>		for p.tok != token.CASE &amp;&amp; p.tok != token.DEFAULT &amp;&amp; p.tok != token.RBRACE &amp;&amp; p.tok != token.EOF {
+<a id="L993"></a><span class="ln">   993</span>			list = append(list, p.parseStmt())
+<a id="L994"></a><span class="ln">   994</span>		}
+<a id="L995"></a><span class="ln">   995</span>	
+<a id="L996"></a><span class="ln">   996</span>		return
+<a id="L997"></a><span class="ln">   997</span>	}
+<a id="L998"></a><span class="ln">   998</span>	
+<a id="L999"></a><span class="ln">   999</span>	func (p *parser) parseBody(scope *ast.Scope) *ast.BlockStmt {
+<a id="L1000"></a><span class="ln">  1000</span>		if p.trace {
+<a id="L1001"></a><span class="ln">  1001</span>			defer un(trace(p, &#34;Body&#34;))
+<a id="L1002"></a><span class="ln">  1002</span>		}
+<a id="L1003"></a><span class="ln">  1003</span>	
+<a id="L1004"></a><span class="ln">  1004</span>		lbrace := p.expect(token.LBRACE)
+<a id="L1005"></a><span class="ln">  1005</span>		p.topScope = scope <span class="comment">// open function scope</span>
+<a id="L1006"></a><span class="ln">  1006</span>		p.openLabelScope()
+<a id="L1007"></a><span class="ln">  1007</span>		list := p.parseStmtList()
+<a id="L1008"></a><span class="ln">  1008</span>		p.closeLabelScope()
+<a id="L1009"></a><span class="ln">  1009</span>		p.closeScope()
+<a id="L1010"></a><span class="ln">  1010</span>		rbrace := p.expect(token.RBRACE)
+<a id="L1011"></a><span class="ln">  1011</span>	
+<a id="L1012"></a><span class="ln">  1012</span>		return &amp;ast.BlockStmt{Lbrace: lbrace, List: list, Rbrace: rbrace}
+<a id="L1013"></a><span class="ln">  1013</span>	}
+<a id="L1014"></a><span class="ln">  1014</span>	
+<a id="L1015"></a><span class="ln">  1015</span>	func (p *parser) parseBlockStmt() *ast.BlockStmt {
+<a id="L1016"></a><span class="ln">  1016</span>		if p.trace {
+<a id="L1017"></a><span class="ln">  1017</span>			defer un(trace(p, &#34;BlockStmt&#34;))
+<a id="L1018"></a><span class="ln">  1018</span>		}
+<a id="L1019"></a><span class="ln">  1019</span>	
+<a id="L1020"></a><span class="ln">  1020</span>		lbrace := p.expect(token.LBRACE)
+<a id="L1021"></a><span class="ln">  1021</span>		p.openScope()
+<a id="L1022"></a><span class="ln">  1022</span>		list := p.parseStmtList()
+<a id="L1023"></a><span class="ln">  1023</span>		p.closeScope()
+<a id="L1024"></a><span class="ln">  1024</span>		rbrace := p.expect(token.RBRACE)
+<a id="L1025"></a><span class="ln">  1025</span>	
+<a id="L1026"></a><span class="ln">  1026</span>		return &amp;ast.BlockStmt{Lbrace: lbrace, List: list, Rbrace: rbrace}
+<a id="L1027"></a><span class="ln">  1027</span>	}
+<a id="L1028"></a><span class="ln">  1028</span>	
+<a id="L1029"></a><span class="ln">  1029</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L1030"></a><span class="ln">  1030</span>	<span class="comment">// Expressions</span>
+<a id="L1031"></a><span class="ln">  1031</span>	
+<a id="L1032"></a><span class="ln">  1032</span>	func (p *parser) parseFuncTypeOrLit() ast.Expr {
+<a id="L1033"></a><span class="ln">  1033</span>		if p.trace {
+<a id="L1034"></a><span class="ln">  1034</span>			defer un(trace(p, &#34;FuncTypeOrLit&#34;))
+<a id="L1035"></a><span class="ln">  1035</span>		}
+<a id="L1036"></a><span class="ln">  1036</span>	
+<a id="L1037"></a><span class="ln">  1037</span>		typ, scope := p.parseFuncType()
+<a id="L1038"></a><span class="ln">  1038</span>		if p.tok != token.LBRACE {
+<a id="L1039"></a><span class="ln">  1039</span>			<span class="comment">// function type only</span>
+<a id="L1040"></a><span class="ln">  1040</span>			return typ
+<a id="L1041"></a><span class="ln">  1041</span>		}
+<a id="L1042"></a><span class="ln">  1042</span>	
+<a id="L1043"></a><span class="ln">  1043</span>		p.exprLev++
+<a id="L1044"></a><span class="ln">  1044</span>		body := p.parseBody(scope)
+<a id="L1045"></a><span class="ln">  1045</span>		p.exprLev--
+<a id="L1046"></a><span class="ln">  1046</span>	
+<a id="L1047"></a><span class="ln">  1047</span>		return &amp;ast.FuncLit{Type: typ, Body: body}
+<a id="L1048"></a><span class="ln">  1048</span>	}
+<a id="L1049"></a><span class="ln">  1049</span>	
+<a id="L1050"></a><span class="ln">  1050</span>	<span class="comment">// parseOperand may return an expression or a raw type (incl. array</span>
+<a id="L1051"></a><span class="ln">  1051</span>	<span class="comment">// types of the form [...]T. Callers must verify the result.</span>
+<a id="L1052"></a><span class="ln">  1052</span>	<span class="comment">// If lhs is set and the result is an identifier, it is not resolved.</span>
+<a id="L1053"></a><span class="ln">  1053</span>	<span class="comment">//</span>
+<a id="L1054"></a><span class="ln">  1054</span>	func (p *parser) parseOperand(lhs bool) ast.Expr {
+<a id="L1055"></a><span class="ln">  1055</span>		if p.trace {
+<a id="L1056"></a><span class="ln">  1056</span>			defer un(trace(p, &#34;Operand&#34;))
+<a id="L1057"></a><span class="ln">  1057</span>		}
+<a id="L1058"></a><span class="ln">  1058</span>	
+<a id="L1059"></a><span class="ln">  1059</span>		switch p.tok {
+<a id="L1060"></a><span class="ln">  1060</span>		case token.IDENT:
+<a id="L1061"></a><span class="ln">  1061</span>			x := p.parseIdent()
+<a id="L1062"></a><span class="ln">  1062</span>			if !lhs {
+<a id="L1063"></a><span class="ln">  1063</span>				p.resolve(x)
+<a id="L1064"></a><span class="ln">  1064</span>			}
+<a id="L1065"></a><span class="ln">  1065</span>			return x
+<a id="L1066"></a><span class="ln">  1066</span>	
+<a id="L1067"></a><span class="ln">  1067</span>		case token.INT, token.FLOAT, token.IMAG, token.CHAR, token.STRING:
+<a id="L1068"></a><span class="ln">  1068</span>			x := &amp;ast.BasicLit{ValuePos: p.pos, Kind: p.tok, Value: p.lit}
+<a id="L1069"></a><span class="ln">  1069</span>			p.next()
+<a id="L1070"></a><span class="ln">  1070</span>			return x
+<a id="L1071"></a><span class="ln">  1071</span>	
+<a id="L1072"></a><span class="ln">  1072</span>		case token.LPAREN:
+<a id="L1073"></a><span class="ln">  1073</span>			lparen := p.pos
+<a id="L1074"></a><span class="ln">  1074</span>			p.next()
+<a id="L1075"></a><span class="ln">  1075</span>			p.exprLev++
+<a id="L1076"></a><span class="ln">  1076</span>			x := p.parseRhsOrType() <span class="comment">// types may be parenthesized: (some type)</span>
+<a id="L1077"></a><span class="ln">  1077</span>			p.exprLev--
+<a id="L1078"></a><span class="ln">  1078</span>			rparen := p.expect(token.RPAREN)
+<a id="L1079"></a><span class="ln">  1079</span>			return &amp;ast.ParenExpr{Lparen: lparen, X: x, Rparen: rparen}
+<a id="L1080"></a><span class="ln">  1080</span>	
+<a id="L1081"></a><span class="ln">  1081</span>		case token.FUNC:
+<a id="L1082"></a><span class="ln">  1082</span>			return p.parseFuncTypeOrLit()
+<a id="L1083"></a><span class="ln">  1083</span>		}
+<a id="L1084"></a><span class="ln">  1084</span>	
+<a id="L1085"></a><span class="ln">  1085</span>		if typ := p.tryIdentOrType(true); typ != nil {
+<a id="L1086"></a><span class="ln">  1086</span>			<span class="comment">// could be type for composite literal or conversion</span>
+<a id="L1087"></a><span class="ln">  1087</span>			_, isIdent := typ.(*ast.Ident)
+<a id="L1088"></a><span class="ln">  1088</span>			assert(!isIdent, &#34;type cannot be identifier&#34;)
+<a id="L1089"></a><span class="ln">  1089</span>			return typ
+<a id="L1090"></a><span class="ln">  1090</span>		}
+<a id="L1091"></a><span class="ln">  1091</span>	
+<a id="L1092"></a><span class="ln">  1092</span>		<span class="comment">// we have an error</span>
+<a id="L1093"></a><span class="ln">  1093</span>		pos := p.pos
+<a id="L1094"></a><span class="ln">  1094</span>		p.errorExpected(pos, &#34;operand&#34;)
+<a id="L1095"></a><span class="ln">  1095</span>		syncStmt(p)
+<a id="L1096"></a><span class="ln">  1096</span>		return &amp;ast.BadExpr{From: pos, To: p.pos}
+<a id="L1097"></a><span class="ln">  1097</span>	}
+<a id="L1098"></a><span class="ln">  1098</span>	
+<a id="L1099"></a><span class="ln">  1099</span>	func (p *parser) parseSelector(x ast.Expr) ast.Expr {
+<a id="L1100"></a><span class="ln">  1100</span>		if p.trace {
+<a id="L1101"></a><span class="ln">  1101</span>			defer un(trace(p, &#34;Selector&#34;))
+<a id="L1102"></a><span class="ln">  1102</span>		}
+<a id="L1103"></a><span class="ln">  1103</span>	
+<a id="L1104"></a><span class="ln">  1104</span>		sel := p.parseIdent()
+<a id="L1105"></a><span class="ln">  1105</span>	
+<a id="L1106"></a><span class="ln">  1106</span>		return &amp;ast.SelectorExpr{X: x, Sel: sel}
+<a id="L1107"></a><span class="ln">  1107</span>	}
+<a id="L1108"></a><span class="ln">  1108</span>	
+<a id="L1109"></a><span class="ln">  1109</span>	func (p *parser) parseTypeAssertion(x ast.Expr) ast.Expr {
+<a id="L1110"></a><span class="ln">  1110</span>		if p.trace {
+<a id="L1111"></a><span class="ln">  1111</span>			defer un(trace(p, &#34;TypeAssertion&#34;))
+<a id="L1112"></a><span class="ln">  1112</span>		}
+<a id="L1113"></a><span class="ln">  1113</span>	
+<a id="L1114"></a><span class="ln">  1114</span>		p.expect(token.LPAREN)
+<a id="L1115"></a><span class="ln">  1115</span>		var typ ast.Expr
+<a id="L1116"></a><span class="ln">  1116</span>		if p.tok == token.TYPE {
+<a id="L1117"></a><span class="ln">  1117</span>			<span class="comment">// type switch: typ == nil</span>
+<a id="L1118"></a><span class="ln">  1118</span>			p.next()
+<a id="L1119"></a><span class="ln">  1119</span>		} else {
+<a id="L1120"></a><span class="ln">  1120</span>			typ = p.parseType()
+<a id="L1121"></a><span class="ln">  1121</span>		}
+<a id="L1122"></a><span class="ln">  1122</span>		p.expect(token.RPAREN)
+<a id="L1123"></a><span class="ln">  1123</span>	
+<a id="L1124"></a><span class="ln">  1124</span>		return &amp;ast.TypeAssertExpr{X: x, Type: typ}
+<a id="L1125"></a><span class="ln">  1125</span>	}
+<a id="L1126"></a><span class="ln">  1126</span>	
+<a id="L1127"></a><span class="ln">  1127</span>	func (p *parser) parseIndexOrSlice(x ast.Expr) ast.Expr {
+<a id="L1128"></a><span class="ln">  1128</span>		if p.trace {
+<a id="L1129"></a><span class="ln">  1129</span>			defer un(trace(p, &#34;IndexOrSlice&#34;))
+<a id="L1130"></a><span class="ln">  1130</span>		}
+<a id="L1131"></a><span class="ln">  1131</span>	
+<a id="L1132"></a><span class="ln">  1132</span>		lbrack := p.expect(token.LBRACK)
+<a id="L1133"></a><span class="ln">  1133</span>		p.exprLev++
+<a id="L1134"></a><span class="ln">  1134</span>		var low, high ast.Expr
+<a id="L1135"></a><span class="ln">  1135</span>		isSlice := false
+<a id="L1136"></a><span class="ln">  1136</span>		if p.tok != token.COLON {
+<a id="L1137"></a><span class="ln">  1137</span>			low = p.parseRhs()
+<a id="L1138"></a><span class="ln">  1138</span>		}
+<a id="L1139"></a><span class="ln">  1139</span>		if p.tok == token.COLON {
+<a id="L1140"></a><span class="ln">  1140</span>			isSlice = true
+<a id="L1141"></a><span class="ln">  1141</span>			p.next()
+<a id="L1142"></a><span class="ln">  1142</span>			if p.tok != token.RBRACK {
+<a id="L1143"></a><span class="ln">  1143</span>				high = p.parseRhs()
+<a id="L1144"></a><span class="ln">  1144</span>			}
+<a id="L1145"></a><span class="ln">  1145</span>		}
+<a id="L1146"></a><span class="ln">  1146</span>		p.exprLev--
+<a id="L1147"></a><span class="ln">  1147</span>		rbrack := p.expect(token.RBRACK)
+<a id="L1148"></a><span class="ln">  1148</span>	
+<a id="L1149"></a><span class="ln">  1149</span>		if isSlice {
+<a id="L1150"></a><span class="ln">  1150</span>			return &amp;ast.SliceExpr{X: x, Lbrack: lbrack, Low: low, High: high, Rbrack: rbrack}
+<a id="L1151"></a><span class="ln">  1151</span>		}
+<a id="L1152"></a><span class="ln">  1152</span>		return &amp;ast.IndexExpr{X: x, Lbrack: lbrack, Index: low, Rbrack: rbrack}
+<a id="L1153"></a><span class="ln">  1153</span>	}
+<a id="L1154"></a><span class="ln">  1154</span>	
+<a id="L1155"></a><span class="ln">  1155</span>	func (p *parser) parseCallOrConversion(fun ast.Expr) *ast.CallExpr {
+<a id="L1156"></a><span class="ln">  1156</span>		if p.trace {
+<a id="L1157"></a><span class="ln">  1157</span>			defer un(trace(p, &#34;CallOrConversion&#34;))
+<a id="L1158"></a><span class="ln">  1158</span>		}
+<a id="L1159"></a><span class="ln">  1159</span>	
+<a id="L1160"></a><span class="ln">  1160</span>		lparen := p.expect(token.LPAREN)
+<a id="L1161"></a><span class="ln">  1161</span>		p.exprLev++
+<a id="L1162"></a><span class="ln">  1162</span>		var list []ast.Expr
+<a id="L1163"></a><span class="ln">  1163</span>		var ellipsis token.Pos
+<a id="L1164"></a><span class="ln">  1164</span>		for p.tok != token.RPAREN &amp;&amp; p.tok != token.EOF &amp;&amp; !ellipsis.IsValid() {
+<a id="L1165"></a><span class="ln">  1165</span>			list = append(list, p.parseRhsOrType()) <span class="comment">// builtins may expect a type: make(some type, ...)</span>
+<a id="L1166"></a><span class="ln">  1166</span>			if p.tok == token.ELLIPSIS {
+<a id="L1167"></a><span class="ln">  1167</span>				ellipsis = p.pos
+<a id="L1168"></a><span class="ln">  1168</span>				p.next()
+<a id="L1169"></a><span class="ln">  1169</span>			}
+<a id="L1170"></a><span class="ln">  1170</span>			if !p.atComma(&#34;argument list&#34;) {
+<a id="L1171"></a><span class="ln">  1171</span>				break
+<a id="L1172"></a><span class="ln">  1172</span>			}
+<a id="L1173"></a><span class="ln">  1173</span>			p.next()
+<a id="L1174"></a><span class="ln">  1174</span>		}
+<a id="L1175"></a><span class="ln">  1175</span>		p.exprLev--
+<a id="L1176"></a><span class="ln">  1176</span>		rparen := p.expectClosing(token.RPAREN, &#34;argument list&#34;)
+<a id="L1177"></a><span class="ln">  1177</span>	
+<a id="L1178"></a><span class="ln">  1178</span>		return &amp;ast.CallExpr{Fun: fun, Lparen: lparen, Args: list, Ellipsis: ellipsis, Rparen: rparen}
+<a id="L1179"></a><span class="ln">  1179</span>	}
+<a id="L1180"></a><span class="ln">  1180</span>	
+<a id="L1181"></a><span class="ln">  1181</span>	func (p *parser) parseElement(keyOk bool) ast.Expr {
+<a id="L1182"></a><span class="ln">  1182</span>		if p.trace {
+<a id="L1183"></a><span class="ln">  1183</span>			defer un(trace(p, &#34;Element&#34;))
+<a id="L1184"></a><span class="ln">  1184</span>		}
+<a id="L1185"></a><span class="ln">  1185</span>	
+<a id="L1186"></a><span class="ln">  1186</span>		if p.tok == token.LBRACE {
+<a id="L1187"></a><span class="ln">  1187</span>			return p.parseLiteralValue(nil)
+<a id="L1188"></a><span class="ln">  1188</span>		}
+<a id="L1189"></a><span class="ln">  1189</span>	
+<a id="L1190"></a><span class="ln">  1190</span>		x := p.checkExpr(p.parseExpr(keyOk)) <span class="comment">// don&#39;t resolve if map key</span>
+<a id="L1191"></a><span class="ln">  1191</span>		if keyOk {
+<a id="L1192"></a><span class="ln">  1192</span>			if p.tok == token.COLON {
+<a id="L1193"></a><span class="ln">  1193</span>				colon := p.pos
+<a id="L1194"></a><span class="ln">  1194</span>				p.next()
+<a id="L1195"></a><span class="ln">  1195</span>				return &amp;ast.KeyValueExpr{Key: x, Colon: colon, Value: p.parseElement(false)}
+<a id="L1196"></a><span class="ln">  1196</span>			}
+<a id="L1197"></a><span class="ln">  1197</span>			p.resolve(x) <span class="comment">// not a map key</span>
+<a id="L1198"></a><span class="ln">  1198</span>		}
+<a id="L1199"></a><span class="ln">  1199</span>	
+<a id="L1200"></a><span class="ln">  1200</span>		return x
+<a id="L1201"></a><span class="ln">  1201</span>	}
+<a id="L1202"></a><span class="ln">  1202</span>	
+<a id="L1203"></a><span class="ln">  1203</span>	func (p *parser) parseElementList() (list []ast.Expr) {
+<a id="L1204"></a><span class="ln">  1204</span>		if p.trace {
+<a id="L1205"></a><span class="ln">  1205</span>			defer un(trace(p, &#34;ElementList&#34;))
+<a id="L1206"></a><span class="ln">  1206</span>		}
+<a id="L1207"></a><span class="ln">  1207</span>	
+<a id="L1208"></a><span class="ln">  1208</span>		for p.tok != token.RBRACE &amp;&amp; p.tok != token.EOF {
+<a id="L1209"></a><span class="ln">  1209</span>			list = append(list, p.parseElement(true))
+<a id="L1210"></a><span class="ln">  1210</span>			if !p.atComma(&#34;composite literal&#34;) {
+<a id="L1211"></a><span class="ln">  1211</span>				break
+<a id="L1212"></a><span class="ln">  1212</span>			}
+<a id="L1213"></a><span class="ln">  1213</span>			p.next()
+<a id="L1214"></a><span class="ln">  1214</span>		}
+<a id="L1215"></a><span class="ln">  1215</span>	
+<a id="L1216"></a><span class="ln">  1216</span>		return
+<a id="L1217"></a><span class="ln">  1217</span>	}
+<a id="L1218"></a><span class="ln">  1218</span>	
+<a id="L1219"></a><span class="ln">  1219</span>	func (p *parser) parseLiteralValue(typ ast.Expr) ast.Expr {
+<a id="L1220"></a><span class="ln">  1220</span>		if p.trace {
+<a id="L1221"></a><span class="ln">  1221</span>			defer un(trace(p, &#34;LiteralValue&#34;))
+<a id="L1222"></a><span class="ln">  1222</span>		}
+<a id="L1223"></a><span class="ln">  1223</span>	
+<a id="L1224"></a><span class="ln">  1224</span>		lbrace := p.expect(token.LBRACE)
+<a id="L1225"></a><span class="ln">  1225</span>		var elts []ast.Expr
+<a id="L1226"></a><span class="ln">  1226</span>		p.exprLev++
+<a id="L1227"></a><span class="ln">  1227</span>		if p.tok != token.RBRACE {
+<a id="L1228"></a><span class="ln">  1228</span>			elts = p.parseElementList()
+<a id="L1229"></a><span class="ln">  1229</span>		}
+<a id="L1230"></a><span class="ln">  1230</span>		p.exprLev--
+<a id="L1231"></a><span class="ln">  1231</span>		rbrace := p.expectClosing(token.RBRACE, &#34;composite literal&#34;)
+<a id="L1232"></a><span class="ln">  1232</span>		return &amp;ast.CompositeLit{Type: typ, Lbrace: lbrace, Elts: elts, Rbrace: rbrace}
+<a id="L1233"></a><span class="ln">  1233</span>	}
+<a id="L1234"></a><span class="ln">  1234</span>	
+<a id="L1235"></a><span class="ln">  1235</span>	<span class="comment">// checkExpr checks that x is an expression (and not a type).</span>
+<a id="L1236"></a><span class="ln">  1236</span>	func (p *parser) checkExpr(x ast.Expr) ast.Expr {
+<a id="L1237"></a><span class="ln">  1237</span>		switch unparen(x).(type) {
+<a id="L1238"></a><span class="ln">  1238</span>		case *ast.BadExpr:
+<a id="L1239"></a><span class="ln">  1239</span>		case *ast.Ident:
+<a id="L1240"></a><span class="ln">  1240</span>		case *ast.BasicLit:
+<a id="L1241"></a><span class="ln">  1241</span>		case *ast.FuncLit:
+<a id="L1242"></a><span class="ln">  1242</span>		case *ast.CompositeLit:
+<a id="L1243"></a><span class="ln">  1243</span>		case *ast.ParenExpr:
+<a id="L1244"></a><span class="ln">  1244</span>			panic(&#34;unreachable&#34;)
+<a id="L1245"></a><span class="ln">  1245</span>		case *ast.SelectorExpr:
+<a id="L1246"></a><span class="ln">  1246</span>		case *ast.IndexExpr:
+<a id="L1247"></a><span class="ln">  1247</span>		case *ast.SliceExpr:
+<a id="L1248"></a><span class="ln">  1248</span>		case *ast.TypeAssertExpr:
+<a id="L1249"></a><span class="ln">  1249</span>			<span class="comment">// If t.Type == nil we have a type assertion of the form</span>
+<a id="L1250"></a><span class="ln">  1250</span>			<span class="comment">// y.(type), which is only allowed in type switch expressions.</span>
+<a id="L1251"></a><span class="ln">  1251</span>			<span class="comment">// It&#39;s hard to exclude those but for the case where we are in</span>
+<a id="L1252"></a><span class="ln">  1252</span>			<span class="comment">// a type switch. Instead be lenient and test this in the type</span>
+<a id="L1253"></a><span class="ln">  1253</span>			<span class="comment">// checker.</span>
+<a id="L1254"></a><span class="ln">  1254</span>		case *ast.CallExpr:
+<a id="L1255"></a><span class="ln">  1255</span>		case *ast.StarExpr:
+<a id="L1256"></a><span class="ln">  1256</span>		case *ast.UnaryExpr:
+<a id="L1257"></a><span class="ln">  1257</span>		case *ast.BinaryExpr:
+<a id="L1258"></a><span class="ln">  1258</span>		default:
+<a id="L1259"></a><span class="ln">  1259</span>			<span class="comment">// all other nodes are not proper expressions</span>
+<a id="L1260"></a><span class="ln">  1260</span>			p.errorExpected(x.Pos(), &#34;expression&#34;)
+<a id="L1261"></a><span class="ln">  1261</span>			x = &amp;ast.BadExpr{From: x.Pos(), To: x.End()}
+<a id="L1262"></a><span class="ln">  1262</span>		}
+<a id="L1263"></a><span class="ln">  1263</span>		return x
+<a id="L1264"></a><span class="ln">  1264</span>	}
+<a id="L1265"></a><span class="ln">  1265</span>	
+<a id="L1266"></a><span class="ln">  1266</span>	<span class="comment">// isTypeName returns true iff x is a (qualified) TypeName.</span>
+<a id="L1267"></a><span class="ln">  1267</span>	func isTypeName(x ast.Expr) bool {
+<a id="L1268"></a><span class="ln">  1268</span>		switch t := x.(type) {
+<a id="L1269"></a><span class="ln">  1269</span>		case *ast.BadExpr:
+<a id="L1270"></a><span class="ln">  1270</span>		case *ast.Ident:
+<a id="L1271"></a><span class="ln">  1271</span>		case *ast.SelectorExpr:
+<a id="L1272"></a><span class="ln">  1272</span>			_, isIdent := t.X.(*ast.Ident)
+<a id="L1273"></a><span class="ln">  1273</span>			return isIdent
+<a id="L1274"></a><span class="ln">  1274</span>		default:
+<a id="L1275"></a><span class="ln">  1275</span>			return false <span class="comment">// all other nodes are not type names</span>
+<a id="L1276"></a><span class="ln">  1276</span>		}
+<a id="L1277"></a><span class="ln">  1277</span>		return true
+<a id="L1278"></a><span class="ln">  1278</span>	}
+<a id="L1279"></a><span class="ln">  1279</span>	
+<a id="L1280"></a><span class="ln">  1280</span>	<span class="comment">// isLiteralType returns true iff x is a legal composite literal type.</span>
+<a id="L1281"></a><span class="ln">  1281</span>	func isLiteralType(x ast.Expr) bool {
+<a id="L1282"></a><span class="ln">  1282</span>		switch t := x.(type) {
+<a id="L1283"></a><span class="ln">  1283</span>		case *ast.BadExpr:
+<a id="L1284"></a><span class="ln">  1284</span>		case *ast.Ident:
+<a id="L1285"></a><span class="ln">  1285</span>		case *ast.SelectorExpr:
+<a id="L1286"></a><span class="ln">  1286</span>			_, isIdent := t.X.(*ast.Ident)
+<a id="L1287"></a><span class="ln">  1287</span>			return isIdent
+<a id="L1288"></a><span class="ln">  1288</span>		case *ast.ArrayType:
+<a id="L1289"></a><span class="ln">  1289</span>		case *ast.StructType:
+<a id="L1290"></a><span class="ln">  1290</span>		case *ast.MapType:
+<a id="L1291"></a><span class="ln">  1291</span>		default:
+<a id="L1292"></a><span class="ln">  1292</span>			return false <span class="comment">// all other nodes are not legal composite literal types</span>
+<a id="L1293"></a><span class="ln">  1293</span>		}
+<a id="L1294"></a><span class="ln">  1294</span>		return true
+<a id="L1295"></a><span class="ln">  1295</span>	}
+<a id="L1296"></a><span class="ln">  1296</span>	
+<a id="L1297"></a><span class="ln">  1297</span>	<span class="comment">// If x is of the form *T, deref returns T, otherwise it returns x.</span>
+<a id="L1298"></a><span class="ln">  1298</span>	func deref(x ast.Expr) ast.Expr {
+<a id="L1299"></a><span class="ln">  1299</span>		if p, isPtr := x.(*ast.StarExpr); isPtr {
+<a id="L1300"></a><span class="ln">  1300</span>			x = p.X
+<a id="L1301"></a><span class="ln">  1301</span>		}
+<a id="L1302"></a><span class="ln">  1302</span>		return x
+<a id="L1303"></a><span class="ln">  1303</span>	}
+<a id="L1304"></a><span class="ln">  1304</span>	
+<a id="L1305"></a><span class="ln">  1305</span>	<span class="comment">// If x is of the form (T), unparen returns unparen(T), otherwise it returns x.</span>
+<a id="L1306"></a><span class="ln">  1306</span>	func unparen(x ast.Expr) ast.Expr {
+<a id="L1307"></a><span class="ln">  1307</span>		if p, isParen := x.(*ast.ParenExpr); isParen {
+<a id="L1308"></a><span class="ln">  1308</span>			x = unparen(p.X)
+<a id="L1309"></a><span class="ln">  1309</span>		}
+<a id="L1310"></a><span class="ln">  1310</span>		return x
+<a id="L1311"></a><span class="ln">  1311</span>	}
+<a id="L1312"></a><span class="ln">  1312</span>	
+<a id="L1313"></a><span class="ln">  1313</span>	<span class="comment">// checkExprOrType checks that x is an expression or a type</span>
+<a id="L1314"></a><span class="ln">  1314</span>	<span class="comment">// (and not a raw type such as [...]T).</span>
+<a id="L1315"></a><span class="ln">  1315</span>	<span class="comment">//</span>
+<a id="L1316"></a><span class="ln">  1316</span>	func (p *parser) checkExprOrType(x ast.Expr) ast.Expr {
+<a id="L1317"></a><span class="ln">  1317</span>		switch t := unparen(x).(type) {
+<a id="L1318"></a><span class="ln">  1318</span>		case *ast.ParenExpr:
+<a id="L1319"></a><span class="ln">  1319</span>			panic(&#34;unreachable&#34;)
+<a id="L1320"></a><span class="ln">  1320</span>		case *ast.UnaryExpr:
+<a id="L1321"></a><span class="ln">  1321</span>		case *ast.ArrayType:
+<a id="L1322"></a><span class="ln">  1322</span>			if len, isEllipsis := t.Len.(*ast.Ellipsis); isEllipsis {
+<a id="L1323"></a><span class="ln">  1323</span>				p.error(len.Pos(), &#34;expected array length, found &#39;...&#39;&#34;)
+<a id="L1324"></a><span class="ln">  1324</span>				x = &amp;ast.BadExpr{From: x.Pos(), To: x.End()}
+<a id="L1325"></a><span class="ln">  1325</span>			}
+<a id="L1326"></a><span class="ln">  1326</span>		}
+<a id="L1327"></a><span class="ln">  1327</span>	
+<a id="L1328"></a><span class="ln">  1328</span>		<span class="comment">// all other nodes are expressions or types</span>
+<a id="L1329"></a><span class="ln">  1329</span>		return x
+<a id="L1330"></a><span class="ln">  1330</span>	}
+<a id="L1331"></a><span class="ln">  1331</span>	
+<a id="L1332"></a><span class="ln">  1332</span>	<span class="comment">// If lhs is set and the result is an identifier, it is not resolved.</span>
+<a id="L1333"></a><span class="ln">  1333</span>	func (p *parser) parsePrimaryExpr(lhs bool) ast.Expr {
+<a id="L1334"></a><span class="ln">  1334</span>		if p.trace {
+<a id="L1335"></a><span class="ln">  1335</span>			defer un(trace(p, &#34;PrimaryExpr&#34;))
+<a id="L1336"></a><span class="ln">  1336</span>		}
+<a id="L1337"></a><span class="ln">  1337</span>	
+<a id="L1338"></a><span class="ln">  1338</span>		x := p.parseOperand(lhs)
+<a id="L1339"></a><span class="ln">  1339</span>	L:
+<a id="L1340"></a><span class="ln">  1340</span>		for {
+<a id="L1341"></a><span class="ln">  1341</span>			switch p.tok {
+<a id="L1342"></a><span class="ln">  1342</span>			case token.PERIOD:
+<a id="L1343"></a><span class="ln">  1343</span>				p.next()
+<a id="L1344"></a><span class="ln">  1344</span>				if lhs {
+<a id="L1345"></a><span class="ln">  1345</span>					p.resolve(x)
+<a id="L1346"></a><span class="ln">  1346</span>				}
+<a id="L1347"></a><span class="ln">  1347</span>				switch p.tok {
+<a id="L1348"></a><span class="ln">  1348</span>				case token.IDENT:
+<a id="L1349"></a><span class="ln">  1349</span>					x = p.parseSelector(p.checkExpr(x))
+<a id="L1350"></a><span class="ln">  1350</span>				case token.LPAREN:
+<a id="L1351"></a><span class="ln">  1351</span>					x = p.parseTypeAssertion(p.checkExpr(x))
+<a id="L1352"></a><span class="ln">  1352</span>				default:
+<a id="L1353"></a><span class="ln">  1353</span>					pos := p.pos
+<a id="L1354"></a><span class="ln">  1354</span>					p.errorExpected(pos, &#34;selector or type assertion&#34;)
+<a id="L1355"></a><span class="ln">  1355</span>					p.next() <span class="comment">// make progress</span>
+<a id="L1356"></a><span class="ln">  1356</span>					x = &amp;ast.BadExpr{From: pos, To: p.pos}
+<a id="L1357"></a><span class="ln">  1357</span>				}
+<a id="L1358"></a><span class="ln">  1358</span>			case token.LBRACK:
+<a id="L1359"></a><span class="ln">  1359</span>				if lhs {
+<a id="L1360"></a><span class="ln">  1360</span>					p.resolve(x)
+<a id="L1361"></a><span class="ln">  1361</span>				}
+<a id="L1362"></a><span class="ln">  1362</span>				x = p.parseIndexOrSlice(p.checkExpr(x))
+<a id="L1363"></a><span class="ln">  1363</span>			case token.LPAREN:
+<a id="L1364"></a><span class="ln">  1364</span>				if lhs {
+<a id="L1365"></a><span class="ln">  1365</span>					p.resolve(x)
+<a id="L1366"></a><span class="ln">  1366</span>				}
+<a id="L1367"></a><span class="ln">  1367</span>				x = p.parseCallOrConversion(p.checkExprOrType(x))
+<a id="L1368"></a><span class="ln">  1368</span>			case token.LBRACE:
+<a id="L1369"></a><span class="ln">  1369</span>				if isLiteralType(x) &amp;&amp; (p.exprLev &gt;= 0 || !isTypeName(x)) {
+<a id="L1370"></a><span class="ln">  1370</span>					if lhs {
+<a id="L1371"></a><span class="ln">  1371</span>						p.resolve(x)
+<a id="L1372"></a><span class="ln">  1372</span>					}
+<a id="L1373"></a><span class="ln">  1373</span>					x = p.parseLiteralValue(x)
+<a id="L1374"></a><span class="ln">  1374</span>				} else {
+<a id="L1375"></a><span class="ln">  1375</span>					break L
+<a id="L1376"></a><span class="ln">  1376</span>				}
+<a id="L1377"></a><span class="ln">  1377</span>			default:
+<a id="L1378"></a><span class="ln">  1378</span>				break L
+<a id="L1379"></a><span class="ln">  1379</span>			}
+<a id="L1380"></a><span class="ln">  1380</span>			lhs = false <span class="comment">// no need to try to resolve again</span>
+<a id="L1381"></a><span class="ln">  1381</span>		}
+<a id="L1382"></a><span class="ln">  1382</span>	
+<a id="L1383"></a><span class="ln">  1383</span>		return x
+<a id="L1384"></a><span class="ln">  1384</span>	}
+<a id="L1385"></a><span class="ln">  1385</span>	
+<a id="L1386"></a><span class="ln">  1386</span>	<span class="comment">// If lhs is set and the result is an identifier, it is not resolved.</span>
+<a id="L1387"></a><span class="ln">  1387</span>	func (p *parser) parseUnaryExpr(lhs bool) ast.Expr {
+<a id="L1388"></a><span class="ln">  1388</span>		if p.trace {
+<a id="L1389"></a><span class="ln">  1389</span>			defer un(trace(p, &#34;UnaryExpr&#34;))
+<a id="L1390"></a><span class="ln">  1390</span>		}
+<a id="L1391"></a><span class="ln">  1391</span>	
+<a id="L1392"></a><span class="ln">  1392</span>		switch p.tok {
+<a id="L1393"></a><span class="ln">  1393</span>		case token.ADD, token.SUB, token.NOT, token.XOR, token.AND:
+<a id="L1394"></a><span class="ln">  1394</span>			pos, op := p.pos, p.tok
+<a id="L1395"></a><span class="ln">  1395</span>			p.next()
+<a id="L1396"></a><span class="ln">  1396</span>			x := p.parseUnaryExpr(false)
+<a id="L1397"></a><span class="ln">  1397</span>			return &amp;ast.UnaryExpr{OpPos: pos, Op: op, X: p.checkExpr(x)}
+<a id="L1398"></a><span class="ln">  1398</span>	
+<a id="L1399"></a><span class="ln">  1399</span>		case token.ARROW:
+<a id="L1400"></a><span class="ln">  1400</span>			<span class="comment">// channel type or receive expression</span>
+<a id="L1401"></a><span class="ln">  1401</span>			pos := p.pos
+<a id="L1402"></a><span class="ln">  1402</span>			p.next()
+<a id="L1403"></a><span class="ln">  1403</span>			if p.tok == token.CHAN {
+<a id="L1404"></a><span class="ln">  1404</span>				p.next()
+<a id="L1405"></a><span class="ln">  1405</span>				value := p.parseType()
+<a id="L1406"></a><span class="ln">  1406</span>				return &amp;ast.ChanType{Begin: pos, Dir: ast.RECV, Value: value}
+<a id="L1407"></a><span class="ln">  1407</span>			}
+<a id="L1408"></a><span class="ln">  1408</span>	
+<a id="L1409"></a><span class="ln">  1409</span>			x := p.parseUnaryExpr(false)
+<a id="L1410"></a><span class="ln">  1410</span>			return &amp;ast.UnaryExpr{OpPos: pos, Op: token.ARROW, X: p.checkExpr(x)}
+<a id="L1411"></a><span class="ln">  1411</span>	
+<a id="L1412"></a><span class="ln">  1412</span>		case token.MUL:
+<a id="L1413"></a><span class="ln">  1413</span>			<span class="comment">// pointer type or unary &#34;*&#34; expression</span>
+<a id="L1414"></a><span class="ln">  1414</span>			pos := p.pos
+<a id="L1415"></a><span class="ln">  1415</span>			p.next()
+<a id="L1416"></a><span class="ln">  1416</span>			x := p.parseUnaryExpr(false)
+<a id="L1417"></a><span class="ln">  1417</span>			return &amp;ast.StarExpr{Star: pos, X: p.checkExprOrType(x)}
+<a id="L1418"></a><span class="ln">  1418</span>		}
+<a id="L1419"></a><span class="ln">  1419</span>	
+<a id="L1420"></a><span class="ln">  1420</span>		return p.parsePrimaryExpr(lhs)
+<a id="L1421"></a><span class="ln">  1421</span>	}
+<a id="L1422"></a><span class="ln">  1422</span>	
+<a id="L1423"></a><span class="ln">  1423</span>	<span class="comment">// If lhs is set and the result is an identifier, it is not resolved.</span>
+<a id="L1424"></a><span class="ln">  1424</span>	func (p *parser) parseBinaryExpr(lhs bool, prec1 int) ast.Expr {
+<a id="L1425"></a><span class="ln">  1425</span>		if p.trace {
+<a id="L1426"></a><span class="ln">  1426</span>			defer un(trace(p, &#34;BinaryExpr&#34;))
+<a id="L1427"></a><span class="ln">  1427</span>		}
+<a id="L1428"></a><span class="ln">  1428</span>	
+<a id="L1429"></a><span class="ln">  1429</span>		x := p.parseUnaryExpr(lhs)
+<a id="L1430"></a><span class="ln">  1430</span>		for prec := p.tok.Precedence(); prec &gt;= prec1; prec-- {
+<a id="L1431"></a><span class="ln">  1431</span>			for p.tok.Precedence() == prec {
+<a id="L1432"></a><span class="ln">  1432</span>				pos, op := p.pos, p.tok
+<a id="L1433"></a><span class="ln">  1433</span>				p.next()
+<a id="L1434"></a><span class="ln">  1434</span>				if lhs {
+<a id="L1435"></a><span class="ln">  1435</span>					p.resolve(x)
+<a id="L1436"></a><span class="ln">  1436</span>					lhs = false
+<a id="L1437"></a><span class="ln">  1437</span>				}
+<a id="L1438"></a><span class="ln">  1438</span>				y := p.parseBinaryExpr(false, prec+1)
+<a id="L1439"></a><span class="ln">  1439</span>				x = &amp;ast.BinaryExpr{X: p.checkExpr(x), OpPos: pos, Op: op, Y: p.checkExpr(y)}
+<a id="L1440"></a><span class="ln">  1440</span>			}
+<a id="L1441"></a><span class="ln">  1441</span>		}
+<a id="L1442"></a><span class="ln">  1442</span>	
+<a id="L1443"></a><span class="ln">  1443</span>		return x
+<a id="L1444"></a><span class="ln">  1444</span>	}
+<a id="L1445"></a><span class="ln">  1445</span>	
+<a id="L1446"></a><span class="ln">  1446</span>	<span class="comment">// If lhs is set and the result is an identifier, it is not resolved.</span>
+<a id="L1447"></a><span class="ln">  1447</span>	<span class="comment">// The result may be a type or even a raw type ([...]int). Callers must</span>
+<a id="L1448"></a><span class="ln">  1448</span>	<span class="comment">// check the result (using checkExpr or checkExprOrType), depending on</span>
+<a id="L1449"></a><span class="ln">  1449</span>	<span class="comment">// context.</span>
+<a id="L1450"></a><span class="ln">  1450</span>	func (p *parser) parseExpr(lhs bool) ast.Expr {
+<a id="L1451"></a><span class="ln">  1451</span>		if p.trace {
+<a id="L1452"></a><span class="ln">  1452</span>			defer un(trace(p, &#34;Expression&#34;))
+<a id="L1453"></a><span class="ln">  1453</span>		}
+<a id="L1454"></a><span class="ln">  1454</span>	
+<a id="L1455"></a><span class="ln">  1455</span>		return p.parseBinaryExpr(lhs, token.LowestPrec+1)
+<a id="L1456"></a><span class="ln">  1456</span>	}
+<a id="L1457"></a><span class="ln">  1457</span>	
+<a id="L1458"></a><span class="ln">  1458</span>	func (p *parser) parseRhs() ast.Expr {
+<a id="L1459"></a><span class="ln">  1459</span>		return p.checkExpr(p.parseExpr(false))
+<a id="L1460"></a><span class="ln">  1460</span>	}
+<a id="L1461"></a><span class="ln">  1461</span>	
+<a id="L1462"></a><span class="ln">  1462</span>	func (p *parser) parseRhsOrType() ast.Expr {
+<a id="L1463"></a><span class="ln">  1463</span>		return p.checkExprOrType(p.parseExpr(false))
+<a id="L1464"></a><span class="ln">  1464</span>	}
+<a id="L1465"></a><span class="ln">  1465</span>	
+<a id="L1466"></a><span class="ln">  1466</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L1467"></a><span class="ln">  1467</span>	<span class="comment">// Statements</span>
+<a id="L1468"></a><span class="ln">  1468</span>	
+<a id="L1469"></a><span class="ln">  1469</span>	<span class="comment">// Parsing modes for parseSimpleStmt.</span>
+<a id="L1470"></a><span class="ln">  1470</span>	const (
+<a id="L1471"></a><span class="ln">  1471</span>		basic = iota
+<a id="L1472"></a><span class="ln">  1472</span>		labelOk
+<a id="L1473"></a><span class="ln">  1473</span>		rangeOk
+<a id="L1474"></a><span class="ln">  1474</span>	)
+<a id="L1475"></a><span class="ln">  1475</span>	
+<a id="L1476"></a><span class="ln">  1476</span>	<span class="comment">// parseSimpleStmt returns true as 2nd result if it parsed the assignment</span>
+<a id="L1477"></a><span class="ln">  1477</span>	<span class="comment">// of a range clause (with mode == rangeOk). The returned statement is an</span>
+<a id="L1478"></a><span class="ln">  1478</span>	<span class="comment">// assignment with a right-hand side that is a single unary expression of</span>
+<a id="L1479"></a><span class="ln">  1479</span>	<span class="comment">// the form &#34;range x&#34;. No guarantees are given for the left-hand side.</span>
+<a id="L1480"></a><span class="ln">  1480</span>	func (p *parser) parseSimpleStmt(mode int) (ast.Stmt, bool) {
+<a id="L1481"></a><span class="ln">  1481</span>		if p.trace {
+<a id="L1482"></a><span class="ln">  1482</span>			defer un(trace(p, &#34;SimpleStmt&#34;))
+<a id="L1483"></a><span class="ln">  1483</span>		}
+<a id="L1484"></a><span class="ln">  1484</span>	
+<a id="L1485"></a><span class="ln">  1485</span>		x := p.parseLhsList()
+<a id="L1486"></a><span class="ln">  1486</span>	
+<a id="L1487"></a><span class="ln">  1487</span>		switch p.tok {
+<a id="L1488"></a><span class="ln">  1488</span>		case
+<a id="L1489"></a><span class="ln">  1489</span>			token.DEFINE, token.ASSIGN, token.ADD_ASSIGN,
+<a id="L1490"></a><span class="ln">  1490</span>			token.SUB_ASSIGN, token.MUL_ASSIGN, token.QUO_ASSIGN,
+<a id="L1491"></a><span class="ln">  1491</span>			token.REM_ASSIGN, token.AND_ASSIGN, token.OR_ASSIGN,
+<a id="L1492"></a><span class="ln">  1492</span>			token.XOR_ASSIGN, token.SHL_ASSIGN, token.SHR_ASSIGN, token.AND_NOT_ASSIGN:
+<a id="L1493"></a><span class="ln">  1493</span>			<span class="comment">// assignment statement, possibly part of a range clause</span>
+<a id="L1494"></a><span class="ln">  1494</span>			pos, tok := p.pos, p.tok
+<a id="L1495"></a><span class="ln">  1495</span>			p.next()
+<a id="L1496"></a><span class="ln">  1496</span>			var y []ast.Expr
+<a id="L1497"></a><span class="ln">  1497</span>			isRange := false
+<a id="L1498"></a><span class="ln">  1498</span>			if mode == rangeOk &amp;&amp; p.tok == token.RANGE &amp;&amp; (tok == token.DEFINE || tok == token.ASSIGN) {
+<a id="L1499"></a><span class="ln">  1499</span>				pos := p.pos
+<a id="L1500"></a><span class="ln">  1500</span>				p.next()
+<a id="L1501"></a><span class="ln">  1501</span>				y = []ast.Expr{&amp;ast.UnaryExpr{OpPos: pos, Op: token.RANGE, X: p.parseRhs()}}
+<a id="L1502"></a><span class="ln">  1502</span>				isRange = true
+<a id="L1503"></a><span class="ln">  1503</span>			} else {
+<a id="L1504"></a><span class="ln">  1504</span>				y = p.parseRhsList()
+<a id="L1505"></a><span class="ln">  1505</span>			}
+<a id="L1506"></a><span class="ln">  1506</span>			as := &amp;ast.AssignStmt{Lhs: x, TokPos: pos, Tok: tok, Rhs: y}
+<a id="L1507"></a><span class="ln">  1507</span>			if tok == token.DEFINE {
+<a id="L1508"></a><span class="ln">  1508</span>				p.shortVarDecl(as, x)
+<a id="L1509"></a><span class="ln">  1509</span>			}
+<a id="L1510"></a><span class="ln">  1510</span>			return as, isRange
+<a id="L1511"></a><span class="ln">  1511</span>		}
+<a id="L1512"></a><span class="ln">  1512</span>	
+<a id="L1513"></a><span class="ln">  1513</span>		if len(x) &gt; 1 {
+<a id="L1514"></a><span class="ln">  1514</span>			p.errorExpected(x[0].Pos(), &#34;1 expression&#34;)
+<a id="L1515"></a><span class="ln">  1515</span>			<span class="comment">// continue with first expression</span>
+<a id="L1516"></a><span class="ln">  1516</span>		}
+<a id="L1517"></a><span class="ln">  1517</span>	
+<a id="L1518"></a><span class="ln">  1518</span>		switch p.tok {
+<a id="L1519"></a><span class="ln">  1519</span>		case token.COLON:
+<a id="L1520"></a><span class="ln">  1520</span>			<span class="comment">// labeled statement</span>
+<a id="L1521"></a><span class="ln">  1521</span>			colon := p.pos
+<a id="L1522"></a><span class="ln">  1522</span>			p.next()
+<a id="L1523"></a><span class="ln">  1523</span>			if label, isIdent := x[0].(*ast.Ident); mode == labelOk &amp;&amp; isIdent {
+<a id="L1524"></a><span class="ln">  1524</span>				<span class="comment">// Go spec: The scope of a label is the body of the function</span>
+<a id="L1525"></a><span class="ln">  1525</span>				<span class="comment">// in which it is declared and excludes the body of any nested</span>
+<a id="L1526"></a><span class="ln">  1526</span>				<span class="comment">// function.</span>
+<a id="L1527"></a><span class="ln">  1527</span>				stmt := &amp;ast.LabeledStmt{Label: label, Colon: colon, Stmt: p.parseStmt()}
+<a id="L1528"></a><span class="ln">  1528</span>				p.declare(stmt, nil, p.labelScope, ast.Lbl, label)
+<a id="L1529"></a><span class="ln">  1529</span>				return stmt, false
+<a id="L1530"></a><span class="ln">  1530</span>			}
+<a id="L1531"></a><span class="ln">  1531</span>			<span class="comment">// The label declaration typically starts at x[0].Pos(), but the label</span>
+<a id="L1532"></a><span class="ln">  1532</span>			<span class="comment">// declaration may be erroneous due to a token after that position (and</span>
+<a id="L1533"></a><span class="ln">  1533</span>			<span class="comment">// before the &#39;:&#39;). If SpuriousErrors is not set, the (only) error re-</span>
+<a id="L1534"></a><span class="ln">  1534</span>			<span class="comment">// ported for the line is the illegal label error instead of the token</span>
+<a id="L1535"></a><span class="ln">  1535</span>			<span class="comment">// before the &#39;:&#39; that caused the problem. Thus, use the (latest) colon</span>
+<a id="L1536"></a><span class="ln">  1536</span>			<span class="comment">// position for error reporting.</span>
+<a id="L1537"></a><span class="ln">  1537</span>			p.error(colon, &#34;illegal label declaration&#34;)
+<a id="L1538"></a><span class="ln">  1538</span>			return &amp;ast.BadStmt{From: x[0].Pos(), To: colon + 1}, false
+<a id="L1539"></a><span class="ln">  1539</span>	
+<a id="L1540"></a><span class="ln">  1540</span>		case token.ARROW:
+<a id="L1541"></a><span class="ln">  1541</span>			<span class="comment">// send statement</span>
+<a id="L1542"></a><span class="ln">  1542</span>			arrow := p.pos
+<a id="L1543"></a><span class="ln">  1543</span>			p.next()
+<a id="L1544"></a><span class="ln">  1544</span>			y := p.parseRhs()
+<a id="L1545"></a><span class="ln">  1545</span>			return &amp;ast.SendStmt{Chan: x[0], Arrow: arrow, Value: y}, false
+<a id="L1546"></a><span class="ln">  1546</span>	
+<a id="L1547"></a><span class="ln">  1547</span>		case token.INC, token.DEC:
+<a id="L1548"></a><span class="ln">  1548</span>			<span class="comment">// increment or decrement</span>
+<a id="L1549"></a><span class="ln">  1549</span>			s := &amp;ast.IncDecStmt{X: x[0], TokPos: p.pos, Tok: p.tok}
+<a id="L1550"></a><span class="ln">  1550</span>			p.next()
+<a id="L1551"></a><span class="ln">  1551</span>			return s, false
+<a id="L1552"></a><span class="ln">  1552</span>		}
+<a id="L1553"></a><span class="ln">  1553</span>	
+<a id="L1554"></a><span class="ln">  1554</span>		<span class="comment">// expression</span>
+<a id="L1555"></a><span class="ln">  1555</span>		return &amp;ast.ExprStmt{X: x[0]}, false
+<a id="L1556"></a><span class="ln">  1556</span>	}
+<a id="L1557"></a><span class="ln">  1557</span>	
+<a id="L1558"></a><span class="ln">  1558</span>	func (p *parser) parseCallExpr() *ast.CallExpr {
+<a id="L1559"></a><span class="ln">  1559</span>		x := p.parseRhsOrType() <span class="comment">// could be a conversion: (some type)(x)</span>
+<a id="L1560"></a><span class="ln">  1560</span>		if call, isCall := x.(*ast.CallExpr); isCall {
+<a id="L1561"></a><span class="ln">  1561</span>			return call
+<a id="L1562"></a><span class="ln">  1562</span>		}
+<a id="L1563"></a><span class="ln">  1563</span>		if _, isBad := x.(*ast.BadExpr); !isBad {
+<a id="L1564"></a><span class="ln">  1564</span>			<span class="comment">// only report error if it&#39;s a new one</span>
+<a id="L1565"></a><span class="ln">  1565</span>			p.errorExpected(x.Pos(), &#34;function/method call&#34;)
+<a id="L1566"></a><span class="ln">  1566</span>		}
+<a id="L1567"></a><span class="ln">  1567</span>		return nil
+<a id="L1568"></a><span class="ln">  1568</span>	}
+<a id="L1569"></a><span class="ln">  1569</span>	
+<a id="L1570"></a><span class="ln">  1570</span>	func (p *parser) parseGoStmt() ast.Stmt {
+<a id="L1571"></a><span class="ln">  1571</span>		if p.trace {
+<a id="L1572"></a><span class="ln">  1572</span>			defer un(trace(p, &#34;GoStmt&#34;))
+<a id="L1573"></a><span class="ln">  1573</span>		}
+<a id="L1574"></a><span class="ln">  1574</span>	
+<a id="L1575"></a><span class="ln">  1575</span>		pos := p.expect(token.GO)
+<a id="L1576"></a><span class="ln">  1576</span>		call := p.parseCallExpr()
+<a id="L1577"></a><span class="ln">  1577</span>		p.expectSemi()
+<a id="L1578"></a><span class="ln">  1578</span>		if call == nil {
+<a id="L1579"></a><span class="ln">  1579</span>			return &amp;ast.BadStmt{From: pos, To: pos + 2} <span class="comment">// len(&#34;go&#34;)</span>
+<a id="L1580"></a><span class="ln">  1580</span>		}
+<a id="L1581"></a><span class="ln">  1581</span>	
+<a id="L1582"></a><span class="ln">  1582</span>		return &amp;ast.GoStmt{Go: pos, Call: call}
+<a id="L1583"></a><span class="ln">  1583</span>	}
+<a id="L1584"></a><span class="ln">  1584</span>	
+<a id="L1585"></a><span class="ln">  1585</span>	func (p *parser) parseDeferStmt() ast.Stmt {
+<a id="L1586"></a><span class="ln">  1586</span>		if p.trace {
+<a id="L1587"></a><span class="ln">  1587</span>			defer un(trace(p, &#34;DeferStmt&#34;))
+<a id="L1588"></a><span class="ln">  1588</span>		}
+<a id="L1589"></a><span class="ln">  1589</span>	
+<a id="L1590"></a><span class="ln">  1590</span>		pos := p.expect(token.DEFER)
+<a id="L1591"></a><span class="ln">  1591</span>		call := p.parseCallExpr()
+<a id="L1592"></a><span class="ln">  1592</span>		p.expectSemi()
+<a id="L1593"></a><span class="ln">  1593</span>		if call == nil {
+<a id="L1594"></a><span class="ln">  1594</span>			return &amp;ast.BadStmt{From: pos, To: pos + 5} <span class="comment">// len(&#34;defer&#34;)</span>
+<a id="L1595"></a><span class="ln">  1595</span>		}
+<a id="L1596"></a><span class="ln">  1596</span>	
+<a id="L1597"></a><span class="ln">  1597</span>		return &amp;ast.DeferStmt{Defer: pos, Call: call}
+<a id="L1598"></a><span class="ln">  1598</span>	}
+<a id="L1599"></a><span class="ln">  1599</span>	
+<a id="L1600"></a><span class="ln">  1600</span>	func (p *parser) parseReturnStmt() *ast.ReturnStmt {
+<a id="L1601"></a><span class="ln">  1601</span>		if p.trace {
+<a id="L1602"></a><span class="ln">  1602</span>			defer un(trace(p, &#34;ReturnStmt&#34;))
+<a id="L1603"></a><span class="ln">  1603</span>		}
+<a id="L1604"></a><span class="ln">  1604</span>	
+<a id="L1605"></a><span class="ln">  1605</span>		pos := p.pos
+<a id="L1606"></a><span class="ln">  1606</span>		p.expect(token.RETURN)
+<a id="L1607"></a><span class="ln">  1607</span>		var x []ast.Expr
+<a id="L1608"></a><span class="ln">  1608</span>		if p.tok != token.SEMICOLON &amp;&amp; p.tok != token.RBRACE {
+<a id="L1609"></a><span class="ln">  1609</span>			x = p.parseRhsList()
+<a id="L1610"></a><span class="ln">  1610</span>		}
+<a id="L1611"></a><span class="ln">  1611</span>		p.expectSemi()
+<a id="L1612"></a><span class="ln">  1612</span>	
+<a id="L1613"></a><span class="ln">  1613</span>		return &amp;ast.ReturnStmt{Return: pos, Results: x}
+<a id="L1614"></a><span class="ln">  1614</span>	}
+<a id="L1615"></a><span class="ln">  1615</span>	
+<a id="L1616"></a><span class="ln">  1616</span>	func (p *parser) parseBranchStmt(tok token.Token) *ast.BranchStmt {
+<a id="L1617"></a><span class="ln">  1617</span>		if p.trace {
+<a id="L1618"></a><span class="ln">  1618</span>			defer un(trace(p, &#34;BranchStmt&#34;))
+<a id="L1619"></a><span class="ln">  1619</span>		}
+<a id="L1620"></a><span class="ln">  1620</span>	
+<a id="L1621"></a><span class="ln">  1621</span>		pos := p.expect(tok)
+<a id="L1622"></a><span class="ln">  1622</span>		var label *ast.Ident
+<a id="L1623"></a><span class="ln">  1623</span>		if tok != token.FALLTHROUGH &amp;&amp; p.tok == token.IDENT {
+<a id="L1624"></a><span class="ln">  1624</span>			label = p.parseIdent()
+<a id="L1625"></a><span class="ln">  1625</span>			<span class="comment">// add to list of unresolved targets</span>
+<a id="L1626"></a><span class="ln">  1626</span>			n := len(p.targetStack) - 1
+<a id="L1627"></a><span class="ln">  1627</span>			p.targetStack[n] = append(p.targetStack[n], label)
+<a id="L1628"></a><span class="ln">  1628</span>		}
+<a id="L1629"></a><span class="ln">  1629</span>		p.expectSemi()
+<a id="L1630"></a><span class="ln">  1630</span>	
+<a id="L1631"></a><span class="ln">  1631</span>		return &amp;ast.BranchStmt{TokPos: pos, Tok: tok, Label: label}
+<a id="L1632"></a><span class="ln">  1632</span>	}
+<a id="L1633"></a><span class="ln">  1633</span>	
+<a id="L1634"></a><span class="ln">  1634</span>	func (p *parser) makeExpr(s ast.Stmt) ast.Expr {
+<a id="L1635"></a><span class="ln">  1635</span>		if s == nil {
+<a id="L1636"></a><span class="ln">  1636</span>			return nil
+<a id="L1637"></a><span class="ln">  1637</span>		}
+<a id="L1638"></a><span class="ln">  1638</span>		if es, isExpr := s.(*ast.ExprStmt); isExpr {
+<a id="L1639"></a><span class="ln">  1639</span>			return p.checkExpr(es.X)
+<a id="L1640"></a><span class="ln">  1640</span>		}
+<a id="L1641"></a><span class="ln">  1641</span>		p.error(s.Pos(), &#34;expected condition, found simple statement&#34;)
+<a id="L1642"></a><span class="ln">  1642</span>		return &amp;ast.BadExpr{From: s.Pos(), To: s.End()}
+<a id="L1643"></a><span class="ln">  1643</span>	}
+<a id="L1644"></a><span class="ln">  1644</span>	
+<a id="L1645"></a><span class="ln">  1645</span>	func (p *parser) parseIfStmt() *ast.IfStmt {
+<a id="L1646"></a><span class="ln">  1646</span>		if p.trace {
+<a id="L1647"></a><span class="ln">  1647</span>			defer un(trace(p, &#34;IfStmt&#34;))
+<a id="L1648"></a><span class="ln">  1648</span>		}
+<a id="L1649"></a><span class="ln">  1649</span>	
+<a id="L1650"></a><span class="ln">  1650</span>		pos := p.expect(token.IF)
+<a id="L1651"></a><span class="ln">  1651</span>		p.openScope()
+<a id="L1652"></a><span class="ln">  1652</span>		defer p.closeScope()
+<a id="L1653"></a><span class="ln">  1653</span>	
+<a id="L1654"></a><span class="ln">  1654</span>		var s ast.Stmt
+<a id="L1655"></a><span class="ln">  1655</span>		var x ast.Expr
+<a id="L1656"></a><span class="ln">  1656</span>		{
+<a id="L1657"></a><span class="ln">  1657</span>			prevLev := p.exprLev
+<a id="L1658"></a><span class="ln">  1658</span>			p.exprLev = -1
+<a id="L1659"></a><span class="ln">  1659</span>			if p.tok == token.SEMICOLON {
+<a id="L1660"></a><span class="ln">  1660</span>				p.next()
+<a id="L1661"></a><span class="ln">  1661</span>				x = p.parseRhs()
+<a id="L1662"></a><span class="ln">  1662</span>			} else {
+<a id="L1663"></a><span class="ln">  1663</span>				s, _ = p.parseSimpleStmt(basic)
+<a id="L1664"></a><span class="ln">  1664</span>				if p.tok == token.SEMICOLON {
+<a id="L1665"></a><span class="ln">  1665</span>					p.next()
+<a id="L1666"></a><span class="ln">  1666</span>					x = p.parseRhs()
+<a id="L1667"></a><span class="ln">  1667</span>				} else {
+<a id="L1668"></a><span class="ln">  1668</span>					x = p.makeExpr(s)
+<a id="L1669"></a><span class="ln">  1669</span>					s = nil
+<a id="L1670"></a><span class="ln">  1670</span>				}
+<a id="L1671"></a><span class="ln">  1671</span>			}
+<a id="L1672"></a><span class="ln">  1672</span>			p.exprLev = prevLev
+<a id="L1673"></a><span class="ln">  1673</span>		}
+<a id="L1674"></a><span class="ln">  1674</span>	
+<a id="L1675"></a><span class="ln">  1675</span>		body := p.parseBlockStmt()
+<a id="L1676"></a><span class="ln">  1676</span>		var else_ ast.Stmt
+<a id="L1677"></a><span class="ln">  1677</span>		if p.tok == token.ELSE {
+<a id="L1678"></a><span class="ln">  1678</span>			p.next()
+<a id="L1679"></a><span class="ln">  1679</span>			else_ = p.parseStmt()
+<a id="L1680"></a><span class="ln">  1680</span>		} else {
+<a id="L1681"></a><span class="ln">  1681</span>			p.expectSemi()
+<a id="L1682"></a><span class="ln">  1682</span>		}
+<a id="L1683"></a><span class="ln">  1683</span>	
+<a id="L1684"></a><span class="ln">  1684</span>		return &amp;ast.IfStmt{If: pos, Init: s, Cond: x, Body: body, Else: else_}
+<a id="L1685"></a><span class="ln">  1685</span>	}
+<a id="L1686"></a><span class="ln">  1686</span>	
+<a id="L1687"></a><span class="ln">  1687</span>	func (p *parser) parseTypeList() (list []ast.Expr) {
+<a id="L1688"></a><span class="ln">  1688</span>		if p.trace {
+<a id="L1689"></a><span class="ln">  1689</span>			defer un(trace(p, &#34;TypeList&#34;))
+<a id="L1690"></a><span class="ln">  1690</span>		}
+<a id="L1691"></a><span class="ln">  1691</span>	
+<a id="L1692"></a><span class="ln">  1692</span>		list = append(list, p.parseType())
+<a id="L1693"></a><span class="ln">  1693</span>		for p.tok == token.COMMA {
+<a id="L1694"></a><span class="ln">  1694</span>			p.next()
+<a id="L1695"></a><span class="ln">  1695</span>			list = append(list, p.parseType())
+<a id="L1696"></a><span class="ln">  1696</span>		}
+<a id="L1697"></a><span class="ln">  1697</span>	
+<a id="L1698"></a><span class="ln">  1698</span>		return
+<a id="L1699"></a><span class="ln">  1699</span>	}
+<a id="L1700"></a><span class="ln">  1700</span>	
+<a id="L1701"></a><span class="ln">  1701</span>	func (p *parser) parseCaseClause(typeSwitch bool) *ast.CaseClause {
+<a id="L1702"></a><span class="ln">  1702</span>		if p.trace {
+<a id="L1703"></a><span class="ln">  1703</span>			defer un(trace(p, &#34;CaseClause&#34;))
+<a id="L1704"></a><span class="ln">  1704</span>		}
+<a id="L1705"></a><span class="ln">  1705</span>	
+<a id="L1706"></a><span class="ln">  1706</span>		pos := p.pos
+<a id="L1707"></a><span class="ln">  1707</span>		var list []ast.Expr
+<a id="L1708"></a><span class="ln">  1708</span>		if p.tok == token.CASE {
+<a id="L1709"></a><span class="ln">  1709</span>			p.next()
+<a id="L1710"></a><span class="ln">  1710</span>			if typeSwitch {
+<a id="L1711"></a><span class="ln">  1711</span>				list = p.parseTypeList()
+<a id="L1712"></a><span class="ln">  1712</span>			} else {
+<a id="L1713"></a><span class="ln">  1713</span>				list = p.parseRhsList()
+<a id="L1714"></a><span class="ln">  1714</span>			}
+<a id="L1715"></a><span class="ln">  1715</span>		} else {
+<a id="L1716"></a><span class="ln">  1716</span>			p.expect(token.DEFAULT)
+<a id="L1717"></a><span class="ln">  1717</span>		}
+<a id="L1718"></a><span class="ln">  1718</span>	
+<a id="L1719"></a><span class="ln">  1719</span>		colon := p.expect(token.COLON)
+<a id="L1720"></a><span class="ln">  1720</span>		p.openScope()
+<a id="L1721"></a><span class="ln">  1721</span>		body := p.parseStmtList()
+<a id="L1722"></a><span class="ln">  1722</span>		p.closeScope()
+<a id="L1723"></a><span class="ln">  1723</span>	
+<a id="L1724"></a><span class="ln">  1724</span>		return &amp;ast.CaseClause{Case: pos, List: list, Colon: colon, Body: body}
+<a id="L1725"></a><span class="ln">  1725</span>	}
+<a id="L1726"></a><span class="ln">  1726</span>	
+<a id="L1727"></a><span class="ln">  1727</span>	func isTypeSwitchAssert(x ast.Expr) bool {
+<a id="L1728"></a><span class="ln">  1728</span>		a, ok := x.(*ast.TypeAssertExpr)
+<a id="L1729"></a><span class="ln">  1729</span>		return ok &amp;&amp; a.Type == nil
+<a id="L1730"></a><span class="ln">  1730</span>	}
+<a id="L1731"></a><span class="ln">  1731</span>	
+<a id="L1732"></a><span class="ln">  1732</span>	func isTypeSwitchGuard(s ast.Stmt) bool {
+<a id="L1733"></a><span class="ln">  1733</span>		switch t := s.(type) {
+<a id="L1734"></a><span class="ln">  1734</span>		case *ast.ExprStmt:
+<a id="L1735"></a><span class="ln">  1735</span>			<span class="comment">// x.(nil)</span>
+<a id="L1736"></a><span class="ln">  1736</span>			return isTypeSwitchAssert(t.X)
+<a id="L1737"></a><span class="ln">  1737</span>		case *ast.AssignStmt:
+<a id="L1738"></a><span class="ln">  1738</span>			<span class="comment">// v := x.(nil)</span>
+<a id="L1739"></a><span class="ln">  1739</span>			return len(t.Lhs) == 1 &amp;&amp; t.Tok == token.DEFINE &amp;&amp; len(t.Rhs) == 1 &amp;&amp; isTypeSwitchAssert(t.Rhs[0])
+<a id="L1740"></a><span class="ln">  1740</span>		}
+<a id="L1741"></a><span class="ln">  1741</span>		return false
+<a id="L1742"></a><span class="ln">  1742</span>	}
+<a id="L1743"></a><span class="ln">  1743</span>	
+<a id="L1744"></a><span class="ln">  1744</span>	func (p *parser) parseSwitchStmt() ast.Stmt {
+<a id="L1745"></a><span class="ln">  1745</span>		if p.trace {
+<a id="L1746"></a><span class="ln">  1746</span>			defer un(trace(p, &#34;SwitchStmt&#34;))
+<a id="L1747"></a><span class="ln">  1747</span>		}
+<a id="L1748"></a><span class="ln">  1748</span>	
+<a id="L1749"></a><span class="ln">  1749</span>		pos := p.expect(token.SWITCH)
+<a id="L1750"></a><span class="ln">  1750</span>		p.openScope()
+<a id="L1751"></a><span class="ln">  1751</span>		defer p.closeScope()
+<a id="L1752"></a><span class="ln">  1752</span>	
+<a id="L1753"></a><span class="ln">  1753</span>		var s1, s2 ast.Stmt
+<a id="L1754"></a><span class="ln">  1754</span>		if p.tok != token.LBRACE {
+<a id="L1755"></a><span class="ln">  1755</span>			prevLev := p.exprLev
+<a id="L1756"></a><span class="ln">  1756</span>			p.exprLev = -1
+<a id="L1757"></a><span class="ln">  1757</span>			if p.tok != token.SEMICOLON {
+<a id="L1758"></a><span class="ln">  1758</span>				s2, _ = p.parseSimpleStmt(basic)
+<a id="L1759"></a><span class="ln">  1759</span>			}
+<a id="L1760"></a><span class="ln">  1760</span>			if p.tok == token.SEMICOLON {
+<a id="L1761"></a><span class="ln">  1761</span>				p.next()
+<a id="L1762"></a><span class="ln">  1762</span>				s1 = s2
+<a id="L1763"></a><span class="ln">  1763</span>				s2 = nil
+<a id="L1764"></a><span class="ln">  1764</span>				if p.tok != token.LBRACE {
+<a id="L1765"></a><span class="ln">  1765</span>					<span class="comment">// A TypeSwitchGuard may declare a variable in addition</span>
+<a id="L1766"></a><span class="ln">  1766</span>					<span class="comment">// to the variable declared in the initial SimpleStmt.</span>
+<a id="L1767"></a><span class="ln">  1767</span>					<span class="comment">// Introduce extra scope to avoid redeclaration errors:</span>
+<a id="L1768"></a><span class="ln">  1768</span>					<span class="comment">//</span>
+<a id="L1769"></a><span class="ln">  1769</span>					<span class="comment">//	switch t := 0; t := x.(T) { ... }</span>
+<a id="L1770"></a><span class="ln">  1770</span>					<span class="comment">//</span>
+<a id="L1771"></a><span class="ln">  1771</span>					<span class="comment">// (this code is not valid Go because the first t will</span>
+<a id="L1772"></a><span class="ln">  1772</span>					<span class="comment">// cannot be accessed and thus is never used, the extra</span>
+<a id="L1773"></a><span class="ln">  1773</span>					<span class="comment">// scope is needed for the correct error message).</span>
+<a id="L1774"></a><span class="ln">  1774</span>					<span class="comment">//</span>
+<a id="L1775"></a><span class="ln">  1775</span>					<span class="comment">// If we don&#39;t have a type switch, s2 must be an expression.</span>
+<a id="L1776"></a><span class="ln">  1776</span>					<span class="comment">// Having the extra nested but empty scope won&#39;t affect it.</span>
+<a id="L1777"></a><span class="ln">  1777</span>					p.openScope()
+<a id="L1778"></a><span class="ln">  1778</span>					defer p.closeScope()
+<a id="L1779"></a><span class="ln">  1779</span>					s2, _ = p.parseSimpleStmt(basic)
+<a id="L1780"></a><span class="ln">  1780</span>				}
+<a id="L1781"></a><span class="ln">  1781</span>			}
+<a id="L1782"></a><span class="ln">  1782</span>			p.exprLev = prevLev
+<a id="L1783"></a><span class="ln">  1783</span>		}
+<a id="L1784"></a><span class="ln">  1784</span>	
+<a id="L1785"></a><span class="ln">  1785</span>		typeSwitch := isTypeSwitchGuard(s2)
+<a id="L1786"></a><span class="ln">  1786</span>		lbrace := p.expect(token.LBRACE)
+<a id="L1787"></a><span class="ln">  1787</span>		var list []ast.Stmt
+<a id="L1788"></a><span class="ln">  1788</span>		for p.tok == token.CASE || p.tok == token.DEFAULT {
+<a id="L1789"></a><span class="ln">  1789</span>			list = append(list, p.parseCaseClause(typeSwitch))
+<a id="L1790"></a><span class="ln">  1790</span>		}
+<a id="L1791"></a><span class="ln">  1791</span>		rbrace := p.expect(token.RBRACE)
+<a id="L1792"></a><span class="ln">  1792</span>		p.expectSemi()
+<a id="L1793"></a><span class="ln">  1793</span>		body := &amp;ast.BlockStmt{Lbrace: lbrace, List: list, Rbrace: rbrace}
+<a id="L1794"></a><span class="ln">  1794</span>	
+<a id="L1795"></a><span class="ln">  1795</span>		if typeSwitch {
+<a id="L1796"></a><span class="ln">  1796</span>			return &amp;ast.TypeSwitchStmt{Switch: pos, Init: s1, Assign: s2, Body: body}
+<a id="L1797"></a><span class="ln">  1797</span>		}
+<a id="L1798"></a><span class="ln">  1798</span>	
+<a id="L1799"></a><span class="ln">  1799</span>		return &amp;ast.SwitchStmt{Switch: pos, Init: s1, Tag: p.makeExpr(s2), Body: body}
+<a id="L1800"></a><span class="ln">  1800</span>	}
+<a id="L1801"></a><span class="ln">  1801</span>	
+<a id="L1802"></a><span class="ln">  1802</span>	func (p *parser) parseCommClause() *ast.CommClause {
+<a id="L1803"></a><span class="ln">  1803</span>		if p.trace {
+<a id="L1804"></a><span class="ln">  1804</span>			defer un(trace(p, &#34;CommClause&#34;))
+<a id="L1805"></a><span class="ln">  1805</span>		}
+<a id="L1806"></a><span class="ln">  1806</span>	
+<a id="L1807"></a><span class="ln">  1807</span>		p.openScope()
+<a id="L1808"></a><span class="ln">  1808</span>		pos := p.pos
+<a id="L1809"></a><span class="ln">  1809</span>		var comm ast.Stmt
+<a id="L1810"></a><span class="ln">  1810</span>		if p.tok == token.CASE {
+<a id="L1811"></a><span class="ln">  1811</span>			p.next()
+<a id="L1812"></a><span class="ln">  1812</span>			lhs := p.parseLhsList()
+<a id="L1813"></a><span class="ln">  1813</span>			if p.tok == token.ARROW {
+<a id="L1814"></a><span class="ln">  1814</span>				<span class="comment">// SendStmt</span>
+<a id="L1815"></a><span class="ln">  1815</span>				if len(lhs) &gt; 1 {
+<a id="L1816"></a><span class="ln">  1816</span>					p.errorExpected(lhs[0].Pos(), &#34;1 expression&#34;)
+<a id="L1817"></a><span class="ln">  1817</span>					<span class="comment">// continue with first expression</span>
+<a id="L1818"></a><span class="ln">  1818</span>				}
+<a id="L1819"></a><span class="ln">  1819</span>				arrow := p.pos
+<a id="L1820"></a><span class="ln">  1820</span>				p.next()
+<a id="L1821"></a><span class="ln">  1821</span>				rhs := p.parseRhs()
+<a id="L1822"></a><span class="ln">  1822</span>				comm = &amp;ast.SendStmt{Chan: lhs[0], Arrow: arrow, Value: rhs}
+<a id="L1823"></a><span class="ln">  1823</span>			} else {
+<a id="L1824"></a><span class="ln">  1824</span>				<span class="comment">// RecvStmt</span>
+<a id="L1825"></a><span class="ln">  1825</span>				if tok := p.tok; tok == token.ASSIGN || tok == token.DEFINE {
+<a id="L1826"></a><span class="ln">  1826</span>					<span class="comment">// RecvStmt with assignment</span>
+<a id="L1827"></a><span class="ln">  1827</span>					if len(lhs) &gt; 2 {
+<a id="L1828"></a><span class="ln">  1828</span>						p.errorExpected(lhs[0].Pos(), &#34;1 or 2 expressions&#34;)
+<a id="L1829"></a><span class="ln">  1829</span>						<span class="comment">// continue with first two expressions</span>
+<a id="L1830"></a><span class="ln">  1830</span>						lhs = lhs[0:2]
+<a id="L1831"></a><span class="ln">  1831</span>					}
+<a id="L1832"></a><span class="ln">  1832</span>					pos := p.pos
+<a id="L1833"></a><span class="ln">  1833</span>					p.next()
+<a id="L1834"></a><span class="ln">  1834</span>					rhs := p.parseRhs()
+<a id="L1835"></a><span class="ln">  1835</span>					as := &amp;ast.AssignStmt{Lhs: lhs, TokPos: pos, Tok: tok, Rhs: []ast.Expr{rhs}}
+<a id="L1836"></a><span class="ln">  1836</span>					if tok == token.DEFINE {
+<a id="L1837"></a><span class="ln">  1837</span>						p.shortVarDecl(as, lhs)
+<a id="L1838"></a><span class="ln">  1838</span>					}
+<a id="L1839"></a><span class="ln">  1839</span>					comm = as
+<a id="L1840"></a><span class="ln">  1840</span>				} else {
+<a id="L1841"></a><span class="ln">  1841</span>					<span class="comment">// lhs must be single receive operation</span>
+<a id="L1842"></a><span class="ln">  1842</span>					if len(lhs) &gt; 1 {
+<a id="L1843"></a><span class="ln">  1843</span>						p.errorExpected(lhs[0].Pos(), &#34;1 expression&#34;)
+<a id="L1844"></a><span class="ln">  1844</span>						<span class="comment">// continue with first expression</span>
+<a id="L1845"></a><span class="ln">  1845</span>					}
+<a id="L1846"></a><span class="ln">  1846</span>					comm = &amp;ast.ExprStmt{X: lhs[0]}
+<a id="L1847"></a><span class="ln">  1847</span>				}
+<a id="L1848"></a><span class="ln">  1848</span>			}
+<a id="L1849"></a><span class="ln">  1849</span>		} else {
+<a id="L1850"></a><span class="ln">  1850</span>			p.expect(token.DEFAULT)
+<a id="L1851"></a><span class="ln">  1851</span>		}
+<a id="L1852"></a><span class="ln">  1852</span>	
+<a id="L1853"></a><span class="ln">  1853</span>		colon := p.expect(token.COLON)
+<a id="L1854"></a><span class="ln">  1854</span>		body := p.parseStmtList()
+<a id="L1855"></a><span class="ln">  1855</span>		p.closeScope()
+<a id="L1856"></a><span class="ln">  1856</span>	
+<a id="L1857"></a><span class="ln">  1857</span>		return &amp;ast.CommClause{Case: pos, Comm: comm, Colon: colon, Body: body}
+<a id="L1858"></a><span class="ln">  1858</span>	}
+<a id="L1859"></a><span class="ln">  1859</span>	
+<a id="L1860"></a><span class="ln">  1860</span>	func (p *parser) parseSelectStmt() *ast.SelectStmt {
+<a id="L1861"></a><span class="ln">  1861</span>		if p.trace {
+<a id="L1862"></a><span class="ln">  1862</span>			defer un(trace(p, &#34;SelectStmt&#34;))
+<a id="L1863"></a><span class="ln">  1863</span>		}
+<a id="L1864"></a><span class="ln">  1864</span>	
+<a id="L1865"></a><span class="ln">  1865</span>		pos := p.expect(token.SELECT)
+<a id="L1866"></a><span class="ln">  1866</span>		lbrace := p.expect(token.LBRACE)
+<a id="L1867"></a><span class="ln">  1867</span>		var list []ast.Stmt
+<a id="L1868"></a><span class="ln">  1868</span>		for p.tok == token.CASE || p.tok == token.DEFAULT {
+<a id="L1869"></a><span class="ln">  1869</span>			list = append(list, p.parseCommClause())
+<a id="L1870"></a><span class="ln">  1870</span>		}
+<a id="L1871"></a><span class="ln">  1871</span>		rbrace := p.expect(token.RBRACE)
+<a id="L1872"></a><span class="ln">  1872</span>		p.expectSemi()
+<a id="L1873"></a><span class="ln">  1873</span>		body := &amp;ast.BlockStmt{Lbrace: lbrace, List: list, Rbrace: rbrace}
+<a id="L1874"></a><span class="ln">  1874</span>	
+<a id="L1875"></a><span class="ln">  1875</span>		return &amp;ast.SelectStmt{Select: pos, Body: body}
+<a id="L1876"></a><span class="ln">  1876</span>	}
+<a id="L1877"></a><span class="ln">  1877</span>	
+<a id="L1878"></a><span class="ln">  1878</span>	func (p *parser) parseForStmt() ast.Stmt {
+<a id="L1879"></a><span class="ln">  1879</span>		if p.trace {
+<a id="L1880"></a><span class="ln">  1880</span>			defer un(trace(p, &#34;ForStmt&#34;))
+<a id="L1881"></a><span class="ln">  1881</span>		}
+<a id="L1882"></a><span class="ln">  1882</span>	
+<a id="L1883"></a><span class="ln">  1883</span>		pos := p.expect(token.FOR)
+<a id="L1884"></a><span class="ln">  1884</span>		p.openScope()
+<a id="L1885"></a><span class="ln">  1885</span>		defer p.closeScope()
+<a id="L1886"></a><span class="ln">  1886</span>	
+<a id="L1887"></a><span class="ln">  1887</span>		var s1, s2, s3 ast.Stmt
+<a id="L1888"></a><span class="ln">  1888</span>		var isRange bool
+<a id="L1889"></a><span class="ln">  1889</span>		if p.tok != token.LBRACE {
+<a id="L1890"></a><span class="ln">  1890</span>			prevLev := p.exprLev
+<a id="L1891"></a><span class="ln">  1891</span>			p.exprLev = -1
+<a id="L1892"></a><span class="ln">  1892</span>			if p.tok != token.SEMICOLON {
+<a id="L1893"></a><span class="ln">  1893</span>				s2, isRange = p.parseSimpleStmt(rangeOk)
+<a id="L1894"></a><span class="ln">  1894</span>			}
+<a id="L1895"></a><span class="ln">  1895</span>			if !isRange &amp;&amp; p.tok == token.SEMICOLON {
+<a id="L1896"></a><span class="ln">  1896</span>				p.next()
+<a id="L1897"></a><span class="ln">  1897</span>				s1 = s2
+<a id="L1898"></a><span class="ln">  1898</span>				s2 = nil
+<a id="L1899"></a><span class="ln">  1899</span>				if p.tok != token.SEMICOLON {
+<a id="L1900"></a><span class="ln">  1900</span>					s2, _ = p.parseSimpleStmt(basic)
+<a id="L1901"></a><span class="ln">  1901</span>				}
+<a id="L1902"></a><span class="ln">  1902</span>				p.expectSemi()
+<a id="L1903"></a><span class="ln">  1903</span>				if p.tok != token.LBRACE {
+<a id="L1904"></a><span class="ln">  1904</span>					s3, _ = p.parseSimpleStmt(basic)
+<a id="L1905"></a><span class="ln">  1905</span>				}
+<a id="L1906"></a><span class="ln">  1906</span>			}
+<a id="L1907"></a><span class="ln">  1907</span>			p.exprLev = prevLev
+<a id="L1908"></a><span class="ln">  1908</span>		}
+<a id="L1909"></a><span class="ln">  1909</span>	
+<a id="L1910"></a><span class="ln">  1910</span>		body := p.parseBlockStmt()
+<a id="L1911"></a><span class="ln">  1911</span>		p.expectSemi()
+<a id="L1912"></a><span class="ln">  1912</span>	
+<a id="L1913"></a><span class="ln">  1913</span>		if isRange {
+<a id="L1914"></a><span class="ln">  1914</span>			as := s2.(*ast.AssignStmt)
+<a id="L1915"></a><span class="ln">  1915</span>			<span class="comment">// check lhs</span>
+<a id="L1916"></a><span class="ln">  1916</span>			var key, value ast.Expr
+<a id="L1917"></a><span class="ln">  1917</span>			switch len(as.Lhs) {
+<a id="L1918"></a><span class="ln">  1918</span>			case 2:
+<a id="L1919"></a><span class="ln">  1919</span>				key, value = as.Lhs[0], as.Lhs[1]
+<a id="L1920"></a><span class="ln">  1920</span>			case 1:
+<a id="L1921"></a><span class="ln">  1921</span>				key = as.Lhs[0]
+<a id="L1922"></a><span class="ln">  1922</span>			default:
+<a id="L1923"></a><span class="ln">  1923</span>				p.errorExpected(as.Lhs[0].Pos(), &#34;1 or 2 expressions&#34;)
+<a id="L1924"></a><span class="ln">  1924</span>				return &amp;ast.BadStmt{From: pos, To: body.End()}
+<a id="L1925"></a><span class="ln">  1925</span>			}
+<a id="L1926"></a><span class="ln">  1926</span>			<span class="comment">// parseSimpleStmt returned a right-hand side that</span>
+<a id="L1927"></a><span class="ln">  1927</span>			<span class="comment">// is a single unary expression of the form &#34;range x&#34;</span>
+<a id="L1928"></a><span class="ln">  1928</span>			x := as.Rhs[0].(*ast.UnaryExpr).X
+<a id="L1929"></a><span class="ln">  1929</span>			return &amp;ast.RangeStmt{
+<a id="L1930"></a><span class="ln">  1930</span>				For:    pos,
+<a id="L1931"></a><span class="ln">  1931</span>				Key:    key,
+<a id="L1932"></a><span class="ln">  1932</span>				Value:  value,
+<a id="L1933"></a><span class="ln">  1933</span>				TokPos: as.TokPos,
+<a id="L1934"></a><span class="ln">  1934</span>				Tok:    as.Tok,
+<a id="L1935"></a><span class="ln">  1935</span>				X:      x,
+<a id="L1936"></a><span class="ln">  1936</span>				Body:   body,
+<a id="L1937"></a><span class="ln">  1937</span>			}
+<a id="L1938"></a><span class="ln">  1938</span>		}
+<a id="L1939"></a><span class="ln">  1939</span>	
+<a id="L1940"></a><span class="ln">  1940</span>		<span class="comment">// regular for statement</span>
+<a id="L1941"></a><span class="ln">  1941</span>		return &amp;ast.ForStmt{
+<a id="L1942"></a><span class="ln">  1942</span>			For:  pos,
+<a id="L1943"></a><span class="ln">  1943</span>			Init: s1,
+<a id="L1944"></a><span class="ln">  1944</span>			Cond: p.makeExpr(s2),
+<a id="L1945"></a><span class="ln">  1945</span>			Post: s3,
+<a id="L1946"></a><span class="ln">  1946</span>			Body: body,
+<a id="L1947"></a><span class="ln">  1947</span>		}
+<a id="L1948"></a><span class="ln">  1948</span>	}
+<a id="L1949"></a><span class="ln">  1949</span>	
+<a id="L1950"></a><span class="ln">  1950</span>	func (p *parser) parseStmt() (s ast.Stmt) {
+<a id="L1951"></a><span class="ln">  1951</span>		if p.trace {
+<a id="L1952"></a><span class="ln">  1952</span>			defer un(trace(p, &#34;Statement&#34;))
+<a id="L1953"></a><span class="ln">  1953</span>		}
+<a id="L1954"></a><span class="ln">  1954</span>	
+<a id="L1955"></a><span class="ln">  1955</span>		switch p.tok {
+<a id="L1956"></a><span class="ln">  1956</span>		case token.CONST, token.TYPE, token.VAR:
+<a id="L1957"></a><span class="ln">  1957</span>			s = &amp;ast.DeclStmt{Decl: p.parseDecl(syncStmt)}
+<a id="L1958"></a><span class="ln">  1958</span>		case
+<a id="L1959"></a><span class="ln">  1959</span>			<span class="comment">// tokens that may start an expression</span>
+<a id="L1960"></a><span class="ln">  1960</span>			token.IDENT, token.INT, token.FLOAT, token.IMAG, token.CHAR, token.STRING, token.FUNC, token.LPAREN, <span class="comment">// operands</span>
+<a id="L1961"></a><span class="ln">  1961</span>			token.LBRACK, token.STRUCT, <span class="comment">// composite types</span>
+<a id="L1962"></a><span class="ln">  1962</span>			token.ADD, token.SUB, token.MUL, token.AND, token.XOR, token.ARROW, token.NOT: <span class="comment">// unary operators</span>
+<a id="L1963"></a><span class="ln">  1963</span>			s, _ = p.parseSimpleStmt(labelOk)
+<a id="L1964"></a><span class="ln">  1964</span>			<span class="comment">// because of the required look-ahead, labeled statements are</span>
+<a id="L1965"></a><span class="ln">  1965</span>			<span class="comment">// parsed by parseSimpleStmt - don&#39;t expect a semicolon after</span>
+<a id="L1966"></a><span class="ln">  1966</span>			<span class="comment">// them</span>
+<a id="L1967"></a><span class="ln">  1967</span>			if _, isLabeledStmt := s.(*ast.LabeledStmt); !isLabeledStmt {
+<a id="L1968"></a><span class="ln">  1968</span>				p.expectSemi()
+<a id="L1969"></a><span class="ln">  1969</span>			}
+<a id="L1970"></a><span class="ln">  1970</span>		case token.GO:
+<a id="L1971"></a><span class="ln">  1971</span>			s = p.parseGoStmt()
+<a id="L1972"></a><span class="ln">  1972</span>		case token.DEFER:
+<a id="L1973"></a><span class="ln">  1973</span>			s = p.parseDeferStmt()
+<a id="L1974"></a><span class="ln">  1974</span>		case token.RETURN:
+<a id="L1975"></a><span class="ln">  1975</span>			s = p.parseReturnStmt()
+<a id="L1976"></a><span class="ln">  1976</span>		case token.BREAK, token.CONTINUE, token.GOTO, token.FALLTHROUGH:
+<a id="L1977"></a><span class="ln">  1977</span>			s = p.parseBranchStmt(p.tok)
+<a id="L1978"></a><span class="ln">  1978</span>		case token.LBRACE:
+<a id="L1979"></a><span class="ln">  1979</span>			s = p.parseBlockStmt()
+<a id="L1980"></a><span class="ln">  1980</span>			p.expectSemi()
+<a id="L1981"></a><span class="ln">  1981</span>		case token.IF:
+<a id="L1982"></a><span class="ln">  1982</span>			s = p.parseIfStmt()
+<a id="L1983"></a><span class="ln">  1983</span>		case token.SWITCH:
+<a id="L1984"></a><span class="ln">  1984</span>			s = p.parseSwitchStmt()
+<a id="L1985"></a><span class="ln">  1985</span>		case token.SELECT:
+<a id="L1986"></a><span class="ln">  1986</span>			s = p.parseSelectStmt()
+<a id="L1987"></a><span class="ln">  1987</span>		case token.FOR:
+<a id="L1988"></a><span class="ln">  1988</span>			s = p.parseForStmt()
+<a id="L1989"></a><span class="ln">  1989</span>		case token.SEMICOLON:
+<a id="L1990"></a><span class="ln">  1990</span>			s = &amp;ast.EmptyStmt{Semicolon: p.pos}
+<a id="L1991"></a><span class="ln">  1991</span>			p.next()
+<a id="L1992"></a><span class="ln">  1992</span>		case token.RBRACE:
+<a id="L1993"></a><span class="ln">  1993</span>			<span class="comment">// a semicolon may be omitted before a closing &#34;}&#34;</span>
+<a id="L1994"></a><span class="ln">  1994</span>			s = &amp;ast.EmptyStmt{Semicolon: p.pos}
+<a id="L1995"></a><span class="ln">  1995</span>		default:
+<a id="L1996"></a><span class="ln">  1996</span>			<span class="comment">// no statement found</span>
+<a id="L1997"></a><span class="ln">  1997</span>			pos := p.pos
+<a id="L1998"></a><span class="ln">  1998</span>			p.errorExpected(pos, &#34;statement&#34;)
+<a id="L1999"></a><span class="ln">  1999</span>			syncStmt(p)
+<a id="L2000"></a><span class="ln">  2000</span>			s = &amp;ast.BadStmt{From: pos, To: p.pos}
+<a id="L2001"></a><span class="ln">  2001</span>		}
+<a id="L2002"></a><span class="ln">  2002</span>	
+<a id="L2003"></a><span class="ln">  2003</span>		return
+<a id="L2004"></a><span class="ln">  2004</span>	}
+<a id="L2005"></a><span class="ln">  2005</span>	
+<a id="L2006"></a><span class="ln">  2006</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L2007"></a><span class="ln">  2007</span>	<span class="comment">// Declarations</span>
+<a id="L2008"></a><span class="ln">  2008</span>	
+<a id="L2009"></a><span class="ln">  2009</span>	type parseSpecFunction func(p *parser, doc *ast.CommentGroup, iota int) ast.Spec
+<a id="L2010"></a><span class="ln">  2010</span>	
+<a id="L2011"></a><span class="ln">  2011</span>	func isValidImport(lit string) bool {
+<a id="L2012"></a><span class="ln">  2012</span>		const illegalChars = `!&#34;#$%&amp;&#39;()*,:;&lt;=&gt;?[\]^{|}` + &#34;`\uFFFD&#34;
+<a id="L2013"></a><span class="ln">  2013</span>		s, _ := strconv.Unquote(lit) <span class="comment">// go/scanner returns a legal string literal</span>
+<a id="L2014"></a><span class="ln">  2014</span>		for _, r := range s {
+<a id="L2015"></a><span class="ln">  2015</span>			if !unicode.IsGraphic(r) || unicode.IsSpace(r) || strings.ContainsRune(illegalChars, r) {
+<a id="L2016"></a><span class="ln">  2016</span>				return false
+<a id="L2017"></a><span class="ln">  2017</span>			}
+<a id="L2018"></a><span class="ln">  2018</span>		}
+<a id="L2019"></a><span class="ln">  2019</span>		return s != &#34;&#34;
+<a id="L2020"></a><span class="ln">  2020</span>	}
+<a id="L2021"></a><span class="ln">  2021</span>	
+<a id="L2022"></a><span class="ln">  2022</span>	func parseImportSpec(p *parser, doc *ast.CommentGroup, _ int) ast.Spec {
+<a id="L2023"></a><span class="ln">  2023</span>		if p.trace {
+<a id="L2024"></a><span class="ln">  2024</span>			defer un(trace(p, &#34;ImportSpec&#34;))
+<a id="L2025"></a><span class="ln">  2025</span>		}
+<a id="L2026"></a><span class="ln">  2026</span>	
+<a id="L2027"></a><span class="ln">  2027</span>		var ident *ast.Ident
+<a id="L2028"></a><span class="ln">  2028</span>		switch p.tok {
+<a id="L2029"></a><span class="ln">  2029</span>		case token.PERIOD:
+<a id="L2030"></a><span class="ln">  2030</span>			ident = &amp;ast.Ident{NamePos: p.pos, Name: &#34;.&#34;}
+<a id="L2031"></a><span class="ln">  2031</span>			p.next()
+<a id="L2032"></a><span class="ln">  2032</span>		case token.IDENT:
+<a id="L2033"></a><span class="ln">  2033</span>			ident = p.parseIdent()
+<a id="L2034"></a><span class="ln">  2034</span>		}
+<a id="L2035"></a><span class="ln">  2035</span>	
+<a id="L2036"></a><span class="ln">  2036</span>		var path *ast.BasicLit
+<a id="L2037"></a><span class="ln">  2037</span>		if p.tok == token.STRING {
+<a id="L2038"></a><span class="ln">  2038</span>			if !isValidImport(p.lit) {
+<a id="L2039"></a><span class="ln">  2039</span>				p.error(p.pos, &#34;invalid import path: &#34;+p.lit)
+<a id="L2040"></a><span class="ln">  2040</span>			}
+<a id="L2041"></a><span class="ln">  2041</span>			path = &amp;ast.BasicLit{ValuePos: p.pos, Kind: p.tok, Value: p.lit}
+<a id="L2042"></a><span class="ln">  2042</span>			p.next()
+<a id="L2043"></a><span class="ln">  2043</span>		} else {
+<a id="L2044"></a><span class="ln">  2044</span>			p.expect(token.STRING) <span class="comment">// use expect() error handling</span>
+<a id="L2045"></a><span class="ln">  2045</span>		}
+<a id="L2046"></a><span class="ln">  2046</span>		p.expectSemi() <span class="comment">// call before accessing p.linecomment</span>
+<a id="L2047"></a><span class="ln">  2047</span>	
+<a id="L2048"></a><span class="ln">  2048</span>		<span class="comment">// collect imports</span>
+<a id="L2049"></a><span class="ln">  2049</span>		spec := &amp;ast.ImportSpec{
+<a id="L2050"></a><span class="ln">  2050</span>			Doc:     doc,
+<a id="L2051"></a><span class="ln">  2051</span>			Name:    ident,
+<a id="L2052"></a><span class="ln">  2052</span>			Path:    path,
+<a id="L2053"></a><span class="ln">  2053</span>			Comment: p.lineComment,
+<a id="L2054"></a><span class="ln">  2054</span>		}
+<a id="L2055"></a><span class="ln">  2055</span>		p.imports = append(p.imports, spec)
+<a id="L2056"></a><span class="ln">  2056</span>	
+<a id="L2057"></a><span class="ln">  2057</span>		return spec
+<a id="L2058"></a><span class="ln">  2058</span>	}
+<a id="L2059"></a><span class="ln">  2059</span>	
+<a id="L2060"></a><span class="ln">  2060</span>	func parseConstSpec(p *parser, doc *ast.CommentGroup, iota int) ast.Spec {
+<a id="L2061"></a><span class="ln">  2061</span>		if p.trace {
+<a id="L2062"></a><span class="ln">  2062</span>			defer un(trace(p, &#34;ConstSpec&#34;))
+<a id="L2063"></a><span class="ln">  2063</span>		}
+<a id="L2064"></a><span class="ln">  2064</span>	
+<a id="L2065"></a><span class="ln">  2065</span>		idents := p.parseIdentList()
+<a id="L2066"></a><span class="ln">  2066</span>		typ := p.tryType()
+<a id="L2067"></a><span class="ln">  2067</span>		var values []ast.Expr
+<a id="L2068"></a><span class="ln">  2068</span>		if typ != nil || p.tok == token.ASSIGN || iota == 0 {
+<a id="L2069"></a><span class="ln">  2069</span>			p.expect(token.ASSIGN)
+<a id="L2070"></a><span class="ln">  2070</span>			values = p.parseRhsList()
+<a id="L2071"></a><span class="ln">  2071</span>		}
+<a id="L2072"></a><span class="ln">  2072</span>		p.expectSemi() <span class="comment">// call before accessing p.linecomment</span>
+<a id="L2073"></a><span class="ln">  2073</span>	
+<a id="L2074"></a><span class="ln">  2074</span>		<span class="comment">// Go spec: The scope of a constant or variable identifier declared inside</span>
+<a id="L2075"></a><span class="ln">  2075</span>		<span class="comment">// a function begins at the end of the ConstSpec or VarSpec and ends at</span>
+<a id="L2076"></a><span class="ln">  2076</span>		<span class="comment">// the end of the innermost containing block.</span>
+<a id="L2077"></a><span class="ln">  2077</span>		<span class="comment">// (Global identifiers are resolved in a separate phase after parsing.)</span>
+<a id="L2078"></a><span class="ln">  2078</span>		spec := &amp;ast.ValueSpec{
+<a id="L2079"></a><span class="ln">  2079</span>			Doc:     doc,
+<a id="L2080"></a><span class="ln">  2080</span>			Names:   idents,
+<a id="L2081"></a><span class="ln">  2081</span>			Type:    typ,
+<a id="L2082"></a><span class="ln">  2082</span>			Values:  values,
+<a id="L2083"></a><span class="ln">  2083</span>			Comment: p.lineComment,
+<a id="L2084"></a><span class="ln">  2084</span>		}
+<a id="L2085"></a><span class="ln">  2085</span>		p.declare(spec, iota, p.topScope, ast.Con, idents...)
+<a id="L2086"></a><span class="ln">  2086</span>	
+<a id="L2087"></a><span class="ln">  2087</span>		return spec
+<a id="L2088"></a><span class="ln">  2088</span>	}
+<a id="L2089"></a><span class="ln">  2089</span>	
+<a id="L2090"></a><span class="ln">  2090</span>	func parseTypeSpec(p *parser, doc *ast.CommentGroup, _ int) ast.Spec {
+<a id="L2091"></a><span class="ln">  2091</span>		if p.trace {
+<a id="L2092"></a><span class="ln">  2092</span>			defer un(trace(p, &#34;TypeSpec&#34;))
+<a id="L2093"></a><span class="ln">  2093</span>		}
+<a id="L2094"></a><span class="ln">  2094</span>	
+<a id="L2095"></a><span class="ln">  2095</span>		ident := p.parseIdent()
+<a id="L2096"></a><span class="ln">  2096</span>	
+<a id="L2097"></a><span class="ln">  2097</span>		<span class="comment">// Go spec: The scope of a type identifier declared inside a function begins</span>
+<a id="L2098"></a><span class="ln">  2098</span>		<span class="comment">// at the identifier in the TypeSpec and ends at the end of the innermost</span>
+<a id="L2099"></a><span class="ln">  2099</span>		<span class="comment">// containing block.</span>
+<a id="L2100"></a><span class="ln">  2100</span>		<span class="comment">// (Global identifiers are resolved in a separate phase after parsing.)</span>
+<a id="L2101"></a><span class="ln">  2101</span>		spec := &amp;ast.TypeSpec{Doc: doc, Name: ident}
+<a id="L2102"></a><span class="ln">  2102</span>		p.declare(spec, nil, p.topScope, ast.Typ, ident)
+<a id="L2103"></a><span class="ln">  2103</span>	
+<a id="L2104"></a><span class="ln">  2104</span>		spec.Type = p.parseType()
+<a id="L2105"></a><span class="ln">  2105</span>		p.expectSemi() <span class="comment">// call before accessing p.linecomment</span>
+<a id="L2106"></a><span class="ln">  2106</span>		spec.Comment = p.lineComment
+<a id="L2107"></a><span class="ln">  2107</span>	
+<a id="L2108"></a><span class="ln">  2108</span>		return spec
+<a id="L2109"></a><span class="ln">  2109</span>	}
+<a id="L2110"></a><span class="ln">  2110</span>	
+<a id="L2111"></a><span class="ln">  2111</span>	func parseVarSpec(p *parser, doc *ast.CommentGroup, _ int) ast.Spec {
+<a id="L2112"></a><span class="ln">  2112</span>		if p.trace {
+<a id="L2113"></a><span class="ln">  2113</span>			defer un(trace(p, &#34;VarSpec&#34;))
+<a id="L2114"></a><span class="ln">  2114</span>		}
+<a id="L2115"></a><span class="ln">  2115</span>	
+<a id="L2116"></a><span class="ln">  2116</span>		idents := p.parseIdentList()
+<a id="L2117"></a><span class="ln">  2117</span>		typ := p.tryType()
+<a id="L2118"></a><span class="ln">  2118</span>		var values []ast.Expr
+<a id="L2119"></a><span class="ln">  2119</span>		if typ == nil || p.tok == token.ASSIGN {
+<a id="L2120"></a><span class="ln">  2120</span>			p.expect(token.ASSIGN)
+<a id="L2121"></a><span class="ln">  2121</span>			values = p.parseRhsList()
+<a id="L2122"></a><span class="ln">  2122</span>		}
+<a id="L2123"></a><span class="ln">  2123</span>		p.expectSemi() <span class="comment">// call before accessing p.linecomment</span>
+<a id="L2124"></a><span class="ln">  2124</span>	
+<a id="L2125"></a><span class="ln">  2125</span>		<span class="comment">// Go spec: The scope of a constant or variable identifier declared inside</span>
+<a id="L2126"></a><span class="ln">  2126</span>		<span class="comment">// a function begins at the end of the ConstSpec or VarSpec and ends at</span>
+<a id="L2127"></a><span class="ln">  2127</span>		<span class="comment">// the end of the innermost containing block.</span>
+<a id="L2128"></a><span class="ln">  2128</span>		<span class="comment">// (Global identifiers are resolved in a separate phase after parsing.)</span>
+<a id="L2129"></a><span class="ln">  2129</span>		spec := &amp;ast.ValueSpec{
+<a id="L2130"></a><span class="ln">  2130</span>			Doc:     doc,
+<a id="L2131"></a><span class="ln">  2131</span>			Names:   idents,
+<a id="L2132"></a><span class="ln">  2132</span>			Type:    typ,
+<a id="L2133"></a><span class="ln">  2133</span>			Values:  values,
+<a id="L2134"></a><span class="ln">  2134</span>			Comment: p.lineComment,
+<a id="L2135"></a><span class="ln">  2135</span>		}
+<a id="L2136"></a><span class="ln">  2136</span>		p.declare(spec, nil, p.topScope, ast.Var, idents...)
+<a id="L2137"></a><span class="ln">  2137</span>	
+<a id="L2138"></a><span class="ln">  2138</span>		return spec
+<a id="L2139"></a><span class="ln">  2139</span>	}
+<a id="L2140"></a><span class="ln">  2140</span>	
+<a id="L2141"></a><span class="ln">  2141</span>	func (p *parser) parseGenDecl(keyword token.Token, f parseSpecFunction) *ast.GenDecl {
+<a id="L2142"></a><span class="ln">  2142</span>		if p.trace {
+<a id="L2143"></a><span class="ln">  2143</span>			defer un(trace(p, &#34;GenDecl(&#34;+keyword.String()+&#34;)&#34;))
+<a id="L2144"></a><span class="ln">  2144</span>		}
+<a id="L2145"></a><span class="ln">  2145</span>	
+<a id="L2146"></a><span class="ln">  2146</span>		doc := p.leadComment
+<a id="L2147"></a><span class="ln">  2147</span>		pos := p.expect(keyword)
+<a id="L2148"></a><span class="ln">  2148</span>		var lparen, rparen token.Pos
+<a id="L2149"></a><span class="ln">  2149</span>		var list []ast.Spec
+<a id="L2150"></a><span class="ln">  2150</span>		if p.tok == token.LPAREN {
+<a id="L2151"></a><span class="ln">  2151</span>			lparen = p.pos
+<a id="L2152"></a><span class="ln">  2152</span>			p.next()
+<a id="L2153"></a><span class="ln">  2153</span>			for iota := 0; p.tok != token.RPAREN &amp;&amp; p.tok != token.EOF; iota++ {
+<a id="L2154"></a><span class="ln">  2154</span>				list = append(list, f(p, p.leadComment, iota))
+<a id="L2155"></a><span class="ln">  2155</span>			}
+<a id="L2156"></a><span class="ln">  2156</span>			rparen = p.expect(token.RPAREN)
+<a id="L2157"></a><span class="ln">  2157</span>			p.expectSemi()
+<a id="L2158"></a><span class="ln">  2158</span>		} else {
+<a id="L2159"></a><span class="ln">  2159</span>			list = append(list, f(p, nil, 0))
+<a id="L2160"></a><span class="ln">  2160</span>		}
+<a id="L2161"></a><span class="ln">  2161</span>	
+<a id="L2162"></a><span class="ln">  2162</span>		return &amp;ast.GenDecl{
+<a id="L2163"></a><span class="ln">  2163</span>			Doc:    doc,
+<a id="L2164"></a><span class="ln">  2164</span>			TokPos: pos,
+<a id="L2165"></a><span class="ln">  2165</span>			Tok:    keyword,
+<a id="L2166"></a><span class="ln">  2166</span>			Lparen: lparen,
+<a id="L2167"></a><span class="ln">  2167</span>			Specs:  list,
+<a id="L2168"></a><span class="ln">  2168</span>			Rparen: rparen,
+<a id="L2169"></a><span class="ln">  2169</span>		}
+<a id="L2170"></a><span class="ln">  2170</span>	}
+<a id="L2171"></a><span class="ln">  2171</span>	
+<a id="L2172"></a><span class="ln">  2172</span>	func (p *parser) parseReceiver(scope *ast.Scope) *ast.FieldList {
+<a id="L2173"></a><span class="ln">  2173</span>		if p.trace {
+<a id="L2174"></a><span class="ln">  2174</span>			defer un(trace(p, &#34;Receiver&#34;))
+<a id="L2175"></a><span class="ln">  2175</span>		}
+<a id="L2176"></a><span class="ln">  2176</span>	
+<a id="L2177"></a><span class="ln">  2177</span>		par := p.parseParameters(scope, false)
+<a id="L2178"></a><span class="ln">  2178</span>	
+<a id="L2179"></a><span class="ln">  2179</span>		<span class="comment">// must have exactly one receiver</span>
+<a id="L2180"></a><span class="ln">  2180</span>		if par.NumFields() != 1 {
+<a id="L2181"></a><span class="ln">  2181</span>			p.errorExpected(par.Opening, &#34;exactly one receiver&#34;)
+<a id="L2182"></a><span class="ln">  2182</span>			par.List = []*ast.Field{{Type: &amp;ast.BadExpr{From: par.Opening, To: par.Closing + 1}}}
+<a id="L2183"></a><span class="ln">  2183</span>			return par
+<a id="L2184"></a><span class="ln">  2184</span>		}
+<a id="L2185"></a><span class="ln">  2185</span>	
+<a id="L2186"></a><span class="ln">  2186</span>		<span class="comment">// recv type must be of the form [&#34;*&#34;] identifier</span>
+<a id="L2187"></a><span class="ln">  2187</span>		recv := par.List[0]
+<a id="L2188"></a><span class="ln">  2188</span>		base := deref(recv.Type)
+<a id="L2189"></a><span class="ln">  2189</span>		if _, isIdent := base.(*ast.Ident); !isIdent {
+<a id="L2190"></a><span class="ln">  2190</span>			if _, isBad := base.(*ast.BadExpr); !isBad {
+<a id="L2191"></a><span class="ln">  2191</span>				<span class="comment">// only report error if it&#39;s a new one</span>
+<a id="L2192"></a><span class="ln">  2192</span>				p.errorExpected(base.Pos(), &#34;(unqualified) identifier&#34;)
+<a id="L2193"></a><span class="ln">  2193</span>			}
+<a id="L2194"></a><span class="ln">  2194</span>			par.List = []*ast.Field{
+<a id="L2195"></a><span class="ln">  2195</span>				{Type: &amp;ast.BadExpr{From: recv.Pos(), To: recv.End()}},
+<a id="L2196"></a><span class="ln">  2196</span>			}
+<a id="L2197"></a><span class="ln">  2197</span>		}
+<a id="L2198"></a><span class="ln">  2198</span>	
+<a id="L2199"></a><span class="ln">  2199</span>		return par
+<a id="L2200"></a><span class="ln">  2200</span>	}
+<a id="L2201"></a><span class="ln">  2201</span>	
+<a id="L2202"></a><span class="ln">  2202</span>	func (p *parser) parseFuncDecl() *ast.FuncDecl {
+<a id="L2203"></a><span class="ln">  2203</span>		if p.trace {
+<a id="L2204"></a><span class="ln">  2204</span>			defer un(trace(p, &#34;FunctionDecl&#34;))
+<a id="L2205"></a><span class="ln">  2205</span>		}
+<a id="L2206"></a><span class="ln">  2206</span>	
+<a id="L2207"></a><span class="ln">  2207</span>		doc := p.leadComment
+<a id="L2208"></a><span class="ln">  2208</span>		pos := p.expect(token.FUNC)
+<a id="L2209"></a><span class="ln">  2209</span>		scope := ast.NewScope(p.topScope) <span class="comment">// function scope</span>
+<a id="L2210"></a><span class="ln">  2210</span>	
+<a id="L2211"></a><span class="ln">  2211</span>		var recv *ast.FieldList
+<a id="L2212"></a><span class="ln">  2212</span>		if p.tok == token.LPAREN {
+<a id="L2213"></a><span class="ln">  2213</span>			recv = p.parseReceiver(scope)
+<a id="L2214"></a><span class="ln">  2214</span>		}
+<a id="L2215"></a><span class="ln">  2215</span>	
+<a id="L2216"></a><span class="ln">  2216</span>		ident := p.parseIdent()
+<a id="L2217"></a><span class="ln">  2217</span>	
+<a id="L2218"></a><span class="ln">  2218</span>		params, results := p.parseSignature(scope)
+<a id="L2219"></a><span class="ln">  2219</span>	
+<a id="L2220"></a><span class="ln">  2220</span>		var body *ast.BlockStmt
+<a id="L2221"></a><span class="ln">  2221</span>		if p.tok == token.LBRACE {
+<a id="L2222"></a><span class="ln">  2222</span>			body = p.parseBody(scope)
+<a id="L2223"></a><span class="ln">  2223</span>		}
+<a id="L2224"></a><span class="ln">  2224</span>		p.expectSemi()
+<a id="L2225"></a><span class="ln">  2225</span>	
+<a id="L2226"></a><span class="ln">  2226</span>		decl := &amp;ast.FuncDecl{
+<a id="L2227"></a><span class="ln">  2227</span>			Doc:  doc,
+<a id="L2228"></a><span class="ln">  2228</span>			Recv: recv,
+<a id="L2229"></a><span class="ln">  2229</span>			Name: ident,
+<a id="L2230"></a><span class="ln">  2230</span>			Type: &amp;ast.FuncType{
+<a id="L2231"></a><span class="ln">  2231</span>				Func:    pos,
+<a id="L2232"></a><span class="ln">  2232</span>				Params:  params,
+<a id="L2233"></a><span class="ln">  2233</span>				Results: results,
+<a id="L2234"></a><span class="ln">  2234</span>			},
+<a id="L2235"></a><span class="ln">  2235</span>			Body: body,
+<a id="L2236"></a><span class="ln">  2236</span>		}
+<a id="L2237"></a><span class="ln">  2237</span>		if recv == nil {
+<a id="L2238"></a><span class="ln">  2238</span>			<span class="comment">// Go spec: The scope of an identifier denoting a constant, type,</span>
+<a id="L2239"></a><span class="ln">  2239</span>			<span class="comment">// variable, or function (but not method) declared at top level</span>
+<a id="L2240"></a><span class="ln">  2240</span>			<span class="comment">// (outside any function) is the package block.</span>
+<a id="L2241"></a><span class="ln">  2241</span>			<span class="comment">//</span>
+<a id="L2242"></a><span class="ln">  2242</span>			<span class="comment">// init() functions cannot be referred to and there may</span>
+<a id="L2243"></a><span class="ln">  2243</span>			<span class="comment">// be more than one - don&#39;t put them in the pkgScope</span>
+<a id="L2244"></a><span class="ln">  2244</span>			if ident.Name != &#34;init&#34; {
+<a id="L2245"></a><span class="ln">  2245</span>				p.declare(decl, nil, p.pkgScope, ast.Fun, ident)
+<a id="L2246"></a><span class="ln">  2246</span>			}
+<a id="L2247"></a><span class="ln">  2247</span>		}
+<a id="L2248"></a><span class="ln">  2248</span>	
+<a id="L2249"></a><span class="ln">  2249</span>		return decl
+<a id="L2250"></a><span class="ln">  2250</span>	}
+<a id="L2251"></a><span class="ln">  2251</span>	
+<a id="L2252"></a><span class="ln">  2252</span>	func (p *parser) parseDecl(sync func(*parser)) ast.Decl {
+<a id="L2253"></a><span class="ln">  2253</span>		if p.trace {
+<a id="L2254"></a><span class="ln">  2254</span>			defer un(trace(p, &#34;Declaration&#34;))
+<a id="L2255"></a><span class="ln">  2255</span>		}
+<a id="L2256"></a><span class="ln">  2256</span>	
+<a id="L2257"></a><span class="ln">  2257</span>		var f parseSpecFunction
+<a id="L2258"></a><span class="ln">  2258</span>		switch p.tok {
+<a id="L2259"></a><span class="ln">  2259</span>		case token.CONST:
+<a id="L2260"></a><span class="ln">  2260</span>			f = parseConstSpec
+<a id="L2261"></a><span class="ln">  2261</span>	
+<a id="L2262"></a><span class="ln">  2262</span>		case token.TYPE:
+<a id="L2263"></a><span class="ln">  2263</span>			f = parseTypeSpec
+<a id="L2264"></a><span class="ln">  2264</span>	
+<a id="L2265"></a><span class="ln">  2265</span>		case token.VAR:
+<a id="L2266"></a><span class="ln">  2266</span>			f = parseVarSpec
+<a id="L2267"></a><span class="ln">  2267</span>	
+<a id="L2268"></a><span class="ln">  2268</span>		case token.FUNC:
+<a id="L2269"></a><span class="ln">  2269</span>			return p.parseFuncDecl()
+<a id="L2270"></a><span class="ln">  2270</span>	
+<a id="L2271"></a><span class="ln">  2271</span>		default:
+<a id="L2272"></a><span class="ln">  2272</span>			pos := p.pos
+<a id="L2273"></a><span class="ln">  2273</span>			p.errorExpected(pos, &#34;declaration&#34;)
+<a id="L2274"></a><span class="ln">  2274</span>			sync(p)
+<a id="L2275"></a><span class="ln">  2275</span>			return &amp;ast.BadDecl{From: pos, To: p.pos}
+<a id="L2276"></a><span class="ln">  2276</span>		}
+<a id="L2277"></a><span class="ln">  2277</span>	
+<a id="L2278"></a><span class="ln">  2278</span>		return p.parseGenDecl(p.tok, f)
+<a id="L2279"></a><span class="ln">  2279</span>	}
+<a id="L2280"></a><span class="ln">  2280</span>	
+<a id="L2281"></a><span class="ln">  2281</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L2282"></a><span class="ln">  2282</span>	<span class="comment">// Source files</span>
+<a id="L2283"></a><span class="ln">  2283</span>	
+<a id="L2284"></a><span class="ln">  2284</span>	func (p *parser) parseFile() *ast.File {
+<a id="L2285"></a><span class="ln">  2285</span>		if p.trace {
+<a id="L2286"></a><span class="ln">  2286</span>			defer un(trace(p, &#34;File&#34;))
+<a id="L2287"></a><span class="ln">  2287</span>		}
+<a id="L2288"></a><span class="ln">  2288</span>	
+<a id="L2289"></a><span class="ln">  2289</span>		<span class="comment">// package clause</span>
+<a id="L2290"></a><span class="ln">  2290</span>		doc := p.leadComment
+<a id="L2291"></a><span class="ln">  2291</span>		pos := p.expect(token.PACKAGE)
+<a id="L2292"></a><span class="ln">  2292</span>		<span class="comment">// Go spec: The package clause is not a declaration;</span>
+<a id="L2293"></a><span class="ln">  2293</span>		<span class="comment">// the package name does not appear in any scope.</span>
+<a id="L2294"></a><span class="ln">  2294</span>		ident := p.parseIdent()
+<a id="L2295"></a><span class="ln">  2295</span>		if ident.Name == &#34;_&#34; {
+<a id="L2296"></a><span class="ln">  2296</span>			p.error(p.pos, &#34;invalid package name _&#34;)
+<a id="L2297"></a><span class="ln">  2297</span>		}
+<a id="L2298"></a><span class="ln">  2298</span>		p.expectSemi()
+<a id="L2299"></a><span class="ln">  2299</span>	
+<a id="L2300"></a><span class="ln">  2300</span>		var decls []ast.Decl
+<a id="L2301"></a><span class="ln">  2301</span>	
+<a id="L2302"></a><span class="ln">  2302</span>		<span class="comment">// Don&#39;t bother parsing the rest if we had errors already.</span>
+<a id="L2303"></a><span class="ln">  2303</span>		<span class="comment">// Likely not a Go source file at all.</span>
+<a id="L2304"></a><span class="ln">  2304</span>	
+<a id="L2305"></a><span class="ln">  2305</span>		if p.errors.Len() == 0 &amp;&amp; p.mode&amp;PackageClauseOnly == 0 {
+<a id="L2306"></a><span class="ln">  2306</span>			<span class="comment">// import decls</span>
+<a id="L2307"></a><span class="ln">  2307</span>			for p.tok == token.IMPORT {
+<a id="L2308"></a><span class="ln">  2308</span>				decls = append(decls, p.parseGenDecl(token.IMPORT, parseImportSpec))
+<a id="L2309"></a><span class="ln">  2309</span>			}
+<a id="L2310"></a><span class="ln">  2310</span>	
+<a id="L2311"></a><span class="ln">  2311</span>			if p.mode&amp;ImportsOnly == 0 {
+<a id="L2312"></a><span class="ln">  2312</span>				<span class="comment">// rest of package body</span>
+<a id="L2313"></a><span class="ln">  2313</span>				for p.tok != token.EOF {
+<a id="L2314"></a><span class="ln">  2314</span>					decls = append(decls, p.parseDecl(syncDecl))
+<a id="L2315"></a><span class="ln">  2315</span>				}
+<a id="L2316"></a><span class="ln">  2316</span>			}
+<a id="L2317"></a><span class="ln">  2317</span>		}
+<a id="L2318"></a><span class="ln">  2318</span>	
+<a id="L2319"></a><span class="ln">  2319</span>		assert(p.topScope == p.pkgScope, &#34;imbalanced scopes&#34;)
+<a id="L2320"></a><span class="ln">  2320</span>	
+<a id="L2321"></a><span class="ln">  2321</span>		<span class="comment">// resolve global identifiers within the same file</span>
+<a id="L2322"></a><span class="ln">  2322</span>		i := 0
+<a id="L2323"></a><span class="ln">  2323</span>		for _, ident := range p.unresolved {
+<a id="L2324"></a><span class="ln">  2324</span>			<span class="comment">// i &lt;= index for current ident</span>
+<a id="L2325"></a><span class="ln">  2325</span>			assert(ident.Obj == unresolved, &#34;object already resolved&#34;)
+<a id="L2326"></a><span class="ln">  2326</span>			ident.Obj = p.pkgScope.Lookup(ident.Name) <span class="comment">// also removes unresolved sentinel</span>
+<a id="L2327"></a><span class="ln">  2327</span>			if ident.Obj == nil {
+<a id="L2328"></a><span class="ln">  2328</span>				p.unresolved[i] = ident
+<a id="L2329"></a><span class="ln">  2329</span>				i++
+<a id="L2330"></a><span class="ln">  2330</span>			}
+<a id="L2331"></a><span class="ln">  2331</span>		}
+<a id="L2332"></a><span class="ln">  2332</span>	
+<a id="L2333"></a><span class="ln">  2333</span>		return &amp;ast.File{
+<a id="L2334"></a><span class="ln">  2334</span>			Doc:        doc,
+<a id="L2335"></a><span class="ln">  2335</span>			Package:    pos,
+<a id="L2336"></a><span class="ln">  2336</span>			Name:       ident,
+<a id="L2337"></a><span class="ln">  2337</span>			Decls:      decls,
+<a id="L2338"></a><span class="ln">  2338</span>			Scope:      p.pkgScope,
+<a id="L2339"></a><span class="ln">  2339</span>			Imports:    p.imports,
+<a id="L2340"></a><span class="ln">  2340</span>			Unresolved: p.unresolved[0:i],
+<a id="L2341"></a><span class="ln">  2341</span>			Comments:   p.comments,
+<a id="L2342"></a><span class="ln">  2342</span>		}
+<a id="L2343"></a><span class="ln">  2343</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

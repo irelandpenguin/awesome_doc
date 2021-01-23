@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/fmt/scan.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/fmt/scan.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package fmt
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;errors&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;io&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;math&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;os&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;reflect&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strconv&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;unicode/utf8&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// runeUnreader is the interface to something that can unread runes.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// If the object provided to Scan does not satisfy this interface,</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// a local buffer will be used to back up the input, but its contents</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// will be lost when Scan returns.</span>
+<a id="L21"></a><span class="ln">    21</span>	type runeUnreader interface {
+<a id="L22"></a><span class="ln">    22</span>		UnreadRune() error
+<a id="L23"></a><span class="ln">    23</span>	}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// ScanState represents the scanner state passed to custom scanners.</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Scanners may do rune-at-a-time scanning or ask the ScanState</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// to discover the next space-delimited token.</span>
+<a id="L28"></a><span class="ln">    28</span>	type ScanState interface {
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// ReadRune reads the next rune (Unicode code point) from the input.</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// If invoked during Scanln, Fscanln, or Sscanln, ReadRune() will</span>
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// return EOF after returning the first &#39;\n&#39; or when reading beyond</span>
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// the specified width.</span>
+<a id="L33"></a><span class="ln">    33</span>		ReadRune() (r rune, size int, err error)
+<a id="L34"></a><span class="ln">    34</span>		<span class="comment">// UnreadRune causes the next call to ReadRune to return the same rune.</span>
+<a id="L35"></a><span class="ln">    35</span>		UnreadRune() error
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// SkipSpace skips space in the input. Newlines are treated as space </span>
+<a id="L37"></a><span class="ln">    37</span>		<span class="comment">// unless the scan operation is Scanln, Fscanln or Sscanln, in which case </span>
+<a id="L38"></a><span class="ln">    38</span>		<span class="comment">// a newline is treated as EOF.</span>
+<a id="L39"></a><span class="ln">    39</span>		SkipSpace()
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// Token skips space in the input if skipSpace is true, then returns the</span>
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">// run of Unicode code points c satisfying f(c).  If f is nil,</span>
+<a id="L42"></a><span class="ln">    42</span>		<span class="comment">// !unicode.IsSpace(c) is used; that is, the token will hold non-space</span>
+<a id="L43"></a><span class="ln">    43</span>		<span class="comment">// characters.  Newlines are treated as space unless the scan operation</span>
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">// is Scanln, Fscanln or Sscanln, in which case a newline is treated as</span>
+<a id="L45"></a><span class="ln">    45</span>		<span class="comment">// EOF.  The returned slice points to shared data that may be overwritten</span>
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// by the next call to Token, a call to a Scan function using the ScanState</span>
+<a id="L47"></a><span class="ln">    47</span>		<span class="comment">// as input, or when the calling Scan method returns.</span>
+<a id="L48"></a><span class="ln">    48</span>		Token(skipSpace bool, f func(rune) bool) (token []byte, err error)
+<a id="L49"></a><span class="ln">    49</span>		<span class="comment">// Width returns the value of the width option and whether it has been set.</span>
+<a id="L50"></a><span class="ln">    50</span>		<span class="comment">// The unit is Unicode code points.</span>
+<a id="L51"></a><span class="ln">    51</span>		Width() (wid int, ok bool)
+<a id="L52"></a><span class="ln">    52</span>		<span class="comment">// Because ReadRune is implemented by the interface, Read should never be</span>
+<a id="L53"></a><span class="ln">    53</span>		<span class="comment">// called by the scanning routines and a valid implementation of</span>
+<a id="L54"></a><span class="ln">    54</span>		<span class="comment">// ScanState may choose always to return an error from Read.</span>
+<a id="L55"></a><span class="ln">    55</span>		Read(buf []byte) (n int, err error)
+<a id="L56"></a><span class="ln">    56</span>	}
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// Scanner is implemented by any value that has a Scan method, which scans</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// the input for the representation of a value and stores the result in the</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// receiver, which must be a pointer to be useful.  The Scan method is called</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// for any argument to Scan, Scanf, or Scanln that implements it.</span>
+<a id="L62"></a><span class="ln">    62</span>	type Scanner interface {
+<a id="L63"></a><span class="ln">    63</span>		Scan(state ScanState, verb rune) error
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// Scan scans text read from standard input, storing successive</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// space-separated values into successive arguments.  Newlines count</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// as space.  It returns the number of items successfully scanned.</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// If that is less than the number of arguments, err will report why.</span>
+<a id="L70"></a><span class="ln">    70</span>	func Scan(a ...interface{}) (n int, err error) {
+<a id="L71"></a><span class="ln">    71</span>		return Fscan(os.Stdin, a...)
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// Scanln is similar to Scan, but stops scanning at a newline and</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// after the final item there must be a newline or EOF.</span>
+<a id="L76"></a><span class="ln">    76</span>	func Scanln(a ...interface{}) (n int, err error) {
+<a id="L77"></a><span class="ln">    77</span>		return Fscanln(os.Stdin, a...)
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// Scanf scans text read from standard input, storing successive</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// space-separated values into successive arguments as determined by</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// the format.  It returns the number of items successfully scanned.</span>
+<a id="L83"></a><span class="ln">    83</span>	func Scanf(format string, a ...interface{}) (n int, err error) {
+<a id="L84"></a><span class="ln">    84</span>		return Fscanf(os.Stdin, format, a...)
+<a id="L85"></a><span class="ln">    85</span>	}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>	type stringReader string
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	func (r *stringReader) Read(b []byte) (n int, err error) {
+<a id="L90"></a><span class="ln">    90</span>		n = copy(b, *r)
+<a id="L91"></a><span class="ln">    91</span>		*r = (*r)[n:]
+<a id="L92"></a><span class="ln">    92</span>		if n == 0 {
+<a id="L93"></a><span class="ln">    93</span>			err = io.EOF
+<a id="L94"></a><span class="ln">    94</span>		}
+<a id="L95"></a><span class="ln">    95</span>		return
+<a id="L96"></a><span class="ln">    96</span>	}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// Sscan scans the argument string, storing successive space-separated</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// values into successive arguments.  Newlines count as space.  It</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// returns the number of items successfully scanned.  If that is less</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// than the number of arguments, err will report why.</span>
+<a id="L102"></a><span class="ln">   102</span>	func Sscan(str string, a ...interface{}) (n int, err error) {
+<a id="L103"></a><span class="ln">   103</span>		return Fscan((*stringReader)(&amp;str), a...)
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// Sscanln is similar to Sscan, but stops scanning at a newline and</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// after the final item there must be a newline or EOF.</span>
+<a id="L108"></a><span class="ln">   108</span>	func Sscanln(str string, a ...interface{}) (n int, err error) {
+<a id="L109"></a><span class="ln">   109</span>		return Fscanln((*stringReader)(&amp;str), a...)
+<a id="L110"></a><span class="ln">   110</span>	}
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// Sscanf scans the argument string, storing successive space-separated</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// values into successive arguments as determined by the format.  It</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// returns the number of items successfully parsed.</span>
+<a id="L115"></a><span class="ln">   115</span>	func Sscanf(str string, format string, a ...interface{}) (n int, err error) {
+<a id="L116"></a><span class="ln">   116</span>		return Fscanf((*stringReader)(&amp;str), format, a...)
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// Fscan scans text read from r, storing successive space-separated</span>
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">// values into successive arguments.  Newlines count as space.  It</span>
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// returns the number of items successfully scanned.  If that is less</span>
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// than the number of arguments, err will report why.</span>
+<a id="L123"></a><span class="ln">   123</span>	func Fscan(r io.Reader, a ...interface{}) (n int, err error) {
+<a id="L124"></a><span class="ln">   124</span>		s, old := newScanState(r, true, false)
+<a id="L125"></a><span class="ln">   125</span>		n, err = s.doScan(a)
+<a id="L126"></a><span class="ln">   126</span>		s.free(old)
+<a id="L127"></a><span class="ln">   127</span>		return
+<a id="L128"></a><span class="ln">   128</span>	}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// Fscanln is similar to Fscan, but stops scanning at a newline and</span>
+<a id="L131"></a><span class="ln">   131</span>	<span class="comment">// after the final item there must be a newline or EOF.</span>
+<a id="L132"></a><span class="ln">   132</span>	func Fscanln(r io.Reader, a ...interface{}) (n int, err error) {
+<a id="L133"></a><span class="ln">   133</span>		s, old := newScanState(r, false, true)
+<a id="L134"></a><span class="ln">   134</span>		n, err = s.doScan(a)
+<a id="L135"></a><span class="ln">   135</span>		s.free(old)
+<a id="L136"></a><span class="ln">   136</span>		return
+<a id="L137"></a><span class="ln">   137</span>	}
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// Fscanf scans text read from r, storing successive space-separated</span>
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// values into successive arguments as determined by the format.  It</span>
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// returns the number of items successfully parsed.</span>
+<a id="L142"></a><span class="ln">   142</span>	func Fscanf(r io.Reader, format string, a ...interface{}) (n int, err error) {
+<a id="L143"></a><span class="ln">   143</span>		s, old := newScanState(r, false, false)
+<a id="L144"></a><span class="ln">   144</span>		n, err = s.doScanf(format, a)
+<a id="L145"></a><span class="ln">   145</span>		s.free(old)
+<a id="L146"></a><span class="ln">   146</span>		return
+<a id="L147"></a><span class="ln">   147</span>	}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// scanError represents an error generated by the scanning software.</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// It&#39;s used as a unique signature to identify such errors when recovering.</span>
+<a id="L151"></a><span class="ln">   151</span>	type scanError struct {
+<a id="L152"></a><span class="ln">   152</span>		err error
+<a id="L153"></a><span class="ln">   153</span>	}
+<a id="L154"></a><span class="ln">   154</span>	
+<a id="L155"></a><span class="ln">   155</span>	const eof = -1
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// ss is the internal implementation of ScanState.</span>
+<a id="L158"></a><span class="ln">   158</span>	type ss struct {
+<a id="L159"></a><span class="ln">   159</span>		rr       io.RuneReader <span class="comment">// where to read input</span>
+<a id="L160"></a><span class="ln">   160</span>		buf      buffer        <span class="comment">// token accumulator</span>
+<a id="L161"></a><span class="ln">   161</span>		peekRune rune          <span class="comment">// one-rune lookahead</span>
+<a id="L162"></a><span class="ln">   162</span>		prevRune rune          <span class="comment">// last rune returned by ReadRune</span>
+<a id="L163"></a><span class="ln">   163</span>		count    int           <span class="comment">// runes consumed so far.</span>
+<a id="L164"></a><span class="ln">   164</span>		atEOF    bool          <span class="comment">// already read EOF</span>
+<a id="L165"></a><span class="ln">   165</span>		ssave
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// ssave holds the parts of ss that need to be</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// saved and restored on recursive scans.</span>
+<a id="L170"></a><span class="ln">   170</span>	type ssave struct {
+<a id="L171"></a><span class="ln">   171</span>		validSave  bool <span class="comment">// is or was a part of an actual ss.</span>
+<a id="L172"></a><span class="ln">   172</span>		nlIsEnd    bool <span class="comment">// whether newline terminates scan</span>
+<a id="L173"></a><span class="ln">   173</span>		nlIsSpace  bool <span class="comment">// whether newline counts as white space</span>
+<a id="L174"></a><span class="ln">   174</span>		fieldLimit int  <span class="comment">// max value of ss.count for this field; fieldLimit &lt;= limit</span>
+<a id="L175"></a><span class="ln">   175</span>		limit      int  <span class="comment">// max value of ss.count.</span>
+<a id="L176"></a><span class="ln">   176</span>		maxWid     int  <span class="comment">// width of this field.</span>
+<a id="L177"></a><span class="ln">   177</span>	}
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// The Read method is only in ScanState so that ScanState</span>
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">// satisfies io.Reader. It will never be called when used as</span>
+<a id="L181"></a><span class="ln">   181</span>	<span class="comment">// intended, so there is no need to make it actually work.</span>
+<a id="L182"></a><span class="ln">   182</span>	func (s *ss) Read(buf []byte) (n int, err error) {
+<a id="L183"></a><span class="ln">   183</span>		return 0, errors.New(&#34;ScanState&#39;s Read should not be called. Use ReadRune&#34;)
+<a id="L184"></a><span class="ln">   184</span>	}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>	func (s *ss) ReadRune() (r rune, size int, err error) {
+<a id="L187"></a><span class="ln">   187</span>		if s.peekRune &gt;= 0 {
+<a id="L188"></a><span class="ln">   188</span>			s.count++
+<a id="L189"></a><span class="ln">   189</span>			r = s.peekRune
+<a id="L190"></a><span class="ln">   190</span>			size = utf8.RuneLen(r)
+<a id="L191"></a><span class="ln">   191</span>			s.prevRune = r
+<a id="L192"></a><span class="ln">   192</span>			s.peekRune = -1
+<a id="L193"></a><span class="ln">   193</span>			return
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>		if s.atEOF || s.nlIsEnd &amp;&amp; s.prevRune == &#39;\n&#39; || s.count &gt;= s.fieldLimit {
+<a id="L196"></a><span class="ln">   196</span>			err = io.EOF
+<a id="L197"></a><span class="ln">   197</span>			return
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>		r, size, err = s.rr.ReadRune()
+<a id="L201"></a><span class="ln">   201</span>		if err == nil {
+<a id="L202"></a><span class="ln">   202</span>			s.count++
+<a id="L203"></a><span class="ln">   203</span>			s.prevRune = r
+<a id="L204"></a><span class="ln">   204</span>		} else if err == io.EOF {
+<a id="L205"></a><span class="ln">   205</span>			s.atEOF = true
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>		return
+<a id="L208"></a><span class="ln">   208</span>	}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>	func (s *ss) Width() (wid int, ok bool) {
+<a id="L211"></a><span class="ln">   211</span>		if s.maxWid == hugeWid {
+<a id="L212"></a><span class="ln">   212</span>			return 0, false
+<a id="L213"></a><span class="ln">   213</span>		}
+<a id="L214"></a><span class="ln">   214</span>		return s.maxWid, true
+<a id="L215"></a><span class="ln">   215</span>	}
+<a id="L216"></a><span class="ln">   216</span>	
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// The public method returns an error; this private one panics.</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// If getRune reaches EOF, the return value is EOF (-1).</span>
+<a id="L219"></a><span class="ln">   219</span>	func (s *ss) getRune() (r rune) {
+<a id="L220"></a><span class="ln">   220</span>		r, _, err := s.ReadRune()
+<a id="L221"></a><span class="ln">   221</span>		if err != nil {
+<a id="L222"></a><span class="ln">   222</span>			if err == io.EOF {
+<a id="L223"></a><span class="ln">   223</span>				return eof
+<a id="L224"></a><span class="ln">   224</span>			}
+<a id="L225"></a><span class="ln">   225</span>			s.error(err)
+<a id="L226"></a><span class="ln">   226</span>		}
+<a id="L227"></a><span class="ln">   227</span>		return
+<a id="L228"></a><span class="ln">   228</span>	}
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// mustReadRune turns io.EOF into a panic(io.ErrUnexpectedEOF).</span>
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// It is called in cases such as string scanning where an EOF is a</span>
+<a id="L232"></a><span class="ln">   232</span>	<span class="comment">// syntax error.</span>
+<a id="L233"></a><span class="ln">   233</span>	func (s *ss) mustReadRune() (r rune) {
+<a id="L234"></a><span class="ln">   234</span>		r = s.getRune()
+<a id="L235"></a><span class="ln">   235</span>		if r == eof {
+<a id="L236"></a><span class="ln">   236</span>			s.error(io.ErrUnexpectedEOF)
+<a id="L237"></a><span class="ln">   237</span>		}
+<a id="L238"></a><span class="ln">   238</span>		return
+<a id="L239"></a><span class="ln">   239</span>	}
+<a id="L240"></a><span class="ln">   240</span>	
+<a id="L241"></a><span class="ln">   241</span>	func (s *ss) UnreadRune() error {
+<a id="L242"></a><span class="ln">   242</span>		if u, ok := s.rr.(runeUnreader); ok {
+<a id="L243"></a><span class="ln">   243</span>			u.UnreadRune()
+<a id="L244"></a><span class="ln">   244</span>		} else {
+<a id="L245"></a><span class="ln">   245</span>			s.peekRune = s.prevRune
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		s.prevRune = -1
+<a id="L248"></a><span class="ln">   248</span>		s.count--
+<a id="L249"></a><span class="ln">   249</span>		return nil
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	func (s *ss) error(err error) {
+<a id="L253"></a><span class="ln">   253</span>		panic(scanError{err})
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	func (s *ss) errorString(err string) {
+<a id="L257"></a><span class="ln">   257</span>		panic(scanError{errors.New(err)})
+<a id="L258"></a><span class="ln">   258</span>	}
+<a id="L259"></a><span class="ln">   259</span>	
+<a id="L260"></a><span class="ln">   260</span>	func (s *ss) Token(skipSpace bool, f func(rune) bool) (tok []byte, err error) {
+<a id="L261"></a><span class="ln">   261</span>		defer func() {
+<a id="L262"></a><span class="ln">   262</span>			if e := recover(); e != nil {
+<a id="L263"></a><span class="ln">   263</span>				if se, ok := e.(scanError); ok {
+<a id="L264"></a><span class="ln">   264</span>					err = se.err
+<a id="L265"></a><span class="ln">   265</span>				} else {
+<a id="L266"></a><span class="ln">   266</span>					panic(e)
+<a id="L267"></a><span class="ln">   267</span>				}
+<a id="L268"></a><span class="ln">   268</span>			}
+<a id="L269"></a><span class="ln">   269</span>		}()
+<a id="L270"></a><span class="ln">   270</span>		if f == nil {
+<a id="L271"></a><span class="ln">   271</span>			f = notSpace
+<a id="L272"></a><span class="ln">   272</span>		}
+<a id="L273"></a><span class="ln">   273</span>		s.buf = s.buf[:0]
+<a id="L274"></a><span class="ln">   274</span>		tok = s.token(skipSpace, f)
+<a id="L275"></a><span class="ln">   275</span>		return
+<a id="L276"></a><span class="ln">   276</span>	}
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>	<span class="comment">// space is a copy of the unicode.White_Space ranges,</span>
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// to avoid depending on package unicode.</span>
+<a id="L280"></a><span class="ln">   280</span>	var space = [][2]uint16{
+<a id="L281"></a><span class="ln">   281</span>		{0x0009, 0x000d},
+<a id="L282"></a><span class="ln">   282</span>		{0x0020, 0x0020},
+<a id="L283"></a><span class="ln">   283</span>		{0x0085, 0x0085},
+<a id="L284"></a><span class="ln">   284</span>		{0x00a0, 0x00a0},
+<a id="L285"></a><span class="ln">   285</span>		{0x1680, 0x1680},
+<a id="L286"></a><span class="ln">   286</span>		{0x180e, 0x180e},
+<a id="L287"></a><span class="ln">   287</span>		{0x2000, 0x200a},
+<a id="L288"></a><span class="ln">   288</span>		{0x2028, 0x2029},
+<a id="L289"></a><span class="ln">   289</span>		{0x202f, 0x202f},
+<a id="L290"></a><span class="ln">   290</span>		{0x205f, 0x205f},
+<a id="L291"></a><span class="ln">   291</span>		{0x3000, 0x3000},
+<a id="L292"></a><span class="ln">   292</span>	}
+<a id="L293"></a><span class="ln">   293</span>	
+<a id="L294"></a><span class="ln">   294</span>	func isSpace(r rune) bool {
+<a id="L295"></a><span class="ln">   295</span>		if r &gt;= 1&lt;&lt;16 {
+<a id="L296"></a><span class="ln">   296</span>			return false
+<a id="L297"></a><span class="ln">   297</span>		}
+<a id="L298"></a><span class="ln">   298</span>		rx := uint16(r)
+<a id="L299"></a><span class="ln">   299</span>		for _, rng := range space {
+<a id="L300"></a><span class="ln">   300</span>			if rx &lt; rng[0] {
+<a id="L301"></a><span class="ln">   301</span>				return false
+<a id="L302"></a><span class="ln">   302</span>			}
+<a id="L303"></a><span class="ln">   303</span>			if rx &lt;= rng[1] {
+<a id="L304"></a><span class="ln">   304</span>				return true
+<a id="L305"></a><span class="ln">   305</span>			}
+<a id="L306"></a><span class="ln">   306</span>		}
+<a id="L307"></a><span class="ln">   307</span>		return false
+<a id="L308"></a><span class="ln">   308</span>	}
+<a id="L309"></a><span class="ln">   309</span>	
+<a id="L310"></a><span class="ln">   310</span>	<span class="comment">// notSpace is the default scanning function used in Token.</span>
+<a id="L311"></a><span class="ln">   311</span>	func notSpace(r rune) bool {
+<a id="L312"></a><span class="ln">   312</span>		return !isSpace(r)
+<a id="L313"></a><span class="ln">   313</span>	}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// skipSpace provides Scan() methods the ability to skip space and newline characters </span>
+<a id="L316"></a><span class="ln">   316</span>	<span class="comment">// in keeping with the current scanning mode set by format strings and Scan()/Scanln().</span>
+<a id="L317"></a><span class="ln">   317</span>	func (s *ss) SkipSpace() {
+<a id="L318"></a><span class="ln">   318</span>		s.skipSpace(false)
+<a id="L319"></a><span class="ln">   319</span>	}
+<a id="L320"></a><span class="ln">   320</span>	
+<a id="L321"></a><span class="ln">   321</span>	<span class="comment">// readRune is a structure to enable reading UTF-8 encoded code points</span>
+<a id="L322"></a><span class="ln">   322</span>	<span class="comment">// from an io.Reader.  It is used if the Reader given to the scanner does</span>
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// not already implement io.RuneReader.</span>
+<a id="L324"></a><span class="ln">   324</span>	type readRune struct {
+<a id="L325"></a><span class="ln">   325</span>		reader  io.Reader
+<a id="L326"></a><span class="ln">   326</span>		buf     [utf8.UTFMax]byte <span class="comment">// used only inside ReadRune</span>
+<a id="L327"></a><span class="ln">   327</span>		pending int               <span class="comment">// number of bytes in pendBuf; only &gt;0 for bad UTF-8</span>
+<a id="L328"></a><span class="ln">   328</span>		pendBuf [utf8.UTFMax]byte <span class="comment">// bytes left over</span>
+<a id="L329"></a><span class="ln">   329</span>	}
+<a id="L330"></a><span class="ln">   330</span>	
+<a id="L331"></a><span class="ln">   331</span>	<span class="comment">// readByte returns the next byte from the input, which may be</span>
+<a id="L332"></a><span class="ln">   332</span>	<span class="comment">// left over from a previous read if the UTF-8 was ill-formed.</span>
+<a id="L333"></a><span class="ln">   333</span>	func (r *readRune) readByte() (b byte, err error) {
+<a id="L334"></a><span class="ln">   334</span>		if r.pending &gt; 0 {
+<a id="L335"></a><span class="ln">   335</span>			b = r.pendBuf[0]
+<a id="L336"></a><span class="ln">   336</span>			copy(r.pendBuf[0:], r.pendBuf[1:])
+<a id="L337"></a><span class="ln">   337</span>			r.pending--
+<a id="L338"></a><span class="ln">   338</span>			return
+<a id="L339"></a><span class="ln">   339</span>		}
+<a id="L340"></a><span class="ln">   340</span>		_, err = r.reader.Read(r.pendBuf[0:1])
+<a id="L341"></a><span class="ln">   341</span>		return r.pendBuf[0], err
+<a id="L342"></a><span class="ln">   342</span>	}
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// unread saves the bytes for the next read.</span>
+<a id="L345"></a><span class="ln">   345</span>	func (r *readRune) unread(buf []byte) {
+<a id="L346"></a><span class="ln">   346</span>		copy(r.pendBuf[r.pending:], buf)
+<a id="L347"></a><span class="ln">   347</span>		r.pending += len(buf)
+<a id="L348"></a><span class="ln">   348</span>	}
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>	<span class="comment">// ReadRune returns the next UTF-8 encoded code point from the</span>
+<a id="L351"></a><span class="ln">   351</span>	<span class="comment">// io.Reader inside r.</span>
+<a id="L352"></a><span class="ln">   352</span>	func (r *readRune) ReadRune() (rr rune, size int, err error) {
+<a id="L353"></a><span class="ln">   353</span>		r.buf[0], err = r.readByte()
+<a id="L354"></a><span class="ln">   354</span>		if err != nil {
+<a id="L355"></a><span class="ln">   355</span>			return 0, 0, err
+<a id="L356"></a><span class="ln">   356</span>		}
+<a id="L357"></a><span class="ln">   357</span>		if r.buf[0] &lt; utf8.RuneSelf { <span class="comment">// fast check for common ASCII case</span>
+<a id="L358"></a><span class="ln">   358</span>			rr = rune(r.buf[0])
+<a id="L359"></a><span class="ln">   359</span>			return
+<a id="L360"></a><span class="ln">   360</span>		}
+<a id="L361"></a><span class="ln">   361</span>		var n int
+<a id="L362"></a><span class="ln">   362</span>		for n = 1; !utf8.FullRune(r.buf[0:n]); n++ {
+<a id="L363"></a><span class="ln">   363</span>			r.buf[n], err = r.readByte()
+<a id="L364"></a><span class="ln">   364</span>			if err != nil {
+<a id="L365"></a><span class="ln">   365</span>				if err == io.EOF {
+<a id="L366"></a><span class="ln">   366</span>					err = nil
+<a id="L367"></a><span class="ln">   367</span>					break
+<a id="L368"></a><span class="ln">   368</span>				}
+<a id="L369"></a><span class="ln">   369</span>				return
+<a id="L370"></a><span class="ln">   370</span>			}
+<a id="L371"></a><span class="ln">   371</span>		}
+<a id="L372"></a><span class="ln">   372</span>		rr, size = utf8.DecodeRune(r.buf[0:n])
+<a id="L373"></a><span class="ln">   373</span>		if size &lt; n { <span class="comment">// an error</span>
+<a id="L374"></a><span class="ln">   374</span>			r.unread(r.buf[size:n])
+<a id="L375"></a><span class="ln">   375</span>		}
+<a id="L376"></a><span class="ln">   376</span>		return
+<a id="L377"></a><span class="ln">   377</span>	}
+<a id="L378"></a><span class="ln">   378</span>	
+<a id="L379"></a><span class="ln">   379</span>	var ssFree = newCache(func() interface{} { return new(ss) })
+<a id="L380"></a><span class="ln">   380</span>	
+<a id="L381"></a><span class="ln">   381</span>	<span class="comment">// Allocate a new ss struct or grab a cached one.</span>
+<a id="L382"></a><span class="ln">   382</span>	func newScanState(r io.Reader, nlIsSpace, nlIsEnd bool) (s *ss, old ssave) {
+<a id="L383"></a><span class="ln">   383</span>		<span class="comment">// If the reader is a *ss, then we&#39;ve got a recursive</span>
+<a id="L384"></a><span class="ln">   384</span>		<span class="comment">// call to Scan, so re-use the scan state.</span>
+<a id="L385"></a><span class="ln">   385</span>		s, ok := r.(*ss)
+<a id="L386"></a><span class="ln">   386</span>		if ok {
+<a id="L387"></a><span class="ln">   387</span>			old = s.ssave
+<a id="L388"></a><span class="ln">   388</span>			s.limit = s.fieldLimit
+<a id="L389"></a><span class="ln">   389</span>			s.nlIsEnd = nlIsEnd || s.nlIsEnd
+<a id="L390"></a><span class="ln">   390</span>			s.nlIsSpace = nlIsSpace
+<a id="L391"></a><span class="ln">   391</span>			return
+<a id="L392"></a><span class="ln">   392</span>		}
+<a id="L393"></a><span class="ln">   393</span>	
+<a id="L394"></a><span class="ln">   394</span>		s = ssFree.get().(*ss)
+<a id="L395"></a><span class="ln">   395</span>		if rr, ok := r.(io.RuneReader); ok {
+<a id="L396"></a><span class="ln">   396</span>			s.rr = rr
+<a id="L397"></a><span class="ln">   397</span>		} else {
+<a id="L398"></a><span class="ln">   398</span>			s.rr = &amp;readRune{reader: r}
+<a id="L399"></a><span class="ln">   399</span>		}
+<a id="L400"></a><span class="ln">   400</span>		s.nlIsSpace = nlIsSpace
+<a id="L401"></a><span class="ln">   401</span>		s.nlIsEnd = nlIsEnd
+<a id="L402"></a><span class="ln">   402</span>		s.prevRune = -1
+<a id="L403"></a><span class="ln">   403</span>		s.peekRune = -1
+<a id="L404"></a><span class="ln">   404</span>		s.atEOF = false
+<a id="L405"></a><span class="ln">   405</span>		s.limit = hugeWid
+<a id="L406"></a><span class="ln">   406</span>		s.fieldLimit = hugeWid
+<a id="L407"></a><span class="ln">   407</span>		s.maxWid = hugeWid
+<a id="L408"></a><span class="ln">   408</span>		s.validSave = true
+<a id="L409"></a><span class="ln">   409</span>		s.count = 0
+<a id="L410"></a><span class="ln">   410</span>		return
+<a id="L411"></a><span class="ln">   411</span>	}
+<a id="L412"></a><span class="ln">   412</span>	
+<a id="L413"></a><span class="ln">   413</span>	<span class="comment">// Save used ss structs in ssFree; avoid an allocation per invocation.</span>
+<a id="L414"></a><span class="ln">   414</span>	func (s *ss) free(old ssave) {
+<a id="L415"></a><span class="ln">   415</span>		<span class="comment">// If it was used recursively, just restore the old state.</span>
+<a id="L416"></a><span class="ln">   416</span>		if old.validSave {
+<a id="L417"></a><span class="ln">   417</span>			s.ssave = old
+<a id="L418"></a><span class="ln">   418</span>			return
+<a id="L419"></a><span class="ln">   419</span>		}
+<a id="L420"></a><span class="ln">   420</span>		<span class="comment">// Don&#39;t hold on to ss structs with large buffers.</span>
+<a id="L421"></a><span class="ln">   421</span>		if cap(s.buf) &gt; 1024 {
+<a id="L422"></a><span class="ln">   422</span>			return
+<a id="L423"></a><span class="ln">   423</span>		}
+<a id="L424"></a><span class="ln">   424</span>		s.buf = s.buf[:0]
+<a id="L425"></a><span class="ln">   425</span>		s.rr = nil
+<a id="L426"></a><span class="ln">   426</span>		ssFree.put(s)
+<a id="L427"></a><span class="ln">   427</span>	}
+<a id="L428"></a><span class="ln">   428</span>	
+<a id="L429"></a><span class="ln">   429</span>	<span class="comment">// skipSpace skips spaces and maybe newlines.</span>
+<a id="L430"></a><span class="ln">   430</span>	func (s *ss) skipSpace(stopAtNewline bool) {
+<a id="L431"></a><span class="ln">   431</span>		for {
+<a id="L432"></a><span class="ln">   432</span>			r := s.getRune()
+<a id="L433"></a><span class="ln">   433</span>			if r == eof {
+<a id="L434"></a><span class="ln">   434</span>				return
+<a id="L435"></a><span class="ln">   435</span>			}
+<a id="L436"></a><span class="ln">   436</span>			if r == &#39;\n&#39; {
+<a id="L437"></a><span class="ln">   437</span>				if stopAtNewline {
+<a id="L438"></a><span class="ln">   438</span>					break
+<a id="L439"></a><span class="ln">   439</span>				}
+<a id="L440"></a><span class="ln">   440</span>				if s.nlIsSpace {
+<a id="L441"></a><span class="ln">   441</span>					continue
+<a id="L442"></a><span class="ln">   442</span>				}
+<a id="L443"></a><span class="ln">   443</span>				s.errorString(&#34;unexpected newline&#34;)
+<a id="L444"></a><span class="ln">   444</span>				return
+<a id="L445"></a><span class="ln">   445</span>			}
+<a id="L446"></a><span class="ln">   446</span>			if !isSpace(r) {
+<a id="L447"></a><span class="ln">   447</span>				s.UnreadRune()
+<a id="L448"></a><span class="ln">   448</span>				break
+<a id="L449"></a><span class="ln">   449</span>			}
+<a id="L450"></a><span class="ln">   450</span>		}
+<a id="L451"></a><span class="ln">   451</span>	}
+<a id="L452"></a><span class="ln">   452</span>	
+<a id="L453"></a><span class="ln">   453</span>	<span class="comment">// token returns the next space-delimited string from the input.  It</span>
+<a id="L454"></a><span class="ln">   454</span>	<span class="comment">// skips white space.  For Scanln, it stops at newlines.  For Scan,</span>
+<a id="L455"></a><span class="ln">   455</span>	<span class="comment">// newlines are treated as spaces.</span>
+<a id="L456"></a><span class="ln">   456</span>	func (s *ss) token(skipSpace bool, f func(rune) bool) []byte {
+<a id="L457"></a><span class="ln">   457</span>		if skipSpace {
+<a id="L458"></a><span class="ln">   458</span>			s.skipSpace(false)
+<a id="L459"></a><span class="ln">   459</span>		}
+<a id="L460"></a><span class="ln">   460</span>		<span class="comment">// read until white space or newline</span>
+<a id="L461"></a><span class="ln">   461</span>		for {
+<a id="L462"></a><span class="ln">   462</span>			r := s.getRune()
+<a id="L463"></a><span class="ln">   463</span>			if r == eof {
+<a id="L464"></a><span class="ln">   464</span>				break
+<a id="L465"></a><span class="ln">   465</span>			}
+<a id="L466"></a><span class="ln">   466</span>			if !f(r) {
+<a id="L467"></a><span class="ln">   467</span>				s.UnreadRune()
+<a id="L468"></a><span class="ln">   468</span>				break
+<a id="L469"></a><span class="ln">   469</span>			}
+<a id="L470"></a><span class="ln">   470</span>			s.buf.WriteRune(r)
+<a id="L471"></a><span class="ln">   471</span>		}
+<a id="L472"></a><span class="ln">   472</span>		return s.buf
+<a id="L473"></a><span class="ln">   473</span>	}
+<a id="L474"></a><span class="ln">   474</span>	
+<a id="L475"></a><span class="ln">   475</span>	<span class="comment">// typeError indicates that the type of the operand did not match the format</span>
+<a id="L476"></a><span class="ln">   476</span>	func (s *ss) typeError(field interface{}, expected string) {
+<a id="L477"></a><span class="ln">   477</span>		s.errorString(&#34;expected field of type pointer to &#34; + expected + &#34;; found &#34; + reflect.TypeOf(field).String())
+<a id="L478"></a><span class="ln">   478</span>	}
+<a id="L479"></a><span class="ln">   479</span>	
+<a id="L480"></a><span class="ln">   480</span>	var complexError = errors.New(&#34;syntax error scanning complex number&#34;)
+<a id="L481"></a><span class="ln">   481</span>	var boolError = errors.New(&#34;syntax error scanning boolean&#34;)
+<a id="L482"></a><span class="ln">   482</span>	
+<a id="L483"></a><span class="ln">   483</span>	func indexRune(s string, r rune) int {
+<a id="L484"></a><span class="ln">   484</span>		for i, c := range s {
+<a id="L485"></a><span class="ln">   485</span>			if c == r {
+<a id="L486"></a><span class="ln">   486</span>				return i
+<a id="L487"></a><span class="ln">   487</span>			}
+<a id="L488"></a><span class="ln">   488</span>		}
+<a id="L489"></a><span class="ln">   489</span>		return -1
+<a id="L490"></a><span class="ln">   490</span>	}
+<a id="L491"></a><span class="ln">   491</span>	
+<a id="L492"></a><span class="ln">   492</span>	<span class="comment">// consume reads the next rune in the input and reports whether it is in the ok string.</span>
+<a id="L493"></a><span class="ln">   493</span>	<span class="comment">// If accept is true, it puts the character into the input token.</span>
+<a id="L494"></a><span class="ln">   494</span>	func (s *ss) consume(ok string, accept bool) bool {
+<a id="L495"></a><span class="ln">   495</span>		r := s.getRune()
+<a id="L496"></a><span class="ln">   496</span>		if r == eof {
+<a id="L497"></a><span class="ln">   497</span>			return false
+<a id="L498"></a><span class="ln">   498</span>		}
+<a id="L499"></a><span class="ln">   499</span>		if indexRune(ok, r) &gt;= 0 {
+<a id="L500"></a><span class="ln">   500</span>			if accept {
+<a id="L501"></a><span class="ln">   501</span>				s.buf.WriteRune(r)
+<a id="L502"></a><span class="ln">   502</span>			}
+<a id="L503"></a><span class="ln">   503</span>			return true
+<a id="L504"></a><span class="ln">   504</span>		}
+<a id="L505"></a><span class="ln">   505</span>		if r != eof &amp;&amp; accept {
+<a id="L506"></a><span class="ln">   506</span>			s.UnreadRune()
+<a id="L507"></a><span class="ln">   507</span>		}
+<a id="L508"></a><span class="ln">   508</span>		return false
+<a id="L509"></a><span class="ln">   509</span>	}
+<a id="L510"></a><span class="ln">   510</span>	
+<a id="L511"></a><span class="ln">   511</span>	<span class="comment">// peek reports whether the next character is in the ok string, without consuming it.</span>
+<a id="L512"></a><span class="ln">   512</span>	func (s *ss) peek(ok string) bool {
+<a id="L513"></a><span class="ln">   513</span>		r := s.getRune()
+<a id="L514"></a><span class="ln">   514</span>		if r != eof {
+<a id="L515"></a><span class="ln">   515</span>			s.UnreadRune()
+<a id="L516"></a><span class="ln">   516</span>		}
+<a id="L517"></a><span class="ln">   517</span>		return indexRune(ok, r) &gt;= 0
+<a id="L518"></a><span class="ln">   518</span>	}
+<a id="L519"></a><span class="ln">   519</span>	
+<a id="L520"></a><span class="ln">   520</span>	func (s *ss) notEOF() {
+<a id="L521"></a><span class="ln">   521</span>		<span class="comment">// Guarantee there is data to be read.</span>
+<a id="L522"></a><span class="ln">   522</span>		if r := s.getRune(); r == eof {
+<a id="L523"></a><span class="ln">   523</span>			panic(io.EOF)
+<a id="L524"></a><span class="ln">   524</span>		}
+<a id="L525"></a><span class="ln">   525</span>		s.UnreadRune()
+<a id="L526"></a><span class="ln">   526</span>	}
+<a id="L527"></a><span class="ln">   527</span>	
+<a id="L528"></a><span class="ln">   528</span>	<span class="comment">// accept checks the next rune in the input.  If it&#39;s a byte (sic) in the string, it puts it in the</span>
+<a id="L529"></a><span class="ln">   529</span>	<span class="comment">// buffer and returns true. Otherwise it return false.</span>
+<a id="L530"></a><span class="ln">   530</span>	func (s *ss) accept(ok string) bool {
+<a id="L531"></a><span class="ln">   531</span>		return s.consume(ok, true)
+<a id="L532"></a><span class="ln">   532</span>	}
+<a id="L533"></a><span class="ln">   533</span>	
+<a id="L534"></a><span class="ln">   534</span>	<span class="comment">// okVerb verifies that the verb is present in the list, setting s.err appropriately if not.</span>
+<a id="L535"></a><span class="ln">   535</span>	func (s *ss) okVerb(verb rune, okVerbs, typ string) bool {
+<a id="L536"></a><span class="ln">   536</span>		for _, v := range okVerbs {
+<a id="L537"></a><span class="ln">   537</span>			if v == verb {
+<a id="L538"></a><span class="ln">   538</span>				return true
+<a id="L539"></a><span class="ln">   539</span>			}
+<a id="L540"></a><span class="ln">   540</span>		}
+<a id="L541"></a><span class="ln">   541</span>		s.errorString(&#34;bad verb %&#34; + string(verb) + &#34; for &#34; + typ)
+<a id="L542"></a><span class="ln">   542</span>		return false
+<a id="L543"></a><span class="ln">   543</span>	}
+<a id="L544"></a><span class="ln">   544</span>	
+<a id="L545"></a><span class="ln">   545</span>	<span class="comment">// scanBool returns the value of the boolean represented by the next token.</span>
+<a id="L546"></a><span class="ln">   546</span>	func (s *ss) scanBool(verb rune) bool {
+<a id="L547"></a><span class="ln">   547</span>		s.skipSpace(false)
+<a id="L548"></a><span class="ln">   548</span>		s.notEOF()
+<a id="L549"></a><span class="ln">   549</span>		if !s.okVerb(verb, &#34;tv&#34;, &#34;boolean&#34;) {
+<a id="L550"></a><span class="ln">   550</span>			return false
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>		<span class="comment">// Syntax-checking a boolean is annoying.  We&#39;re not fastidious about case.</span>
+<a id="L553"></a><span class="ln">   553</span>		switch s.getRune() {
+<a id="L554"></a><span class="ln">   554</span>		case &#39;0&#39;:
+<a id="L555"></a><span class="ln">   555</span>			return false
+<a id="L556"></a><span class="ln">   556</span>		case &#39;1&#39;:
+<a id="L557"></a><span class="ln">   557</span>			return true
+<a id="L558"></a><span class="ln">   558</span>		case &#39;t&#39;, &#39;T&#39;:
+<a id="L559"></a><span class="ln">   559</span>			if s.accept(&#34;rR&#34;) &amp;&amp; (!s.accept(&#34;uU&#34;) || !s.accept(&#34;eE&#34;)) {
+<a id="L560"></a><span class="ln">   560</span>				s.error(boolError)
+<a id="L561"></a><span class="ln">   561</span>			}
+<a id="L562"></a><span class="ln">   562</span>			return true
+<a id="L563"></a><span class="ln">   563</span>		case &#39;f&#39;, &#39;F&#39;:
+<a id="L564"></a><span class="ln">   564</span>			if s.accept(&#34;aA&#34;) &amp;&amp; (!s.accept(&#34;lL&#34;) || !s.accept(&#34;sS&#34;) || !s.accept(&#34;eE&#34;)) {
+<a id="L565"></a><span class="ln">   565</span>				s.error(boolError)
+<a id="L566"></a><span class="ln">   566</span>			}
+<a id="L567"></a><span class="ln">   567</span>			return false
+<a id="L568"></a><span class="ln">   568</span>		}
+<a id="L569"></a><span class="ln">   569</span>		return false
+<a id="L570"></a><span class="ln">   570</span>	}
+<a id="L571"></a><span class="ln">   571</span>	
+<a id="L572"></a><span class="ln">   572</span>	<span class="comment">// Numerical elements</span>
+<a id="L573"></a><span class="ln">   573</span>	const (
+<a id="L574"></a><span class="ln">   574</span>		binaryDigits      = &#34;01&#34;
+<a id="L575"></a><span class="ln">   575</span>		octalDigits       = &#34;01234567&#34;
+<a id="L576"></a><span class="ln">   576</span>		decimalDigits     = &#34;0123456789&#34;
+<a id="L577"></a><span class="ln">   577</span>		hexadecimalDigits = &#34;0123456789aAbBcCdDeEfF&#34;
+<a id="L578"></a><span class="ln">   578</span>		sign              = &#34;+-&#34;
+<a id="L579"></a><span class="ln">   579</span>		period            = &#34;.&#34;
+<a id="L580"></a><span class="ln">   580</span>		exponent          = &#34;eEp&#34;
+<a id="L581"></a><span class="ln">   581</span>	)
+<a id="L582"></a><span class="ln">   582</span>	
+<a id="L583"></a><span class="ln">   583</span>	<span class="comment">// getBase returns the numeric base represented by the verb and its digit string.</span>
+<a id="L584"></a><span class="ln">   584</span>	func (s *ss) getBase(verb rune) (base int, digits string) {
+<a id="L585"></a><span class="ln">   585</span>		s.okVerb(verb, &#34;bdoUxXv&#34;, &#34;integer&#34;) <span class="comment">// sets s.err</span>
+<a id="L586"></a><span class="ln">   586</span>		base = 10
+<a id="L587"></a><span class="ln">   587</span>		digits = decimalDigits
+<a id="L588"></a><span class="ln">   588</span>		switch verb {
+<a id="L589"></a><span class="ln">   589</span>		case &#39;b&#39;:
+<a id="L590"></a><span class="ln">   590</span>			base = 2
+<a id="L591"></a><span class="ln">   591</span>			digits = binaryDigits
+<a id="L592"></a><span class="ln">   592</span>		case &#39;o&#39;:
+<a id="L593"></a><span class="ln">   593</span>			base = 8
+<a id="L594"></a><span class="ln">   594</span>			digits = octalDigits
+<a id="L595"></a><span class="ln">   595</span>		case &#39;x&#39;, &#39;X&#39;, &#39;U&#39;:
+<a id="L596"></a><span class="ln">   596</span>			base = 16
+<a id="L597"></a><span class="ln">   597</span>			digits = hexadecimalDigits
+<a id="L598"></a><span class="ln">   598</span>		}
+<a id="L599"></a><span class="ln">   599</span>		return
+<a id="L600"></a><span class="ln">   600</span>	}
+<a id="L601"></a><span class="ln">   601</span>	
+<a id="L602"></a><span class="ln">   602</span>	<span class="comment">// scanNumber returns the numerical string with specified digits starting here.</span>
+<a id="L603"></a><span class="ln">   603</span>	func (s *ss) scanNumber(digits string, haveDigits bool) string {
+<a id="L604"></a><span class="ln">   604</span>		if !haveDigits {
+<a id="L605"></a><span class="ln">   605</span>			s.notEOF()
+<a id="L606"></a><span class="ln">   606</span>			if !s.accept(digits) {
+<a id="L607"></a><span class="ln">   607</span>				s.errorString(&#34;expected integer&#34;)
+<a id="L608"></a><span class="ln">   608</span>			}
+<a id="L609"></a><span class="ln">   609</span>		}
+<a id="L610"></a><span class="ln">   610</span>		for s.accept(digits) {
+<a id="L611"></a><span class="ln">   611</span>		}
+<a id="L612"></a><span class="ln">   612</span>		return string(s.buf)
+<a id="L613"></a><span class="ln">   613</span>	}
+<a id="L614"></a><span class="ln">   614</span>	
+<a id="L615"></a><span class="ln">   615</span>	<span class="comment">// scanRune returns the next rune value in the input.</span>
+<a id="L616"></a><span class="ln">   616</span>	func (s *ss) scanRune(bitSize int) int64 {
+<a id="L617"></a><span class="ln">   617</span>		s.notEOF()
+<a id="L618"></a><span class="ln">   618</span>		r := int64(s.getRune())
+<a id="L619"></a><span class="ln">   619</span>		n := uint(bitSize)
+<a id="L620"></a><span class="ln">   620</span>		x := (r &lt;&lt; (64 - n)) &gt;&gt; (64 - n)
+<a id="L621"></a><span class="ln">   621</span>		if x != r {
+<a id="L622"></a><span class="ln">   622</span>			s.errorString(&#34;overflow on character value &#34; + string(r))
+<a id="L623"></a><span class="ln">   623</span>		}
+<a id="L624"></a><span class="ln">   624</span>		return r
+<a id="L625"></a><span class="ln">   625</span>	}
+<a id="L626"></a><span class="ln">   626</span>	
+<a id="L627"></a><span class="ln">   627</span>	<span class="comment">// scanBasePrefix reports whether the integer begins with a 0 or 0x,</span>
+<a id="L628"></a><span class="ln">   628</span>	<span class="comment">// and returns the base, digit string, and whether a zero was found.</span>
+<a id="L629"></a><span class="ln">   629</span>	<span class="comment">// It is called only if the verb is %v.</span>
+<a id="L630"></a><span class="ln">   630</span>	func (s *ss) scanBasePrefix() (base int, digits string, found bool) {
+<a id="L631"></a><span class="ln">   631</span>		if !s.peek(&#34;0&#34;) {
+<a id="L632"></a><span class="ln">   632</span>			return 10, decimalDigits, false
+<a id="L633"></a><span class="ln">   633</span>		}
+<a id="L634"></a><span class="ln">   634</span>		s.accept(&#34;0&#34;)
+<a id="L635"></a><span class="ln">   635</span>		found = true <span class="comment">// We&#39;ve put a digit into the token buffer.</span>
+<a id="L636"></a><span class="ln">   636</span>		<span class="comment">// Special cases for &#39;0&#39; &amp;&amp; &#39;0x&#39;</span>
+<a id="L637"></a><span class="ln">   637</span>		base, digits = 8, octalDigits
+<a id="L638"></a><span class="ln">   638</span>		if s.peek(&#34;xX&#34;) {
+<a id="L639"></a><span class="ln">   639</span>			s.consume(&#34;xX&#34;, false)
+<a id="L640"></a><span class="ln">   640</span>			base, digits = 16, hexadecimalDigits
+<a id="L641"></a><span class="ln">   641</span>		}
+<a id="L642"></a><span class="ln">   642</span>		return
+<a id="L643"></a><span class="ln">   643</span>	}
+<a id="L644"></a><span class="ln">   644</span>	
+<a id="L645"></a><span class="ln">   645</span>	<span class="comment">// scanInt returns the value of the integer represented by the next</span>
+<a id="L646"></a><span class="ln">   646</span>	<span class="comment">// token, checking for overflow.  Any error is stored in s.err.</span>
+<a id="L647"></a><span class="ln">   647</span>	func (s *ss) scanInt(verb rune, bitSize int) int64 {
+<a id="L648"></a><span class="ln">   648</span>		if verb == &#39;c&#39; {
+<a id="L649"></a><span class="ln">   649</span>			return s.scanRune(bitSize)
+<a id="L650"></a><span class="ln">   650</span>		}
+<a id="L651"></a><span class="ln">   651</span>		s.skipSpace(false)
+<a id="L652"></a><span class="ln">   652</span>		s.notEOF()
+<a id="L653"></a><span class="ln">   653</span>		base, digits := s.getBase(verb)
+<a id="L654"></a><span class="ln">   654</span>		haveDigits := false
+<a id="L655"></a><span class="ln">   655</span>		if verb == &#39;U&#39; {
+<a id="L656"></a><span class="ln">   656</span>			if !s.consume(&#34;U&#34;, false) || !s.consume(&#34;+&#34;, false) {
+<a id="L657"></a><span class="ln">   657</span>				s.errorString(&#34;bad unicode format &#34;)
+<a id="L658"></a><span class="ln">   658</span>			}
+<a id="L659"></a><span class="ln">   659</span>		} else {
+<a id="L660"></a><span class="ln">   660</span>			s.accept(sign) <span class="comment">// If there&#39;s a sign, it will be left in the token buffer.</span>
+<a id="L661"></a><span class="ln">   661</span>			if verb == &#39;v&#39; {
+<a id="L662"></a><span class="ln">   662</span>				base, digits, haveDigits = s.scanBasePrefix()
+<a id="L663"></a><span class="ln">   663</span>			}
+<a id="L664"></a><span class="ln">   664</span>		}
+<a id="L665"></a><span class="ln">   665</span>		tok := s.scanNumber(digits, haveDigits)
+<a id="L666"></a><span class="ln">   666</span>		i, err := strconv.ParseInt(tok, base, 64)
+<a id="L667"></a><span class="ln">   667</span>		if err != nil {
+<a id="L668"></a><span class="ln">   668</span>			s.error(err)
+<a id="L669"></a><span class="ln">   669</span>		}
+<a id="L670"></a><span class="ln">   670</span>		n := uint(bitSize)
+<a id="L671"></a><span class="ln">   671</span>		x := (i &lt;&lt; (64 - n)) &gt;&gt; (64 - n)
+<a id="L672"></a><span class="ln">   672</span>		if x != i {
+<a id="L673"></a><span class="ln">   673</span>			s.errorString(&#34;integer overflow on token &#34; + tok)
+<a id="L674"></a><span class="ln">   674</span>		}
+<a id="L675"></a><span class="ln">   675</span>		return i
+<a id="L676"></a><span class="ln">   676</span>	}
+<a id="L677"></a><span class="ln">   677</span>	
+<a id="L678"></a><span class="ln">   678</span>	<span class="comment">// scanUint returns the value of the unsigned integer represented</span>
+<a id="L679"></a><span class="ln">   679</span>	<span class="comment">// by the next token, checking for overflow.  Any error is stored in s.err.</span>
+<a id="L680"></a><span class="ln">   680</span>	func (s *ss) scanUint(verb rune, bitSize int) uint64 {
+<a id="L681"></a><span class="ln">   681</span>		if verb == &#39;c&#39; {
+<a id="L682"></a><span class="ln">   682</span>			return uint64(s.scanRune(bitSize))
+<a id="L683"></a><span class="ln">   683</span>		}
+<a id="L684"></a><span class="ln">   684</span>		s.skipSpace(false)
+<a id="L685"></a><span class="ln">   685</span>		s.notEOF()
+<a id="L686"></a><span class="ln">   686</span>		base, digits := s.getBase(verb)
+<a id="L687"></a><span class="ln">   687</span>		haveDigits := false
+<a id="L688"></a><span class="ln">   688</span>		if verb == &#39;U&#39; {
+<a id="L689"></a><span class="ln">   689</span>			if !s.consume(&#34;U&#34;, false) || !s.consume(&#34;+&#34;, false) {
+<a id="L690"></a><span class="ln">   690</span>				s.errorString(&#34;bad unicode format &#34;)
+<a id="L691"></a><span class="ln">   691</span>			}
+<a id="L692"></a><span class="ln">   692</span>		} else if verb == &#39;v&#39; {
+<a id="L693"></a><span class="ln">   693</span>			base, digits, haveDigits = s.scanBasePrefix()
+<a id="L694"></a><span class="ln">   694</span>		}
+<a id="L695"></a><span class="ln">   695</span>		tok := s.scanNumber(digits, haveDigits)
+<a id="L696"></a><span class="ln">   696</span>		i, err := strconv.ParseUint(tok, base, 64)
+<a id="L697"></a><span class="ln">   697</span>		if err != nil {
+<a id="L698"></a><span class="ln">   698</span>			s.error(err)
+<a id="L699"></a><span class="ln">   699</span>		}
+<a id="L700"></a><span class="ln">   700</span>		n := uint(bitSize)
+<a id="L701"></a><span class="ln">   701</span>		x := (i &lt;&lt; (64 - n)) &gt;&gt; (64 - n)
+<a id="L702"></a><span class="ln">   702</span>		if x != i {
+<a id="L703"></a><span class="ln">   703</span>			s.errorString(&#34;unsigned integer overflow on token &#34; + tok)
+<a id="L704"></a><span class="ln">   704</span>		}
+<a id="L705"></a><span class="ln">   705</span>		return i
+<a id="L706"></a><span class="ln">   706</span>	}
+<a id="L707"></a><span class="ln">   707</span>	
+<a id="L708"></a><span class="ln">   708</span>	<span class="comment">// floatToken returns the floating-point number starting here, no longer than swid</span>
+<a id="L709"></a><span class="ln">   709</span>	<span class="comment">// if the width is specified. It&#39;s not rigorous about syntax because it doesn&#39;t check that</span>
+<a id="L710"></a><span class="ln">   710</span>	<span class="comment">// we have at least some digits, but Atof will do that.</span>
+<a id="L711"></a><span class="ln">   711</span>	func (s *ss) floatToken() string {
+<a id="L712"></a><span class="ln">   712</span>		s.buf = s.buf[:0]
+<a id="L713"></a><span class="ln">   713</span>		<span class="comment">// NaN?</span>
+<a id="L714"></a><span class="ln">   714</span>		if s.accept(&#34;nN&#34;) &amp;&amp; s.accept(&#34;aA&#34;) &amp;&amp; s.accept(&#34;nN&#34;) {
+<a id="L715"></a><span class="ln">   715</span>			return string(s.buf)
+<a id="L716"></a><span class="ln">   716</span>		}
+<a id="L717"></a><span class="ln">   717</span>		<span class="comment">// leading sign?</span>
+<a id="L718"></a><span class="ln">   718</span>		s.accept(sign)
+<a id="L719"></a><span class="ln">   719</span>		<span class="comment">// Inf?</span>
+<a id="L720"></a><span class="ln">   720</span>		if s.accept(&#34;iI&#34;) &amp;&amp; s.accept(&#34;nN&#34;) &amp;&amp; s.accept(&#34;fF&#34;) {
+<a id="L721"></a><span class="ln">   721</span>			return string(s.buf)
+<a id="L722"></a><span class="ln">   722</span>		}
+<a id="L723"></a><span class="ln">   723</span>		<span class="comment">// digits?</span>
+<a id="L724"></a><span class="ln">   724</span>		for s.accept(decimalDigits) {
+<a id="L725"></a><span class="ln">   725</span>		}
+<a id="L726"></a><span class="ln">   726</span>		<span class="comment">// decimal point?</span>
+<a id="L727"></a><span class="ln">   727</span>		if s.accept(period) {
+<a id="L728"></a><span class="ln">   728</span>			<span class="comment">// fraction?</span>
+<a id="L729"></a><span class="ln">   729</span>			for s.accept(decimalDigits) {
+<a id="L730"></a><span class="ln">   730</span>			}
+<a id="L731"></a><span class="ln">   731</span>		}
+<a id="L732"></a><span class="ln">   732</span>		<span class="comment">// exponent?</span>
+<a id="L733"></a><span class="ln">   733</span>		if s.accept(exponent) {
+<a id="L734"></a><span class="ln">   734</span>			<span class="comment">// leading sign?</span>
+<a id="L735"></a><span class="ln">   735</span>			s.accept(sign)
+<a id="L736"></a><span class="ln">   736</span>			<span class="comment">// digits?</span>
+<a id="L737"></a><span class="ln">   737</span>			for s.accept(decimalDigits) {
+<a id="L738"></a><span class="ln">   738</span>			}
+<a id="L739"></a><span class="ln">   739</span>		}
+<a id="L740"></a><span class="ln">   740</span>		return string(s.buf)
+<a id="L741"></a><span class="ln">   741</span>	}
+<a id="L742"></a><span class="ln">   742</span>	
+<a id="L743"></a><span class="ln">   743</span>	<span class="comment">// complexTokens returns the real and imaginary parts of the complex number starting here.</span>
+<a id="L744"></a><span class="ln">   744</span>	<span class="comment">// The number might be parenthesized and has the format (N+Ni) where N is a floating-point</span>
+<a id="L745"></a><span class="ln">   745</span>	<span class="comment">// number and there are no spaces within.</span>
+<a id="L746"></a><span class="ln">   746</span>	func (s *ss) complexTokens() (real, imag string) {
+<a id="L747"></a><span class="ln">   747</span>		<span class="comment">// TODO: accept N and Ni independently?</span>
+<a id="L748"></a><span class="ln">   748</span>		parens := s.accept(&#34;(&#34;)
+<a id="L749"></a><span class="ln">   749</span>		real = s.floatToken()
+<a id="L750"></a><span class="ln">   750</span>		s.buf = s.buf[:0]
+<a id="L751"></a><span class="ln">   751</span>		<span class="comment">// Must now have a sign.</span>
+<a id="L752"></a><span class="ln">   752</span>		if !s.accept(&#34;+-&#34;) {
+<a id="L753"></a><span class="ln">   753</span>			s.error(complexError)
+<a id="L754"></a><span class="ln">   754</span>		}
+<a id="L755"></a><span class="ln">   755</span>		<span class="comment">// Sign is now in buffer</span>
+<a id="L756"></a><span class="ln">   756</span>		imagSign := string(s.buf)
+<a id="L757"></a><span class="ln">   757</span>		imag = s.floatToken()
+<a id="L758"></a><span class="ln">   758</span>		if !s.accept(&#34;i&#34;) {
+<a id="L759"></a><span class="ln">   759</span>			s.error(complexError)
+<a id="L760"></a><span class="ln">   760</span>		}
+<a id="L761"></a><span class="ln">   761</span>		if parens &amp;&amp; !s.accept(&#34;)&#34;) {
+<a id="L762"></a><span class="ln">   762</span>			s.error(complexError)
+<a id="L763"></a><span class="ln">   763</span>		}
+<a id="L764"></a><span class="ln">   764</span>		return real, imagSign + imag
+<a id="L765"></a><span class="ln">   765</span>	}
+<a id="L766"></a><span class="ln">   766</span>	
+<a id="L767"></a><span class="ln">   767</span>	<span class="comment">// convertFloat converts the string to a float64value.</span>
+<a id="L768"></a><span class="ln">   768</span>	func (s *ss) convertFloat(str string, n int) float64 {
+<a id="L769"></a><span class="ln">   769</span>		if p := indexRune(str, &#39;p&#39;); p &gt;= 0 {
+<a id="L770"></a><span class="ln">   770</span>			<span class="comment">// Atof doesn&#39;t handle power-of-2 exponents,</span>
+<a id="L771"></a><span class="ln">   771</span>			<span class="comment">// but they&#39;re easy to evaluate.</span>
+<a id="L772"></a><span class="ln">   772</span>			f, err := strconv.ParseFloat(str[:p], n)
+<a id="L773"></a><span class="ln">   773</span>			if err != nil {
+<a id="L774"></a><span class="ln">   774</span>				<span class="comment">// Put full string into error.</span>
+<a id="L775"></a><span class="ln">   775</span>				if e, ok := err.(*strconv.NumError); ok {
+<a id="L776"></a><span class="ln">   776</span>					e.Num = str
+<a id="L777"></a><span class="ln">   777</span>				}
+<a id="L778"></a><span class="ln">   778</span>				s.error(err)
+<a id="L779"></a><span class="ln">   779</span>			}
+<a id="L780"></a><span class="ln">   780</span>			n, err := strconv.Atoi(str[p+1:])
+<a id="L781"></a><span class="ln">   781</span>			if err != nil {
+<a id="L782"></a><span class="ln">   782</span>				<span class="comment">// Put full string into error.</span>
+<a id="L783"></a><span class="ln">   783</span>				if e, ok := err.(*strconv.NumError); ok {
+<a id="L784"></a><span class="ln">   784</span>					e.Num = str
+<a id="L785"></a><span class="ln">   785</span>				}
+<a id="L786"></a><span class="ln">   786</span>				s.error(err)
+<a id="L787"></a><span class="ln">   787</span>			}
+<a id="L788"></a><span class="ln">   788</span>			return math.Ldexp(f, n)
+<a id="L789"></a><span class="ln">   789</span>		}
+<a id="L790"></a><span class="ln">   790</span>		f, err := strconv.ParseFloat(str, n)
+<a id="L791"></a><span class="ln">   791</span>		if err != nil {
+<a id="L792"></a><span class="ln">   792</span>			s.error(err)
+<a id="L793"></a><span class="ln">   793</span>		}
+<a id="L794"></a><span class="ln">   794</span>		return f
+<a id="L795"></a><span class="ln">   795</span>	}
+<a id="L796"></a><span class="ln">   796</span>	
+<a id="L797"></a><span class="ln">   797</span>	<span class="comment">// convertComplex converts the next token to a complex128 value.</span>
+<a id="L798"></a><span class="ln">   798</span>	<span class="comment">// The atof argument is a type-specific reader for the underlying type.</span>
+<a id="L799"></a><span class="ln">   799</span>	<span class="comment">// If we&#39;re reading complex64, atof will parse float32s and convert them</span>
+<a id="L800"></a><span class="ln">   800</span>	<span class="comment">// to float64&#39;s to avoid reproducing this code for each complex type.</span>
+<a id="L801"></a><span class="ln">   801</span>	func (s *ss) scanComplex(verb rune, n int) complex128 {
+<a id="L802"></a><span class="ln">   802</span>		if !s.okVerb(verb, floatVerbs, &#34;complex&#34;) {
+<a id="L803"></a><span class="ln">   803</span>			return 0
+<a id="L804"></a><span class="ln">   804</span>		}
+<a id="L805"></a><span class="ln">   805</span>		s.skipSpace(false)
+<a id="L806"></a><span class="ln">   806</span>		s.notEOF()
+<a id="L807"></a><span class="ln">   807</span>		sreal, simag := s.complexTokens()
+<a id="L808"></a><span class="ln">   808</span>		real := s.convertFloat(sreal, n/2)
+<a id="L809"></a><span class="ln">   809</span>		imag := s.convertFloat(simag, n/2)
+<a id="L810"></a><span class="ln">   810</span>		return complex(real, imag)
+<a id="L811"></a><span class="ln">   811</span>	}
+<a id="L812"></a><span class="ln">   812</span>	
+<a id="L813"></a><span class="ln">   813</span>	<span class="comment">// convertString returns the string represented by the next input characters.</span>
+<a id="L814"></a><span class="ln">   814</span>	<span class="comment">// The format of the input is determined by the verb.</span>
+<a id="L815"></a><span class="ln">   815</span>	func (s *ss) convertString(verb rune) (str string) {
+<a id="L816"></a><span class="ln">   816</span>		if !s.okVerb(verb, &#34;svqx&#34;, &#34;string&#34;) {
+<a id="L817"></a><span class="ln">   817</span>			return &#34;&#34;
+<a id="L818"></a><span class="ln">   818</span>		}
+<a id="L819"></a><span class="ln">   819</span>		s.skipSpace(false)
+<a id="L820"></a><span class="ln">   820</span>		s.notEOF()
+<a id="L821"></a><span class="ln">   821</span>		switch verb {
+<a id="L822"></a><span class="ln">   822</span>		case &#39;q&#39;:
+<a id="L823"></a><span class="ln">   823</span>			str = s.quotedString()
+<a id="L824"></a><span class="ln">   824</span>		case &#39;x&#39;:
+<a id="L825"></a><span class="ln">   825</span>			str = s.hexString()
+<a id="L826"></a><span class="ln">   826</span>		default:
+<a id="L827"></a><span class="ln">   827</span>			str = string(s.token(true, notSpace)) <span class="comment">// %s and %v just return the next word</span>
+<a id="L828"></a><span class="ln">   828</span>		}
+<a id="L829"></a><span class="ln">   829</span>		return
+<a id="L830"></a><span class="ln">   830</span>	}
+<a id="L831"></a><span class="ln">   831</span>	
+<a id="L832"></a><span class="ln">   832</span>	<span class="comment">// quotedString returns the double- or back-quoted string represented by the next input characters.</span>
+<a id="L833"></a><span class="ln">   833</span>	func (s *ss) quotedString() string {
+<a id="L834"></a><span class="ln">   834</span>		s.notEOF()
+<a id="L835"></a><span class="ln">   835</span>		quote := s.getRune()
+<a id="L836"></a><span class="ln">   836</span>		switch quote {
+<a id="L837"></a><span class="ln">   837</span>		case &#39;`&#39;:
+<a id="L838"></a><span class="ln">   838</span>			<span class="comment">// Back-quoted: Anything goes until EOF or back quote.</span>
+<a id="L839"></a><span class="ln">   839</span>			for {
+<a id="L840"></a><span class="ln">   840</span>				r := s.mustReadRune()
+<a id="L841"></a><span class="ln">   841</span>				if r == quote {
+<a id="L842"></a><span class="ln">   842</span>					break
+<a id="L843"></a><span class="ln">   843</span>				}
+<a id="L844"></a><span class="ln">   844</span>				s.buf.WriteRune(r)
+<a id="L845"></a><span class="ln">   845</span>			}
+<a id="L846"></a><span class="ln">   846</span>			return string(s.buf)
+<a id="L847"></a><span class="ln">   847</span>		case &#39;&#34;&#39;:
+<a id="L848"></a><span class="ln">   848</span>			<span class="comment">// Double-quoted: Include the quotes and let strconv.Unquote do the backslash escapes.</span>
+<a id="L849"></a><span class="ln">   849</span>			s.buf.WriteRune(quote)
+<a id="L850"></a><span class="ln">   850</span>			for {
+<a id="L851"></a><span class="ln">   851</span>				r := s.mustReadRune()
+<a id="L852"></a><span class="ln">   852</span>				s.buf.WriteRune(r)
+<a id="L853"></a><span class="ln">   853</span>				if r == &#39;\\&#39; {
+<a id="L854"></a><span class="ln">   854</span>					<span class="comment">// In a legal backslash escape, no matter how long, only the character</span>
+<a id="L855"></a><span class="ln">   855</span>					<span class="comment">// immediately after the escape can itself be a backslash or quote.</span>
+<a id="L856"></a><span class="ln">   856</span>					<span class="comment">// Thus we only need to protect the first character after the backslash.</span>
+<a id="L857"></a><span class="ln">   857</span>					r := s.mustReadRune()
+<a id="L858"></a><span class="ln">   858</span>					s.buf.WriteRune(r)
+<a id="L859"></a><span class="ln">   859</span>				} else if r == &#39;&#34;&#39; {
+<a id="L860"></a><span class="ln">   860</span>					break
+<a id="L861"></a><span class="ln">   861</span>				}
+<a id="L862"></a><span class="ln">   862</span>			}
+<a id="L863"></a><span class="ln">   863</span>			result, err := strconv.Unquote(string(s.buf))
+<a id="L864"></a><span class="ln">   864</span>			if err != nil {
+<a id="L865"></a><span class="ln">   865</span>				s.error(err)
+<a id="L866"></a><span class="ln">   866</span>			}
+<a id="L867"></a><span class="ln">   867</span>			return result
+<a id="L868"></a><span class="ln">   868</span>		default:
+<a id="L869"></a><span class="ln">   869</span>			s.errorString(&#34;expected quoted string&#34;)
+<a id="L870"></a><span class="ln">   870</span>		}
+<a id="L871"></a><span class="ln">   871</span>		return &#34;&#34;
+<a id="L872"></a><span class="ln">   872</span>	}
+<a id="L873"></a><span class="ln">   873</span>	
+<a id="L874"></a><span class="ln">   874</span>	<span class="comment">// hexDigit returns the value of the hexadecimal digit</span>
+<a id="L875"></a><span class="ln">   875</span>	func (s *ss) hexDigit(d rune) int {
+<a id="L876"></a><span class="ln">   876</span>		digit := int(d)
+<a id="L877"></a><span class="ln">   877</span>		switch digit {
+<a id="L878"></a><span class="ln">   878</span>		case &#39;0&#39;, &#39;1&#39;, &#39;2&#39;, &#39;3&#39;, &#39;4&#39;, &#39;5&#39;, &#39;6&#39;, &#39;7&#39;, &#39;8&#39;, &#39;9&#39;:
+<a id="L879"></a><span class="ln">   879</span>			return digit - &#39;0&#39;
+<a id="L880"></a><span class="ln">   880</span>		case &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;d&#39;, &#39;e&#39;, &#39;f&#39;:
+<a id="L881"></a><span class="ln">   881</span>			return 10 + digit - &#39;a&#39;
+<a id="L882"></a><span class="ln">   882</span>		case &#39;A&#39;, &#39;B&#39;, &#39;C&#39;, &#39;D&#39;, &#39;E&#39;, &#39;F&#39;:
+<a id="L883"></a><span class="ln">   883</span>			return 10 + digit - &#39;A&#39;
+<a id="L884"></a><span class="ln">   884</span>		}
+<a id="L885"></a><span class="ln">   885</span>		s.errorString(&#34;Scan: illegal hex digit&#34;)
+<a id="L886"></a><span class="ln">   886</span>		return 0
+<a id="L887"></a><span class="ln">   887</span>	}
+<a id="L888"></a><span class="ln">   888</span>	
+<a id="L889"></a><span class="ln">   889</span>	<span class="comment">// hexByte returns the next hex-encoded (two-character) byte from the input.</span>
+<a id="L890"></a><span class="ln">   890</span>	<span class="comment">// There must be either two hexadecimal digits or a space character in the input.</span>
+<a id="L891"></a><span class="ln">   891</span>	func (s *ss) hexByte() (b byte, ok bool) {
+<a id="L892"></a><span class="ln">   892</span>		rune1 := s.getRune()
+<a id="L893"></a><span class="ln">   893</span>		if rune1 == eof {
+<a id="L894"></a><span class="ln">   894</span>			return
+<a id="L895"></a><span class="ln">   895</span>		}
+<a id="L896"></a><span class="ln">   896</span>		if isSpace(rune1) {
+<a id="L897"></a><span class="ln">   897</span>			s.UnreadRune()
+<a id="L898"></a><span class="ln">   898</span>			return
+<a id="L899"></a><span class="ln">   899</span>		}
+<a id="L900"></a><span class="ln">   900</span>		rune2 := s.mustReadRune()
+<a id="L901"></a><span class="ln">   901</span>		return byte(s.hexDigit(rune1)&lt;&lt;4 | s.hexDigit(rune2)), true
+<a id="L902"></a><span class="ln">   902</span>	}
+<a id="L903"></a><span class="ln">   903</span>	
+<a id="L904"></a><span class="ln">   904</span>	<span class="comment">// hexString returns the space-delimited hexpair-encoded string.</span>
+<a id="L905"></a><span class="ln">   905</span>	func (s *ss) hexString() string {
+<a id="L906"></a><span class="ln">   906</span>		s.notEOF()
+<a id="L907"></a><span class="ln">   907</span>		for {
+<a id="L908"></a><span class="ln">   908</span>			b, ok := s.hexByte()
+<a id="L909"></a><span class="ln">   909</span>			if !ok {
+<a id="L910"></a><span class="ln">   910</span>				break
+<a id="L911"></a><span class="ln">   911</span>			}
+<a id="L912"></a><span class="ln">   912</span>			s.buf.WriteByte(b)
+<a id="L913"></a><span class="ln">   913</span>		}
+<a id="L914"></a><span class="ln">   914</span>		if len(s.buf) == 0 {
+<a id="L915"></a><span class="ln">   915</span>			s.errorString(&#34;Scan: no hex data for %x string&#34;)
+<a id="L916"></a><span class="ln">   916</span>			return &#34;&#34;
+<a id="L917"></a><span class="ln">   917</span>		}
+<a id="L918"></a><span class="ln">   918</span>		return string(s.buf)
+<a id="L919"></a><span class="ln">   919</span>	}
+<a id="L920"></a><span class="ln">   920</span>	
+<a id="L921"></a><span class="ln">   921</span>	const floatVerbs = &#34;beEfFgGv&#34;
+<a id="L922"></a><span class="ln">   922</span>	
+<a id="L923"></a><span class="ln">   923</span>	const hugeWid = 1 &lt;&lt; 30
+<a id="L924"></a><span class="ln">   924</span>	
+<a id="L925"></a><span class="ln">   925</span>	<span class="comment">// scanOne scans a single value, deriving the scanner from the type of the argument.</span>
+<a id="L926"></a><span class="ln">   926</span>	func (s *ss) scanOne(verb rune, field interface{}) {
+<a id="L927"></a><span class="ln">   927</span>		s.buf = s.buf[:0]
+<a id="L928"></a><span class="ln">   928</span>		var err error
+<a id="L929"></a><span class="ln">   929</span>		<span class="comment">// If the parameter has its own Scan method, use that.</span>
+<a id="L930"></a><span class="ln">   930</span>		if v, ok := field.(Scanner); ok {
+<a id="L931"></a><span class="ln">   931</span>			err = v.Scan(s, verb)
+<a id="L932"></a><span class="ln">   932</span>			if err != nil {
+<a id="L933"></a><span class="ln">   933</span>				if err == io.EOF {
+<a id="L934"></a><span class="ln">   934</span>					err = io.ErrUnexpectedEOF
+<a id="L935"></a><span class="ln">   935</span>				}
+<a id="L936"></a><span class="ln">   936</span>				s.error(err)
+<a id="L937"></a><span class="ln">   937</span>			}
+<a id="L938"></a><span class="ln">   938</span>			return
+<a id="L939"></a><span class="ln">   939</span>		}
+<a id="L940"></a><span class="ln">   940</span>	
+<a id="L941"></a><span class="ln">   941</span>		switch v := field.(type) {
+<a id="L942"></a><span class="ln">   942</span>		case *bool:
+<a id="L943"></a><span class="ln">   943</span>			*v = s.scanBool(verb)
+<a id="L944"></a><span class="ln">   944</span>		case *complex64:
+<a id="L945"></a><span class="ln">   945</span>			*v = complex64(s.scanComplex(verb, 64))
+<a id="L946"></a><span class="ln">   946</span>		case *complex128:
+<a id="L947"></a><span class="ln">   947</span>			*v = s.scanComplex(verb, 128)
+<a id="L948"></a><span class="ln">   948</span>		case *int:
+<a id="L949"></a><span class="ln">   949</span>			*v = int(s.scanInt(verb, intBits))
+<a id="L950"></a><span class="ln">   950</span>		case *int8:
+<a id="L951"></a><span class="ln">   951</span>			*v = int8(s.scanInt(verb, 8))
+<a id="L952"></a><span class="ln">   952</span>		case *int16:
+<a id="L953"></a><span class="ln">   953</span>			*v = int16(s.scanInt(verb, 16))
+<a id="L954"></a><span class="ln">   954</span>		case *int32:
+<a id="L955"></a><span class="ln">   955</span>			*v = int32(s.scanInt(verb, 32))
+<a id="L956"></a><span class="ln">   956</span>		case *int64:
+<a id="L957"></a><span class="ln">   957</span>			*v = s.scanInt(verb, 64)
+<a id="L958"></a><span class="ln">   958</span>		case *uint:
+<a id="L959"></a><span class="ln">   959</span>			*v = uint(s.scanUint(verb, intBits))
+<a id="L960"></a><span class="ln">   960</span>		case *uint8:
+<a id="L961"></a><span class="ln">   961</span>			*v = uint8(s.scanUint(verb, 8))
+<a id="L962"></a><span class="ln">   962</span>		case *uint16:
+<a id="L963"></a><span class="ln">   963</span>			*v = uint16(s.scanUint(verb, 16))
+<a id="L964"></a><span class="ln">   964</span>		case *uint32:
+<a id="L965"></a><span class="ln">   965</span>			*v = uint32(s.scanUint(verb, 32))
+<a id="L966"></a><span class="ln">   966</span>		case *uint64:
+<a id="L967"></a><span class="ln">   967</span>			*v = s.scanUint(verb, 64)
+<a id="L968"></a><span class="ln">   968</span>		case *uintptr:
+<a id="L969"></a><span class="ln">   969</span>			*v = uintptr(s.scanUint(verb, uintptrBits))
+<a id="L970"></a><span class="ln">   970</span>		<span class="comment">// Floats are tricky because you want to scan in the precision of the result, not</span>
+<a id="L971"></a><span class="ln">   971</span>		<span class="comment">// scan in high precision and convert, in order to preserve the correct error condition.</span>
+<a id="L972"></a><span class="ln">   972</span>		case *float32:
+<a id="L973"></a><span class="ln">   973</span>			if s.okVerb(verb, floatVerbs, &#34;float32&#34;) {
+<a id="L974"></a><span class="ln">   974</span>				s.skipSpace(false)
+<a id="L975"></a><span class="ln">   975</span>				s.notEOF()
+<a id="L976"></a><span class="ln">   976</span>				*v = float32(s.convertFloat(s.floatToken(), 32))
+<a id="L977"></a><span class="ln">   977</span>			}
+<a id="L978"></a><span class="ln">   978</span>		case *float64:
+<a id="L979"></a><span class="ln">   979</span>			if s.okVerb(verb, floatVerbs, &#34;float64&#34;) {
+<a id="L980"></a><span class="ln">   980</span>				s.skipSpace(false)
+<a id="L981"></a><span class="ln">   981</span>				s.notEOF()
+<a id="L982"></a><span class="ln">   982</span>				*v = s.convertFloat(s.floatToken(), 64)
+<a id="L983"></a><span class="ln">   983</span>			}
+<a id="L984"></a><span class="ln">   984</span>		case *string:
+<a id="L985"></a><span class="ln">   985</span>			*v = s.convertString(verb)
+<a id="L986"></a><span class="ln">   986</span>		case *[]byte:
+<a id="L987"></a><span class="ln">   987</span>			<span class="comment">// We scan to string and convert so we get a copy of the data.</span>
+<a id="L988"></a><span class="ln">   988</span>			<span class="comment">// If we scanned to bytes, the slice would point at the buffer.</span>
+<a id="L989"></a><span class="ln">   989</span>			*v = []byte(s.convertString(verb))
+<a id="L990"></a><span class="ln">   990</span>		default:
+<a id="L991"></a><span class="ln">   991</span>			val := reflect.ValueOf(v)
+<a id="L992"></a><span class="ln">   992</span>			ptr := val
+<a id="L993"></a><span class="ln">   993</span>			if ptr.Kind() != reflect.Ptr {
+<a id="L994"></a><span class="ln">   994</span>				s.errorString(&#34;Scan: type not a pointer: &#34; + val.Type().String())
+<a id="L995"></a><span class="ln">   995</span>				return
+<a id="L996"></a><span class="ln">   996</span>			}
+<a id="L997"></a><span class="ln">   997</span>			switch v := ptr.Elem(); v.Kind() {
+<a id="L998"></a><span class="ln">   998</span>			case reflect.Bool:
+<a id="L999"></a><span class="ln">   999</span>				v.SetBool(s.scanBool(verb))
+<a id="L1000"></a><span class="ln">  1000</span>			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L1001"></a><span class="ln">  1001</span>				v.SetInt(s.scanInt(verb, v.Type().Bits()))
+<a id="L1002"></a><span class="ln">  1002</span>			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L1003"></a><span class="ln">  1003</span>				v.SetUint(s.scanUint(verb, v.Type().Bits()))
+<a id="L1004"></a><span class="ln">  1004</span>			case reflect.String:
+<a id="L1005"></a><span class="ln">  1005</span>				v.SetString(s.convertString(verb))
+<a id="L1006"></a><span class="ln">  1006</span>			case reflect.Slice:
+<a id="L1007"></a><span class="ln">  1007</span>				<span class="comment">// For now, can only handle (renamed) []byte.</span>
+<a id="L1008"></a><span class="ln">  1008</span>				typ := v.Type()
+<a id="L1009"></a><span class="ln">  1009</span>				if typ.Elem().Kind() != reflect.Uint8 {
+<a id="L1010"></a><span class="ln">  1010</span>					s.errorString(&#34;Scan: can&#39;t handle type: &#34; + val.Type().String())
+<a id="L1011"></a><span class="ln">  1011</span>				}
+<a id="L1012"></a><span class="ln">  1012</span>				str := s.convertString(verb)
+<a id="L1013"></a><span class="ln">  1013</span>				v.Set(reflect.MakeSlice(typ, len(str), len(str)))
+<a id="L1014"></a><span class="ln">  1014</span>				for i := 0; i &lt; len(str); i++ {
+<a id="L1015"></a><span class="ln">  1015</span>					v.Index(i).SetUint(uint64(str[i]))
+<a id="L1016"></a><span class="ln">  1016</span>				}
+<a id="L1017"></a><span class="ln">  1017</span>			case reflect.Float32, reflect.Float64:
+<a id="L1018"></a><span class="ln">  1018</span>				s.skipSpace(false)
+<a id="L1019"></a><span class="ln">  1019</span>				s.notEOF()
+<a id="L1020"></a><span class="ln">  1020</span>				v.SetFloat(s.convertFloat(s.floatToken(), v.Type().Bits()))
+<a id="L1021"></a><span class="ln">  1021</span>			case reflect.Complex64, reflect.Complex128:
+<a id="L1022"></a><span class="ln">  1022</span>				v.SetComplex(s.scanComplex(verb, v.Type().Bits()))
+<a id="L1023"></a><span class="ln">  1023</span>			default:
+<a id="L1024"></a><span class="ln">  1024</span>				s.errorString(&#34;Scan: can&#39;t handle type: &#34; + val.Type().String())
+<a id="L1025"></a><span class="ln">  1025</span>			}
+<a id="L1026"></a><span class="ln">  1026</span>		}
+<a id="L1027"></a><span class="ln">  1027</span>	}
+<a id="L1028"></a><span class="ln">  1028</span>	
+<a id="L1029"></a><span class="ln">  1029</span>	<span class="comment">// errorHandler turns local panics into error returns.</span>
+<a id="L1030"></a><span class="ln">  1030</span>	func errorHandler(errp *error) {
+<a id="L1031"></a><span class="ln">  1031</span>		if e := recover(); e != nil {
+<a id="L1032"></a><span class="ln">  1032</span>			if se, ok := e.(scanError); ok { <span class="comment">// catch local error</span>
+<a id="L1033"></a><span class="ln">  1033</span>				*errp = se.err
+<a id="L1034"></a><span class="ln">  1034</span>			} else if eof, ok := e.(error); ok &amp;&amp; eof == io.EOF { <span class="comment">// out of input</span>
+<a id="L1035"></a><span class="ln">  1035</span>				*errp = eof
+<a id="L1036"></a><span class="ln">  1036</span>			} else {
+<a id="L1037"></a><span class="ln">  1037</span>				panic(e)
+<a id="L1038"></a><span class="ln">  1038</span>			}
+<a id="L1039"></a><span class="ln">  1039</span>		}
+<a id="L1040"></a><span class="ln">  1040</span>	}
+<a id="L1041"></a><span class="ln">  1041</span>	
+<a id="L1042"></a><span class="ln">  1042</span>	<span class="comment">// doScan does the real work for scanning without a format string.</span>
+<a id="L1043"></a><span class="ln">  1043</span>	func (s *ss) doScan(a []interface{}) (numProcessed int, err error) {
+<a id="L1044"></a><span class="ln">  1044</span>		defer errorHandler(&amp;err)
+<a id="L1045"></a><span class="ln">  1045</span>		for _, field := range a {
+<a id="L1046"></a><span class="ln">  1046</span>			s.scanOne(&#39;v&#39;, field)
+<a id="L1047"></a><span class="ln">  1047</span>			numProcessed++
+<a id="L1048"></a><span class="ln">  1048</span>		}
+<a id="L1049"></a><span class="ln">  1049</span>		<span class="comment">// Check for newline if required.</span>
+<a id="L1050"></a><span class="ln">  1050</span>		if !s.nlIsSpace {
+<a id="L1051"></a><span class="ln">  1051</span>			for {
+<a id="L1052"></a><span class="ln">  1052</span>				r := s.getRune()
+<a id="L1053"></a><span class="ln">  1053</span>				if r == &#39;\n&#39; || r == eof {
+<a id="L1054"></a><span class="ln">  1054</span>					break
+<a id="L1055"></a><span class="ln">  1055</span>				}
+<a id="L1056"></a><span class="ln">  1056</span>				if !isSpace(r) {
+<a id="L1057"></a><span class="ln">  1057</span>					s.errorString(&#34;Scan: expected newline&#34;)
+<a id="L1058"></a><span class="ln">  1058</span>					break
+<a id="L1059"></a><span class="ln">  1059</span>				}
+<a id="L1060"></a><span class="ln">  1060</span>			}
+<a id="L1061"></a><span class="ln">  1061</span>		}
+<a id="L1062"></a><span class="ln">  1062</span>		return
+<a id="L1063"></a><span class="ln">  1063</span>	}
+<a id="L1064"></a><span class="ln">  1064</span>	
+<a id="L1065"></a><span class="ln">  1065</span>	<span class="comment">// advance determines whether the next characters in the input match</span>
+<a id="L1066"></a><span class="ln">  1066</span>	<span class="comment">// those of the format.  It returns the number of bytes (sic) consumed</span>
+<a id="L1067"></a><span class="ln">  1067</span>	<span class="comment">// in the format. Newlines included, all runs of space characters in</span>
+<a id="L1068"></a><span class="ln">  1068</span>	<span class="comment">// either input or format behave as a single space. This routine also</span>
+<a id="L1069"></a><span class="ln">  1069</span>	<span class="comment">// handles the %% case.  If the return value is zero, either format</span>
+<a id="L1070"></a><span class="ln">  1070</span>	<span class="comment">// starts with a % (with no following %) or the input is empty.</span>
+<a id="L1071"></a><span class="ln">  1071</span>	<span class="comment">// If it is negative, the input did not match the string.</span>
+<a id="L1072"></a><span class="ln">  1072</span>	func (s *ss) advance(format string) (i int) {
+<a id="L1073"></a><span class="ln">  1073</span>		for i &lt; len(format) {
+<a id="L1074"></a><span class="ln">  1074</span>			fmtc, w := utf8.DecodeRuneInString(format[i:])
+<a id="L1075"></a><span class="ln">  1075</span>			if fmtc == &#39;%&#39; {
+<a id="L1076"></a><span class="ln">  1076</span>				<span class="comment">// %% acts like a real percent</span>
+<a id="L1077"></a><span class="ln">  1077</span>				nextc, _ := utf8.DecodeRuneInString(format[i+w:]) <span class="comment">// will not match % if string is empty</span>
+<a id="L1078"></a><span class="ln">  1078</span>				if nextc != &#39;%&#39; {
+<a id="L1079"></a><span class="ln">  1079</span>					return
+<a id="L1080"></a><span class="ln">  1080</span>				}
+<a id="L1081"></a><span class="ln">  1081</span>				i += w <span class="comment">// skip the first %</span>
+<a id="L1082"></a><span class="ln">  1082</span>			}
+<a id="L1083"></a><span class="ln">  1083</span>			sawSpace := false
+<a id="L1084"></a><span class="ln">  1084</span>			for isSpace(fmtc) &amp;&amp; i &lt; len(format) {
+<a id="L1085"></a><span class="ln">  1085</span>				sawSpace = true
+<a id="L1086"></a><span class="ln">  1086</span>				i += w
+<a id="L1087"></a><span class="ln">  1087</span>				fmtc, w = utf8.DecodeRuneInString(format[i:])
+<a id="L1088"></a><span class="ln">  1088</span>			}
+<a id="L1089"></a><span class="ln">  1089</span>			if sawSpace {
+<a id="L1090"></a><span class="ln">  1090</span>				<span class="comment">// There was space in the format, so there should be space (EOF)</span>
+<a id="L1091"></a><span class="ln">  1091</span>				<span class="comment">// in the input.</span>
+<a id="L1092"></a><span class="ln">  1092</span>				inputc := s.getRune()
+<a id="L1093"></a><span class="ln">  1093</span>				if inputc == eof {
+<a id="L1094"></a><span class="ln">  1094</span>					return
+<a id="L1095"></a><span class="ln">  1095</span>				}
+<a id="L1096"></a><span class="ln">  1096</span>				if !isSpace(inputc) {
+<a id="L1097"></a><span class="ln">  1097</span>					<span class="comment">// Space in format but not in input: error</span>
+<a id="L1098"></a><span class="ln">  1098</span>					s.errorString(&#34;expected space in input to match format&#34;)
+<a id="L1099"></a><span class="ln">  1099</span>				}
+<a id="L1100"></a><span class="ln">  1100</span>				s.skipSpace(true)
+<a id="L1101"></a><span class="ln">  1101</span>				continue
+<a id="L1102"></a><span class="ln">  1102</span>			}
+<a id="L1103"></a><span class="ln">  1103</span>			inputc := s.mustReadRune()
+<a id="L1104"></a><span class="ln">  1104</span>			if fmtc != inputc {
+<a id="L1105"></a><span class="ln">  1105</span>				s.UnreadRune()
+<a id="L1106"></a><span class="ln">  1106</span>				return -1
+<a id="L1107"></a><span class="ln">  1107</span>			}
+<a id="L1108"></a><span class="ln">  1108</span>			i += w
+<a id="L1109"></a><span class="ln">  1109</span>		}
+<a id="L1110"></a><span class="ln">  1110</span>		return
+<a id="L1111"></a><span class="ln">  1111</span>	}
+<a id="L1112"></a><span class="ln">  1112</span>	
+<a id="L1113"></a><span class="ln">  1113</span>	<span class="comment">// doScanf does the real work when scanning with a format string.</span>
+<a id="L1114"></a><span class="ln">  1114</span>	<span class="comment">//  At the moment, it handles only pointers to basic types.</span>
+<a id="L1115"></a><span class="ln">  1115</span>	func (s *ss) doScanf(format string, a []interface{}) (numProcessed int, err error) {
+<a id="L1116"></a><span class="ln">  1116</span>		defer errorHandler(&amp;err)
+<a id="L1117"></a><span class="ln">  1117</span>		end := len(format) - 1
+<a id="L1118"></a><span class="ln">  1118</span>		<span class="comment">// We process one item per non-trivial format</span>
+<a id="L1119"></a><span class="ln">  1119</span>		for i := 0; i &lt;= end; {
+<a id="L1120"></a><span class="ln">  1120</span>			w := s.advance(format[i:])
+<a id="L1121"></a><span class="ln">  1121</span>			if w &gt; 0 {
+<a id="L1122"></a><span class="ln">  1122</span>				i += w
+<a id="L1123"></a><span class="ln">  1123</span>				continue
+<a id="L1124"></a><span class="ln">  1124</span>			}
+<a id="L1125"></a><span class="ln">  1125</span>			<span class="comment">// Either we failed to advance, we have a percent character, or we ran out of input.</span>
+<a id="L1126"></a><span class="ln">  1126</span>			if format[i] != &#39;%&#39; {
+<a id="L1127"></a><span class="ln">  1127</span>				<span class="comment">// Can&#39;t advance format.  Why not?</span>
+<a id="L1128"></a><span class="ln">  1128</span>				if w &lt; 0 {
+<a id="L1129"></a><span class="ln">  1129</span>					s.errorString(&#34;input does not match format&#34;)
+<a id="L1130"></a><span class="ln">  1130</span>				}
+<a id="L1131"></a><span class="ln">  1131</span>				<span class="comment">// Otherwise at EOF; &#34;too many operands&#34; error handled below</span>
+<a id="L1132"></a><span class="ln">  1132</span>				break
+<a id="L1133"></a><span class="ln">  1133</span>			}
+<a id="L1134"></a><span class="ln">  1134</span>			i++ <span class="comment">// % is one byte</span>
+<a id="L1135"></a><span class="ln">  1135</span>	
+<a id="L1136"></a><span class="ln">  1136</span>			<span class="comment">// do we have 20 (width)?</span>
+<a id="L1137"></a><span class="ln">  1137</span>			var widPresent bool
+<a id="L1138"></a><span class="ln">  1138</span>			s.maxWid, widPresent, i = parsenum(format, i, end)
+<a id="L1139"></a><span class="ln">  1139</span>			if !widPresent {
+<a id="L1140"></a><span class="ln">  1140</span>				s.maxWid = hugeWid
+<a id="L1141"></a><span class="ln">  1141</span>			}
+<a id="L1142"></a><span class="ln">  1142</span>			s.fieldLimit = s.limit
+<a id="L1143"></a><span class="ln">  1143</span>			if f := s.count + s.maxWid; f &lt; s.fieldLimit {
+<a id="L1144"></a><span class="ln">  1144</span>				s.fieldLimit = f
+<a id="L1145"></a><span class="ln">  1145</span>			}
+<a id="L1146"></a><span class="ln">  1146</span>	
+<a id="L1147"></a><span class="ln">  1147</span>			c, w := utf8.DecodeRuneInString(format[i:])
+<a id="L1148"></a><span class="ln">  1148</span>			i += w
+<a id="L1149"></a><span class="ln">  1149</span>	
+<a id="L1150"></a><span class="ln">  1150</span>			if numProcessed &gt;= len(a) { <span class="comment">// out of operands</span>
+<a id="L1151"></a><span class="ln">  1151</span>				s.errorString(&#34;too few operands for format %&#34; + format[i-w:])
+<a id="L1152"></a><span class="ln">  1152</span>				break
+<a id="L1153"></a><span class="ln">  1153</span>			}
+<a id="L1154"></a><span class="ln">  1154</span>			field := a[numProcessed]
+<a id="L1155"></a><span class="ln">  1155</span>	
+<a id="L1156"></a><span class="ln">  1156</span>			s.scanOne(c, field)
+<a id="L1157"></a><span class="ln">  1157</span>			numProcessed++
+<a id="L1158"></a><span class="ln">  1158</span>			s.fieldLimit = s.limit
+<a id="L1159"></a><span class="ln">  1159</span>		}
+<a id="L1160"></a><span class="ln">  1160</span>		if numProcessed &lt; len(a) {
+<a id="L1161"></a><span class="ln">  1161</span>			s.errorString(&#34;too many operands&#34;)
+<a id="L1162"></a><span class="ln">  1162</span>		}
+<a id="L1163"></a><span class="ln">  1163</span>		return
+<a id="L1164"></a><span class="ln">  1164</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

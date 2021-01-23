@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/html/template/escape.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/html/template/escape.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package template
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bytes&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;fmt&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;html&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;io&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;text/template&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;text/template/parse&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// escapeTemplates rewrites the named templates, which must be</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// associated with t, to guarantee that the output of any of the named</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// templates is properly escaped.  Names should include the names of</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// all templates that might be Executed but need not include helper</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// templates.  If no error is returned, then the named templates have</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// been modified.  Otherwise the named templates have been rendered</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// unusable.</span>
+<a id="L23"></a><span class="ln">    23</span>	func escapeTemplates(tmpl *Template, names ...string) error {
+<a id="L24"></a><span class="ln">    24</span>		e := newEscaper(tmpl)
+<a id="L25"></a><span class="ln">    25</span>		for _, name := range names {
+<a id="L26"></a><span class="ln">    26</span>			c, _ := e.escapeTree(context{}, name, 0)
+<a id="L27"></a><span class="ln">    27</span>			var err error
+<a id="L28"></a><span class="ln">    28</span>			if c.err != nil {
+<a id="L29"></a><span class="ln">    29</span>				err, c.err.Name = c.err, name
+<a id="L30"></a><span class="ln">    30</span>			} else if c.state != stateText {
+<a id="L31"></a><span class="ln">    31</span>				err = &amp;Error{ErrEndContext, name, 0, fmt.Sprintf(&#34;ends in a non-text context: %v&#34;, c)}
+<a id="L32"></a><span class="ln">    32</span>			}
+<a id="L33"></a><span class="ln">    33</span>			if err != nil {
+<a id="L34"></a><span class="ln">    34</span>				<span class="comment">// Prevent execution of unsafe templates.</span>
+<a id="L35"></a><span class="ln">    35</span>				for _, name := range names {
+<a id="L36"></a><span class="ln">    36</span>					if t := tmpl.set[name]; t != nil {
+<a id="L37"></a><span class="ln">    37</span>						t.text.Tree = nil
+<a id="L38"></a><span class="ln">    38</span>					}
+<a id="L39"></a><span class="ln">    39</span>				}
+<a id="L40"></a><span class="ln">    40</span>				return err
+<a id="L41"></a><span class="ln">    41</span>			}
+<a id="L42"></a><span class="ln">    42</span>			tmpl.escaped = true
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>		e.commit()
+<a id="L45"></a><span class="ln">    45</span>		return nil
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// funcMap maps command names to functions that render their inputs safe.</span>
+<a id="L49"></a><span class="ln">    49</span>	var funcMap = template.FuncMap{
+<a id="L50"></a><span class="ln">    50</span>		&#34;html_template_attrescaper&#34;:     attrEscaper,
+<a id="L51"></a><span class="ln">    51</span>		&#34;html_template_commentescaper&#34;:  commentEscaper,
+<a id="L52"></a><span class="ln">    52</span>		&#34;html_template_cssescaper&#34;:      cssEscaper,
+<a id="L53"></a><span class="ln">    53</span>		&#34;html_template_cssvaluefilter&#34;:  cssValueFilter,
+<a id="L54"></a><span class="ln">    54</span>		&#34;html_template_htmlnamefilter&#34;:  htmlNameFilter,
+<a id="L55"></a><span class="ln">    55</span>		&#34;html_template_htmlescaper&#34;:     htmlEscaper,
+<a id="L56"></a><span class="ln">    56</span>		&#34;html_template_jsregexpescaper&#34;: jsRegexpEscaper,
+<a id="L57"></a><span class="ln">    57</span>		&#34;html_template_jsstrescaper&#34;:    jsStrEscaper,
+<a id="L58"></a><span class="ln">    58</span>		&#34;html_template_jsvalescaper&#34;:    jsValEscaper,
+<a id="L59"></a><span class="ln">    59</span>		&#34;html_template_nospaceescaper&#34;:  htmlNospaceEscaper,
+<a id="L60"></a><span class="ln">    60</span>		&#34;html_template_rcdataescaper&#34;:   rcdataEscaper,
+<a id="L61"></a><span class="ln">    61</span>		&#34;html_template_urlescaper&#34;:      urlEscaper,
+<a id="L62"></a><span class="ln">    62</span>		&#34;html_template_urlfilter&#34;:       urlFilter,
+<a id="L63"></a><span class="ln">    63</span>		&#34;html_template_urlnormalizer&#34;:   urlNormalizer,
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// equivEscapers matches contextual escapers to equivalent template builtins.</span>
+<a id="L67"></a><span class="ln">    67</span>	var equivEscapers = map[string]string{
+<a id="L68"></a><span class="ln">    68</span>		&#34;html_template_attrescaper&#34;:    &#34;html&#34;,
+<a id="L69"></a><span class="ln">    69</span>		&#34;html_template_htmlescaper&#34;:    &#34;html&#34;,
+<a id="L70"></a><span class="ln">    70</span>		&#34;html_template_nospaceescaper&#34;: &#34;html&#34;,
+<a id="L71"></a><span class="ln">    71</span>		&#34;html_template_rcdataescaper&#34;:  &#34;html&#34;,
+<a id="L72"></a><span class="ln">    72</span>		&#34;html_template_urlescaper&#34;:     &#34;urlquery&#34;,
+<a id="L73"></a><span class="ln">    73</span>		&#34;html_template_urlnormalizer&#34;:  &#34;urlquery&#34;,
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// escaper collects type inferences about templates and changes needed to make</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// templates injection safe.</span>
+<a id="L78"></a><span class="ln">    78</span>	type escaper struct {
+<a id="L79"></a><span class="ln">    79</span>		tmpl *Template
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// output[templateName] is the output context for a templateName that</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// has been mangled to include its input context.</span>
+<a id="L82"></a><span class="ln">    82</span>		output map[string]context
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// derived[c.mangle(name)] maps to a template derived from the template</span>
+<a id="L84"></a><span class="ln">    84</span>		<span class="comment">// named name templateName for the start context c.</span>
+<a id="L85"></a><span class="ln">    85</span>		derived map[string]*template.Template
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// called[templateName] is a set of called mangled template names.</span>
+<a id="L87"></a><span class="ln">    87</span>		called map[string]bool
+<a id="L88"></a><span class="ln">    88</span>		<span class="comment">// xxxNodeEdits are the accumulated edits to apply during commit.</span>
+<a id="L89"></a><span class="ln">    89</span>		<span class="comment">// Such edits are not applied immediately in case a template set</span>
+<a id="L90"></a><span class="ln">    90</span>		<span class="comment">// executes a given template in different escaping contexts.</span>
+<a id="L91"></a><span class="ln">    91</span>		actionNodeEdits   map[*parse.ActionNode][]string
+<a id="L92"></a><span class="ln">    92</span>		templateNodeEdits map[*parse.TemplateNode]string
+<a id="L93"></a><span class="ln">    93</span>		textNodeEdits     map[*parse.TextNode][]byte
+<a id="L94"></a><span class="ln">    94</span>	}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">// newEscaper creates a blank escaper for the given set.</span>
+<a id="L97"></a><span class="ln">    97</span>	func newEscaper(t *Template) *escaper {
+<a id="L98"></a><span class="ln">    98</span>		return &amp;escaper{
+<a id="L99"></a><span class="ln">    99</span>			t,
+<a id="L100"></a><span class="ln">   100</span>			map[string]context{},
+<a id="L101"></a><span class="ln">   101</span>			map[string]*template.Template{},
+<a id="L102"></a><span class="ln">   102</span>			map[string]bool{},
+<a id="L103"></a><span class="ln">   103</span>			map[*parse.ActionNode][]string{},
+<a id="L104"></a><span class="ln">   104</span>			map[*parse.TemplateNode]string{},
+<a id="L105"></a><span class="ln">   105</span>			map[*parse.TextNode][]byte{},
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>	}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// filterFailsafe is an innocuous word that is emitted in place of unsafe values</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// by sanitizer functions. It is not a keyword in any programming language,</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// contains no special characters, is not empty, and when it appears in output</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// it is distinct enough that a developer can find the source of the problem</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// via a search engine.</span>
+<a id="L114"></a><span class="ln">   114</span>	const filterFailsafe = &#34;ZgotmplZ&#34;
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// escape escapes a template node.</span>
+<a id="L117"></a><span class="ln">   117</span>	func (e *escaper) escape(c context, n parse.Node) context {
+<a id="L118"></a><span class="ln">   118</span>		switch n := n.(type) {
+<a id="L119"></a><span class="ln">   119</span>		case *parse.ActionNode:
+<a id="L120"></a><span class="ln">   120</span>			return e.escapeAction(c, n)
+<a id="L121"></a><span class="ln">   121</span>		case *parse.IfNode:
+<a id="L122"></a><span class="ln">   122</span>			return e.escapeBranch(c, &amp;n.BranchNode, &#34;if&#34;)
+<a id="L123"></a><span class="ln">   123</span>		case *parse.ListNode:
+<a id="L124"></a><span class="ln">   124</span>			return e.escapeList(c, n)
+<a id="L125"></a><span class="ln">   125</span>		case *parse.RangeNode:
+<a id="L126"></a><span class="ln">   126</span>			return e.escapeBranch(c, &amp;n.BranchNode, &#34;range&#34;)
+<a id="L127"></a><span class="ln">   127</span>		case *parse.TemplateNode:
+<a id="L128"></a><span class="ln">   128</span>			return e.escapeTemplate(c, n)
+<a id="L129"></a><span class="ln">   129</span>		case *parse.TextNode:
+<a id="L130"></a><span class="ln">   130</span>			return e.escapeText(c, n)
+<a id="L131"></a><span class="ln">   131</span>		case *parse.WithNode:
+<a id="L132"></a><span class="ln">   132</span>			return e.escapeBranch(c, &amp;n.BranchNode, &#34;with&#34;)
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>		panic(&#34;escaping &#34; + n.String() + &#34; is unimplemented&#34;)
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// escapeAction escapes an action template node.</span>
+<a id="L138"></a><span class="ln">   138</span>	func (e *escaper) escapeAction(c context, n *parse.ActionNode) context {
+<a id="L139"></a><span class="ln">   139</span>		if len(n.Pipe.Decl) != 0 {
+<a id="L140"></a><span class="ln">   140</span>			<span class="comment">// A local variable assignment, not an interpolation.</span>
+<a id="L141"></a><span class="ln">   141</span>			return c
+<a id="L142"></a><span class="ln">   142</span>		}
+<a id="L143"></a><span class="ln">   143</span>		c = nudge(c)
+<a id="L144"></a><span class="ln">   144</span>		s := make([]string, 0, 3)
+<a id="L145"></a><span class="ln">   145</span>		switch c.state {
+<a id="L146"></a><span class="ln">   146</span>		case stateError:
+<a id="L147"></a><span class="ln">   147</span>			return c
+<a id="L148"></a><span class="ln">   148</span>		case stateURL, stateCSSDqStr, stateCSSSqStr, stateCSSDqURL, stateCSSSqURL, stateCSSURL:
+<a id="L149"></a><span class="ln">   149</span>			switch c.urlPart {
+<a id="L150"></a><span class="ln">   150</span>			case urlPartNone:
+<a id="L151"></a><span class="ln">   151</span>				s = append(s, &#34;html_template_urlfilter&#34;)
+<a id="L152"></a><span class="ln">   152</span>				fallthrough
+<a id="L153"></a><span class="ln">   153</span>			case urlPartPreQuery:
+<a id="L154"></a><span class="ln">   154</span>				switch c.state {
+<a id="L155"></a><span class="ln">   155</span>				case stateCSSDqStr, stateCSSSqStr:
+<a id="L156"></a><span class="ln">   156</span>					s = append(s, &#34;html_template_cssescaper&#34;)
+<a id="L157"></a><span class="ln">   157</span>				default:
+<a id="L158"></a><span class="ln">   158</span>					s = append(s, &#34;html_template_urlnormalizer&#34;)
+<a id="L159"></a><span class="ln">   159</span>				}
+<a id="L160"></a><span class="ln">   160</span>			case urlPartQueryOrFrag:
+<a id="L161"></a><span class="ln">   161</span>				s = append(s, &#34;html_template_urlescaper&#34;)
+<a id="L162"></a><span class="ln">   162</span>			case urlPartUnknown:
+<a id="L163"></a><span class="ln">   163</span>				return context{
+<a id="L164"></a><span class="ln">   164</span>					state: stateError,
+<a id="L165"></a><span class="ln">   165</span>					err:   errorf(ErrAmbigContext, n.Line, &#34;%s appears in an ambiguous URL context&#34;, n),
+<a id="L166"></a><span class="ln">   166</span>				}
+<a id="L167"></a><span class="ln">   167</span>			default:
+<a id="L168"></a><span class="ln">   168</span>				panic(c.urlPart.String())
+<a id="L169"></a><span class="ln">   169</span>			}
+<a id="L170"></a><span class="ln">   170</span>		case stateJS:
+<a id="L171"></a><span class="ln">   171</span>			s = append(s, &#34;html_template_jsvalescaper&#34;)
+<a id="L172"></a><span class="ln">   172</span>			<span class="comment">// A slash after a value starts a div operator.</span>
+<a id="L173"></a><span class="ln">   173</span>			c.jsCtx = jsCtxDivOp
+<a id="L174"></a><span class="ln">   174</span>		case stateJSDqStr, stateJSSqStr:
+<a id="L175"></a><span class="ln">   175</span>			s = append(s, &#34;html_template_jsstrescaper&#34;)
+<a id="L176"></a><span class="ln">   176</span>		case stateJSRegexp:
+<a id="L177"></a><span class="ln">   177</span>			s = append(s, &#34;html_template_jsregexpescaper&#34;)
+<a id="L178"></a><span class="ln">   178</span>		case stateCSS:
+<a id="L179"></a><span class="ln">   179</span>			s = append(s, &#34;html_template_cssvaluefilter&#34;)
+<a id="L180"></a><span class="ln">   180</span>		case stateText:
+<a id="L181"></a><span class="ln">   181</span>			s = append(s, &#34;html_template_htmlescaper&#34;)
+<a id="L182"></a><span class="ln">   182</span>		case stateRCDATA:
+<a id="L183"></a><span class="ln">   183</span>			s = append(s, &#34;html_template_rcdataescaper&#34;)
+<a id="L184"></a><span class="ln">   184</span>		case stateAttr:
+<a id="L185"></a><span class="ln">   185</span>			<span class="comment">// Handled below in delim check.</span>
+<a id="L186"></a><span class="ln">   186</span>		case stateAttrName, stateTag:
+<a id="L187"></a><span class="ln">   187</span>			c.state = stateAttrName
+<a id="L188"></a><span class="ln">   188</span>			s = append(s, &#34;html_template_htmlnamefilter&#34;)
+<a id="L189"></a><span class="ln">   189</span>		default:
+<a id="L190"></a><span class="ln">   190</span>			if isComment(c.state) {
+<a id="L191"></a><span class="ln">   191</span>				s = append(s, &#34;html_template_commentescaper&#34;)
+<a id="L192"></a><span class="ln">   192</span>			} else {
+<a id="L193"></a><span class="ln">   193</span>				panic(&#34;unexpected state &#34; + c.state.String())
+<a id="L194"></a><span class="ln">   194</span>			}
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>		switch c.delim {
+<a id="L197"></a><span class="ln">   197</span>		case delimNone:
+<a id="L198"></a><span class="ln">   198</span>			<span class="comment">// No extra-escaping needed for raw text content.</span>
+<a id="L199"></a><span class="ln">   199</span>		case delimSpaceOrTagEnd:
+<a id="L200"></a><span class="ln">   200</span>			s = append(s, &#34;html_template_nospaceescaper&#34;)
+<a id="L201"></a><span class="ln">   201</span>		default:
+<a id="L202"></a><span class="ln">   202</span>			s = append(s, &#34;html_template_attrescaper&#34;)
+<a id="L203"></a><span class="ln">   203</span>		}
+<a id="L204"></a><span class="ln">   204</span>		e.editActionNode(n, s)
+<a id="L205"></a><span class="ln">   205</span>		return c
+<a id="L206"></a><span class="ln">   206</span>	}
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">// ensurePipelineContains ensures that the pipeline has commands with</span>
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">// the identifiers in s in order.</span>
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// If the pipeline already has some of the sanitizers, do not interfere.</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// For example, if p is (.X | html) and s is [&#34;escapeJSVal&#34;, &#34;html&#34;] then it</span>
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// has one matching, &#34;html&#34;, and one to insert, &#34;escapeJSVal&#34;, to produce</span>
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// (.X | escapeJSVal | html).</span>
+<a id="L214"></a><span class="ln">   214</span>	func ensurePipelineContains(p *parse.PipeNode, s []string) {
+<a id="L215"></a><span class="ln">   215</span>		if len(s) == 0 {
+<a id="L216"></a><span class="ln">   216</span>			return
+<a id="L217"></a><span class="ln">   217</span>		}
+<a id="L218"></a><span class="ln">   218</span>		n := len(p.Cmds)
+<a id="L219"></a><span class="ln">   219</span>		<span class="comment">// Find the identifiers at the end of the command chain.</span>
+<a id="L220"></a><span class="ln">   220</span>		idents := p.Cmds
+<a id="L221"></a><span class="ln">   221</span>		for i := n - 1; i &gt;= 0; i-- {
+<a id="L222"></a><span class="ln">   222</span>			if cmd := p.Cmds[i]; len(cmd.Args) != 0 {
+<a id="L223"></a><span class="ln">   223</span>				if id, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
+<a id="L224"></a><span class="ln">   224</span>					if id.Ident == &#34;noescape&#34; {
+<a id="L225"></a><span class="ln">   225</span>						return
+<a id="L226"></a><span class="ln">   226</span>					}
+<a id="L227"></a><span class="ln">   227</span>					continue
+<a id="L228"></a><span class="ln">   228</span>				}
+<a id="L229"></a><span class="ln">   229</span>			}
+<a id="L230"></a><span class="ln">   230</span>			idents = p.Cmds[i+1:]
+<a id="L231"></a><span class="ln">   231</span>		}
+<a id="L232"></a><span class="ln">   232</span>		dups := 0
+<a id="L233"></a><span class="ln">   233</span>		for _, id := range idents {
+<a id="L234"></a><span class="ln">   234</span>			if escFnsEq(s[dups], (id.Args[0].(*parse.IdentifierNode)).Ident) {
+<a id="L235"></a><span class="ln">   235</span>				dups++
+<a id="L236"></a><span class="ln">   236</span>				if dups == len(s) {
+<a id="L237"></a><span class="ln">   237</span>					return
+<a id="L238"></a><span class="ln">   238</span>				}
+<a id="L239"></a><span class="ln">   239</span>			}
+<a id="L240"></a><span class="ln">   240</span>		}
+<a id="L241"></a><span class="ln">   241</span>		newCmds := make([]*parse.CommandNode, n-len(idents), n+len(s)-dups)
+<a id="L242"></a><span class="ln">   242</span>		copy(newCmds, p.Cmds)
+<a id="L243"></a><span class="ln">   243</span>		<span class="comment">// Merge existing identifier commands with the sanitizers needed.</span>
+<a id="L244"></a><span class="ln">   244</span>		for _, id := range idents {
+<a id="L245"></a><span class="ln">   245</span>			i := indexOfStr((id.Args[0].(*parse.IdentifierNode)).Ident, s, escFnsEq)
+<a id="L246"></a><span class="ln">   246</span>			if i != -1 {
+<a id="L247"></a><span class="ln">   247</span>				for _, name := range s[:i] {
+<a id="L248"></a><span class="ln">   248</span>					newCmds = appendCmd(newCmds, newIdentCmd(name))
+<a id="L249"></a><span class="ln">   249</span>				}
+<a id="L250"></a><span class="ln">   250</span>				s = s[i+1:]
+<a id="L251"></a><span class="ln">   251</span>			}
+<a id="L252"></a><span class="ln">   252</span>			newCmds = appendCmd(newCmds, id)
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>		<span class="comment">// Create any remaining sanitizers.</span>
+<a id="L255"></a><span class="ln">   255</span>		for _, name := range s {
+<a id="L256"></a><span class="ln">   256</span>			newCmds = appendCmd(newCmds, newIdentCmd(name))
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>		p.Cmds = newCmds
+<a id="L259"></a><span class="ln">   259</span>	}
+<a id="L260"></a><span class="ln">   260</span>	
+<a id="L261"></a><span class="ln">   261</span>	<span class="comment">// redundantFuncs[a][b] implies that funcMap[b](funcMap[a](x)) == funcMap[a](x)</span>
+<a id="L262"></a><span class="ln">   262</span>	<span class="comment">// for all x.</span>
+<a id="L263"></a><span class="ln">   263</span>	var redundantFuncs = map[string]map[string]bool{
+<a id="L264"></a><span class="ln">   264</span>		&#34;html_template_commentescaper&#34;: {
+<a id="L265"></a><span class="ln">   265</span>			&#34;html_template_attrescaper&#34;:    true,
+<a id="L266"></a><span class="ln">   266</span>			&#34;html_template_nospaceescaper&#34;: true,
+<a id="L267"></a><span class="ln">   267</span>			&#34;html_template_htmlescaper&#34;:    true,
+<a id="L268"></a><span class="ln">   268</span>		},
+<a id="L269"></a><span class="ln">   269</span>		&#34;html_template_cssescaper&#34;: {
+<a id="L270"></a><span class="ln">   270</span>			&#34;html_template_attrescaper&#34;: true,
+<a id="L271"></a><span class="ln">   271</span>		},
+<a id="L272"></a><span class="ln">   272</span>		&#34;html_template_jsregexpescaper&#34;: {
+<a id="L273"></a><span class="ln">   273</span>			&#34;html_template_attrescaper&#34;: true,
+<a id="L274"></a><span class="ln">   274</span>		},
+<a id="L275"></a><span class="ln">   275</span>		&#34;html_template_jsstrescaper&#34;: {
+<a id="L276"></a><span class="ln">   276</span>			&#34;html_template_attrescaper&#34;: true,
+<a id="L277"></a><span class="ln">   277</span>		},
+<a id="L278"></a><span class="ln">   278</span>		&#34;html_template_urlescaper&#34;: {
+<a id="L279"></a><span class="ln">   279</span>			&#34;html_template_urlnormalizer&#34;: true,
+<a id="L280"></a><span class="ln">   280</span>		},
+<a id="L281"></a><span class="ln">   281</span>	}
+<a id="L282"></a><span class="ln">   282</span>	
+<a id="L283"></a><span class="ln">   283</span>	<span class="comment">// appendCmd appends the given command to the end of the command pipeline</span>
+<a id="L284"></a><span class="ln">   284</span>	<span class="comment">// unless it is redundant with the last command.</span>
+<a id="L285"></a><span class="ln">   285</span>	func appendCmd(cmds []*parse.CommandNode, cmd *parse.CommandNode) []*parse.CommandNode {
+<a id="L286"></a><span class="ln">   286</span>		if n := len(cmds); n != 0 {
+<a id="L287"></a><span class="ln">   287</span>			last, ok := cmds[n-1].Args[0].(*parse.IdentifierNode)
+<a id="L288"></a><span class="ln">   288</span>			next, _ := cmd.Args[0].(*parse.IdentifierNode)
+<a id="L289"></a><span class="ln">   289</span>			if ok &amp;&amp; redundantFuncs[last.Ident][next.Ident] {
+<a id="L290"></a><span class="ln">   290</span>				return cmds
+<a id="L291"></a><span class="ln">   291</span>			}
+<a id="L292"></a><span class="ln">   292</span>		}
+<a id="L293"></a><span class="ln">   293</span>		return append(cmds, cmd)
+<a id="L294"></a><span class="ln">   294</span>	}
+<a id="L295"></a><span class="ln">   295</span>	
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">// indexOfStr is the first i such that eq(s, strs[i]) or -1 if s was not found.</span>
+<a id="L297"></a><span class="ln">   297</span>	func indexOfStr(s string, strs []string, eq func(a, b string) bool) int {
+<a id="L298"></a><span class="ln">   298</span>		for i, t := range strs {
+<a id="L299"></a><span class="ln">   299</span>			if eq(s, t) {
+<a id="L300"></a><span class="ln">   300</span>				return i
+<a id="L301"></a><span class="ln">   301</span>			}
+<a id="L302"></a><span class="ln">   302</span>		}
+<a id="L303"></a><span class="ln">   303</span>		return -1
+<a id="L304"></a><span class="ln">   304</span>	}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>	<span class="comment">// escFnsEq returns whether the two escaping functions are equivalent.</span>
+<a id="L307"></a><span class="ln">   307</span>	func escFnsEq(a, b string) bool {
+<a id="L308"></a><span class="ln">   308</span>		if e := equivEscapers[a]; e != &#34;&#34; {
+<a id="L309"></a><span class="ln">   309</span>			a = e
+<a id="L310"></a><span class="ln">   310</span>		}
+<a id="L311"></a><span class="ln">   311</span>		if e := equivEscapers[b]; e != &#34;&#34; {
+<a id="L312"></a><span class="ln">   312</span>			b = e
+<a id="L313"></a><span class="ln">   313</span>		}
+<a id="L314"></a><span class="ln">   314</span>		return a == b
+<a id="L315"></a><span class="ln">   315</span>	}
+<a id="L316"></a><span class="ln">   316</span>	
+<a id="L317"></a><span class="ln">   317</span>	<span class="comment">// newIdentCmd produces a command containing a single identifier node.</span>
+<a id="L318"></a><span class="ln">   318</span>	func newIdentCmd(identifier string) *parse.CommandNode {
+<a id="L319"></a><span class="ln">   319</span>		return &amp;parse.CommandNode{
+<a id="L320"></a><span class="ln">   320</span>			NodeType: parse.NodeCommand,
+<a id="L321"></a><span class="ln">   321</span>			Args:     []parse.Node{parse.NewIdentifier(identifier)},
+<a id="L322"></a><span class="ln">   322</span>		}
+<a id="L323"></a><span class="ln">   323</span>	}
+<a id="L324"></a><span class="ln">   324</span>	
+<a id="L325"></a><span class="ln">   325</span>	<span class="comment">// nudge returns the context that would result from following empty string</span>
+<a id="L326"></a><span class="ln">   326</span>	<span class="comment">// transitions from the input context.</span>
+<a id="L327"></a><span class="ln">   327</span>	<span class="comment">// For example, parsing:</span>
+<a id="L328"></a><span class="ln">   328</span>	<span class="comment">//     `&lt;a href=`</span>
+<a id="L329"></a><span class="ln">   329</span>	<span class="comment">// will end in context{stateBeforeValue, attrURL}, but parsing one extra rune:</span>
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">//     `&lt;a href=x`</span>
+<a id="L331"></a><span class="ln">   331</span>	<span class="comment">// will end in context{stateURL, delimSpaceOrTagEnd, ...}.</span>
+<a id="L332"></a><span class="ln">   332</span>	<span class="comment">// There are two transitions that happen when the &#39;x&#39; is seen:</span>
+<a id="L333"></a><span class="ln">   333</span>	<span class="comment">// (1) Transition from a before-value state to a start-of-value state without</span>
+<a id="L334"></a><span class="ln">   334</span>	<span class="comment">//     consuming any character.</span>
+<a id="L335"></a><span class="ln">   335</span>	<span class="comment">// (2) Consume &#39;x&#39; and transition past the first value character.</span>
+<a id="L336"></a><span class="ln">   336</span>	<span class="comment">// In this case, nudging produces the context after (1) happens.</span>
+<a id="L337"></a><span class="ln">   337</span>	func nudge(c context) context {
+<a id="L338"></a><span class="ln">   338</span>		switch c.state {
+<a id="L339"></a><span class="ln">   339</span>		case stateTag:
+<a id="L340"></a><span class="ln">   340</span>			<span class="comment">// In `&lt;foo {{.}}`, the action should emit an attribute.</span>
+<a id="L341"></a><span class="ln">   341</span>			c.state = stateAttrName
+<a id="L342"></a><span class="ln">   342</span>		case stateBeforeValue:
+<a id="L343"></a><span class="ln">   343</span>			<span class="comment">// In `&lt;foo bar={{.}}`, the action is an undelimited value.</span>
+<a id="L344"></a><span class="ln">   344</span>			c.state, c.delim, c.attr = attrStartStates[c.attr], delimSpaceOrTagEnd, attrNone
+<a id="L345"></a><span class="ln">   345</span>		case stateAfterName:
+<a id="L346"></a><span class="ln">   346</span>			<span class="comment">// In `&lt;foo bar {{.}}`, the action is an attribute name.</span>
+<a id="L347"></a><span class="ln">   347</span>			c.state, c.attr = stateAttrName, attrNone
+<a id="L348"></a><span class="ln">   348</span>		}
+<a id="L349"></a><span class="ln">   349</span>		return c
+<a id="L350"></a><span class="ln">   350</span>	}
+<a id="L351"></a><span class="ln">   351</span>	
+<a id="L352"></a><span class="ln">   352</span>	<span class="comment">// join joins the two contexts of a branch template node. The result is an</span>
+<a id="L353"></a><span class="ln">   353</span>	<span class="comment">// error context if either of the input contexts are error contexts, or if the</span>
+<a id="L354"></a><span class="ln">   354</span>	<span class="comment">// the input contexts differ.</span>
+<a id="L355"></a><span class="ln">   355</span>	func join(a, b context, line int, nodeName string) context {
+<a id="L356"></a><span class="ln">   356</span>		if a.state == stateError {
+<a id="L357"></a><span class="ln">   357</span>			return a
+<a id="L358"></a><span class="ln">   358</span>		}
+<a id="L359"></a><span class="ln">   359</span>		if b.state == stateError {
+<a id="L360"></a><span class="ln">   360</span>			return b
+<a id="L361"></a><span class="ln">   361</span>		}
+<a id="L362"></a><span class="ln">   362</span>		if a.eq(b) {
+<a id="L363"></a><span class="ln">   363</span>			return a
+<a id="L364"></a><span class="ln">   364</span>		}
+<a id="L365"></a><span class="ln">   365</span>	
+<a id="L366"></a><span class="ln">   366</span>		c := a
+<a id="L367"></a><span class="ln">   367</span>		c.urlPart = b.urlPart
+<a id="L368"></a><span class="ln">   368</span>		if c.eq(b) {
+<a id="L369"></a><span class="ln">   369</span>			<span class="comment">// The contexts differ only by urlPart.</span>
+<a id="L370"></a><span class="ln">   370</span>			c.urlPart = urlPartUnknown
+<a id="L371"></a><span class="ln">   371</span>			return c
+<a id="L372"></a><span class="ln">   372</span>		}
+<a id="L373"></a><span class="ln">   373</span>	
+<a id="L374"></a><span class="ln">   374</span>		c = a
+<a id="L375"></a><span class="ln">   375</span>		c.jsCtx = b.jsCtx
+<a id="L376"></a><span class="ln">   376</span>		if c.eq(b) {
+<a id="L377"></a><span class="ln">   377</span>			<span class="comment">// The contexts differ only by jsCtx.</span>
+<a id="L378"></a><span class="ln">   378</span>			c.jsCtx = jsCtxUnknown
+<a id="L379"></a><span class="ln">   379</span>			return c
+<a id="L380"></a><span class="ln">   380</span>		}
+<a id="L381"></a><span class="ln">   381</span>	
+<a id="L382"></a><span class="ln">   382</span>		<span class="comment">// Allow a nudged context to join with an unnudged one.</span>
+<a id="L383"></a><span class="ln">   383</span>		<span class="comment">// This means that</span>
+<a id="L384"></a><span class="ln">   384</span>		<span class="comment">//   &lt;p title={{if .C}}{{.}}{{end}}</span>
+<a id="L385"></a><span class="ln">   385</span>		<span class="comment">// ends in an unquoted value state even though the else branch</span>
+<a id="L386"></a><span class="ln">   386</span>		<span class="comment">// ends in stateBeforeValue.</span>
+<a id="L387"></a><span class="ln">   387</span>		if c, d := nudge(a), nudge(b); !(c.eq(a) &amp;&amp; d.eq(b)) {
+<a id="L388"></a><span class="ln">   388</span>			if e := join(c, d, line, nodeName); e.state != stateError {
+<a id="L389"></a><span class="ln">   389</span>				return e
+<a id="L390"></a><span class="ln">   390</span>			}
+<a id="L391"></a><span class="ln">   391</span>		}
+<a id="L392"></a><span class="ln">   392</span>	
+<a id="L393"></a><span class="ln">   393</span>		return context{
+<a id="L394"></a><span class="ln">   394</span>			state: stateError,
+<a id="L395"></a><span class="ln">   395</span>			err:   errorf(ErrBranchEnd, line, &#34;{{%s}} branches end in different contexts: %v, %v&#34;, nodeName, a, b),
+<a id="L396"></a><span class="ln">   396</span>		}
+<a id="L397"></a><span class="ln">   397</span>	}
+<a id="L398"></a><span class="ln">   398</span>	
+<a id="L399"></a><span class="ln">   399</span>	<span class="comment">// escapeBranch escapes a branch template node: &#34;if&#34;, &#34;range&#34; and &#34;with&#34;.</span>
+<a id="L400"></a><span class="ln">   400</span>	func (e *escaper) escapeBranch(c context, n *parse.BranchNode, nodeName string) context {
+<a id="L401"></a><span class="ln">   401</span>		c0 := e.escapeList(c, n.List)
+<a id="L402"></a><span class="ln">   402</span>		if nodeName == &#34;range&#34; &amp;&amp; c0.state != stateError {
+<a id="L403"></a><span class="ln">   403</span>			<span class="comment">// The &#34;true&#34; branch of a &#34;range&#34; node can execute multiple times.</span>
+<a id="L404"></a><span class="ln">   404</span>			<span class="comment">// We check that executing n.List once results in the same context</span>
+<a id="L405"></a><span class="ln">   405</span>			<span class="comment">// as executing n.List twice.</span>
+<a id="L406"></a><span class="ln">   406</span>			c1, _ := e.escapeListConditionally(c0, n.List, nil)
+<a id="L407"></a><span class="ln">   407</span>			c0 = join(c0, c1, n.Line, nodeName)
+<a id="L408"></a><span class="ln">   408</span>			if c0.state == stateError {
+<a id="L409"></a><span class="ln">   409</span>				<span class="comment">// Make clear that this is a problem on loop re-entry</span>
+<a id="L410"></a><span class="ln">   410</span>				<span class="comment">// since developers tend to overlook that branch when</span>
+<a id="L411"></a><span class="ln">   411</span>				<span class="comment">// debugging templates.</span>
+<a id="L412"></a><span class="ln">   412</span>				c0.err.Line = n.Line
+<a id="L413"></a><span class="ln">   413</span>				c0.err.Description = &#34;on range loop re-entry: &#34; + c0.err.Description
+<a id="L414"></a><span class="ln">   414</span>				return c0
+<a id="L415"></a><span class="ln">   415</span>			}
+<a id="L416"></a><span class="ln">   416</span>		}
+<a id="L417"></a><span class="ln">   417</span>		c1 := e.escapeList(c, n.ElseList)
+<a id="L418"></a><span class="ln">   418</span>		return join(c0, c1, n.Line, nodeName)
+<a id="L419"></a><span class="ln">   419</span>	}
+<a id="L420"></a><span class="ln">   420</span>	
+<a id="L421"></a><span class="ln">   421</span>	<span class="comment">// escapeList escapes a list template node.</span>
+<a id="L422"></a><span class="ln">   422</span>	func (e *escaper) escapeList(c context, n *parse.ListNode) context {
+<a id="L423"></a><span class="ln">   423</span>		if n == nil {
+<a id="L424"></a><span class="ln">   424</span>			return c
+<a id="L425"></a><span class="ln">   425</span>		}
+<a id="L426"></a><span class="ln">   426</span>		for _, m := range n.Nodes {
+<a id="L427"></a><span class="ln">   427</span>			c = e.escape(c, m)
+<a id="L428"></a><span class="ln">   428</span>		}
+<a id="L429"></a><span class="ln">   429</span>		return c
+<a id="L430"></a><span class="ln">   430</span>	}
+<a id="L431"></a><span class="ln">   431</span>	
+<a id="L432"></a><span class="ln">   432</span>	<span class="comment">// escapeListConditionally escapes a list node but only preserves edits and</span>
+<a id="L433"></a><span class="ln">   433</span>	<span class="comment">// inferences in e if the inferences and output context satisfy filter.</span>
+<a id="L434"></a><span class="ln">   434</span>	<span class="comment">// It returns the best guess at an output context, and the result of the filter</span>
+<a id="L435"></a><span class="ln">   435</span>	<span class="comment">// which is the same as whether e was updated.</span>
+<a id="L436"></a><span class="ln">   436</span>	func (e *escaper) escapeListConditionally(c context, n *parse.ListNode, filter func(*escaper, context) bool) (context, bool) {
+<a id="L437"></a><span class="ln">   437</span>		e1 := newEscaper(e.tmpl)
+<a id="L438"></a><span class="ln">   438</span>		<span class="comment">// Make type inferences available to f.</span>
+<a id="L439"></a><span class="ln">   439</span>		for k, v := range e.output {
+<a id="L440"></a><span class="ln">   440</span>			e1.output[k] = v
+<a id="L441"></a><span class="ln">   441</span>		}
+<a id="L442"></a><span class="ln">   442</span>		c = e1.escapeList(c, n)
+<a id="L443"></a><span class="ln">   443</span>		ok := filter != nil &amp;&amp; filter(e1, c)
+<a id="L444"></a><span class="ln">   444</span>		if ok {
+<a id="L445"></a><span class="ln">   445</span>			<span class="comment">// Copy inferences and edits from e1 back into e.</span>
+<a id="L446"></a><span class="ln">   446</span>			for k, v := range e1.output {
+<a id="L447"></a><span class="ln">   447</span>				e.output[k] = v
+<a id="L448"></a><span class="ln">   448</span>			}
+<a id="L449"></a><span class="ln">   449</span>			for k, v := range e1.derived {
+<a id="L450"></a><span class="ln">   450</span>				e.derived[k] = v
+<a id="L451"></a><span class="ln">   451</span>			}
+<a id="L452"></a><span class="ln">   452</span>			for k, v := range e1.called {
+<a id="L453"></a><span class="ln">   453</span>				e.called[k] = v
+<a id="L454"></a><span class="ln">   454</span>			}
+<a id="L455"></a><span class="ln">   455</span>			for k, v := range e1.actionNodeEdits {
+<a id="L456"></a><span class="ln">   456</span>				e.editActionNode(k, v)
+<a id="L457"></a><span class="ln">   457</span>			}
+<a id="L458"></a><span class="ln">   458</span>			for k, v := range e1.templateNodeEdits {
+<a id="L459"></a><span class="ln">   459</span>				e.editTemplateNode(k, v)
+<a id="L460"></a><span class="ln">   460</span>			}
+<a id="L461"></a><span class="ln">   461</span>			for k, v := range e1.textNodeEdits {
+<a id="L462"></a><span class="ln">   462</span>				e.editTextNode(k, v)
+<a id="L463"></a><span class="ln">   463</span>			}
+<a id="L464"></a><span class="ln">   464</span>		}
+<a id="L465"></a><span class="ln">   465</span>		return c, ok
+<a id="L466"></a><span class="ln">   466</span>	}
+<a id="L467"></a><span class="ln">   467</span>	
+<a id="L468"></a><span class="ln">   468</span>	<span class="comment">// escapeTemplate escapes a {{template}} call node.</span>
+<a id="L469"></a><span class="ln">   469</span>	func (e *escaper) escapeTemplate(c context, n *parse.TemplateNode) context {
+<a id="L470"></a><span class="ln">   470</span>		c, name := e.escapeTree(c, n.Name, n.Line)
+<a id="L471"></a><span class="ln">   471</span>		if name != n.Name {
+<a id="L472"></a><span class="ln">   472</span>			e.editTemplateNode(n, name)
+<a id="L473"></a><span class="ln">   473</span>		}
+<a id="L474"></a><span class="ln">   474</span>		return c
+<a id="L475"></a><span class="ln">   475</span>	}
+<a id="L476"></a><span class="ln">   476</span>	
+<a id="L477"></a><span class="ln">   477</span>	<span class="comment">// escapeTree escapes the named template starting in the given context as</span>
+<a id="L478"></a><span class="ln">   478</span>	<span class="comment">// necessary and returns its output context.</span>
+<a id="L479"></a><span class="ln">   479</span>	func (e *escaper) escapeTree(c context, name string, line int) (context, string) {
+<a id="L480"></a><span class="ln">   480</span>		<span class="comment">// Mangle the template name with the input context to produce a reliable</span>
+<a id="L481"></a><span class="ln">   481</span>		<span class="comment">// identifier.</span>
+<a id="L482"></a><span class="ln">   482</span>		dname := c.mangle(name)
+<a id="L483"></a><span class="ln">   483</span>		e.called[dname] = true
+<a id="L484"></a><span class="ln">   484</span>		if out, ok := e.output[dname]; ok {
+<a id="L485"></a><span class="ln">   485</span>			<span class="comment">// Already escaped.</span>
+<a id="L486"></a><span class="ln">   486</span>			return out, dname
+<a id="L487"></a><span class="ln">   487</span>		}
+<a id="L488"></a><span class="ln">   488</span>		t := e.template(name)
+<a id="L489"></a><span class="ln">   489</span>		if t == nil {
+<a id="L490"></a><span class="ln">   490</span>			<span class="comment">// Two cases: The template exists but is empty, or has never been mentioned at</span>
+<a id="L491"></a><span class="ln">   491</span>			<span class="comment">// all. Distinguish the cases in the error messages.</span>
+<a id="L492"></a><span class="ln">   492</span>			if e.tmpl.set[name] != nil {
+<a id="L493"></a><span class="ln">   493</span>				return context{
+<a id="L494"></a><span class="ln">   494</span>					state: stateError,
+<a id="L495"></a><span class="ln">   495</span>					err:   errorf(ErrNoSuchTemplate, line, &#34;%q is an incomplete or empty template&#34;, name),
+<a id="L496"></a><span class="ln">   496</span>				}, dname
+<a id="L497"></a><span class="ln">   497</span>			}
+<a id="L498"></a><span class="ln">   498</span>			return context{
+<a id="L499"></a><span class="ln">   499</span>				state: stateError,
+<a id="L500"></a><span class="ln">   500</span>				err:   errorf(ErrNoSuchTemplate, line, &#34;no such template %q&#34;, name),
+<a id="L501"></a><span class="ln">   501</span>			}, dname
+<a id="L502"></a><span class="ln">   502</span>		}
+<a id="L503"></a><span class="ln">   503</span>		if dname != name {
+<a id="L504"></a><span class="ln">   504</span>			<span class="comment">// Use any template derived during an earlier call to escapeTemplate</span>
+<a id="L505"></a><span class="ln">   505</span>			<span class="comment">// with different top level templates, or clone if necessary.</span>
+<a id="L506"></a><span class="ln">   506</span>			dt := e.template(dname)
+<a id="L507"></a><span class="ln">   507</span>			if dt == nil {
+<a id="L508"></a><span class="ln">   508</span>				dt = template.New(dname)
+<a id="L509"></a><span class="ln">   509</span>				dt.Tree = &amp;parse.Tree{Name: dname, Root: t.Root.CopyList()}
+<a id="L510"></a><span class="ln">   510</span>				e.derived[dname] = dt
+<a id="L511"></a><span class="ln">   511</span>			}
+<a id="L512"></a><span class="ln">   512</span>			t = dt
+<a id="L513"></a><span class="ln">   513</span>		}
+<a id="L514"></a><span class="ln">   514</span>		return e.computeOutCtx(c, t), dname
+<a id="L515"></a><span class="ln">   515</span>	}
+<a id="L516"></a><span class="ln">   516</span>	
+<a id="L517"></a><span class="ln">   517</span>	<span class="comment">// computeOutCtx takes a template and its start context and computes the output</span>
+<a id="L518"></a><span class="ln">   518</span>	<span class="comment">// context while storing any inferences in e.</span>
+<a id="L519"></a><span class="ln">   519</span>	func (e *escaper) computeOutCtx(c context, t *template.Template) context {
+<a id="L520"></a><span class="ln">   520</span>		<span class="comment">// Propagate context over the body.</span>
+<a id="L521"></a><span class="ln">   521</span>		c1, ok := e.escapeTemplateBody(c, t)
+<a id="L522"></a><span class="ln">   522</span>		if !ok {
+<a id="L523"></a><span class="ln">   523</span>			<span class="comment">// Look for a fixed point by assuming c1 as the output context.</span>
+<a id="L524"></a><span class="ln">   524</span>			if c2, ok2 := e.escapeTemplateBody(c1, t); ok2 {
+<a id="L525"></a><span class="ln">   525</span>				c1, ok = c2, true
+<a id="L526"></a><span class="ln">   526</span>			}
+<a id="L527"></a><span class="ln">   527</span>			<span class="comment">// Use c1 as the error context if neither assumption worked.</span>
+<a id="L528"></a><span class="ln">   528</span>		}
+<a id="L529"></a><span class="ln">   529</span>		if !ok &amp;&amp; c1.state != stateError {
+<a id="L530"></a><span class="ln">   530</span>			return context{
+<a id="L531"></a><span class="ln">   531</span>				state: stateError,
+<a id="L532"></a><span class="ln">   532</span>				<span class="comment">// TODO: Find the first node with a line in t.text.Tree.Root</span>
+<a id="L533"></a><span class="ln">   533</span>				err: errorf(ErrOutputContext, 0, &#34;cannot compute output context for template %s&#34;, t.Name()),
+<a id="L534"></a><span class="ln">   534</span>			}
+<a id="L535"></a><span class="ln">   535</span>		}
+<a id="L536"></a><span class="ln">   536</span>		return c1
+<a id="L537"></a><span class="ln">   537</span>	}
+<a id="L538"></a><span class="ln">   538</span>	
+<a id="L539"></a><span class="ln">   539</span>	<span class="comment">// escapeTemplateBody escapes the given template assuming the given output</span>
+<a id="L540"></a><span class="ln">   540</span>	<span class="comment">// context, and returns the best guess at the output context and whether the</span>
+<a id="L541"></a><span class="ln">   541</span>	<span class="comment">// assumption was correct.</span>
+<a id="L542"></a><span class="ln">   542</span>	func (e *escaper) escapeTemplateBody(c context, t *template.Template) (context, bool) {
+<a id="L543"></a><span class="ln">   543</span>		filter := func(e1 *escaper, c1 context) bool {
+<a id="L544"></a><span class="ln">   544</span>			if c1.state == stateError {
+<a id="L545"></a><span class="ln">   545</span>				<span class="comment">// Do not update the input escaper, e.</span>
+<a id="L546"></a><span class="ln">   546</span>				return false
+<a id="L547"></a><span class="ln">   547</span>			}
+<a id="L548"></a><span class="ln">   548</span>			if !e1.called[t.Name()] {
+<a id="L549"></a><span class="ln">   549</span>				<span class="comment">// If t is not recursively called, then c1 is an</span>
+<a id="L550"></a><span class="ln">   550</span>				<span class="comment">// accurate output context.</span>
+<a id="L551"></a><span class="ln">   551</span>				return true
+<a id="L552"></a><span class="ln">   552</span>			}
+<a id="L553"></a><span class="ln">   553</span>			<span class="comment">// c1 is accurate if it matches our assumed output context.</span>
+<a id="L554"></a><span class="ln">   554</span>			return c.eq(c1)
+<a id="L555"></a><span class="ln">   555</span>		}
+<a id="L556"></a><span class="ln">   556</span>		<span class="comment">// We need to assume an output context so that recursive template calls</span>
+<a id="L557"></a><span class="ln">   557</span>		<span class="comment">// take the fast path out of escapeTree instead of infinitely recursing.</span>
+<a id="L558"></a><span class="ln">   558</span>		<span class="comment">// Naively assuming that the input context is the same as the output</span>
+<a id="L559"></a><span class="ln">   559</span>		<span class="comment">// works &gt;90% of the time.</span>
+<a id="L560"></a><span class="ln">   560</span>		e.output[t.Name()] = c
+<a id="L561"></a><span class="ln">   561</span>		return e.escapeListConditionally(c, t.Tree.Root, filter)
+<a id="L562"></a><span class="ln">   562</span>	}
+<a id="L563"></a><span class="ln">   563</span>	
+<a id="L564"></a><span class="ln">   564</span>	<span class="comment">// delimEnds maps each delim to a string of characters that terminate it.</span>
+<a id="L565"></a><span class="ln">   565</span>	var delimEnds = [...]string{
+<a id="L566"></a><span class="ln">   566</span>		delimDoubleQuote: `&#34;`,
+<a id="L567"></a><span class="ln">   567</span>		delimSingleQuote: &#34;&#39;&#34;,
+<a id="L568"></a><span class="ln">   568</span>		<span class="comment">// Determined empirically by running the below in various browsers.</span>
+<a id="L569"></a><span class="ln">   569</span>		<span class="comment">// var div = document.createElement(&#34;DIV&#34;);</span>
+<a id="L570"></a><span class="ln">   570</span>		<span class="comment">// for (var i = 0; i &lt; 0x10000; ++i) {</span>
+<a id="L571"></a><span class="ln">   571</span>		<span class="comment">//   div.innerHTML = &#34;&lt;span title=x&#34; + String.fromCharCode(i) + &#34;-bar&gt;&#34;;</span>
+<a id="L572"></a><span class="ln">   572</span>		<span class="comment">//   if (div.getElementsByTagName(&#34;SPAN&#34;)[0].title.indexOf(&#34;bar&#34;) &lt; 0)</span>
+<a id="L573"></a><span class="ln">   573</span>		<span class="comment">//     document.write(&#34;&lt;p&gt;U+&#34; + i.toString(16));</span>
+<a id="L574"></a><span class="ln">   574</span>		<span class="comment">// }</span>
+<a id="L575"></a><span class="ln">   575</span>		delimSpaceOrTagEnd: &#34; \t\n\f\r&gt;&#34;,
+<a id="L576"></a><span class="ln">   576</span>	}
+<a id="L577"></a><span class="ln">   577</span>	
+<a id="L578"></a><span class="ln">   578</span>	var doctypeBytes = []byte(&#34;&lt;!DOCTYPE&#34;)
+<a id="L579"></a><span class="ln">   579</span>	
+<a id="L580"></a><span class="ln">   580</span>	<span class="comment">// escapeText escapes a text template node.</span>
+<a id="L581"></a><span class="ln">   581</span>	func (e *escaper) escapeText(c context, n *parse.TextNode) context {
+<a id="L582"></a><span class="ln">   582</span>		s, written, i, b := n.Text, 0, 0, new(bytes.Buffer)
+<a id="L583"></a><span class="ln">   583</span>		for i != len(s) {
+<a id="L584"></a><span class="ln">   584</span>			c1, nread := contextAfterText(c, s[i:])
+<a id="L585"></a><span class="ln">   585</span>			i1 := i + nread
+<a id="L586"></a><span class="ln">   586</span>			if c.state == stateText || c.state == stateRCDATA {
+<a id="L587"></a><span class="ln">   587</span>				end := i1
+<a id="L588"></a><span class="ln">   588</span>				if c1.state != c.state {
+<a id="L589"></a><span class="ln">   589</span>					for j := end - 1; j &gt;= i; j-- {
+<a id="L590"></a><span class="ln">   590</span>						if s[j] == &#39;&lt;&#39; {
+<a id="L591"></a><span class="ln">   591</span>							end = j
+<a id="L592"></a><span class="ln">   592</span>							break
+<a id="L593"></a><span class="ln">   593</span>						}
+<a id="L594"></a><span class="ln">   594</span>					}
+<a id="L595"></a><span class="ln">   595</span>				}
+<a id="L596"></a><span class="ln">   596</span>				for j := i; j &lt; end; j++ {
+<a id="L597"></a><span class="ln">   597</span>					if s[j] == &#39;&lt;&#39; &amp;&amp; !bytes.HasPrefix(bytes.ToUpper(s[j:]), doctypeBytes) {
+<a id="L598"></a><span class="ln">   598</span>						b.Write(s[written:j])
+<a id="L599"></a><span class="ln">   599</span>						b.WriteString(&#34;&amp;lt;&#34;)
+<a id="L600"></a><span class="ln">   600</span>						written = j + 1
+<a id="L601"></a><span class="ln">   601</span>					}
+<a id="L602"></a><span class="ln">   602</span>				}
+<a id="L603"></a><span class="ln">   603</span>			} else if isComment(c.state) &amp;&amp; c.delim == delimNone {
+<a id="L604"></a><span class="ln">   604</span>				switch c.state {
+<a id="L605"></a><span class="ln">   605</span>				case stateJSBlockCmt:
+<a id="L606"></a><span class="ln">   606</span>					<span class="comment">// http://es5.github.com/#x7.4:</span>
+<a id="L607"></a><span class="ln">   607</span>					<span class="comment">// &#34;Comments behave like white space and are</span>
+<a id="L608"></a><span class="ln">   608</span>					<span class="comment">// discarded except that, if a MultiLineComment</span>
+<a id="L609"></a><span class="ln">   609</span>					<span class="comment">// contains a line terminator character, then</span>
+<a id="L610"></a><span class="ln">   610</span>					<span class="comment">// the entire comment is considered to be a</span>
+<a id="L611"></a><span class="ln">   611</span>					<span class="comment">// LineTerminator for purposes of parsing by</span>
+<a id="L612"></a><span class="ln">   612</span>					<span class="comment">// the syntactic grammar.&#34;</span>
+<a id="L613"></a><span class="ln">   613</span>					if bytes.IndexAny(s[written:i1], &#34;\n\r\u2028\u2029&#34;) != -1 {
+<a id="L614"></a><span class="ln">   614</span>						b.WriteByte(&#39;\n&#39;)
+<a id="L615"></a><span class="ln">   615</span>					} else {
+<a id="L616"></a><span class="ln">   616</span>						b.WriteByte(&#39; &#39;)
+<a id="L617"></a><span class="ln">   617</span>					}
+<a id="L618"></a><span class="ln">   618</span>				case stateCSSBlockCmt:
+<a id="L619"></a><span class="ln">   619</span>					b.WriteByte(&#39; &#39;)
+<a id="L620"></a><span class="ln">   620</span>				}
+<a id="L621"></a><span class="ln">   621</span>				written = i1
+<a id="L622"></a><span class="ln">   622</span>			}
+<a id="L623"></a><span class="ln">   623</span>			if c.state != c1.state &amp;&amp; isComment(c1.state) &amp;&amp; c1.delim == delimNone {
+<a id="L624"></a><span class="ln">   624</span>				<span class="comment">// Preserve the portion between written and the comment start.</span>
+<a id="L625"></a><span class="ln">   625</span>				cs := i1 - 2
+<a id="L626"></a><span class="ln">   626</span>				if c1.state == stateHTMLCmt {
+<a id="L627"></a><span class="ln">   627</span>					<span class="comment">// &#34;&lt;!--&#34; instead of &#34;/*&#34; or &#34;//&#34;</span>
+<a id="L628"></a><span class="ln">   628</span>					cs -= 2
+<a id="L629"></a><span class="ln">   629</span>				}
+<a id="L630"></a><span class="ln">   630</span>				b.Write(s[written:cs])
+<a id="L631"></a><span class="ln">   631</span>				written = i1
+<a id="L632"></a><span class="ln">   632</span>			}
+<a id="L633"></a><span class="ln">   633</span>			if i == i1 &amp;&amp; c.state == c1.state {
+<a id="L634"></a><span class="ln">   634</span>				panic(fmt.Sprintf(&#34;infinite loop from %v to %v on %q..%q&#34;, c, c1, s[:i], s[i:]))
+<a id="L635"></a><span class="ln">   635</span>			}
+<a id="L636"></a><span class="ln">   636</span>			c, i = c1, i1
+<a id="L637"></a><span class="ln">   637</span>		}
+<a id="L638"></a><span class="ln">   638</span>	
+<a id="L639"></a><span class="ln">   639</span>		if written != 0 &amp;&amp; c.state != stateError {
+<a id="L640"></a><span class="ln">   640</span>			if !isComment(c.state) || c.delim != delimNone {
+<a id="L641"></a><span class="ln">   641</span>				b.Write(n.Text[written:])
+<a id="L642"></a><span class="ln">   642</span>			}
+<a id="L643"></a><span class="ln">   643</span>			e.editTextNode(n, b.Bytes())
+<a id="L644"></a><span class="ln">   644</span>		}
+<a id="L645"></a><span class="ln">   645</span>		return c
+<a id="L646"></a><span class="ln">   646</span>	}
+<a id="L647"></a><span class="ln">   647</span>	
+<a id="L648"></a><span class="ln">   648</span>	<span class="comment">// contextAfterText starts in context c, consumes some tokens from the front of</span>
+<a id="L649"></a><span class="ln">   649</span>	<span class="comment">// s, then returns the context after those tokens and the unprocessed suffix.</span>
+<a id="L650"></a><span class="ln">   650</span>	func contextAfterText(c context, s []byte) (context, int) {
+<a id="L651"></a><span class="ln">   651</span>		if c.delim == delimNone {
+<a id="L652"></a><span class="ln">   652</span>			c1, i := tSpecialTagEnd(c, s)
+<a id="L653"></a><span class="ln">   653</span>			if i == 0 {
+<a id="L654"></a><span class="ln">   654</span>				<span class="comment">// A special end tag (`&lt;/script&gt;`) has been seen and</span>
+<a id="L655"></a><span class="ln">   655</span>				<span class="comment">// all content preceding it has been consumed.</span>
+<a id="L656"></a><span class="ln">   656</span>				return c1, 0
+<a id="L657"></a><span class="ln">   657</span>			}
+<a id="L658"></a><span class="ln">   658</span>			<span class="comment">// Consider all content up to any end tag.</span>
+<a id="L659"></a><span class="ln">   659</span>			return transitionFunc[c.state](c, s[:i])
+<a id="L660"></a><span class="ln">   660</span>		}
+<a id="L661"></a><span class="ln">   661</span>	
+<a id="L662"></a><span class="ln">   662</span>		i := bytes.IndexAny(s, delimEnds[c.delim])
+<a id="L663"></a><span class="ln">   663</span>		if i == -1 {
+<a id="L664"></a><span class="ln">   664</span>			i = len(s)
+<a id="L665"></a><span class="ln">   665</span>		}
+<a id="L666"></a><span class="ln">   666</span>		if c.delim == delimSpaceOrTagEnd {
+<a id="L667"></a><span class="ln">   667</span>			<span class="comment">// http://www.w3.org/TR/html5/tokenization.html#attribute-value-unquoted-state</span>
+<a id="L668"></a><span class="ln">   668</span>			<span class="comment">// lists the runes below as error characters.</span>
+<a id="L669"></a><span class="ln">   669</span>			<span class="comment">// Error out because HTML parsers may differ on whether</span>
+<a id="L670"></a><span class="ln">   670</span>			<span class="comment">// &#34;&lt;a id= onclick=f(&#34;     ends inside id&#39;s or onclick&#39;s value,</span>
+<a id="L671"></a><span class="ln">   671</span>			<span class="comment">// &#34;&lt;a class=`foo &#34;        ends inside a value,</span>
+<a id="L672"></a><span class="ln">   672</span>			<span class="comment">// &#34;&lt;a style=font:&#39;Arial&#39;&#34; needs open-quote fixup.</span>
+<a id="L673"></a><span class="ln">   673</span>			<span class="comment">// IE treats &#39;`&#39; as a quotation character.</span>
+<a id="L674"></a><span class="ln">   674</span>			if j := bytes.IndexAny(s[:i], &#34;\&#34;&#39;&lt;=`&#34;); j &gt;= 0 {
+<a id="L675"></a><span class="ln">   675</span>				return context{
+<a id="L676"></a><span class="ln">   676</span>					state: stateError,
+<a id="L677"></a><span class="ln">   677</span>					err:   errorf(ErrBadHTML, 0, &#34;%q in unquoted attr: %q&#34;, s[j:j+1], s[:i]),
+<a id="L678"></a><span class="ln">   678</span>				}, len(s)
+<a id="L679"></a><span class="ln">   679</span>			}
+<a id="L680"></a><span class="ln">   680</span>		}
+<a id="L681"></a><span class="ln">   681</span>		if i == len(s) {
+<a id="L682"></a><span class="ln">   682</span>			<span class="comment">// Remain inside the attribute.</span>
+<a id="L683"></a><span class="ln">   683</span>			<span class="comment">// Decode the value so non-HTML rules can easily handle</span>
+<a id="L684"></a><span class="ln">   684</span>			<span class="comment">//     &lt;button onclick=&#34;alert(&amp;quot;Hi!&amp;quot;)&#34;&gt;</span>
+<a id="L685"></a><span class="ln">   685</span>			<span class="comment">// without having to entity decode token boundaries.</span>
+<a id="L686"></a><span class="ln">   686</span>			for u := []byte(html.UnescapeString(string(s))); len(u) != 0; {
+<a id="L687"></a><span class="ln">   687</span>				c1, i1 := transitionFunc[c.state](c, u)
+<a id="L688"></a><span class="ln">   688</span>				c, u = c1, u[i1:]
+<a id="L689"></a><span class="ln">   689</span>			}
+<a id="L690"></a><span class="ln">   690</span>			return c, len(s)
+<a id="L691"></a><span class="ln">   691</span>		}
+<a id="L692"></a><span class="ln">   692</span>		if c.delim != delimSpaceOrTagEnd {
+<a id="L693"></a><span class="ln">   693</span>			<span class="comment">// Consume any quote.</span>
+<a id="L694"></a><span class="ln">   694</span>			i++
+<a id="L695"></a><span class="ln">   695</span>		}
+<a id="L696"></a><span class="ln">   696</span>		<span class="comment">// On exiting an attribute, we discard all state information</span>
+<a id="L697"></a><span class="ln">   697</span>		<span class="comment">// except the state and element.</span>
+<a id="L698"></a><span class="ln">   698</span>		return context{state: stateTag, element: c.element}, i
+<a id="L699"></a><span class="ln">   699</span>	}
+<a id="L700"></a><span class="ln">   700</span>	
+<a id="L701"></a><span class="ln">   701</span>	<span class="comment">// editActionNode records a change to an action pipeline for later commit.</span>
+<a id="L702"></a><span class="ln">   702</span>	func (e *escaper) editActionNode(n *parse.ActionNode, cmds []string) {
+<a id="L703"></a><span class="ln">   703</span>		if _, ok := e.actionNodeEdits[n]; ok {
+<a id="L704"></a><span class="ln">   704</span>			panic(fmt.Sprintf(&#34;node %s shared between templates&#34;, n))
+<a id="L705"></a><span class="ln">   705</span>		}
+<a id="L706"></a><span class="ln">   706</span>		e.actionNodeEdits[n] = cmds
+<a id="L707"></a><span class="ln">   707</span>	}
+<a id="L708"></a><span class="ln">   708</span>	
+<a id="L709"></a><span class="ln">   709</span>	<span class="comment">// editTemplateNode records a change to a {{template}} callee for later commit.</span>
+<a id="L710"></a><span class="ln">   710</span>	func (e *escaper) editTemplateNode(n *parse.TemplateNode, callee string) {
+<a id="L711"></a><span class="ln">   711</span>		if _, ok := e.templateNodeEdits[n]; ok {
+<a id="L712"></a><span class="ln">   712</span>			panic(fmt.Sprintf(&#34;node %s shared between templates&#34;, n))
+<a id="L713"></a><span class="ln">   713</span>		}
+<a id="L714"></a><span class="ln">   714</span>		e.templateNodeEdits[n] = callee
+<a id="L715"></a><span class="ln">   715</span>	}
+<a id="L716"></a><span class="ln">   716</span>	
+<a id="L717"></a><span class="ln">   717</span>	<span class="comment">// editTextNode records a change to a text node for later commit.</span>
+<a id="L718"></a><span class="ln">   718</span>	func (e *escaper) editTextNode(n *parse.TextNode, text []byte) {
+<a id="L719"></a><span class="ln">   719</span>		if _, ok := e.textNodeEdits[n]; ok {
+<a id="L720"></a><span class="ln">   720</span>			panic(fmt.Sprintf(&#34;node %s shared between templates&#34;, n))
+<a id="L721"></a><span class="ln">   721</span>		}
+<a id="L722"></a><span class="ln">   722</span>		e.textNodeEdits[n] = text
+<a id="L723"></a><span class="ln">   723</span>	}
+<a id="L724"></a><span class="ln">   724</span>	
+<a id="L725"></a><span class="ln">   725</span>	<span class="comment">// commit applies changes to actions and template calls needed to contextually</span>
+<a id="L726"></a><span class="ln">   726</span>	<span class="comment">// autoescape content and adds any derived templates to the set.</span>
+<a id="L727"></a><span class="ln">   727</span>	func (e *escaper) commit() {
+<a id="L728"></a><span class="ln">   728</span>		for name := range e.output {
+<a id="L729"></a><span class="ln">   729</span>			e.template(name).Funcs(funcMap)
+<a id="L730"></a><span class="ln">   730</span>		}
+<a id="L731"></a><span class="ln">   731</span>		for _, t := range e.derived {
+<a id="L732"></a><span class="ln">   732</span>			if _, err := e.tmpl.text.AddParseTree(t.Name(), t.Tree); err != nil {
+<a id="L733"></a><span class="ln">   733</span>				panic(&#34;error adding derived template&#34;)
+<a id="L734"></a><span class="ln">   734</span>			}
+<a id="L735"></a><span class="ln">   735</span>		}
+<a id="L736"></a><span class="ln">   736</span>		for n, s := range e.actionNodeEdits {
+<a id="L737"></a><span class="ln">   737</span>			ensurePipelineContains(n.Pipe, s)
+<a id="L738"></a><span class="ln">   738</span>		}
+<a id="L739"></a><span class="ln">   739</span>		for n, name := range e.templateNodeEdits {
+<a id="L740"></a><span class="ln">   740</span>			n.Name = name
+<a id="L741"></a><span class="ln">   741</span>		}
+<a id="L742"></a><span class="ln">   742</span>		for n, s := range e.textNodeEdits {
+<a id="L743"></a><span class="ln">   743</span>			n.Text = s
+<a id="L744"></a><span class="ln">   744</span>		}
+<a id="L745"></a><span class="ln">   745</span>	}
+<a id="L746"></a><span class="ln">   746</span>	
+<a id="L747"></a><span class="ln">   747</span>	<span class="comment">// template returns the named template given a mangled template name.</span>
+<a id="L748"></a><span class="ln">   748</span>	func (e *escaper) template(name string) *template.Template {
+<a id="L749"></a><span class="ln">   749</span>		t := e.tmpl.text.Lookup(name)
+<a id="L750"></a><span class="ln">   750</span>		if t == nil {
+<a id="L751"></a><span class="ln">   751</span>			t = e.derived[name]
+<a id="L752"></a><span class="ln">   752</span>		}
+<a id="L753"></a><span class="ln">   753</span>		return t
+<a id="L754"></a><span class="ln">   754</span>	}
+<a id="L755"></a><span class="ln">   755</span>	
+<a id="L756"></a><span class="ln">   756</span>	<span class="comment">// Forwarding functions so that clients need only import this package</span>
+<a id="L757"></a><span class="ln">   757</span>	<span class="comment">// to reach the general escaping functions of text/template.</span>
+<a id="L758"></a><span class="ln">   758</span>	
+<a id="L759"></a><span class="ln">   759</span>	<span class="comment">// HTMLEscape writes to w the escaped HTML equivalent of the plain text data b.</span>
+<a id="L760"></a><span class="ln">   760</span>	func HTMLEscape(w io.Writer, b []byte) {
+<a id="L761"></a><span class="ln">   761</span>		template.HTMLEscape(w, b)
+<a id="L762"></a><span class="ln">   762</span>	}
+<a id="L763"></a><span class="ln">   763</span>	
+<a id="L764"></a><span class="ln">   764</span>	<span class="comment">// HTMLEscapeString returns the escaped HTML equivalent of the plain text data s.</span>
+<a id="L765"></a><span class="ln">   765</span>	func HTMLEscapeString(s string) string {
+<a id="L766"></a><span class="ln">   766</span>		return template.HTMLEscapeString(s)
+<a id="L767"></a><span class="ln">   767</span>	}
+<a id="L768"></a><span class="ln">   768</span>	
+<a id="L769"></a><span class="ln">   769</span>	<span class="comment">// HTMLEscaper returns the escaped HTML equivalent of the textual</span>
+<a id="L770"></a><span class="ln">   770</span>	<span class="comment">// representation of its arguments.</span>
+<a id="L771"></a><span class="ln">   771</span>	func HTMLEscaper(args ...interface{}) string {
+<a id="L772"></a><span class="ln">   772</span>		return template.HTMLEscaper(args...)
+<a id="L773"></a><span class="ln">   773</span>	}
+<a id="L774"></a><span class="ln">   774</span>	
+<a id="L775"></a><span class="ln">   775</span>	<span class="comment">// JSEscape writes to w the escaped JavaScript equivalent of the plain text data b.</span>
+<a id="L776"></a><span class="ln">   776</span>	func JSEscape(w io.Writer, b []byte) {
+<a id="L777"></a><span class="ln">   777</span>		template.JSEscape(w, b)
+<a id="L778"></a><span class="ln">   778</span>	}
+<a id="L779"></a><span class="ln">   779</span>	
+<a id="L780"></a><span class="ln">   780</span>	<span class="comment">// JSEscapeString returns the escaped JavaScript equivalent of the plain text data s.</span>
+<a id="L781"></a><span class="ln">   781</span>	func JSEscapeString(s string) string {
+<a id="L782"></a><span class="ln">   782</span>		return template.JSEscapeString(s)
+<a id="L783"></a><span class="ln">   783</span>	}
+<a id="L784"></a><span class="ln">   784</span>	
+<a id="L785"></a><span class="ln">   785</span>	<span class="comment">// JSEscaper returns the escaped JavaScript equivalent of the textual</span>
+<a id="L786"></a><span class="ln">   786</span>	<span class="comment">// representation of its arguments.</span>
+<a id="L787"></a><span class="ln">   787</span>	func JSEscaper(args ...interface{}) string {
+<a id="L788"></a><span class="ln">   788</span>		return template.JSEscaper(args...)
+<a id="L789"></a><span class="ln">   789</span>	}
+<a id="L790"></a><span class="ln">   790</span>	
+<a id="L791"></a><span class="ln">   791</span>	<span class="comment">// URLQueryEscaper returns the escaped value of the textual representation of</span>
+<a id="L792"></a><span class="ln">   792</span>	<span class="comment">// its arguments in a form suitable for embedding in a URL query.</span>
+<a id="L793"></a><span class="ln">   793</span>	func URLQueryEscaper(args ...interface{}) string {
+<a id="L794"></a><span class="ln">   794</span>		return template.URLQueryEscaper(args...)
+<a id="L795"></a><span class="ln">   795</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

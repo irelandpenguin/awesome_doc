@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/debug/gosym/symtab.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/debug/gosym/symtab.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package gosym implements access to the Go symbol</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// and line number tables embedded in Go binaries generated</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// by the gc compilers.</span>
+<a id="L8"></a><span class="ln">     8</span>	package gosym
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// The table format is a variant of the format used in Plan 9&#39;s a.out</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// format, documented at http://plan9.bell-labs.com/magic/man2html/6/a.out.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// The best reference for the differences between the Plan 9 format</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// and the Go format is the runtime source, specifically ../../runtime/symtab.c.</span>
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	import (
+<a id="L16"></a><span class="ln">    16</span>		&#34;encoding/binary&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;fmt&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;strconv&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;strings&#34;
+<a id="L20"></a><span class="ln">    20</span>	)
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">/*
+</span><a id="L23"></a><span class="ln">    23</span>	<span class="comment"> * Symbols
+</span><a id="L24"></a><span class="ln">    24</span>	<span class="comment"> */</span>
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// A Sym represents a single symbol table entry.</span>
+<a id="L27"></a><span class="ln">    27</span>	type Sym struct {
+<a id="L28"></a><span class="ln">    28</span>		Value  uint64
+<a id="L29"></a><span class="ln">    29</span>		Type   byte
+<a id="L30"></a><span class="ln">    30</span>		Name   string
+<a id="L31"></a><span class="ln">    31</span>		GoType uint64
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// If this symbol if a function symbol, the corresponding Func</span>
+<a id="L33"></a><span class="ln">    33</span>		Func *Func
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// Static returns whether this symbol is static (not visible outside its file).</span>
+<a id="L37"></a><span class="ln">    37</span>	func (s *Sym) Static() bool { return s.Type &gt;= &#39;a&#39; }
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// PackageName returns the package part of the symbol name,</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// or the empty string if there is none.</span>
+<a id="L41"></a><span class="ln">    41</span>	func (s *Sym) PackageName() string {
+<a id="L42"></a><span class="ln">    42</span>		if i := strings.Index(s.Name, &#34;.&#34;); i != -1 {
+<a id="L43"></a><span class="ln">    43</span>			return s.Name[0:i]
+<a id="L44"></a><span class="ln">    44</span>		}
+<a id="L45"></a><span class="ln">    45</span>		return &#34;&#34;
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// ReceiverName returns the receiver type name of this symbol,</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// or the empty string if there is none.</span>
+<a id="L50"></a><span class="ln">    50</span>	func (s *Sym) ReceiverName() string {
+<a id="L51"></a><span class="ln">    51</span>		l := strings.Index(s.Name, &#34;.&#34;)
+<a id="L52"></a><span class="ln">    52</span>		r := strings.LastIndex(s.Name, &#34;.&#34;)
+<a id="L53"></a><span class="ln">    53</span>		if l == -1 || r == -1 || l == r {
+<a id="L54"></a><span class="ln">    54</span>			return &#34;&#34;
+<a id="L55"></a><span class="ln">    55</span>		}
+<a id="L56"></a><span class="ln">    56</span>		return s.Name[l+1 : r]
+<a id="L57"></a><span class="ln">    57</span>	}
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// BaseName returns the symbol name without the package or receiver name.</span>
+<a id="L60"></a><span class="ln">    60</span>	func (s *Sym) BaseName() string {
+<a id="L61"></a><span class="ln">    61</span>		if i := strings.LastIndex(s.Name, &#34;.&#34;); i != -1 {
+<a id="L62"></a><span class="ln">    62</span>			return s.Name[i+1:]
+<a id="L63"></a><span class="ln">    63</span>		}
+<a id="L64"></a><span class="ln">    64</span>		return s.Name
+<a id="L65"></a><span class="ln">    65</span>	}
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// A Func collects information about a single function.</span>
+<a id="L68"></a><span class="ln">    68</span>	type Func struct {
+<a id="L69"></a><span class="ln">    69</span>		Entry uint64
+<a id="L70"></a><span class="ln">    70</span>		*Sym
+<a id="L71"></a><span class="ln">    71</span>		End       uint64
+<a id="L72"></a><span class="ln">    72</span>		Params    []*Sym
+<a id="L73"></a><span class="ln">    73</span>		Locals    []*Sym
+<a id="L74"></a><span class="ln">    74</span>		FrameSize int
+<a id="L75"></a><span class="ln">    75</span>		LineTable *LineTable
+<a id="L76"></a><span class="ln">    76</span>		Obj       *Obj
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// An Obj represents a single object file.</span>
+<a id="L80"></a><span class="ln">    80</span>	type Obj struct {
+<a id="L81"></a><span class="ln">    81</span>		Funcs []Func
+<a id="L82"></a><span class="ln">    82</span>		Paths []Sym
+<a id="L83"></a><span class="ln">    83</span>	}
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">/*
+</span><a id="L86"></a><span class="ln">    86</span>	<span class="comment"> * Symbol tables
+</span><a id="L87"></a><span class="ln">    87</span>	<span class="comment"> */</span>
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// Table represents a Go symbol table.  It stores all of the</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// symbols decoded from the program and provides methods to translate</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// between symbols, names, and addresses.</span>
+<a id="L92"></a><span class="ln">    92</span>	type Table struct {
+<a id="L93"></a><span class="ln">    93</span>		Syms  []Sym
+<a id="L94"></a><span class="ln">    94</span>		Funcs []Func
+<a id="L95"></a><span class="ln">    95</span>		Files map[string]*Obj
+<a id="L96"></a><span class="ln">    96</span>		Objs  []Obj
+<a id="L97"></a><span class="ln">    97</span>		<span class="comment">//	textEnd uint64;</span>
+<a id="L98"></a><span class="ln">    98</span>	}
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>	type sym struct {
+<a id="L101"></a><span class="ln">   101</span>		value  uint32
+<a id="L102"></a><span class="ln">   102</span>		gotype uint32
+<a id="L103"></a><span class="ln">   103</span>		typ    byte
+<a id="L104"></a><span class="ln">   104</span>		name   []byte
+<a id="L105"></a><span class="ln">   105</span>	}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	func walksymtab(data []byte, fn func(sym) error) error {
+<a id="L108"></a><span class="ln">   108</span>		var s sym
+<a id="L109"></a><span class="ln">   109</span>		p := data
+<a id="L110"></a><span class="ln">   110</span>		for len(p) &gt;= 6 {
+<a id="L111"></a><span class="ln">   111</span>			s.value = binary.BigEndian.Uint32(p[0:4])
+<a id="L112"></a><span class="ln">   112</span>			typ := p[4]
+<a id="L113"></a><span class="ln">   113</span>			if typ&amp;0x80 == 0 {
+<a id="L114"></a><span class="ln">   114</span>				return &amp;DecodingError{len(data) - len(p) + 4, &#34;bad symbol type&#34;, typ}
+<a id="L115"></a><span class="ln">   115</span>			}
+<a id="L116"></a><span class="ln">   116</span>			typ &amp;^= 0x80
+<a id="L117"></a><span class="ln">   117</span>			s.typ = typ
+<a id="L118"></a><span class="ln">   118</span>			p = p[5:]
+<a id="L119"></a><span class="ln">   119</span>			var i int
+<a id="L120"></a><span class="ln">   120</span>			var nnul int
+<a id="L121"></a><span class="ln">   121</span>			for i = 0; i &lt; len(p); i++ {
+<a id="L122"></a><span class="ln">   122</span>				if p[i] == 0 {
+<a id="L123"></a><span class="ln">   123</span>					nnul = 1
+<a id="L124"></a><span class="ln">   124</span>					break
+<a id="L125"></a><span class="ln">   125</span>				}
+<a id="L126"></a><span class="ln">   126</span>			}
+<a id="L127"></a><span class="ln">   127</span>			switch typ {
+<a id="L128"></a><span class="ln">   128</span>			case &#39;z&#39;, &#39;Z&#39;:
+<a id="L129"></a><span class="ln">   129</span>				p = p[i+nnul:]
+<a id="L130"></a><span class="ln">   130</span>				for i = 0; i+2 &lt;= len(p); i += 2 {
+<a id="L131"></a><span class="ln">   131</span>					if p[i] == 0 &amp;&amp; p[i+1] == 0 {
+<a id="L132"></a><span class="ln">   132</span>						nnul = 2
+<a id="L133"></a><span class="ln">   133</span>						break
+<a id="L134"></a><span class="ln">   134</span>					}
+<a id="L135"></a><span class="ln">   135</span>				}
+<a id="L136"></a><span class="ln">   136</span>			}
+<a id="L137"></a><span class="ln">   137</span>			if i+nnul+4 &gt; len(p) {
+<a id="L138"></a><span class="ln">   138</span>				return &amp;DecodingError{len(data), &#34;unexpected EOF&#34;, nil}
+<a id="L139"></a><span class="ln">   139</span>			}
+<a id="L140"></a><span class="ln">   140</span>			s.name = p[0:i]
+<a id="L141"></a><span class="ln">   141</span>			i += nnul
+<a id="L142"></a><span class="ln">   142</span>			s.gotype = binary.BigEndian.Uint32(p[i : i+4])
+<a id="L143"></a><span class="ln">   143</span>			p = p[i+4:]
+<a id="L144"></a><span class="ln">   144</span>			fn(s)
+<a id="L145"></a><span class="ln">   145</span>		}
+<a id="L146"></a><span class="ln">   146</span>		return nil
+<a id="L147"></a><span class="ln">   147</span>	}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// NewTable decodes the Go symbol table in data,</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// returning an in-memory representation.</span>
+<a id="L151"></a><span class="ln">   151</span>	func NewTable(symtab []byte, pcln *LineTable) (*Table, error) {
+<a id="L152"></a><span class="ln">   152</span>		var n int
+<a id="L153"></a><span class="ln">   153</span>		err := walksymtab(symtab, func(s sym) error {
+<a id="L154"></a><span class="ln">   154</span>			n++
+<a id="L155"></a><span class="ln">   155</span>			return nil
+<a id="L156"></a><span class="ln">   156</span>		})
+<a id="L157"></a><span class="ln">   157</span>		if err != nil {
+<a id="L158"></a><span class="ln">   158</span>			return nil, err
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		var t Table
+<a id="L162"></a><span class="ln">   162</span>		fname := make(map[uint16]string)
+<a id="L163"></a><span class="ln">   163</span>		t.Syms = make([]Sym, 0, n)
+<a id="L164"></a><span class="ln">   164</span>		nf := 0
+<a id="L165"></a><span class="ln">   165</span>		nz := 0
+<a id="L166"></a><span class="ln">   166</span>		lasttyp := uint8(0)
+<a id="L167"></a><span class="ln">   167</span>		err = walksymtab(symtab, func(s sym) error {
+<a id="L168"></a><span class="ln">   168</span>			n := len(t.Syms)
+<a id="L169"></a><span class="ln">   169</span>			t.Syms = t.Syms[0 : n+1]
+<a id="L170"></a><span class="ln">   170</span>			ts := &amp;t.Syms[n]
+<a id="L171"></a><span class="ln">   171</span>			ts.Type = s.typ
+<a id="L172"></a><span class="ln">   172</span>			ts.Value = uint64(s.value)
+<a id="L173"></a><span class="ln">   173</span>			ts.GoType = uint64(s.gotype)
+<a id="L174"></a><span class="ln">   174</span>			switch s.typ {
+<a id="L175"></a><span class="ln">   175</span>			default:
+<a id="L176"></a><span class="ln">   176</span>				<span class="comment">// rewrite name to use . instead of · (c2 b7)</span>
+<a id="L177"></a><span class="ln">   177</span>				w := 0
+<a id="L178"></a><span class="ln">   178</span>				b := s.name
+<a id="L179"></a><span class="ln">   179</span>				for i := 0; i &lt; len(b); i++ {
+<a id="L180"></a><span class="ln">   180</span>					if b[i] == 0xc2 &amp;&amp; i+1 &lt; len(b) &amp;&amp; b[i+1] == 0xb7 {
+<a id="L181"></a><span class="ln">   181</span>						i++
+<a id="L182"></a><span class="ln">   182</span>						b[i] = &#39;.&#39;
+<a id="L183"></a><span class="ln">   183</span>					}
+<a id="L184"></a><span class="ln">   184</span>					b[w] = b[i]
+<a id="L185"></a><span class="ln">   185</span>					w++
+<a id="L186"></a><span class="ln">   186</span>				}
+<a id="L187"></a><span class="ln">   187</span>				ts.Name = string(s.name[0:w])
+<a id="L188"></a><span class="ln">   188</span>			case &#39;z&#39;, &#39;Z&#39;:
+<a id="L189"></a><span class="ln">   189</span>				if lasttyp != &#39;z&#39; &amp;&amp; lasttyp != &#39;Z&#39; {
+<a id="L190"></a><span class="ln">   190</span>					nz++
+<a id="L191"></a><span class="ln">   191</span>				}
+<a id="L192"></a><span class="ln">   192</span>				for i := 0; i &lt; len(s.name); i += 2 {
+<a id="L193"></a><span class="ln">   193</span>					eltIdx := binary.BigEndian.Uint16(s.name[i : i+2])
+<a id="L194"></a><span class="ln">   194</span>					elt, ok := fname[eltIdx]
+<a id="L195"></a><span class="ln">   195</span>					if !ok {
+<a id="L196"></a><span class="ln">   196</span>						return &amp;DecodingError{-1, &#34;bad filename code&#34;, eltIdx}
+<a id="L197"></a><span class="ln">   197</span>					}
+<a id="L198"></a><span class="ln">   198</span>					if n := len(ts.Name); n &gt; 0 &amp;&amp; ts.Name[n-1] != &#39;/&#39; {
+<a id="L199"></a><span class="ln">   199</span>						ts.Name += &#34;/&#34;
+<a id="L200"></a><span class="ln">   200</span>					}
+<a id="L201"></a><span class="ln">   201</span>					ts.Name += elt
+<a id="L202"></a><span class="ln">   202</span>				}
+<a id="L203"></a><span class="ln">   203</span>			}
+<a id="L204"></a><span class="ln">   204</span>			switch s.typ {
+<a id="L205"></a><span class="ln">   205</span>			case &#39;T&#39;, &#39;t&#39;, &#39;L&#39;, &#39;l&#39;:
+<a id="L206"></a><span class="ln">   206</span>				nf++
+<a id="L207"></a><span class="ln">   207</span>			case &#39;f&#39;:
+<a id="L208"></a><span class="ln">   208</span>				fname[uint16(s.value)] = ts.Name
+<a id="L209"></a><span class="ln">   209</span>			}
+<a id="L210"></a><span class="ln">   210</span>			lasttyp = s.typ
+<a id="L211"></a><span class="ln">   211</span>			return nil
+<a id="L212"></a><span class="ln">   212</span>		})
+<a id="L213"></a><span class="ln">   213</span>		if err != nil {
+<a id="L214"></a><span class="ln">   214</span>			return nil, err
+<a id="L215"></a><span class="ln">   215</span>		}
+<a id="L216"></a><span class="ln">   216</span>	
+<a id="L217"></a><span class="ln">   217</span>		t.Funcs = make([]Func, 0, nf)
+<a id="L218"></a><span class="ln">   218</span>		t.Objs = make([]Obj, 0, nz)
+<a id="L219"></a><span class="ln">   219</span>		t.Files = make(map[string]*Obj)
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>		<span class="comment">// Count text symbols and attach frame sizes, parameters, and</span>
+<a id="L222"></a><span class="ln">   222</span>		<span class="comment">// locals to them.  Also, find object file boundaries.</span>
+<a id="L223"></a><span class="ln">   223</span>		var obj *Obj
+<a id="L224"></a><span class="ln">   224</span>		lastf := 0
+<a id="L225"></a><span class="ln">   225</span>		for i := 0; i &lt; len(t.Syms); i++ {
+<a id="L226"></a><span class="ln">   226</span>			sym := &amp;t.Syms[i]
+<a id="L227"></a><span class="ln">   227</span>			switch sym.Type {
+<a id="L228"></a><span class="ln">   228</span>			case &#39;Z&#39;, &#39;z&#39;: <span class="comment">// path symbol</span>
+<a id="L229"></a><span class="ln">   229</span>				<span class="comment">// Finish the current object</span>
+<a id="L230"></a><span class="ln">   230</span>				if obj != nil {
+<a id="L231"></a><span class="ln">   231</span>					obj.Funcs = t.Funcs[lastf:]
+<a id="L232"></a><span class="ln">   232</span>				}
+<a id="L233"></a><span class="ln">   233</span>				lastf = len(t.Funcs)
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>				<span class="comment">// Start new object</span>
+<a id="L236"></a><span class="ln">   236</span>				n := len(t.Objs)
+<a id="L237"></a><span class="ln">   237</span>				t.Objs = t.Objs[0 : n+1]
+<a id="L238"></a><span class="ln">   238</span>				obj = &amp;t.Objs[n]
+<a id="L239"></a><span class="ln">   239</span>	
+<a id="L240"></a><span class="ln">   240</span>				<span class="comment">// Count &amp; copy path symbols</span>
+<a id="L241"></a><span class="ln">   241</span>				var end int
+<a id="L242"></a><span class="ln">   242</span>				for end = i + 1; end &lt; len(t.Syms); end++ {
+<a id="L243"></a><span class="ln">   243</span>					if c := t.Syms[end].Type; c != &#39;Z&#39; &amp;&amp; c != &#39;z&#39; {
+<a id="L244"></a><span class="ln">   244</span>						break
+<a id="L245"></a><span class="ln">   245</span>					}
+<a id="L246"></a><span class="ln">   246</span>				}
+<a id="L247"></a><span class="ln">   247</span>				obj.Paths = t.Syms[i:end]
+<a id="L248"></a><span class="ln">   248</span>				i = end - 1 <span class="comment">// loop will i++</span>
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>				<span class="comment">// Record file names</span>
+<a id="L251"></a><span class="ln">   251</span>				depth := 0
+<a id="L252"></a><span class="ln">   252</span>				for j := range obj.Paths {
+<a id="L253"></a><span class="ln">   253</span>					s := &amp;obj.Paths[j]
+<a id="L254"></a><span class="ln">   254</span>					if s.Name == &#34;&#34; {
+<a id="L255"></a><span class="ln">   255</span>						depth--
+<a id="L256"></a><span class="ln">   256</span>					} else {
+<a id="L257"></a><span class="ln">   257</span>						if depth == 0 {
+<a id="L258"></a><span class="ln">   258</span>							t.Files[s.Name] = obj
+<a id="L259"></a><span class="ln">   259</span>						}
+<a id="L260"></a><span class="ln">   260</span>						depth++
+<a id="L261"></a><span class="ln">   261</span>					}
+<a id="L262"></a><span class="ln">   262</span>				}
+<a id="L263"></a><span class="ln">   263</span>	
+<a id="L264"></a><span class="ln">   264</span>			case &#39;T&#39;, &#39;t&#39;, &#39;L&#39;, &#39;l&#39;: <span class="comment">// text symbol</span>
+<a id="L265"></a><span class="ln">   265</span>				if n := len(t.Funcs); n &gt; 0 {
+<a id="L266"></a><span class="ln">   266</span>					t.Funcs[n-1].End = sym.Value
+<a id="L267"></a><span class="ln">   267</span>				}
+<a id="L268"></a><span class="ln">   268</span>				if sym.Name == &#34;etext&#34; {
+<a id="L269"></a><span class="ln">   269</span>					continue
+<a id="L270"></a><span class="ln">   270</span>				}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>				<span class="comment">// Count parameter and local (auto) syms</span>
+<a id="L273"></a><span class="ln">   273</span>				var np, na int
+<a id="L274"></a><span class="ln">   274</span>				var end int
+<a id="L275"></a><span class="ln">   275</span>			countloop:
+<a id="L276"></a><span class="ln">   276</span>				for end = i + 1; end &lt; len(t.Syms); end++ {
+<a id="L277"></a><span class="ln">   277</span>					switch t.Syms[end].Type {
+<a id="L278"></a><span class="ln">   278</span>					case &#39;T&#39;, &#39;t&#39;, &#39;L&#39;, &#39;l&#39;, &#39;Z&#39;, &#39;z&#39;:
+<a id="L279"></a><span class="ln">   279</span>						break countloop
+<a id="L280"></a><span class="ln">   280</span>					case &#39;p&#39;:
+<a id="L281"></a><span class="ln">   281</span>						np++
+<a id="L282"></a><span class="ln">   282</span>					case &#39;a&#39;:
+<a id="L283"></a><span class="ln">   283</span>						na++
+<a id="L284"></a><span class="ln">   284</span>					}
+<a id="L285"></a><span class="ln">   285</span>				}
+<a id="L286"></a><span class="ln">   286</span>	
+<a id="L287"></a><span class="ln">   287</span>				<span class="comment">// Fill in the function symbol</span>
+<a id="L288"></a><span class="ln">   288</span>				n := len(t.Funcs)
+<a id="L289"></a><span class="ln">   289</span>				t.Funcs = t.Funcs[0 : n+1]
+<a id="L290"></a><span class="ln">   290</span>				fn := &amp;t.Funcs[n]
+<a id="L291"></a><span class="ln">   291</span>				sym.Func = fn
+<a id="L292"></a><span class="ln">   292</span>				fn.Params = make([]*Sym, 0, np)
+<a id="L293"></a><span class="ln">   293</span>				fn.Locals = make([]*Sym, 0, na)
+<a id="L294"></a><span class="ln">   294</span>				fn.Sym = sym
+<a id="L295"></a><span class="ln">   295</span>				fn.Entry = sym.Value
+<a id="L296"></a><span class="ln">   296</span>				fn.Obj = obj
+<a id="L297"></a><span class="ln">   297</span>				if pcln != nil {
+<a id="L298"></a><span class="ln">   298</span>					fn.LineTable = pcln.slice(fn.Entry)
+<a id="L299"></a><span class="ln">   299</span>					pcln = fn.LineTable
+<a id="L300"></a><span class="ln">   300</span>				}
+<a id="L301"></a><span class="ln">   301</span>				for j := i; j &lt; end; j++ {
+<a id="L302"></a><span class="ln">   302</span>					s := &amp;t.Syms[j]
+<a id="L303"></a><span class="ln">   303</span>					switch s.Type {
+<a id="L304"></a><span class="ln">   304</span>					case &#39;m&#39;:
+<a id="L305"></a><span class="ln">   305</span>						fn.FrameSize = int(s.Value)
+<a id="L306"></a><span class="ln">   306</span>					case &#39;p&#39;:
+<a id="L307"></a><span class="ln">   307</span>						n := len(fn.Params)
+<a id="L308"></a><span class="ln">   308</span>						fn.Params = fn.Params[0 : n+1]
+<a id="L309"></a><span class="ln">   309</span>						fn.Params[n] = s
+<a id="L310"></a><span class="ln">   310</span>					case &#39;a&#39;:
+<a id="L311"></a><span class="ln">   311</span>						n := len(fn.Locals)
+<a id="L312"></a><span class="ln">   312</span>						fn.Locals = fn.Locals[0 : n+1]
+<a id="L313"></a><span class="ln">   313</span>						fn.Locals[n] = s
+<a id="L314"></a><span class="ln">   314</span>					}
+<a id="L315"></a><span class="ln">   315</span>				}
+<a id="L316"></a><span class="ln">   316</span>				i = end - 1 <span class="comment">// loop will i++</span>
+<a id="L317"></a><span class="ln">   317</span>			}
+<a id="L318"></a><span class="ln">   318</span>		}
+<a id="L319"></a><span class="ln">   319</span>		if obj != nil {
+<a id="L320"></a><span class="ln">   320</span>			obj.Funcs = t.Funcs[lastf:]
+<a id="L321"></a><span class="ln">   321</span>		}
+<a id="L322"></a><span class="ln">   322</span>		return &amp;t, nil
+<a id="L323"></a><span class="ln">   323</span>	}
+<a id="L324"></a><span class="ln">   324</span>	
+<a id="L325"></a><span class="ln">   325</span>	<span class="comment">// PCToFunc returns the function containing the program counter pc,</span>
+<a id="L326"></a><span class="ln">   326</span>	<span class="comment">// or nil if there is no such function.</span>
+<a id="L327"></a><span class="ln">   327</span>	func (t *Table) PCToFunc(pc uint64) *Func {
+<a id="L328"></a><span class="ln">   328</span>		funcs := t.Funcs
+<a id="L329"></a><span class="ln">   329</span>		for len(funcs) &gt; 0 {
+<a id="L330"></a><span class="ln">   330</span>			m := len(funcs) / 2
+<a id="L331"></a><span class="ln">   331</span>			fn := &amp;funcs[m]
+<a id="L332"></a><span class="ln">   332</span>			switch {
+<a id="L333"></a><span class="ln">   333</span>			case pc &lt; fn.Entry:
+<a id="L334"></a><span class="ln">   334</span>				funcs = funcs[0:m]
+<a id="L335"></a><span class="ln">   335</span>			case fn.Entry &lt;= pc &amp;&amp; pc &lt; fn.End:
+<a id="L336"></a><span class="ln">   336</span>				return fn
+<a id="L337"></a><span class="ln">   337</span>			default:
+<a id="L338"></a><span class="ln">   338</span>				funcs = funcs[m+1:]
+<a id="L339"></a><span class="ln">   339</span>			}
+<a id="L340"></a><span class="ln">   340</span>		}
+<a id="L341"></a><span class="ln">   341</span>		return nil
+<a id="L342"></a><span class="ln">   342</span>	}
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// PCToLine looks up line number information for a program counter.</span>
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// If there is no information, it returns fn == nil.</span>
+<a id="L346"></a><span class="ln">   346</span>	func (t *Table) PCToLine(pc uint64) (file string, line int, fn *Func) {
+<a id="L347"></a><span class="ln">   347</span>		if fn = t.PCToFunc(pc); fn == nil {
+<a id="L348"></a><span class="ln">   348</span>			return
+<a id="L349"></a><span class="ln">   349</span>		}
+<a id="L350"></a><span class="ln">   350</span>		file, line = fn.Obj.lineFromAline(fn.LineTable.PCToLine(pc))
+<a id="L351"></a><span class="ln">   351</span>		return
+<a id="L352"></a><span class="ln">   352</span>	}
+<a id="L353"></a><span class="ln">   353</span>	
+<a id="L354"></a><span class="ln">   354</span>	<span class="comment">// LineToPC looks up the first program counter on the given line in</span>
+<a id="L355"></a><span class="ln">   355</span>	<span class="comment">// the named file.  Returns UnknownPathError or UnknownLineError if</span>
+<a id="L356"></a><span class="ln">   356</span>	<span class="comment">// there is an error looking up this line.</span>
+<a id="L357"></a><span class="ln">   357</span>	func (t *Table) LineToPC(file string, line int) (pc uint64, fn *Func, err error) {
+<a id="L358"></a><span class="ln">   358</span>		obj, ok := t.Files[file]
+<a id="L359"></a><span class="ln">   359</span>		if !ok {
+<a id="L360"></a><span class="ln">   360</span>			return 0, nil, UnknownFileError(file)
+<a id="L361"></a><span class="ln">   361</span>		}
+<a id="L362"></a><span class="ln">   362</span>		abs, err := obj.alineFromLine(file, line)
+<a id="L363"></a><span class="ln">   363</span>		if err != nil {
+<a id="L364"></a><span class="ln">   364</span>			return
+<a id="L365"></a><span class="ln">   365</span>		}
+<a id="L366"></a><span class="ln">   366</span>		for i := range obj.Funcs {
+<a id="L367"></a><span class="ln">   367</span>			f := &amp;obj.Funcs[i]
+<a id="L368"></a><span class="ln">   368</span>			pc := f.LineTable.LineToPC(abs, f.End)
+<a id="L369"></a><span class="ln">   369</span>			if pc != 0 {
+<a id="L370"></a><span class="ln">   370</span>				return pc, f, nil
+<a id="L371"></a><span class="ln">   371</span>			}
+<a id="L372"></a><span class="ln">   372</span>		}
+<a id="L373"></a><span class="ln">   373</span>		return 0, nil, &amp;UnknownLineError{file, line}
+<a id="L374"></a><span class="ln">   374</span>	}
+<a id="L375"></a><span class="ln">   375</span>	
+<a id="L376"></a><span class="ln">   376</span>	<span class="comment">// LookupSym returns the text, data, or bss symbol with the given name,</span>
+<a id="L377"></a><span class="ln">   377</span>	<span class="comment">// or nil if no such symbol is found.</span>
+<a id="L378"></a><span class="ln">   378</span>	func (t *Table) LookupSym(name string) *Sym {
+<a id="L379"></a><span class="ln">   379</span>		<span class="comment">// TODO(austin) Maybe make a map</span>
+<a id="L380"></a><span class="ln">   380</span>		for i := range t.Syms {
+<a id="L381"></a><span class="ln">   381</span>			s := &amp;t.Syms[i]
+<a id="L382"></a><span class="ln">   382</span>			switch s.Type {
+<a id="L383"></a><span class="ln">   383</span>			case &#39;T&#39;, &#39;t&#39;, &#39;L&#39;, &#39;l&#39;, &#39;D&#39;, &#39;d&#39;, &#39;B&#39;, &#39;b&#39;:
+<a id="L384"></a><span class="ln">   384</span>				if s.Name == name {
+<a id="L385"></a><span class="ln">   385</span>					return s
+<a id="L386"></a><span class="ln">   386</span>				}
+<a id="L387"></a><span class="ln">   387</span>			}
+<a id="L388"></a><span class="ln">   388</span>		}
+<a id="L389"></a><span class="ln">   389</span>		return nil
+<a id="L390"></a><span class="ln">   390</span>	}
+<a id="L391"></a><span class="ln">   391</span>	
+<a id="L392"></a><span class="ln">   392</span>	<span class="comment">// LookupFunc returns the text, data, or bss symbol with the given name,</span>
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// or nil if no such symbol is found.</span>
+<a id="L394"></a><span class="ln">   394</span>	func (t *Table) LookupFunc(name string) *Func {
+<a id="L395"></a><span class="ln">   395</span>		for i := range t.Funcs {
+<a id="L396"></a><span class="ln">   396</span>			f := &amp;t.Funcs[i]
+<a id="L397"></a><span class="ln">   397</span>			if f.Sym.Name == name {
+<a id="L398"></a><span class="ln">   398</span>				return f
+<a id="L399"></a><span class="ln">   399</span>			}
+<a id="L400"></a><span class="ln">   400</span>		}
+<a id="L401"></a><span class="ln">   401</span>		return nil
+<a id="L402"></a><span class="ln">   402</span>	}
+<a id="L403"></a><span class="ln">   403</span>	
+<a id="L404"></a><span class="ln">   404</span>	<span class="comment">// SymByAddr returns the text, data, or bss symbol starting at the given address.</span>
+<a id="L405"></a><span class="ln">   405</span>	<span class="comment">// TODO(rsc): Allow lookup by any address within the symbol.</span>
+<a id="L406"></a><span class="ln">   406</span>	func (t *Table) SymByAddr(addr uint64) *Sym {
+<a id="L407"></a><span class="ln">   407</span>		<span class="comment">// TODO(austin) Maybe make a map</span>
+<a id="L408"></a><span class="ln">   408</span>		for i := range t.Syms {
+<a id="L409"></a><span class="ln">   409</span>			s := &amp;t.Syms[i]
+<a id="L410"></a><span class="ln">   410</span>			switch s.Type {
+<a id="L411"></a><span class="ln">   411</span>			case &#39;T&#39;, &#39;t&#39;, &#39;L&#39;, &#39;l&#39;, &#39;D&#39;, &#39;d&#39;, &#39;B&#39;, &#39;b&#39;:
+<a id="L412"></a><span class="ln">   412</span>				if s.Value == addr {
+<a id="L413"></a><span class="ln">   413</span>					return s
+<a id="L414"></a><span class="ln">   414</span>				}
+<a id="L415"></a><span class="ln">   415</span>			}
+<a id="L416"></a><span class="ln">   416</span>		}
+<a id="L417"></a><span class="ln">   417</span>		return nil
+<a id="L418"></a><span class="ln">   418</span>	}
+<a id="L419"></a><span class="ln">   419</span>	
+<a id="L420"></a><span class="ln">   420</span>	<span class="comment">/*
+</span><a id="L421"></a><span class="ln">   421</span>	<span class="comment"> * Object files
+</span><a id="L422"></a><span class="ln">   422</span>	<span class="comment"> */</span>
+<a id="L423"></a><span class="ln">   423</span>	
+<a id="L424"></a><span class="ln">   424</span>	func (o *Obj) lineFromAline(aline int) (string, int) {
+<a id="L425"></a><span class="ln">   425</span>		type stackEnt struct {
+<a id="L426"></a><span class="ln">   426</span>			path   string
+<a id="L427"></a><span class="ln">   427</span>			start  int
+<a id="L428"></a><span class="ln">   428</span>			offset int
+<a id="L429"></a><span class="ln">   429</span>			prev   *stackEnt
+<a id="L430"></a><span class="ln">   430</span>		}
+<a id="L431"></a><span class="ln">   431</span>	
+<a id="L432"></a><span class="ln">   432</span>		noPath := &amp;stackEnt{&#34;&#34;, 0, 0, nil}
+<a id="L433"></a><span class="ln">   433</span>		tos := noPath
+<a id="L434"></a><span class="ln">   434</span>	
+<a id="L435"></a><span class="ln">   435</span>		<span class="comment">// TODO(austin) I have no idea how &#39;Z&#39; symbols work, except</span>
+<a id="L436"></a><span class="ln">   436</span>		<span class="comment">// that they pop the stack.</span>
+<a id="L437"></a><span class="ln">   437</span>	pathloop:
+<a id="L438"></a><span class="ln">   438</span>		for _, s := range o.Paths {
+<a id="L439"></a><span class="ln">   439</span>			val := int(s.Value)
+<a id="L440"></a><span class="ln">   440</span>			switch {
+<a id="L441"></a><span class="ln">   441</span>			case val &gt; aline:
+<a id="L442"></a><span class="ln">   442</span>				break pathloop
+<a id="L443"></a><span class="ln">   443</span>	
+<a id="L444"></a><span class="ln">   444</span>			case val == 1:
+<a id="L445"></a><span class="ln">   445</span>				<span class="comment">// Start a new stack</span>
+<a id="L446"></a><span class="ln">   446</span>				tos = &amp;stackEnt{s.Name, val, 0, noPath}
+<a id="L447"></a><span class="ln">   447</span>	
+<a id="L448"></a><span class="ln">   448</span>			case s.Name == &#34;&#34;:
+<a id="L449"></a><span class="ln">   449</span>				<span class="comment">// Pop</span>
+<a id="L450"></a><span class="ln">   450</span>				if tos == noPath {
+<a id="L451"></a><span class="ln">   451</span>					return &#34;&lt;malformed symbol table&gt;&#34;, 0
+<a id="L452"></a><span class="ln">   452</span>				}
+<a id="L453"></a><span class="ln">   453</span>				tos.prev.offset += val - tos.start
+<a id="L454"></a><span class="ln">   454</span>				tos = tos.prev
+<a id="L455"></a><span class="ln">   455</span>	
+<a id="L456"></a><span class="ln">   456</span>			default:
+<a id="L457"></a><span class="ln">   457</span>				<span class="comment">// Push</span>
+<a id="L458"></a><span class="ln">   458</span>				tos = &amp;stackEnt{s.Name, val, 0, tos}
+<a id="L459"></a><span class="ln">   459</span>			}
+<a id="L460"></a><span class="ln">   460</span>		}
+<a id="L461"></a><span class="ln">   461</span>	
+<a id="L462"></a><span class="ln">   462</span>		if tos == noPath {
+<a id="L463"></a><span class="ln">   463</span>			return &#34;&#34;, 0
+<a id="L464"></a><span class="ln">   464</span>		}
+<a id="L465"></a><span class="ln">   465</span>		return tos.path, aline - tos.start - tos.offset + 1
+<a id="L466"></a><span class="ln">   466</span>	}
+<a id="L467"></a><span class="ln">   467</span>	
+<a id="L468"></a><span class="ln">   468</span>	func (o *Obj) alineFromLine(path string, line int) (int, error) {
+<a id="L469"></a><span class="ln">   469</span>		if line &lt; 1 {
+<a id="L470"></a><span class="ln">   470</span>			return 0, &amp;UnknownLineError{path, line}
+<a id="L471"></a><span class="ln">   471</span>		}
+<a id="L472"></a><span class="ln">   472</span>	
+<a id="L473"></a><span class="ln">   473</span>		for i, s := range o.Paths {
+<a id="L474"></a><span class="ln">   474</span>			<span class="comment">// Find this path</span>
+<a id="L475"></a><span class="ln">   475</span>			if s.Name != path {
+<a id="L476"></a><span class="ln">   476</span>				continue
+<a id="L477"></a><span class="ln">   477</span>			}
+<a id="L478"></a><span class="ln">   478</span>	
+<a id="L479"></a><span class="ln">   479</span>			<span class="comment">// Find this line at this stack level</span>
+<a id="L480"></a><span class="ln">   480</span>			depth := 0
+<a id="L481"></a><span class="ln">   481</span>			var incstart int
+<a id="L482"></a><span class="ln">   482</span>			line += int(s.Value)
+<a id="L483"></a><span class="ln">   483</span>		pathloop:
+<a id="L484"></a><span class="ln">   484</span>			for _, s := range o.Paths[i:] {
+<a id="L485"></a><span class="ln">   485</span>				val := int(s.Value)
+<a id="L486"></a><span class="ln">   486</span>				switch {
+<a id="L487"></a><span class="ln">   487</span>				case depth == 1 &amp;&amp; val &gt;= line:
+<a id="L488"></a><span class="ln">   488</span>					return line - 1, nil
+<a id="L489"></a><span class="ln">   489</span>	
+<a id="L490"></a><span class="ln">   490</span>				case s.Name == &#34;&#34;:
+<a id="L491"></a><span class="ln">   491</span>					depth--
+<a id="L492"></a><span class="ln">   492</span>					if depth == 0 {
+<a id="L493"></a><span class="ln">   493</span>						break pathloop
+<a id="L494"></a><span class="ln">   494</span>					} else if depth == 1 {
+<a id="L495"></a><span class="ln">   495</span>						line += val - incstart
+<a id="L496"></a><span class="ln">   496</span>					}
+<a id="L497"></a><span class="ln">   497</span>	
+<a id="L498"></a><span class="ln">   498</span>				default:
+<a id="L499"></a><span class="ln">   499</span>					if depth == 1 {
+<a id="L500"></a><span class="ln">   500</span>						incstart = val
+<a id="L501"></a><span class="ln">   501</span>					}
+<a id="L502"></a><span class="ln">   502</span>					depth++
+<a id="L503"></a><span class="ln">   503</span>				}
+<a id="L504"></a><span class="ln">   504</span>			}
+<a id="L505"></a><span class="ln">   505</span>			return 0, &amp;UnknownLineError{path, line}
+<a id="L506"></a><span class="ln">   506</span>		}
+<a id="L507"></a><span class="ln">   507</span>		return 0, UnknownFileError(path)
+<a id="L508"></a><span class="ln">   508</span>	}
+<a id="L509"></a><span class="ln">   509</span>	
+<a id="L510"></a><span class="ln">   510</span>	<span class="comment">/*
+</span><a id="L511"></a><span class="ln">   511</span>	<span class="comment"> * Errors
+</span><a id="L512"></a><span class="ln">   512</span>	<span class="comment"> */</span>
+<a id="L513"></a><span class="ln">   513</span>	
+<a id="L514"></a><span class="ln">   514</span>	<span class="comment">// UnknownFileError represents a failure to find the specific file in</span>
+<a id="L515"></a><span class="ln">   515</span>	<span class="comment">// the symbol table.</span>
+<a id="L516"></a><span class="ln">   516</span>	type UnknownFileError string
+<a id="L517"></a><span class="ln">   517</span>	
+<a id="L518"></a><span class="ln">   518</span>	func (e UnknownFileError) Error() string { return &#34;unknown file: &#34; + string(e) }
+<a id="L519"></a><span class="ln">   519</span>	
+<a id="L520"></a><span class="ln">   520</span>	<span class="comment">// UnknownLineError represents a failure to map a line to a program</span>
+<a id="L521"></a><span class="ln">   521</span>	<span class="comment">// counter, either because the line is beyond the bounds of the file</span>
+<a id="L522"></a><span class="ln">   522</span>	<span class="comment">// or because there is no code on the given line.</span>
+<a id="L523"></a><span class="ln">   523</span>	type UnknownLineError struct {
+<a id="L524"></a><span class="ln">   524</span>		File string
+<a id="L525"></a><span class="ln">   525</span>		Line int
+<a id="L526"></a><span class="ln">   526</span>	}
+<a id="L527"></a><span class="ln">   527</span>	
+<a id="L528"></a><span class="ln">   528</span>	func (e *UnknownLineError) Error() string {
+<a id="L529"></a><span class="ln">   529</span>		return &#34;no code at &#34; + e.File + &#34;:&#34; + strconv.Itoa(e.Line)
+<a id="L530"></a><span class="ln">   530</span>	}
+<a id="L531"></a><span class="ln">   531</span>	
+<a id="L532"></a><span class="ln">   532</span>	<span class="comment">// DecodingError represents an error during the decoding of</span>
+<a id="L533"></a><span class="ln">   533</span>	<span class="comment">// the symbol table.</span>
+<a id="L534"></a><span class="ln">   534</span>	type DecodingError struct {
+<a id="L535"></a><span class="ln">   535</span>		off int
+<a id="L536"></a><span class="ln">   536</span>		msg string
+<a id="L537"></a><span class="ln">   537</span>		val interface{}
+<a id="L538"></a><span class="ln">   538</span>	}
+<a id="L539"></a><span class="ln">   539</span>	
+<a id="L540"></a><span class="ln">   540</span>	func (e *DecodingError) Error() string {
+<a id="L541"></a><span class="ln">   541</span>		msg := e.msg
+<a id="L542"></a><span class="ln">   542</span>		if e.val != nil {
+<a id="L543"></a><span class="ln">   543</span>			msg += fmt.Sprintf(&#34; &#39;%v&#39;&#34;, e.val)
+<a id="L544"></a><span class="ln">   544</span>		}
+<a id="L545"></a><span class="ln">   545</span>		msg += fmt.Sprintf(&#34; at byte %#x&#34;, e.off)
+<a id="L546"></a><span class="ln">   546</span>		return msg
+<a id="L547"></a><span class="ln">   547</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

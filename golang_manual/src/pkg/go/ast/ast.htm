@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/ast/ast.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/ast/ast.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package ast declares the types used to represent syntax trees for Go</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// packages.</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//</span>
+<a id="L8"></a><span class="ln">     8</span>	package ast
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;go/token&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;strings&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;unicode&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;unicode/utf8&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// Interfaces</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// There are 3 main classes of nodes: Expressions and type nodes,</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// statement nodes, and declaration nodes. The node names usually</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// match the corresponding Go spec production names to which they</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// correspond. The node fields correspond to the individual parts</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// of the respective productions.</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// All nodes contain position information marking the beginning of</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// the corresponding source text segment; it is accessible via the</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// Pos accessor method. Nodes may contain additional position info</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// for language constructs where comments may be found between parts</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// of the construct (typically any larger, parenthesized subpart).</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// That position information is needed to properly position comments</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// when printing the construct.</span>
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// All node types implement the Node interface.</span>
+<a id="L35"></a><span class="ln">    35</span>	type Node interface {
+<a id="L36"></a><span class="ln">    36</span>		Pos() token.Pos <span class="comment">// position of first character belonging to the node</span>
+<a id="L37"></a><span class="ln">    37</span>		End() token.Pos <span class="comment">// position of first character immediately after the node</span>
+<a id="L38"></a><span class="ln">    38</span>	}
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// All expression nodes implement the Expr interface.</span>
+<a id="L41"></a><span class="ln">    41</span>	type Expr interface {
+<a id="L42"></a><span class="ln">    42</span>		Node
+<a id="L43"></a><span class="ln">    43</span>		exprNode()
+<a id="L44"></a><span class="ln">    44</span>	}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// All statement nodes implement the Stmt interface.</span>
+<a id="L47"></a><span class="ln">    47</span>	type Stmt interface {
+<a id="L48"></a><span class="ln">    48</span>		Node
+<a id="L49"></a><span class="ln">    49</span>		stmtNode()
+<a id="L50"></a><span class="ln">    50</span>	}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// All declaration nodes implement the Decl interface.</span>
+<a id="L53"></a><span class="ln">    53</span>	type Decl interface {
+<a id="L54"></a><span class="ln">    54</span>		Node
+<a id="L55"></a><span class="ln">    55</span>		declNode()
+<a id="L56"></a><span class="ln">    56</span>	}
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// Comments</span>
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// A Comment node represents a single //-style or /*-style comment.</span>
+<a id="L62"></a><span class="ln">    62</span>	type Comment struct {
+<a id="L63"></a><span class="ln">    63</span>		Slash token.Pos <span class="comment">// position of &#34;/&#34; starting the comment</span>
+<a id="L64"></a><span class="ln">    64</span>		Text  string    <span class="comment">// comment text (excluding &#39;\n&#39; for //-style comments)</span>
+<a id="L65"></a><span class="ln">    65</span>	}
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	func (c *Comment) Pos() token.Pos { return c.Slash }
+<a id="L68"></a><span class="ln">    68</span>	func (c *Comment) End() token.Pos { return token.Pos(int(c.Slash) + len(c.Text)) }
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// A CommentGroup represents a sequence of comments</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// with no other tokens and no empty lines between.</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//</span>
+<a id="L73"></a><span class="ln">    73</span>	type CommentGroup struct {
+<a id="L74"></a><span class="ln">    74</span>		List []*Comment <span class="comment">// len(List) &gt; 0</span>
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	func (g *CommentGroup) Pos() token.Pos { return g.List[0].Pos() }
+<a id="L78"></a><span class="ln">    78</span>	func (g *CommentGroup) End() token.Pos { return g.List[len(g.List)-1].End() }
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	func isWhitespace(ch byte) bool { return ch == &#39; &#39; || ch == &#39;\t&#39; || ch == &#39;\n&#39; || ch == &#39;\r&#39; }
+<a id="L81"></a><span class="ln">    81</span>	
+<a id="L82"></a><span class="ln">    82</span>	func stripTrailingWhitespace(s string) string {
+<a id="L83"></a><span class="ln">    83</span>		i := len(s)
+<a id="L84"></a><span class="ln">    84</span>		for i &gt; 0 &amp;&amp; isWhitespace(s[i-1]) {
+<a id="L85"></a><span class="ln">    85</span>			i--
+<a id="L86"></a><span class="ln">    86</span>		}
+<a id="L87"></a><span class="ln">    87</span>		return s[0:i]
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// Text returns the text of the comment,</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// with the comment markers - //, /*, and */ - removed.</span>
+<a id="L92"></a><span class="ln">    92</span>	func (g *CommentGroup) Text() string {
+<a id="L93"></a><span class="ln">    93</span>		if g == nil {
+<a id="L94"></a><span class="ln">    94</span>			return &#34;&#34;
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>		comments := make([]string, len(g.List))
+<a id="L97"></a><span class="ln">    97</span>		for i, c := range g.List {
+<a id="L98"></a><span class="ln">    98</span>			comments[i] = string(c.Text)
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>		lines := make([]string, 0, 10) <span class="comment">// most comments are less than 10 lines</span>
+<a id="L102"></a><span class="ln">   102</span>		for _, c := range comments {
+<a id="L103"></a><span class="ln">   103</span>			<span class="comment">// Remove comment markers.</span>
+<a id="L104"></a><span class="ln">   104</span>			<span class="comment">// The parser has given us exactly the comment text.</span>
+<a id="L105"></a><span class="ln">   105</span>			switch c[1] {
+<a id="L106"></a><span class="ln">   106</span>			case &#39;/&#39;:
+<a id="L107"></a><span class="ln">   107</span>				<span class="comment">//-style comment</span>
+<a id="L108"></a><span class="ln">   108</span>				c = c[2:]
+<a id="L109"></a><span class="ln">   109</span>				<span class="comment">// Remove leading space after //, if there is one.</span>
+<a id="L110"></a><span class="ln">   110</span>				<span class="comment">// TODO(gri) This appears to be necessary in isolated</span>
+<a id="L111"></a><span class="ln">   111</span>				<span class="comment">//           cases (bignum.RatFromString) - why?</span>
+<a id="L112"></a><span class="ln">   112</span>				if len(c) &gt; 0 &amp;&amp; c[0] == &#39; &#39; {
+<a id="L113"></a><span class="ln">   113</span>					c = c[1:]
+<a id="L114"></a><span class="ln">   114</span>				}
+<a id="L115"></a><span class="ln">   115</span>			case &#39;*&#39;:
+<a id="L116"></a><span class="ln">   116</span>				<span class="comment">/*-style comment */</span>
+<a id="L117"></a><span class="ln">   117</span>				c = c[2 : len(c)-2]
+<a id="L118"></a><span class="ln">   118</span>			}
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>			<span class="comment">// Split on newlines.</span>
+<a id="L121"></a><span class="ln">   121</span>			cl := strings.Split(c, &#34;\n&#34;)
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>			<span class="comment">// Walk lines, stripping trailing white space and adding to list.</span>
+<a id="L124"></a><span class="ln">   124</span>			for _, l := range cl {
+<a id="L125"></a><span class="ln">   125</span>				lines = append(lines, stripTrailingWhitespace(l))
+<a id="L126"></a><span class="ln">   126</span>			}
+<a id="L127"></a><span class="ln">   127</span>		}
+<a id="L128"></a><span class="ln">   128</span>	
+<a id="L129"></a><span class="ln">   129</span>		<span class="comment">// Remove leading blank lines; convert runs of</span>
+<a id="L130"></a><span class="ln">   130</span>		<span class="comment">// interior blank lines to a single blank line.</span>
+<a id="L131"></a><span class="ln">   131</span>		n := 0
+<a id="L132"></a><span class="ln">   132</span>		for _, line := range lines {
+<a id="L133"></a><span class="ln">   133</span>			if line != &#34;&#34; || n &gt; 0 &amp;&amp; lines[n-1] != &#34;&#34; {
+<a id="L134"></a><span class="ln">   134</span>				lines[n] = line
+<a id="L135"></a><span class="ln">   135</span>				n++
+<a id="L136"></a><span class="ln">   136</span>			}
+<a id="L137"></a><span class="ln">   137</span>		}
+<a id="L138"></a><span class="ln">   138</span>		lines = lines[0:n]
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		<span class="comment">// Add final &#34;&#34; entry to get trailing newline from Join.</span>
+<a id="L141"></a><span class="ln">   141</span>		if n &gt; 0 &amp;&amp; lines[n-1] != &#34;&#34; {
+<a id="L142"></a><span class="ln">   142</span>			lines = append(lines, &#34;&#34;)
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>		return strings.Join(lines, &#34;\n&#34;)
+<a id="L146"></a><span class="ln">   146</span>	}
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// Expressions and types</span>
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// A Field represents a Field declaration list in a struct type,</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">// a method list in an interface type, or a parameter/result declaration</span>
+<a id="L153"></a><span class="ln">   153</span>	<span class="comment">// in a signature.</span>
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">//</span>
+<a id="L155"></a><span class="ln">   155</span>	type Field struct {
+<a id="L156"></a><span class="ln">   156</span>		Doc     *CommentGroup <span class="comment">// associated documentation; or nil</span>
+<a id="L157"></a><span class="ln">   157</span>		Names   []*Ident      <span class="comment">// field/method/parameter names; or nil if anonymous field</span>
+<a id="L158"></a><span class="ln">   158</span>		Type    Expr          <span class="comment">// field/method/parameter type</span>
+<a id="L159"></a><span class="ln">   159</span>		Tag     *BasicLit     <span class="comment">// field tag; or nil</span>
+<a id="L160"></a><span class="ln">   160</span>		Comment *CommentGroup <span class="comment">// line comments; or nil</span>
+<a id="L161"></a><span class="ln">   161</span>	}
+<a id="L162"></a><span class="ln">   162</span>	
+<a id="L163"></a><span class="ln">   163</span>	func (f *Field) Pos() token.Pos {
+<a id="L164"></a><span class="ln">   164</span>		if len(f.Names) &gt; 0 {
+<a id="L165"></a><span class="ln">   165</span>			return f.Names[0].Pos()
+<a id="L166"></a><span class="ln">   166</span>		}
+<a id="L167"></a><span class="ln">   167</span>		return f.Type.Pos()
+<a id="L168"></a><span class="ln">   168</span>	}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>	func (f *Field) End() token.Pos {
+<a id="L171"></a><span class="ln">   171</span>		if f.Tag != nil {
+<a id="L172"></a><span class="ln">   172</span>			return f.Tag.End()
+<a id="L173"></a><span class="ln">   173</span>		}
+<a id="L174"></a><span class="ln">   174</span>		return f.Type.End()
+<a id="L175"></a><span class="ln">   175</span>	}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// A FieldList represents a list of Fields, enclosed by parentheses or braces.</span>
+<a id="L178"></a><span class="ln">   178</span>	type FieldList struct {
+<a id="L179"></a><span class="ln">   179</span>		Opening token.Pos <span class="comment">// position of opening parenthesis/brace, if any</span>
+<a id="L180"></a><span class="ln">   180</span>		List    []*Field  <span class="comment">// field list; or nil</span>
+<a id="L181"></a><span class="ln">   181</span>		Closing token.Pos <span class="comment">// position of closing parenthesis/brace, if any</span>
+<a id="L182"></a><span class="ln">   182</span>	}
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>	func (f *FieldList) Pos() token.Pos {
+<a id="L185"></a><span class="ln">   185</span>		if f.Opening.IsValid() {
+<a id="L186"></a><span class="ln">   186</span>			return f.Opening
+<a id="L187"></a><span class="ln">   187</span>		}
+<a id="L188"></a><span class="ln">   188</span>		<span class="comment">// the list should not be empty in this case;</span>
+<a id="L189"></a><span class="ln">   189</span>		<span class="comment">// be conservative and guard against bad ASTs</span>
+<a id="L190"></a><span class="ln">   190</span>		if len(f.List) &gt; 0 {
+<a id="L191"></a><span class="ln">   191</span>			return f.List[0].Pos()
+<a id="L192"></a><span class="ln">   192</span>		}
+<a id="L193"></a><span class="ln">   193</span>		return token.NoPos
+<a id="L194"></a><span class="ln">   194</span>	}
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>	func (f *FieldList) End() token.Pos {
+<a id="L197"></a><span class="ln">   197</span>		if f.Closing.IsValid() {
+<a id="L198"></a><span class="ln">   198</span>			return f.Closing + 1
+<a id="L199"></a><span class="ln">   199</span>		}
+<a id="L200"></a><span class="ln">   200</span>		<span class="comment">// the list should not be empty in this case;</span>
+<a id="L201"></a><span class="ln">   201</span>		<span class="comment">// be conservative and guard against bad ASTs</span>
+<a id="L202"></a><span class="ln">   202</span>		if n := len(f.List); n &gt; 0 {
+<a id="L203"></a><span class="ln">   203</span>			return f.List[n-1].End()
+<a id="L204"></a><span class="ln">   204</span>		}
+<a id="L205"></a><span class="ln">   205</span>		return token.NoPos
+<a id="L206"></a><span class="ln">   206</span>	}
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">// NumFields returns the number of (named and anonymous fields) in a FieldList.</span>
+<a id="L209"></a><span class="ln">   209</span>	func (f *FieldList) NumFields() int {
+<a id="L210"></a><span class="ln">   210</span>		n := 0
+<a id="L211"></a><span class="ln">   211</span>		if f != nil {
+<a id="L212"></a><span class="ln">   212</span>			for _, g := range f.List {
+<a id="L213"></a><span class="ln">   213</span>				m := len(g.Names)
+<a id="L214"></a><span class="ln">   214</span>				if m == 0 {
+<a id="L215"></a><span class="ln">   215</span>					m = 1 <span class="comment">// anonymous field</span>
+<a id="L216"></a><span class="ln">   216</span>				}
+<a id="L217"></a><span class="ln">   217</span>				n += m
+<a id="L218"></a><span class="ln">   218</span>			}
+<a id="L219"></a><span class="ln">   219</span>		}
+<a id="L220"></a><span class="ln">   220</span>		return n
+<a id="L221"></a><span class="ln">   221</span>	}
+<a id="L222"></a><span class="ln">   222</span>	
+<a id="L223"></a><span class="ln">   223</span>	<span class="comment">// An expression is represented by a tree consisting of one</span>
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// or more of the following concrete expression nodes.</span>
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">//</span>
+<a id="L226"></a><span class="ln">   226</span>	type (
+<a id="L227"></a><span class="ln">   227</span>		<span class="comment">// A BadExpr node is a placeholder for expressions containing</span>
+<a id="L228"></a><span class="ln">   228</span>		<span class="comment">// syntax errors for which no correct expression nodes can be</span>
+<a id="L229"></a><span class="ln">   229</span>		<span class="comment">// created.</span>
+<a id="L230"></a><span class="ln">   230</span>		<span class="comment">//</span>
+<a id="L231"></a><span class="ln">   231</span>		BadExpr struct {
+<a id="L232"></a><span class="ln">   232</span>			From, To token.Pos <span class="comment">// position range of bad expression</span>
+<a id="L233"></a><span class="ln">   233</span>		}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>		<span class="comment">// An Ident node represents an identifier.</span>
+<a id="L236"></a><span class="ln">   236</span>		Ident struct {
+<a id="L237"></a><span class="ln">   237</span>			NamePos token.Pos <span class="comment">// identifier position</span>
+<a id="L238"></a><span class="ln">   238</span>			Name    string    <span class="comment">// identifier name</span>
+<a id="L239"></a><span class="ln">   239</span>			Obj     *Object   <span class="comment">// denoted object; or nil</span>
+<a id="L240"></a><span class="ln">   240</span>		}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>		<span class="comment">// An Ellipsis node stands for the &#34;...&#34; type in a</span>
+<a id="L243"></a><span class="ln">   243</span>		<span class="comment">// parameter list or the &#34;...&#34; length in an array type.</span>
+<a id="L244"></a><span class="ln">   244</span>		<span class="comment">//</span>
+<a id="L245"></a><span class="ln">   245</span>		Ellipsis struct {
+<a id="L246"></a><span class="ln">   246</span>			Ellipsis token.Pos <span class="comment">// position of &#34;...&#34;</span>
+<a id="L247"></a><span class="ln">   247</span>			Elt      Expr      <span class="comment">// ellipsis element type (parameter lists only); or nil</span>
+<a id="L248"></a><span class="ln">   248</span>		}
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>		<span class="comment">// A BasicLit node represents a literal of basic type.</span>
+<a id="L251"></a><span class="ln">   251</span>		BasicLit struct {
+<a id="L252"></a><span class="ln">   252</span>			ValuePos token.Pos   <span class="comment">// literal position</span>
+<a id="L253"></a><span class="ln">   253</span>			Kind     token.Token <span class="comment">// token.INT, token.FLOAT, token.IMAG, token.CHAR, or token.STRING</span>
+<a id="L254"></a><span class="ln">   254</span>			Value    string      <span class="comment">// literal string; e.g. 42, 0x7f, 3.14, 1e-9, 2.4i, &#39;a&#39;, &#39;\x7f&#39;, &#34;foo&#34; or `\m\n\o`</span>
+<a id="L255"></a><span class="ln">   255</span>		}
+<a id="L256"></a><span class="ln">   256</span>	
+<a id="L257"></a><span class="ln">   257</span>		<span class="comment">// A FuncLit node represents a function literal.</span>
+<a id="L258"></a><span class="ln">   258</span>		FuncLit struct {
+<a id="L259"></a><span class="ln">   259</span>			Type *FuncType  <span class="comment">// function type</span>
+<a id="L260"></a><span class="ln">   260</span>			Body *BlockStmt <span class="comment">// function body</span>
+<a id="L261"></a><span class="ln">   261</span>		}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>		<span class="comment">// A CompositeLit node represents a composite literal.</span>
+<a id="L264"></a><span class="ln">   264</span>		CompositeLit struct {
+<a id="L265"></a><span class="ln">   265</span>			Type   Expr      <span class="comment">// literal type; or nil</span>
+<a id="L266"></a><span class="ln">   266</span>			Lbrace token.Pos <span class="comment">// position of &#34;{&#34;</span>
+<a id="L267"></a><span class="ln">   267</span>			Elts   []Expr    <span class="comment">// list of composite elements; or nil</span>
+<a id="L268"></a><span class="ln">   268</span>			Rbrace token.Pos <span class="comment">// position of &#34;}&#34;</span>
+<a id="L269"></a><span class="ln">   269</span>		}
+<a id="L270"></a><span class="ln">   270</span>	
+<a id="L271"></a><span class="ln">   271</span>		<span class="comment">// A ParenExpr node represents a parenthesized expression.</span>
+<a id="L272"></a><span class="ln">   272</span>		ParenExpr struct {
+<a id="L273"></a><span class="ln">   273</span>			Lparen token.Pos <span class="comment">// position of &#34;(&#34;</span>
+<a id="L274"></a><span class="ln">   274</span>			X      Expr      <span class="comment">// parenthesized expression</span>
+<a id="L275"></a><span class="ln">   275</span>			Rparen token.Pos <span class="comment">// position of &#34;)&#34;</span>
+<a id="L276"></a><span class="ln">   276</span>		}
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>		<span class="comment">// A SelectorExpr node represents an expression followed by a selector.</span>
+<a id="L279"></a><span class="ln">   279</span>		SelectorExpr struct {
+<a id="L280"></a><span class="ln">   280</span>			X   Expr   <span class="comment">// expression</span>
+<a id="L281"></a><span class="ln">   281</span>			Sel *Ident <span class="comment">// field selector</span>
+<a id="L282"></a><span class="ln">   282</span>		}
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>		<span class="comment">// An IndexExpr node represents an expression followed by an index.</span>
+<a id="L285"></a><span class="ln">   285</span>		IndexExpr struct {
+<a id="L286"></a><span class="ln">   286</span>			X      Expr      <span class="comment">// expression</span>
+<a id="L287"></a><span class="ln">   287</span>			Lbrack token.Pos <span class="comment">// position of &#34;[&#34;</span>
+<a id="L288"></a><span class="ln">   288</span>			Index  Expr      <span class="comment">// index expression</span>
+<a id="L289"></a><span class="ln">   289</span>			Rbrack token.Pos <span class="comment">// position of &#34;]&#34;</span>
+<a id="L290"></a><span class="ln">   290</span>		}
+<a id="L291"></a><span class="ln">   291</span>	
+<a id="L292"></a><span class="ln">   292</span>		<span class="comment">// An SliceExpr node represents an expression followed by slice indices.</span>
+<a id="L293"></a><span class="ln">   293</span>		SliceExpr struct {
+<a id="L294"></a><span class="ln">   294</span>			X      Expr      <span class="comment">// expression</span>
+<a id="L295"></a><span class="ln">   295</span>			Lbrack token.Pos <span class="comment">// position of &#34;[&#34;</span>
+<a id="L296"></a><span class="ln">   296</span>			Low    Expr      <span class="comment">// begin of slice range; or nil</span>
+<a id="L297"></a><span class="ln">   297</span>			High   Expr      <span class="comment">// end of slice range; or nil</span>
+<a id="L298"></a><span class="ln">   298</span>			Rbrack token.Pos <span class="comment">// position of &#34;]&#34;</span>
+<a id="L299"></a><span class="ln">   299</span>		}
+<a id="L300"></a><span class="ln">   300</span>	
+<a id="L301"></a><span class="ln">   301</span>		<span class="comment">// A TypeAssertExpr node represents an expression followed by a</span>
+<a id="L302"></a><span class="ln">   302</span>		<span class="comment">// type assertion.</span>
+<a id="L303"></a><span class="ln">   303</span>		<span class="comment">//</span>
+<a id="L304"></a><span class="ln">   304</span>		TypeAssertExpr struct {
+<a id="L305"></a><span class="ln">   305</span>			X    Expr <span class="comment">// expression</span>
+<a id="L306"></a><span class="ln">   306</span>			Type Expr <span class="comment">// asserted type; nil means type switch X.(type)</span>
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>	
+<a id="L309"></a><span class="ln">   309</span>		<span class="comment">// A CallExpr node represents an expression followed by an argument list.</span>
+<a id="L310"></a><span class="ln">   310</span>		CallExpr struct {
+<a id="L311"></a><span class="ln">   311</span>			Fun      Expr      <span class="comment">// function expression</span>
+<a id="L312"></a><span class="ln">   312</span>			Lparen   token.Pos <span class="comment">// position of &#34;(&#34;</span>
+<a id="L313"></a><span class="ln">   313</span>			Args     []Expr    <span class="comment">// function arguments; or nil</span>
+<a id="L314"></a><span class="ln">   314</span>			Ellipsis token.Pos <span class="comment">// position of &#34;...&#34;, if any</span>
+<a id="L315"></a><span class="ln">   315</span>			Rparen   token.Pos <span class="comment">// position of &#34;)&#34;</span>
+<a id="L316"></a><span class="ln">   316</span>		}
+<a id="L317"></a><span class="ln">   317</span>	
+<a id="L318"></a><span class="ln">   318</span>		<span class="comment">// A StarExpr node represents an expression of the form &#34;*&#34; Expression.</span>
+<a id="L319"></a><span class="ln">   319</span>		<span class="comment">// Semantically it could be a unary &#34;*&#34; expression, or a pointer type.</span>
+<a id="L320"></a><span class="ln">   320</span>		<span class="comment">//</span>
+<a id="L321"></a><span class="ln">   321</span>		StarExpr struct {
+<a id="L322"></a><span class="ln">   322</span>			Star token.Pos <span class="comment">// position of &#34;*&#34;</span>
+<a id="L323"></a><span class="ln">   323</span>			X    Expr      <span class="comment">// operand</span>
+<a id="L324"></a><span class="ln">   324</span>		}
+<a id="L325"></a><span class="ln">   325</span>	
+<a id="L326"></a><span class="ln">   326</span>		<span class="comment">// A UnaryExpr node represents a unary expression.</span>
+<a id="L327"></a><span class="ln">   327</span>		<span class="comment">// Unary &#34;*&#34; expressions are represented via StarExpr nodes.</span>
+<a id="L328"></a><span class="ln">   328</span>		<span class="comment">//</span>
+<a id="L329"></a><span class="ln">   329</span>		UnaryExpr struct {
+<a id="L330"></a><span class="ln">   330</span>			OpPos token.Pos   <span class="comment">// position of Op</span>
+<a id="L331"></a><span class="ln">   331</span>			Op    token.Token <span class="comment">// operator</span>
+<a id="L332"></a><span class="ln">   332</span>			X     Expr        <span class="comment">// operand</span>
+<a id="L333"></a><span class="ln">   333</span>		}
+<a id="L334"></a><span class="ln">   334</span>	
+<a id="L335"></a><span class="ln">   335</span>		<span class="comment">// A BinaryExpr node represents a binary expression.</span>
+<a id="L336"></a><span class="ln">   336</span>		BinaryExpr struct {
+<a id="L337"></a><span class="ln">   337</span>			X     Expr        <span class="comment">// left operand</span>
+<a id="L338"></a><span class="ln">   338</span>			OpPos token.Pos   <span class="comment">// position of Op</span>
+<a id="L339"></a><span class="ln">   339</span>			Op    token.Token <span class="comment">// operator</span>
+<a id="L340"></a><span class="ln">   340</span>			Y     Expr        <span class="comment">// right operand</span>
+<a id="L341"></a><span class="ln">   341</span>		}
+<a id="L342"></a><span class="ln">   342</span>	
+<a id="L343"></a><span class="ln">   343</span>		<span class="comment">// A KeyValueExpr node represents (key : value) pairs</span>
+<a id="L344"></a><span class="ln">   344</span>		<span class="comment">// in composite literals.</span>
+<a id="L345"></a><span class="ln">   345</span>		<span class="comment">//</span>
+<a id="L346"></a><span class="ln">   346</span>		KeyValueExpr struct {
+<a id="L347"></a><span class="ln">   347</span>			Key   Expr
+<a id="L348"></a><span class="ln">   348</span>			Colon token.Pos <span class="comment">// position of &#34;:&#34;</span>
+<a id="L349"></a><span class="ln">   349</span>			Value Expr
+<a id="L350"></a><span class="ln">   350</span>		}
+<a id="L351"></a><span class="ln">   351</span>	)
+<a id="L352"></a><span class="ln">   352</span>	
+<a id="L353"></a><span class="ln">   353</span>	<span class="comment">// The direction of a channel type is indicated by one</span>
+<a id="L354"></a><span class="ln">   354</span>	<span class="comment">// of the following constants.</span>
+<a id="L355"></a><span class="ln">   355</span>	<span class="comment">//</span>
+<a id="L356"></a><span class="ln">   356</span>	type ChanDir int
+<a id="L357"></a><span class="ln">   357</span>	
+<a id="L358"></a><span class="ln">   358</span>	const (
+<a id="L359"></a><span class="ln">   359</span>		SEND ChanDir = 1 &lt;&lt; iota
+<a id="L360"></a><span class="ln">   360</span>		RECV
+<a id="L361"></a><span class="ln">   361</span>	)
+<a id="L362"></a><span class="ln">   362</span>	
+<a id="L363"></a><span class="ln">   363</span>	<span class="comment">// A type is represented by a tree consisting of one</span>
+<a id="L364"></a><span class="ln">   364</span>	<span class="comment">// or more of the following type-specific expression</span>
+<a id="L365"></a><span class="ln">   365</span>	<span class="comment">// nodes.</span>
+<a id="L366"></a><span class="ln">   366</span>	<span class="comment">//</span>
+<a id="L367"></a><span class="ln">   367</span>	type (
+<a id="L368"></a><span class="ln">   368</span>		<span class="comment">// An ArrayType node represents an array or slice type.</span>
+<a id="L369"></a><span class="ln">   369</span>		ArrayType struct {
+<a id="L370"></a><span class="ln">   370</span>			Lbrack token.Pos <span class="comment">// position of &#34;[&#34;</span>
+<a id="L371"></a><span class="ln">   371</span>			Len    Expr      <span class="comment">// Ellipsis node for [...]T array types, nil for slice types</span>
+<a id="L372"></a><span class="ln">   372</span>			Elt    Expr      <span class="comment">// element type</span>
+<a id="L373"></a><span class="ln">   373</span>		}
+<a id="L374"></a><span class="ln">   374</span>	
+<a id="L375"></a><span class="ln">   375</span>		<span class="comment">// A StructType node represents a struct type.</span>
+<a id="L376"></a><span class="ln">   376</span>		StructType struct {
+<a id="L377"></a><span class="ln">   377</span>			Struct     token.Pos  <span class="comment">// position of &#34;struct&#34; keyword</span>
+<a id="L378"></a><span class="ln">   378</span>			Fields     *FieldList <span class="comment">// list of field declarations</span>
+<a id="L379"></a><span class="ln">   379</span>			Incomplete bool       <span class="comment">// true if (source) fields are missing in the Fields list</span>
+<a id="L380"></a><span class="ln">   380</span>		}
+<a id="L381"></a><span class="ln">   381</span>	
+<a id="L382"></a><span class="ln">   382</span>		<span class="comment">// Pointer types are represented via StarExpr nodes.</span>
+<a id="L383"></a><span class="ln">   383</span>	
+<a id="L384"></a><span class="ln">   384</span>		<span class="comment">// A FuncType node represents a function type.</span>
+<a id="L385"></a><span class="ln">   385</span>		FuncType struct {
+<a id="L386"></a><span class="ln">   386</span>			Func    token.Pos  <span class="comment">// position of &#34;func&#34; keyword</span>
+<a id="L387"></a><span class="ln">   387</span>			Params  *FieldList <span class="comment">// (incoming) parameters; or nil</span>
+<a id="L388"></a><span class="ln">   388</span>			Results *FieldList <span class="comment">// (outgoing) results; or nil</span>
+<a id="L389"></a><span class="ln">   389</span>		}
+<a id="L390"></a><span class="ln">   390</span>	
+<a id="L391"></a><span class="ln">   391</span>		<span class="comment">// An InterfaceType node represents an interface type.</span>
+<a id="L392"></a><span class="ln">   392</span>		InterfaceType struct {
+<a id="L393"></a><span class="ln">   393</span>			Interface  token.Pos  <span class="comment">// position of &#34;interface&#34; keyword</span>
+<a id="L394"></a><span class="ln">   394</span>			Methods    *FieldList <span class="comment">// list of methods</span>
+<a id="L395"></a><span class="ln">   395</span>			Incomplete bool       <span class="comment">// true if (source) methods are missing in the Methods list</span>
+<a id="L396"></a><span class="ln">   396</span>		}
+<a id="L397"></a><span class="ln">   397</span>	
+<a id="L398"></a><span class="ln">   398</span>		<span class="comment">// A MapType node represents a map type.</span>
+<a id="L399"></a><span class="ln">   399</span>		MapType struct {
+<a id="L400"></a><span class="ln">   400</span>			Map   token.Pos <span class="comment">// position of &#34;map&#34; keyword</span>
+<a id="L401"></a><span class="ln">   401</span>			Key   Expr
+<a id="L402"></a><span class="ln">   402</span>			Value Expr
+<a id="L403"></a><span class="ln">   403</span>		}
+<a id="L404"></a><span class="ln">   404</span>	
+<a id="L405"></a><span class="ln">   405</span>		<span class="comment">// A ChanType node represents a channel type.</span>
+<a id="L406"></a><span class="ln">   406</span>		ChanType struct {
+<a id="L407"></a><span class="ln">   407</span>			Begin token.Pos <span class="comment">// position of &#34;chan&#34; keyword or &#34;&lt;-&#34; (whichever comes first)</span>
+<a id="L408"></a><span class="ln">   408</span>			Dir   ChanDir   <span class="comment">// channel direction</span>
+<a id="L409"></a><span class="ln">   409</span>			Value Expr      <span class="comment">// value type</span>
+<a id="L410"></a><span class="ln">   410</span>		}
+<a id="L411"></a><span class="ln">   411</span>	)
+<a id="L412"></a><span class="ln">   412</span>	
+<a id="L413"></a><span class="ln">   413</span>	<span class="comment">// Pos and End implementations for expression/type nodes.</span>
+<a id="L414"></a><span class="ln">   414</span>	<span class="comment">//</span>
+<a id="L415"></a><span class="ln">   415</span>	func (x *BadExpr) Pos() token.Pos  { return x.From }
+<a id="L416"></a><span class="ln">   416</span>	func (x *Ident) Pos() token.Pos    { return x.NamePos }
+<a id="L417"></a><span class="ln">   417</span>	func (x *Ellipsis) Pos() token.Pos { return x.Ellipsis }
+<a id="L418"></a><span class="ln">   418</span>	func (x *BasicLit) Pos() token.Pos { return x.ValuePos }
+<a id="L419"></a><span class="ln">   419</span>	func (x *FuncLit) Pos() token.Pos  { return x.Type.Pos() }
+<a id="L420"></a><span class="ln">   420</span>	func (x *CompositeLit) Pos() token.Pos {
+<a id="L421"></a><span class="ln">   421</span>		if x.Type != nil {
+<a id="L422"></a><span class="ln">   422</span>			return x.Type.Pos()
+<a id="L423"></a><span class="ln">   423</span>		}
+<a id="L424"></a><span class="ln">   424</span>		return x.Lbrace
+<a id="L425"></a><span class="ln">   425</span>	}
+<a id="L426"></a><span class="ln">   426</span>	func (x *ParenExpr) Pos() token.Pos      { return x.Lparen }
+<a id="L427"></a><span class="ln">   427</span>	func (x *SelectorExpr) Pos() token.Pos   { return x.X.Pos() }
+<a id="L428"></a><span class="ln">   428</span>	func (x *IndexExpr) Pos() token.Pos      { return x.X.Pos() }
+<a id="L429"></a><span class="ln">   429</span>	func (x *SliceExpr) Pos() token.Pos      { return x.X.Pos() }
+<a id="L430"></a><span class="ln">   430</span>	func (x *TypeAssertExpr) Pos() token.Pos { return x.X.Pos() }
+<a id="L431"></a><span class="ln">   431</span>	func (x *CallExpr) Pos() token.Pos       { return x.Fun.Pos() }
+<a id="L432"></a><span class="ln">   432</span>	func (x *StarExpr) Pos() token.Pos       { return x.Star }
+<a id="L433"></a><span class="ln">   433</span>	func (x *UnaryExpr) Pos() token.Pos      { return x.OpPos }
+<a id="L434"></a><span class="ln">   434</span>	func (x *BinaryExpr) Pos() token.Pos     { return x.X.Pos() }
+<a id="L435"></a><span class="ln">   435</span>	func (x *KeyValueExpr) Pos() token.Pos   { return x.Key.Pos() }
+<a id="L436"></a><span class="ln">   436</span>	func (x *ArrayType) Pos() token.Pos      { return x.Lbrack }
+<a id="L437"></a><span class="ln">   437</span>	func (x *StructType) Pos() token.Pos     { return x.Struct }
+<a id="L438"></a><span class="ln">   438</span>	func (x *FuncType) Pos() token.Pos       { return x.Func }
+<a id="L439"></a><span class="ln">   439</span>	func (x *InterfaceType) Pos() token.Pos  { return x.Interface }
+<a id="L440"></a><span class="ln">   440</span>	func (x *MapType) Pos() token.Pos        { return x.Map }
+<a id="L441"></a><span class="ln">   441</span>	func (x *ChanType) Pos() token.Pos       { return x.Begin }
+<a id="L442"></a><span class="ln">   442</span>	
+<a id="L443"></a><span class="ln">   443</span>	func (x *BadExpr) End() token.Pos { return x.To }
+<a id="L444"></a><span class="ln">   444</span>	func (x *Ident) End() token.Pos   { return token.Pos(int(x.NamePos) + len(x.Name)) }
+<a id="L445"></a><span class="ln">   445</span>	func (x *Ellipsis) End() token.Pos {
+<a id="L446"></a><span class="ln">   446</span>		if x.Elt != nil {
+<a id="L447"></a><span class="ln">   447</span>			return x.Elt.End()
+<a id="L448"></a><span class="ln">   448</span>		}
+<a id="L449"></a><span class="ln">   449</span>		return x.Ellipsis + 3 <span class="comment">// len(&#34;...&#34;)</span>
+<a id="L450"></a><span class="ln">   450</span>	}
+<a id="L451"></a><span class="ln">   451</span>	func (x *BasicLit) End() token.Pos     { return token.Pos(int(x.ValuePos) + len(x.Value)) }
+<a id="L452"></a><span class="ln">   452</span>	func (x *FuncLit) End() token.Pos      { return x.Body.End() }
+<a id="L453"></a><span class="ln">   453</span>	func (x *CompositeLit) End() token.Pos { return x.Rbrace + 1 }
+<a id="L454"></a><span class="ln">   454</span>	func (x *ParenExpr) End() token.Pos    { return x.Rparen + 1 }
+<a id="L455"></a><span class="ln">   455</span>	func (x *SelectorExpr) End() token.Pos { return x.Sel.End() }
+<a id="L456"></a><span class="ln">   456</span>	func (x *IndexExpr) End() token.Pos    { return x.Rbrack + 1 }
+<a id="L457"></a><span class="ln">   457</span>	func (x *SliceExpr) End() token.Pos    { return x.Rbrack + 1 }
+<a id="L458"></a><span class="ln">   458</span>	func (x *TypeAssertExpr) End() token.Pos {
+<a id="L459"></a><span class="ln">   459</span>		if x.Type != nil {
+<a id="L460"></a><span class="ln">   460</span>			return x.Type.End()
+<a id="L461"></a><span class="ln">   461</span>		}
+<a id="L462"></a><span class="ln">   462</span>		return x.X.End()
+<a id="L463"></a><span class="ln">   463</span>	}
+<a id="L464"></a><span class="ln">   464</span>	func (x *CallExpr) End() token.Pos     { return x.Rparen + 1 }
+<a id="L465"></a><span class="ln">   465</span>	func (x *StarExpr) End() token.Pos     { return x.X.End() }
+<a id="L466"></a><span class="ln">   466</span>	func (x *UnaryExpr) End() token.Pos    { return x.X.End() }
+<a id="L467"></a><span class="ln">   467</span>	func (x *BinaryExpr) End() token.Pos   { return x.Y.End() }
+<a id="L468"></a><span class="ln">   468</span>	func (x *KeyValueExpr) End() token.Pos { return x.Value.End() }
+<a id="L469"></a><span class="ln">   469</span>	func (x *ArrayType) End() token.Pos    { return x.Elt.End() }
+<a id="L470"></a><span class="ln">   470</span>	func (x *StructType) End() token.Pos   { return x.Fields.End() }
+<a id="L471"></a><span class="ln">   471</span>	func (x *FuncType) End() token.Pos {
+<a id="L472"></a><span class="ln">   472</span>		if x.Results != nil {
+<a id="L473"></a><span class="ln">   473</span>			return x.Results.End()
+<a id="L474"></a><span class="ln">   474</span>		}
+<a id="L475"></a><span class="ln">   475</span>		return x.Params.End()
+<a id="L476"></a><span class="ln">   476</span>	}
+<a id="L477"></a><span class="ln">   477</span>	func (x *InterfaceType) End() token.Pos { return x.Methods.End() }
+<a id="L478"></a><span class="ln">   478</span>	func (x *MapType) End() token.Pos       { return x.Value.End() }
+<a id="L479"></a><span class="ln">   479</span>	func (x *ChanType) End() token.Pos      { return x.Value.End() }
+<a id="L480"></a><span class="ln">   480</span>	
+<a id="L481"></a><span class="ln">   481</span>	<span class="comment">// exprNode() ensures that only expression/type nodes can be</span>
+<a id="L482"></a><span class="ln">   482</span>	<span class="comment">// assigned to an ExprNode.</span>
+<a id="L483"></a><span class="ln">   483</span>	<span class="comment">//</span>
+<a id="L484"></a><span class="ln">   484</span>	func (*BadExpr) exprNode()        {}
+<a id="L485"></a><span class="ln">   485</span>	func (*Ident) exprNode()          {}
+<a id="L486"></a><span class="ln">   486</span>	func (*Ellipsis) exprNode()       {}
+<a id="L487"></a><span class="ln">   487</span>	func (*BasicLit) exprNode()       {}
+<a id="L488"></a><span class="ln">   488</span>	func (*FuncLit) exprNode()        {}
+<a id="L489"></a><span class="ln">   489</span>	func (*CompositeLit) exprNode()   {}
+<a id="L490"></a><span class="ln">   490</span>	func (*ParenExpr) exprNode()      {}
+<a id="L491"></a><span class="ln">   491</span>	func (*SelectorExpr) exprNode()   {}
+<a id="L492"></a><span class="ln">   492</span>	func (*IndexExpr) exprNode()      {}
+<a id="L493"></a><span class="ln">   493</span>	func (*SliceExpr) exprNode()      {}
+<a id="L494"></a><span class="ln">   494</span>	func (*TypeAssertExpr) exprNode() {}
+<a id="L495"></a><span class="ln">   495</span>	func (*CallExpr) exprNode()       {}
+<a id="L496"></a><span class="ln">   496</span>	func (*StarExpr) exprNode()       {}
+<a id="L497"></a><span class="ln">   497</span>	func (*UnaryExpr) exprNode()      {}
+<a id="L498"></a><span class="ln">   498</span>	func (*BinaryExpr) exprNode()     {}
+<a id="L499"></a><span class="ln">   499</span>	func (*KeyValueExpr) exprNode()   {}
+<a id="L500"></a><span class="ln">   500</span>	
+<a id="L501"></a><span class="ln">   501</span>	func (*ArrayType) exprNode()     {}
+<a id="L502"></a><span class="ln">   502</span>	func (*StructType) exprNode()    {}
+<a id="L503"></a><span class="ln">   503</span>	func (*FuncType) exprNode()      {}
+<a id="L504"></a><span class="ln">   504</span>	func (*InterfaceType) exprNode() {}
+<a id="L505"></a><span class="ln">   505</span>	func (*MapType) exprNode()       {}
+<a id="L506"></a><span class="ln">   506</span>	func (*ChanType) exprNode()      {}
+<a id="L507"></a><span class="ln">   507</span>	
+<a id="L508"></a><span class="ln">   508</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L509"></a><span class="ln">   509</span>	<span class="comment">// Convenience functions for Idents</span>
+<a id="L510"></a><span class="ln">   510</span>	
+<a id="L511"></a><span class="ln">   511</span>	var noPos token.Pos
+<a id="L512"></a><span class="ln">   512</span>	
+<a id="L513"></a><span class="ln">   513</span>	<span class="comment">// NewIdent creates a new Ident without position.</span>
+<a id="L514"></a><span class="ln">   514</span>	<span class="comment">// Useful for ASTs generated by code other than the Go parser.</span>
+<a id="L515"></a><span class="ln">   515</span>	<span class="comment">//</span>
+<a id="L516"></a><span class="ln">   516</span>	func NewIdent(name string) *Ident { return &amp;Ident{noPos, name, nil} }
+<a id="L517"></a><span class="ln">   517</span>	
+<a id="L518"></a><span class="ln">   518</span>	<span class="comment">// IsExported returns whether name is an exported Go symbol</span>
+<a id="L519"></a><span class="ln">   519</span>	<span class="comment">// (i.e., whether it begins with an uppercase letter).</span>
+<a id="L520"></a><span class="ln">   520</span>	<span class="comment">//</span>
+<a id="L521"></a><span class="ln">   521</span>	func IsExported(name string) bool {
+<a id="L522"></a><span class="ln">   522</span>		ch, _ := utf8.DecodeRuneInString(name)
+<a id="L523"></a><span class="ln">   523</span>		return unicode.IsUpper(ch)
+<a id="L524"></a><span class="ln">   524</span>	}
+<a id="L525"></a><span class="ln">   525</span>	
+<a id="L526"></a><span class="ln">   526</span>	<span class="comment">// IsExported returns whether id is an exported Go symbol</span>
+<a id="L527"></a><span class="ln">   527</span>	<span class="comment">// (i.e., whether it begins with an uppercase letter).</span>
+<a id="L528"></a><span class="ln">   528</span>	<span class="comment">//</span>
+<a id="L529"></a><span class="ln">   529</span>	func (id *Ident) IsExported() bool { return IsExported(id.Name) }
+<a id="L530"></a><span class="ln">   530</span>	
+<a id="L531"></a><span class="ln">   531</span>	func (id *Ident) String() string {
+<a id="L532"></a><span class="ln">   532</span>		if id != nil {
+<a id="L533"></a><span class="ln">   533</span>			return id.Name
+<a id="L534"></a><span class="ln">   534</span>		}
+<a id="L535"></a><span class="ln">   535</span>		return &#34;&lt;nil&gt;&#34;
+<a id="L536"></a><span class="ln">   536</span>	}
+<a id="L537"></a><span class="ln">   537</span>	
+<a id="L538"></a><span class="ln">   538</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L539"></a><span class="ln">   539</span>	<span class="comment">// Statements</span>
+<a id="L540"></a><span class="ln">   540</span>	
+<a id="L541"></a><span class="ln">   541</span>	<span class="comment">// A statement is represented by a tree consisting of one</span>
+<a id="L542"></a><span class="ln">   542</span>	<span class="comment">// or more of the following concrete statement nodes.</span>
+<a id="L543"></a><span class="ln">   543</span>	<span class="comment">//</span>
+<a id="L544"></a><span class="ln">   544</span>	type (
+<a id="L545"></a><span class="ln">   545</span>		<span class="comment">// A BadStmt node is a placeholder for statements containing</span>
+<a id="L546"></a><span class="ln">   546</span>		<span class="comment">// syntax errors for which no correct statement nodes can be</span>
+<a id="L547"></a><span class="ln">   547</span>		<span class="comment">// created.</span>
+<a id="L548"></a><span class="ln">   548</span>		<span class="comment">//</span>
+<a id="L549"></a><span class="ln">   549</span>		BadStmt struct {
+<a id="L550"></a><span class="ln">   550</span>			From, To token.Pos <span class="comment">// position range of bad statement</span>
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>	
+<a id="L553"></a><span class="ln">   553</span>		<span class="comment">// A DeclStmt node represents a declaration in a statement list.</span>
+<a id="L554"></a><span class="ln">   554</span>		DeclStmt struct {
+<a id="L555"></a><span class="ln">   555</span>			Decl Decl
+<a id="L556"></a><span class="ln">   556</span>		}
+<a id="L557"></a><span class="ln">   557</span>	
+<a id="L558"></a><span class="ln">   558</span>		<span class="comment">// An EmptyStmt node represents an empty statement.</span>
+<a id="L559"></a><span class="ln">   559</span>		<span class="comment">// The &#34;position&#34; of the empty statement is the position</span>
+<a id="L560"></a><span class="ln">   560</span>		<span class="comment">// of the immediately preceding semicolon.</span>
+<a id="L561"></a><span class="ln">   561</span>		<span class="comment">//</span>
+<a id="L562"></a><span class="ln">   562</span>		EmptyStmt struct {
+<a id="L563"></a><span class="ln">   563</span>			Semicolon token.Pos <span class="comment">// position of preceding &#34;;&#34;</span>
+<a id="L564"></a><span class="ln">   564</span>		}
+<a id="L565"></a><span class="ln">   565</span>	
+<a id="L566"></a><span class="ln">   566</span>		<span class="comment">// A LabeledStmt node represents a labeled statement.</span>
+<a id="L567"></a><span class="ln">   567</span>		LabeledStmt struct {
+<a id="L568"></a><span class="ln">   568</span>			Label *Ident
+<a id="L569"></a><span class="ln">   569</span>			Colon token.Pos <span class="comment">// position of &#34;:&#34;</span>
+<a id="L570"></a><span class="ln">   570</span>			Stmt  Stmt
+<a id="L571"></a><span class="ln">   571</span>		}
+<a id="L572"></a><span class="ln">   572</span>	
+<a id="L573"></a><span class="ln">   573</span>		<span class="comment">// An ExprStmt node represents a (stand-alone) expression</span>
+<a id="L574"></a><span class="ln">   574</span>		<span class="comment">// in a statement list.</span>
+<a id="L575"></a><span class="ln">   575</span>		<span class="comment">//</span>
+<a id="L576"></a><span class="ln">   576</span>		ExprStmt struct {
+<a id="L577"></a><span class="ln">   577</span>			X Expr <span class="comment">// expression</span>
+<a id="L578"></a><span class="ln">   578</span>		}
+<a id="L579"></a><span class="ln">   579</span>	
+<a id="L580"></a><span class="ln">   580</span>		<span class="comment">// A SendStmt node represents a send statement.</span>
+<a id="L581"></a><span class="ln">   581</span>		SendStmt struct {
+<a id="L582"></a><span class="ln">   582</span>			Chan  Expr
+<a id="L583"></a><span class="ln">   583</span>			Arrow token.Pos <span class="comment">// position of &#34;&lt;-&#34;</span>
+<a id="L584"></a><span class="ln">   584</span>			Value Expr
+<a id="L585"></a><span class="ln">   585</span>		}
+<a id="L586"></a><span class="ln">   586</span>	
+<a id="L587"></a><span class="ln">   587</span>		<span class="comment">// An IncDecStmt node represents an increment or decrement statement.</span>
+<a id="L588"></a><span class="ln">   588</span>		IncDecStmt struct {
+<a id="L589"></a><span class="ln">   589</span>			X      Expr
+<a id="L590"></a><span class="ln">   590</span>			TokPos token.Pos   <span class="comment">// position of Tok</span>
+<a id="L591"></a><span class="ln">   591</span>			Tok    token.Token <span class="comment">// INC or DEC</span>
+<a id="L592"></a><span class="ln">   592</span>		}
+<a id="L593"></a><span class="ln">   593</span>	
+<a id="L594"></a><span class="ln">   594</span>		<span class="comment">// An AssignStmt node represents an assignment or</span>
+<a id="L595"></a><span class="ln">   595</span>		<span class="comment">// a short variable declaration.</span>
+<a id="L596"></a><span class="ln">   596</span>		<span class="comment">//</span>
+<a id="L597"></a><span class="ln">   597</span>		AssignStmt struct {
+<a id="L598"></a><span class="ln">   598</span>			Lhs    []Expr
+<a id="L599"></a><span class="ln">   599</span>			TokPos token.Pos   <span class="comment">// position of Tok</span>
+<a id="L600"></a><span class="ln">   600</span>			Tok    token.Token <span class="comment">// assignment token, DEFINE</span>
+<a id="L601"></a><span class="ln">   601</span>			Rhs    []Expr
+<a id="L602"></a><span class="ln">   602</span>		}
+<a id="L603"></a><span class="ln">   603</span>	
+<a id="L604"></a><span class="ln">   604</span>		<span class="comment">// A GoStmt node represents a go statement.</span>
+<a id="L605"></a><span class="ln">   605</span>		GoStmt struct {
+<a id="L606"></a><span class="ln">   606</span>			Go   token.Pos <span class="comment">// position of &#34;go&#34; keyword</span>
+<a id="L607"></a><span class="ln">   607</span>			Call *CallExpr
+<a id="L608"></a><span class="ln">   608</span>		}
+<a id="L609"></a><span class="ln">   609</span>	
+<a id="L610"></a><span class="ln">   610</span>		<span class="comment">// A DeferStmt node represents a defer statement.</span>
+<a id="L611"></a><span class="ln">   611</span>		DeferStmt struct {
+<a id="L612"></a><span class="ln">   612</span>			Defer token.Pos <span class="comment">// position of &#34;defer&#34; keyword</span>
+<a id="L613"></a><span class="ln">   613</span>			Call  *CallExpr
+<a id="L614"></a><span class="ln">   614</span>		}
+<a id="L615"></a><span class="ln">   615</span>	
+<a id="L616"></a><span class="ln">   616</span>		<span class="comment">// A ReturnStmt node represents a return statement.</span>
+<a id="L617"></a><span class="ln">   617</span>		ReturnStmt struct {
+<a id="L618"></a><span class="ln">   618</span>			Return  token.Pos <span class="comment">// position of &#34;return&#34; keyword</span>
+<a id="L619"></a><span class="ln">   619</span>			Results []Expr    <span class="comment">// result expressions; or nil</span>
+<a id="L620"></a><span class="ln">   620</span>		}
+<a id="L621"></a><span class="ln">   621</span>	
+<a id="L622"></a><span class="ln">   622</span>		<span class="comment">// A BranchStmt node represents a break, continue, goto,</span>
+<a id="L623"></a><span class="ln">   623</span>		<span class="comment">// or fallthrough statement.</span>
+<a id="L624"></a><span class="ln">   624</span>		<span class="comment">//</span>
+<a id="L625"></a><span class="ln">   625</span>		BranchStmt struct {
+<a id="L626"></a><span class="ln">   626</span>			TokPos token.Pos   <span class="comment">// position of Tok</span>
+<a id="L627"></a><span class="ln">   627</span>			Tok    token.Token <span class="comment">// keyword token (BREAK, CONTINUE, GOTO, FALLTHROUGH)</span>
+<a id="L628"></a><span class="ln">   628</span>			Label  *Ident      <span class="comment">// label name; or nil</span>
+<a id="L629"></a><span class="ln">   629</span>		}
+<a id="L630"></a><span class="ln">   630</span>	
+<a id="L631"></a><span class="ln">   631</span>		<span class="comment">// A BlockStmt node represents a braced statement list.</span>
+<a id="L632"></a><span class="ln">   632</span>		BlockStmt struct {
+<a id="L633"></a><span class="ln">   633</span>			Lbrace token.Pos <span class="comment">// position of &#34;{&#34;</span>
+<a id="L634"></a><span class="ln">   634</span>			List   []Stmt
+<a id="L635"></a><span class="ln">   635</span>			Rbrace token.Pos <span class="comment">// position of &#34;}&#34;</span>
+<a id="L636"></a><span class="ln">   636</span>		}
+<a id="L637"></a><span class="ln">   637</span>	
+<a id="L638"></a><span class="ln">   638</span>		<span class="comment">// An IfStmt node represents an if statement.</span>
+<a id="L639"></a><span class="ln">   639</span>		IfStmt struct {
+<a id="L640"></a><span class="ln">   640</span>			If   token.Pos <span class="comment">// position of &#34;if&#34; keyword</span>
+<a id="L641"></a><span class="ln">   641</span>			Init Stmt      <span class="comment">// initialization statement; or nil</span>
+<a id="L642"></a><span class="ln">   642</span>			Cond Expr      <span class="comment">// condition</span>
+<a id="L643"></a><span class="ln">   643</span>			Body *BlockStmt
+<a id="L644"></a><span class="ln">   644</span>			Else Stmt <span class="comment">// else branch; or nil</span>
+<a id="L645"></a><span class="ln">   645</span>		}
+<a id="L646"></a><span class="ln">   646</span>	
+<a id="L647"></a><span class="ln">   647</span>		<span class="comment">// A CaseClause represents a case of an expression or type switch statement.</span>
+<a id="L648"></a><span class="ln">   648</span>		CaseClause struct {
+<a id="L649"></a><span class="ln">   649</span>			Case  token.Pos <span class="comment">// position of &#34;case&#34; or &#34;default&#34; keyword</span>
+<a id="L650"></a><span class="ln">   650</span>			List  []Expr    <span class="comment">// list of expressions or types; nil means default case</span>
+<a id="L651"></a><span class="ln">   651</span>			Colon token.Pos <span class="comment">// position of &#34;:&#34;</span>
+<a id="L652"></a><span class="ln">   652</span>			Body  []Stmt    <span class="comment">// statement list; or nil</span>
+<a id="L653"></a><span class="ln">   653</span>		}
+<a id="L654"></a><span class="ln">   654</span>	
+<a id="L655"></a><span class="ln">   655</span>		<span class="comment">// A SwitchStmt node represents an expression switch statement.</span>
+<a id="L656"></a><span class="ln">   656</span>		SwitchStmt struct {
+<a id="L657"></a><span class="ln">   657</span>			Switch token.Pos  <span class="comment">// position of &#34;switch&#34; keyword</span>
+<a id="L658"></a><span class="ln">   658</span>			Init   Stmt       <span class="comment">// initialization statement; or nil</span>
+<a id="L659"></a><span class="ln">   659</span>			Tag    Expr       <span class="comment">// tag expression; or nil</span>
+<a id="L660"></a><span class="ln">   660</span>			Body   *BlockStmt <span class="comment">// CaseClauses only</span>
+<a id="L661"></a><span class="ln">   661</span>		}
+<a id="L662"></a><span class="ln">   662</span>	
+<a id="L663"></a><span class="ln">   663</span>		<span class="comment">// An TypeSwitchStmt node represents a type switch statement.</span>
+<a id="L664"></a><span class="ln">   664</span>		TypeSwitchStmt struct {
+<a id="L665"></a><span class="ln">   665</span>			Switch token.Pos  <span class="comment">// position of &#34;switch&#34; keyword</span>
+<a id="L666"></a><span class="ln">   666</span>			Init   Stmt       <span class="comment">// initialization statement; or nil</span>
+<a id="L667"></a><span class="ln">   667</span>			Assign Stmt       <span class="comment">// x := y.(type) or y.(type)</span>
+<a id="L668"></a><span class="ln">   668</span>			Body   *BlockStmt <span class="comment">// CaseClauses only</span>
+<a id="L669"></a><span class="ln">   669</span>		}
+<a id="L670"></a><span class="ln">   670</span>	
+<a id="L671"></a><span class="ln">   671</span>		<span class="comment">// A CommClause node represents a case of a select statement.</span>
+<a id="L672"></a><span class="ln">   672</span>		CommClause struct {
+<a id="L673"></a><span class="ln">   673</span>			Case  token.Pos <span class="comment">// position of &#34;case&#34; or &#34;default&#34; keyword</span>
+<a id="L674"></a><span class="ln">   674</span>			Comm  Stmt      <span class="comment">// send or receive statement; nil means default case</span>
+<a id="L675"></a><span class="ln">   675</span>			Colon token.Pos <span class="comment">// position of &#34;:&#34;</span>
+<a id="L676"></a><span class="ln">   676</span>			Body  []Stmt    <span class="comment">// statement list; or nil</span>
+<a id="L677"></a><span class="ln">   677</span>		}
+<a id="L678"></a><span class="ln">   678</span>	
+<a id="L679"></a><span class="ln">   679</span>		<span class="comment">// An SelectStmt node represents a select statement.</span>
+<a id="L680"></a><span class="ln">   680</span>		SelectStmt struct {
+<a id="L681"></a><span class="ln">   681</span>			Select token.Pos  <span class="comment">// position of &#34;select&#34; keyword</span>
+<a id="L682"></a><span class="ln">   682</span>			Body   *BlockStmt <span class="comment">// CommClauses only</span>
+<a id="L683"></a><span class="ln">   683</span>		}
+<a id="L684"></a><span class="ln">   684</span>	
+<a id="L685"></a><span class="ln">   685</span>		<span class="comment">// A ForStmt represents a for statement.</span>
+<a id="L686"></a><span class="ln">   686</span>		ForStmt struct {
+<a id="L687"></a><span class="ln">   687</span>			For  token.Pos <span class="comment">// position of &#34;for&#34; keyword</span>
+<a id="L688"></a><span class="ln">   688</span>			Init Stmt      <span class="comment">// initialization statement; or nil</span>
+<a id="L689"></a><span class="ln">   689</span>			Cond Expr      <span class="comment">// condition; or nil</span>
+<a id="L690"></a><span class="ln">   690</span>			Post Stmt      <span class="comment">// post iteration statement; or nil</span>
+<a id="L691"></a><span class="ln">   691</span>			Body *BlockStmt
+<a id="L692"></a><span class="ln">   692</span>		}
+<a id="L693"></a><span class="ln">   693</span>	
+<a id="L694"></a><span class="ln">   694</span>		<span class="comment">// A RangeStmt represents a for statement with a range clause.</span>
+<a id="L695"></a><span class="ln">   695</span>		RangeStmt struct {
+<a id="L696"></a><span class="ln">   696</span>			For        token.Pos   <span class="comment">// position of &#34;for&#34; keyword</span>
+<a id="L697"></a><span class="ln">   697</span>			Key, Value Expr        <span class="comment">// Value may be nil</span>
+<a id="L698"></a><span class="ln">   698</span>			TokPos     token.Pos   <span class="comment">// position of Tok</span>
+<a id="L699"></a><span class="ln">   699</span>			Tok        token.Token <span class="comment">// ASSIGN, DEFINE</span>
+<a id="L700"></a><span class="ln">   700</span>			X          Expr        <span class="comment">// value to range over</span>
+<a id="L701"></a><span class="ln">   701</span>			Body       *BlockStmt
+<a id="L702"></a><span class="ln">   702</span>		}
+<a id="L703"></a><span class="ln">   703</span>	)
+<a id="L704"></a><span class="ln">   704</span>	
+<a id="L705"></a><span class="ln">   705</span>	<span class="comment">// Pos and End implementations for statement nodes.</span>
+<a id="L706"></a><span class="ln">   706</span>	<span class="comment">//</span>
+<a id="L707"></a><span class="ln">   707</span>	func (s *BadStmt) Pos() token.Pos        { return s.From }
+<a id="L708"></a><span class="ln">   708</span>	func (s *DeclStmt) Pos() token.Pos       { return s.Decl.Pos() }
+<a id="L709"></a><span class="ln">   709</span>	func (s *EmptyStmt) Pos() token.Pos      { return s.Semicolon }
+<a id="L710"></a><span class="ln">   710</span>	func (s *LabeledStmt) Pos() token.Pos    { return s.Label.Pos() }
+<a id="L711"></a><span class="ln">   711</span>	func (s *ExprStmt) Pos() token.Pos       { return s.X.Pos() }
+<a id="L712"></a><span class="ln">   712</span>	func (s *SendStmt) Pos() token.Pos       { return s.Chan.Pos() }
+<a id="L713"></a><span class="ln">   713</span>	func (s *IncDecStmt) Pos() token.Pos     { return s.X.Pos() }
+<a id="L714"></a><span class="ln">   714</span>	func (s *AssignStmt) Pos() token.Pos     { return s.Lhs[0].Pos() }
+<a id="L715"></a><span class="ln">   715</span>	func (s *GoStmt) Pos() token.Pos         { return s.Go }
+<a id="L716"></a><span class="ln">   716</span>	func (s *DeferStmt) Pos() token.Pos      { return s.Defer }
+<a id="L717"></a><span class="ln">   717</span>	func (s *ReturnStmt) Pos() token.Pos     { return s.Return }
+<a id="L718"></a><span class="ln">   718</span>	func (s *BranchStmt) Pos() token.Pos     { return s.TokPos }
+<a id="L719"></a><span class="ln">   719</span>	func (s *BlockStmt) Pos() token.Pos      { return s.Lbrace }
+<a id="L720"></a><span class="ln">   720</span>	func (s *IfStmt) Pos() token.Pos         { return s.If }
+<a id="L721"></a><span class="ln">   721</span>	func (s *CaseClause) Pos() token.Pos     { return s.Case }
+<a id="L722"></a><span class="ln">   722</span>	func (s *SwitchStmt) Pos() token.Pos     { return s.Switch }
+<a id="L723"></a><span class="ln">   723</span>	func (s *TypeSwitchStmt) Pos() token.Pos { return s.Switch }
+<a id="L724"></a><span class="ln">   724</span>	func (s *CommClause) Pos() token.Pos     { return s.Case }
+<a id="L725"></a><span class="ln">   725</span>	func (s *SelectStmt) Pos() token.Pos     { return s.Select }
+<a id="L726"></a><span class="ln">   726</span>	func (s *ForStmt) Pos() token.Pos        { return s.For }
+<a id="L727"></a><span class="ln">   727</span>	func (s *RangeStmt) Pos() token.Pos      { return s.For }
+<a id="L728"></a><span class="ln">   728</span>	
+<a id="L729"></a><span class="ln">   729</span>	func (s *BadStmt) End() token.Pos  { return s.To }
+<a id="L730"></a><span class="ln">   730</span>	func (s *DeclStmt) End() token.Pos { return s.Decl.End() }
+<a id="L731"></a><span class="ln">   731</span>	func (s *EmptyStmt) End() token.Pos {
+<a id="L732"></a><span class="ln">   732</span>		return s.Semicolon + 1 <span class="comment">/* len(&#34;;&#34;) */</span>
+<a id="L733"></a><span class="ln">   733</span>	}
+<a id="L734"></a><span class="ln">   734</span>	func (s *LabeledStmt) End() token.Pos { return s.Stmt.End() }
+<a id="L735"></a><span class="ln">   735</span>	func (s *ExprStmt) End() token.Pos    { return s.X.End() }
+<a id="L736"></a><span class="ln">   736</span>	func (s *SendStmt) End() token.Pos    { return s.Value.End() }
+<a id="L737"></a><span class="ln">   737</span>	func (s *IncDecStmt) End() token.Pos {
+<a id="L738"></a><span class="ln">   738</span>		return s.TokPos + 2 <span class="comment">/* len(&#34;++&#34;) */</span>
+<a id="L739"></a><span class="ln">   739</span>	}
+<a id="L740"></a><span class="ln">   740</span>	func (s *AssignStmt) End() token.Pos { return s.Rhs[len(s.Rhs)-1].End() }
+<a id="L741"></a><span class="ln">   741</span>	func (s *GoStmt) End() token.Pos     { return s.Call.End() }
+<a id="L742"></a><span class="ln">   742</span>	func (s *DeferStmt) End() token.Pos  { return s.Call.End() }
+<a id="L743"></a><span class="ln">   743</span>	func (s *ReturnStmt) End() token.Pos {
+<a id="L744"></a><span class="ln">   744</span>		if n := len(s.Results); n &gt; 0 {
+<a id="L745"></a><span class="ln">   745</span>			return s.Results[n-1].End()
+<a id="L746"></a><span class="ln">   746</span>		}
+<a id="L747"></a><span class="ln">   747</span>		return s.Return + 6 <span class="comment">// len(&#34;return&#34;)</span>
+<a id="L748"></a><span class="ln">   748</span>	}
+<a id="L749"></a><span class="ln">   749</span>	func (s *BranchStmt) End() token.Pos {
+<a id="L750"></a><span class="ln">   750</span>		if s.Label != nil {
+<a id="L751"></a><span class="ln">   751</span>			return s.Label.End()
+<a id="L752"></a><span class="ln">   752</span>		}
+<a id="L753"></a><span class="ln">   753</span>		return token.Pos(int(s.TokPos) + len(s.Tok.String()))
+<a id="L754"></a><span class="ln">   754</span>	}
+<a id="L755"></a><span class="ln">   755</span>	func (s *BlockStmt) End() token.Pos { return s.Rbrace + 1 }
+<a id="L756"></a><span class="ln">   756</span>	func (s *IfStmt) End() token.Pos {
+<a id="L757"></a><span class="ln">   757</span>		if s.Else != nil {
+<a id="L758"></a><span class="ln">   758</span>			return s.Else.End()
+<a id="L759"></a><span class="ln">   759</span>		}
+<a id="L760"></a><span class="ln">   760</span>		return s.Body.End()
+<a id="L761"></a><span class="ln">   761</span>	}
+<a id="L762"></a><span class="ln">   762</span>	func (s *CaseClause) End() token.Pos {
+<a id="L763"></a><span class="ln">   763</span>		if n := len(s.Body); n &gt; 0 {
+<a id="L764"></a><span class="ln">   764</span>			return s.Body[n-1].End()
+<a id="L765"></a><span class="ln">   765</span>		}
+<a id="L766"></a><span class="ln">   766</span>		return s.Colon + 1
+<a id="L767"></a><span class="ln">   767</span>	}
+<a id="L768"></a><span class="ln">   768</span>	func (s *SwitchStmt) End() token.Pos     { return s.Body.End() }
+<a id="L769"></a><span class="ln">   769</span>	func (s *TypeSwitchStmt) End() token.Pos { return s.Body.End() }
+<a id="L770"></a><span class="ln">   770</span>	func (s *CommClause) End() token.Pos {
+<a id="L771"></a><span class="ln">   771</span>		if n := len(s.Body); n &gt; 0 {
+<a id="L772"></a><span class="ln">   772</span>			return s.Body[n-1].End()
+<a id="L773"></a><span class="ln">   773</span>		}
+<a id="L774"></a><span class="ln">   774</span>		return s.Colon + 1
+<a id="L775"></a><span class="ln">   775</span>	}
+<a id="L776"></a><span class="ln">   776</span>	func (s *SelectStmt) End() token.Pos { return s.Body.End() }
+<a id="L777"></a><span class="ln">   777</span>	func (s *ForStmt) End() token.Pos    { return s.Body.End() }
+<a id="L778"></a><span class="ln">   778</span>	func (s *RangeStmt) End() token.Pos  { return s.Body.End() }
+<a id="L779"></a><span class="ln">   779</span>	
+<a id="L780"></a><span class="ln">   780</span>	<span class="comment">// stmtNode() ensures that only statement nodes can be</span>
+<a id="L781"></a><span class="ln">   781</span>	<span class="comment">// assigned to a StmtNode.</span>
+<a id="L782"></a><span class="ln">   782</span>	<span class="comment">//</span>
+<a id="L783"></a><span class="ln">   783</span>	func (*BadStmt) stmtNode()        {}
+<a id="L784"></a><span class="ln">   784</span>	func (*DeclStmt) stmtNode()       {}
+<a id="L785"></a><span class="ln">   785</span>	func (*EmptyStmt) stmtNode()      {}
+<a id="L786"></a><span class="ln">   786</span>	func (*LabeledStmt) stmtNode()    {}
+<a id="L787"></a><span class="ln">   787</span>	func (*ExprStmt) stmtNode()       {}
+<a id="L788"></a><span class="ln">   788</span>	func (*SendStmt) stmtNode()       {}
+<a id="L789"></a><span class="ln">   789</span>	func (*IncDecStmt) stmtNode()     {}
+<a id="L790"></a><span class="ln">   790</span>	func (*AssignStmt) stmtNode()     {}
+<a id="L791"></a><span class="ln">   791</span>	func (*GoStmt) stmtNode()         {}
+<a id="L792"></a><span class="ln">   792</span>	func (*DeferStmt) stmtNode()      {}
+<a id="L793"></a><span class="ln">   793</span>	func (*ReturnStmt) stmtNode()     {}
+<a id="L794"></a><span class="ln">   794</span>	func (*BranchStmt) stmtNode()     {}
+<a id="L795"></a><span class="ln">   795</span>	func (*BlockStmt) stmtNode()      {}
+<a id="L796"></a><span class="ln">   796</span>	func (*IfStmt) stmtNode()         {}
+<a id="L797"></a><span class="ln">   797</span>	func (*CaseClause) stmtNode()     {}
+<a id="L798"></a><span class="ln">   798</span>	func (*SwitchStmt) stmtNode()     {}
+<a id="L799"></a><span class="ln">   799</span>	func (*TypeSwitchStmt) stmtNode() {}
+<a id="L800"></a><span class="ln">   800</span>	func (*CommClause) stmtNode()     {}
+<a id="L801"></a><span class="ln">   801</span>	func (*SelectStmt) stmtNode()     {}
+<a id="L802"></a><span class="ln">   802</span>	func (*ForStmt) stmtNode()        {}
+<a id="L803"></a><span class="ln">   803</span>	func (*RangeStmt) stmtNode()      {}
+<a id="L804"></a><span class="ln">   804</span>	
+<a id="L805"></a><span class="ln">   805</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L806"></a><span class="ln">   806</span>	<span class="comment">// Declarations</span>
+<a id="L807"></a><span class="ln">   807</span>	
+<a id="L808"></a><span class="ln">   808</span>	<span class="comment">// A Spec node represents a single (non-parenthesized) import,</span>
+<a id="L809"></a><span class="ln">   809</span>	<span class="comment">// constant, type, or variable declaration.</span>
+<a id="L810"></a><span class="ln">   810</span>	<span class="comment">//</span>
+<a id="L811"></a><span class="ln">   811</span>	type (
+<a id="L812"></a><span class="ln">   812</span>		<span class="comment">// The Spec type stands for any of *ImportSpec, *ValueSpec, and *TypeSpec.</span>
+<a id="L813"></a><span class="ln">   813</span>		Spec interface {
+<a id="L814"></a><span class="ln">   814</span>			Node
+<a id="L815"></a><span class="ln">   815</span>			specNode()
+<a id="L816"></a><span class="ln">   816</span>		}
+<a id="L817"></a><span class="ln">   817</span>	
+<a id="L818"></a><span class="ln">   818</span>		<span class="comment">// An ImportSpec node represents a single package import.</span>
+<a id="L819"></a><span class="ln">   819</span>		ImportSpec struct {
+<a id="L820"></a><span class="ln">   820</span>			Doc     *CommentGroup <span class="comment">// associated documentation; or nil</span>
+<a id="L821"></a><span class="ln">   821</span>			Name    *Ident        <span class="comment">// local package name (including &#34;.&#34;); or nil</span>
+<a id="L822"></a><span class="ln">   822</span>			Path    *BasicLit     <span class="comment">// import path</span>
+<a id="L823"></a><span class="ln">   823</span>			Comment *CommentGroup <span class="comment">// line comments; or nil</span>
+<a id="L824"></a><span class="ln">   824</span>			EndPos  token.Pos     <span class="comment">// end of spec (overrides Path.Pos if nonzero)</span>
+<a id="L825"></a><span class="ln">   825</span>		}
+<a id="L826"></a><span class="ln">   826</span>	
+<a id="L827"></a><span class="ln">   827</span>		<span class="comment">// A ValueSpec node represents a constant or variable declaration</span>
+<a id="L828"></a><span class="ln">   828</span>		<span class="comment">// (ConstSpec or VarSpec production).</span>
+<a id="L829"></a><span class="ln">   829</span>		<span class="comment">//</span>
+<a id="L830"></a><span class="ln">   830</span>		ValueSpec struct {
+<a id="L831"></a><span class="ln">   831</span>			Doc     *CommentGroup <span class="comment">// associated documentation; or nil</span>
+<a id="L832"></a><span class="ln">   832</span>			Names   []*Ident      <span class="comment">// value names (len(Names) &gt; 0)</span>
+<a id="L833"></a><span class="ln">   833</span>			Type    Expr          <span class="comment">// value type; or nil</span>
+<a id="L834"></a><span class="ln">   834</span>			Values  []Expr        <span class="comment">// initial values; or nil</span>
+<a id="L835"></a><span class="ln">   835</span>			Comment *CommentGroup <span class="comment">// line comments; or nil</span>
+<a id="L836"></a><span class="ln">   836</span>		}
+<a id="L837"></a><span class="ln">   837</span>	
+<a id="L838"></a><span class="ln">   838</span>		<span class="comment">// A TypeSpec node represents a type declaration (TypeSpec production).</span>
+<a id="L839"></a><span class="ln">   839</span>		TypeSpec struct {
+<a id="L840"></a><span class="ln">   840</span>			Doc     *CommentGroup <span class="comment">// associated documentation; or nil</span>
+<a id="L841"></a><span class="ln">   841</span>			Name    *Ident        <span class="comment">// type name</span>
+<a id="L842"></a><span class="ln">   842</span>			Type    Expr          <span class="comment">// *Ident, *ParenExpr, *SelectorExpr, *StarExpr, or any of the *XxxTypes</span>
+<a id="L843"></a><span class="ln">   843</span>			Comment *CommentGroup <span class="comment">// line comments; or nil</span>
+<a id="L844"></a><span class="ln">   844</span>		}
+<a id="L845"></a><span class="ln">   845</span>	)
+<a id="L846"></a><span class="ln">   846</span>	
+<a id="L847"></a><span class="ln">   847</span>	<span class="comment">// Pos and End implementations for spec nodes.</span>
+<a id="L848"></a><span class="ln">   848</span>	<span class="comment">//</span>
+<a id="L849"></a><span class="ln">   849</span>	func (s *ImportSpec) Pos() token.Pos {
+<a id="L850"></a><span class="ln">   850</span>		if s.Name != nil {
+<a id="L851"></a><span class="ln">   851</span>			return s.Name.Pos()
+<a id="L852"></a><span class="ln">   852</span>		}
+<a id="L853"></a><span class="ln">   853</span>		return s.Path.Pos()
+<a id="L854"></a><span class="ln">   854</span>	}
+<a id="L855"></a><span class="ln">   855</span>	func (s *ValueSpec) Pos() token.Pos { return s.Names[0].Pos() }
+<a id="L856"></a><span class="ln">   856</span>	func (s *TypeSpec) Pos() token.Pos  { return s.Name.Pos() }
+<a id="L857"></a><span class="ln">   857</span>	
+<a id="L858"></a><span class="ln">   858</span>	func (s *ImportSpec) End() token.Pos {
+<a id="L859"></a><span class="ln">   859</span>		if s.EndPos != 0 {
+<a id="L860"></a><span class="ln">   860</span>			return s.EndPos
+<a id="L861"></a><span class="ln">   861</span>		}
+<a id="L862"></a><span class="ln">   862</span>		return s.Path.End()
+<a id="L863"></a><span class="ln">   863</span>	}
+<a id="L864"></a><span class="ln">   864</span>	
+<a id="L865"></a><span class="ln">   865</span>	func (s *ValueSpec) End() token.Pos {
+<a id="L866"></a><span class="ln">   866</span>		if n := len(s.Values); n &gt; 0 {
+<a id="L867"></a><span class="ln">   867</span>			return s.Values[n-1].End()
+<a id="L868"></a><span class="ln">   868</span>		}
+<a id="L869"></a><span class="ln">   869</span>		if s.Type != nil {
+<a id="L870"></a><span class="ln">   870</span>			return s.Type.End()
+<a id="L871"></a><span class="ln">   871</span>		}
+<a id="L872"></a><span class="ln">   872</span>		return s.Names[len(s.Names)-1].End()
+<a id="L873"></a><span class="ln">   873</span>	}
+<a id="L874"></a><span class="ln">   874</span>	func (s *TypeSpec) End() token.Pos { return s.Type.End() }
+<a id="L875"></a><span class="ln">   875</span>	
+<a id="L876"></a><span class="ln">   876</span>	<span class="comment">// specNode() ensures that only spec nodes can be</span>
+<a id="L877"></a><span class="ln">   877</span>	<span class="comment">// assigned to a Spec.</span>
+<a id="L878"></a><span class="ln">   878</span>	<span class="comment">//</span>
+<a id="L879"></a><span class="ln">   879</span>	func (*ImportSpec) specNode() {}
+<a id="L880"></a><span class="ln">   880</span>	func (*ValueSpec) specNode()  {}
+<a id="L881"></a><span class="ln">   881</span>	func (*TypeSpec) specNode()   {}
+<a id="L882"></a><span class="ln">   882</span>	
+<a id="L883"></a><span class="ln">   883</span>	<span class="comment">// A declaration is represented by one of the following declaration nodes.</span>
+<a id="L884"></a><span class="ln">   884</span>	<span class="comment">//</span>
+<a id="L885"></a><span class="ln">   885</span>	type (
+<a id="L886"></a><span class="ln">   886</span>		<span class="comment">// A BadDecl node is a placeholder for declarations containing</span>
+<a id="L887"></a><span class="ln">   887</span>		<span class="comment">// syntax errors for which no correct declaration nodes can be</span>
+<a id="L888"></a><span class="ln">   888</span>		<span class="comment">// created.</span>
+<a id="L889"></a><span class="ln">   889</span>		<span class="comment">//</span>
+<a id="L890"></a><span class="ln">   890</span>		BadDecl struct {
+<a id="L891"></a><span class="ln">   891</span>			From, To token.Pos <span class="comment">// position range of bad declaration</span>
+<a id="L892"></a><span class="ln">   892</span>		}
+<a id="L893"></a><span class="ln">   893</span>	
+<a id="L894"></a><span class="ln">   894</span>		<span class="comment">// A GenDecl node (generic declaration node) represents an import,</span>
+<a id="L895"></a><span class="ln">   895</span>		<span class="comment">// constant, type or variable declaration. A valid Lparen position</span>
+<a id="L896"></a><span class="ln">   896</span>		<span class="comment">// (Lparen.Line &gt; 0) indicates a parenthesized declaration.</span>
+<a id="L897"></a><span class="ln">   897</span>		<span class="comment">//</span>
+<a id="L898"></a><span class="ln">   898</span>		<span class="comment">// Relationship between Tok value and Specs element type:</span>
+<a id="L899"></a><span class="ln">   899</span>		<span class="comment">//</span>
+<a id="L900"></a><span class="ln">   900</span>		<span class="comment">//	token.IMPORT  *ImportSpec</span>
+<a id="L901"></a><span class="ln">   901</span>		<span class="comment">//	token.CONST   *ValueSpec</span>
+<a id="L902"></a><span class="ln">   902</span>		<span class="comment">//	token.TYPE    *TypeSpec</span>
+<a id="L903"></a><span class="ln">   903</span>		<span class="comment">//	token.VAR     *ValueSpec</span>
+<a id="L904"></a><span class="ln">   904</span>		<span class="comment">//</span>
+<a id="L905"></a><span class="ln">   905</span>		GenDecl struct {
+<a id="L906"></a><span class="ln">   906</span>			Doc    *CommentGroup <span class="comment">// associated documentation; or nil</span>
+<a id="L907"></a><span class="ln">   907</span>			TokPos token.Pos     <span class="comment">// position of Tok</span>
+<a id="L908"></a><span class="ln">   908</span>			Tok    token.Token   <span class="comment">// IMPORT, CONST, TYPE, VAR</span>
+<a id="L909"></a><span class="ln">   909</span>			Lparen token.Pos     <span class="comment">// position of &#39;(&#39;, if any</span>
+<a id="L910"></a><span class="ln">   910</span>			Specs  []Spec
+<a id="L911"></a><span class="ln">   911</span>			Rparen token.Pos <span class="comment">// position of &#39;)&#39;, if any</span>
+<a id="L912"></a><span class="ln">   912</span>		}
+<a id="L913"></a><span class="ln">   913</span>	
+<a id="L914"></a><span class="ln">   914</span>		<span class="comment">// A FuncDecl node represents a function declaration.</span>
+<a id="L915"></a><span class="ln">   915</span>		FuncDecl struct {
+<a id="L916"></a><span class="ln">   916</span>			Doc  *CommentGroup <span class="comment">// associated documentation; or nil</span>
+<a id="L917"></a><span class="ln">   917</span>			Recv *FieldList    <span class="comment">// receiver (methods); or nil (functions)</span>
+<a id="L918"></a><span class="ln">   918</span>			Name *Ident        <span class="comment">// function/method name</span>
+<a id="L919"></a><span class="ln">   919</span>			Type *FuncType     <span class="comment">// position of Func keyword, parameters and results</span>
+<a id="L920"></a><span class="ln">   920</span>			Body *BlockStmt    <span class="comment">// function body; or nil (forward declaration)</span>
+<a id="L921"></a><span class="ln">   921</span>		}
+<a id="L922"></a><span class="ln">   922</span>	)
+<a id="L923"></a><span class="ln">   923</span>	
+<a id="L924"></a><span class="ln">   924</span>	<span class="comment">// Pos and End implementations for declaration nodes.</span>
+<a id="L925"></a><span class="ln">   925</span>	<span class="comment">//</span>
+<a id="L926"></a><span class="ln">   926</span>	func (d *BadDecl) Pos() token.Pos  { return d.From }
+<a id="L927"></a><span class="ln">   927</span>	func (d *GenDecl) Pos() token.Pos  { return d.TokPos }
+<a id="L928"></a><span class="ln">   928</span>	func (d *FuncDecl) Pos() token.Pos { return d.Type.Pos() }
+<a id="L929"></a><span class="ln">   929</span>	
+<a id="L930"></a><span class="ln">   930</span>	func (d *BadDecl) End() token.Pos { return d.To }
+<a id="L931"></a><span class="ln">   931</span>	func (d *GenDecl) End() token.Pos {
+<a id="L932"></a><span class="ln">   932</span>		if d.Rparen.IsValid() {
+<a id="L933"></a><span class="ln">   933</span>			return d.Rparen + 1
+<a id="L934"></a><span class="ln">   934</span>		}
+<a id="L935"></a><span class="ln">   935</span>		return d.Specs[0].End()
+<a id="L936"></a><span class="ln">   936</span>	}
+<a id="L937"></a><span class="ln">   937</span>	func (d *FuncDecl) End() token.Pos {
+<a id="L938"></a><span class="ln">   938</span>		if d.Body != nil {
+<a id="L939"></a><span class="ln">   939</span>			return d.Body.End()
+<a id="L940"></a><span class="ln">   940</span>		}
+<a id="L941"></a><span class="ln">   941</span>		return d.Type.End()
+<a id="L942"></a><span class="ln">   942</span>	}
+<a id="L943"></a><span class="ln">   943</span>	
+<a id="L944"></a><span class="ln">   944</span>	<span class="comment">// declNode() ensures that only declaration nodes can be</span>
+<a id="L945"></a><span class="ln">   945</span>	<span class="comment">// assigned to a DeclNode.</span>
+<a id="L946"></a><span class="ln">   946</span>	<span class="comment">//</span>
+<a id="L947"></a><span class="ln">   947</span>	func (*BadDecl) declNode()  {}
+<a id="L948"></a><span class="ln">   948</span>	func (*GenDecl) declNode()  {}
+<a id="L949"></a><span class="ln">   949</span>	func (*FuncDecl) declNode() {}
+<a id="L950"></a><span class="ln">   950</span>	
+<a id="L951"></a><span class="ln">   951</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L952"></a><span class="ln">   952</span>	<span class="comment">// Files and packages</span>
+<a id="L953"></a><span class="ln">   953</span>	
+<a id="L954"></a><span class="ln">   954</span>	<span class="comment">// A File node represents a Go source file.</span>
+<a id="L955"></a><span class="ln">   955</span>	<span class="comment">//</span>
+<a id="L956"></a><span class="ln">   956</span>	<span class="comment">// The Comments list contains all comments in the source file in order of</span>
+<a id="L957"></a><span class="ln">   957</span>	<span class="comment">// appearance, including the comments that are pointed to from other nodes</span>
+<a id="L958"></a><span class="ln">   958</span>	<span class="comment">// via Doc and Comment fields.</span>
+<a id="L959"></a><span class="ln">   959</span>	<span class="comment">//</span>
+<a id="L960"></a><span class="ln">   960</span>	type File struct {
+<a id="L961"></a><span class="ln">   961</span>		Doc        *CommentGroup   <span class="comment">// associated documentation; or nil</span>
+<a id="L962"></a><span class="ln">   962</span>		Package    token.Pos       <span class="comment">// position of &#34;package&#34; keyword</span>
+<a id="L963"></a><span class="ln">   963</span>		Name       *Ident          <span class="comment">// package name</span>
+<a id="L964"></a><span class="ln">   964</span>		Decls      []Decl          <span class="comment">// top-level declarations; or nil</span>
+<a id="L965"></a><span class="ln">   965</span>		Scope      *Scope          <span class="comment">// package scope (this file only)</span>
+<a id="L966"></a><span class="ln">   966</span>		Imports    []*ImportSpec   <span class="comment">// imports in this file</span>
+<a id="L967"></a><span class="ln">   967</span>		Unresolved []*Ident        <span class="comment">// unresolved identifiers in this file</span>
+<a id="L968"></a><span class="ln">   968</span>		Comments   []*CommentGroup <span class="comment">// list of all comments in the source file</span>
+<a id="L969"></a><span class="ln">   969</span>	}
+<a id="L970"></a><span class="ln">   970</span>	
+<a id="L971"></a><span class="ln">   971</span>	func (f *File) Pos() token.Pos { return f.Package }
+<a id="L972"></a><span class="ln">   972</span>	func (f *File) End() token.Pos {
+<a id="L973"></a><span class="ln">   973</span>		if n := len(f.Decls); n &gt; 0 {
+<a id="L974"></a><span class="ln">   974</span>			return f.Decls[n-1].End()
+<a id="L975"></a><span class="ln">   975</span>		}
+<a id="L976"></a><span class="ln">   976</span>		return f.Name.End()
+<a id="L977"></a><span class="ln">   977</span>	}
+<a id="L978"></a><span class="ln">   978</span>	
+<a id="L979"></a><span class="ln">   979</span>	<span class="comment">// A Package node represents a set of source files</span>
+<a id="L980"></a><span class="ln">   980</span>	<span class="comment">// collectively building a Go package.</span>
+<a id="L981"></a><span class="ln">   981</span>	<span class="comment">//</span>
+<a id="L982"></a><span class="ln">   982</span>	type Package struct {
+<a id="L983"></a><span class="ln">   983</span>		Name    string             <span class="comment">// package name</span>
+<a id="L984"></a><span class="ln">   984</span>		Scope   *Scope             <span class="comment">// package scope across all files</span>
+<a id="L985"></a><span class="ln">   985</span>		Imports map[string]*Object <span class="comment">// map of package id -&gt; package object</span>
+<a id="L986"></a><span class="ln">   986</span>		Files   map[string]*File   <span class="comment">// Go source files by filename</span>
+<a id="L987"></a><span class="ln">   987</span>	}
+<a id="L988"></a><span class="ln">   988</span>	
+<a id="L989"></a><span class="ln">   989</span>	func (p *Package) Pos() token.Pos { return token.NoPos }
+<a id="L990"></a><span class="ln">   990</span>	func (p *Package) End() token.Pos { return token.NoPos }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/text/template/helper.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/text/template/helper.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Helper functions to make constructing templates easier.</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package template
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;fmt&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;io/ioutil&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;path/filepath&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// Functions and methods to parse templates.</span>
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// Must is a helper that wraps a call to a function returning (*Template, error)</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// and panics if the error is non-nil. It is intended for use in variable</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// initializations such as</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//	var t = template.Must(template.New(&#34;name&#34;).Parse(&#34;text&#34;))</span>
+<a id="L21"></a><span class="ln">    21</span>	func Must(t *Template, err error) *Template {
+<a id="L22"></a><span class="ln">    22</span>		if err != nil {
+<a id="L23"></a><span class="ln">    23</span>			panic(err)
+<a id="L24"></a><span class="ln">    24</span>		}
+<a id="L25"></a><span class="ln">    25</span>		return t
+<a id="L26"></a><span class="ln">    26</span>	}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// ParseFiles creates a new Template and parses the template definitions from</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// the named files. The returned template&#39;s name will have the (base) name and</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// (parsed) contents of the first file. There must be at least one file.</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// If an error occurs, parsing stops and the returned *Template is nil.</span>
+<a id="L32"></a><span class="ln">    32</span>	func ParseFiles(filenames ...string) (*Template, error) {
+<a id="L33"></a><span class="ln">    33</span>		return parseFiles(nil, filenames...)
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// ParseFiles parses the named files and associates the resulting templates with</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// t. If an error occurs, parsing stops and the returned template is nil;</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// otherwise it is t. There must be at least one file.</span>
+<a id="L39"></a><span class="ln">    39</span>	func (t *Template) ParseFiles(filenames ...string) (*Template, error) {
+<a id="L40"></a><span class="ln">    40</span>		return parseFiles(t, filenames...)
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// parseFiles is the helper for the method and function. If the argument</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// template is nil, it is created from the first file.</span>
+<a id="L45"></a><span class="ln">    45</span>	func parseFiles(t *Template, filenames ...string) (*Template, error) {
+<a id="L46"></a><span class="ln">    46</span>		if len(filenames) == 0 {
+<a id="L47"></a><span class="ln">    47</span>			<span class="comment">// Not really a problem, but be consistent.</span>
+<a id="L48"></a><span class="ln">    48</span>			return nil, fmt.Errorf(&#34;template: no files named in call to ParseFiles&#34;)
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		for _, filename := range filenames {
+<a id="L51"></a><span class="ln">    51</span>			b, err := ioutil.ReadFile(filename)
+<a id="L52"></a><span class="ln">    52</span>			if err != nil {
+<a id="L53"></a><span class="ln">    53</span>				return nil, err
+<a id="L54"></a><span class="ln">    54</span>			}
+<a id="L55"></a><span class="ln">    55</span>			s := string(b)
+<a id="L56"></a><span class="ln">    56</span>			name := filepath.Base(filename)
+<a id="L57"></a><span class="ln">    57</span>			<span class="comment">// First template becomes return value if not already defined,</span>
+<a id="L58"></a><span class="ln">    58</span>			<span class="comment">// and we use that one for subsequent New calls to associate</span>
+<a id="L59"></a><span class="ln">    59</span>			<span class="comment">// all the templates together. Also, if this file has the same name</span>
+<a id="L60"></a><span class="ln">    60</span>			<span class="comment">// as t, this file becomes the contents of t, so</span>
+<a id="L61"></a><span class="ln">    61</span>			<span class="comment">//  t, err := New(name).Funcs(xxx).ParseFiles(name)</span>
+<a id="L62"></a><span class="ln">    62</span>			<span class="comment">// works. Otherwise we create a new template associated with t.</span>
+<a id="L63"></a><span class="ln">    63</span>			var tmpl *Template
+<a id="L64"></a><span class="ln">    64</span>			if t == nil {
+<a id="L65"></a><span class="ln">    65</span>				t = New(name)
+<a id="L66"></a><span class="ln">    66</span>			}
+<a id="L67"></a><span class="ln">    67</span>			if name == t.Name() {
+<a id="L68"></a><span class="ln">    68</span>				tmpl = t
+<a id="L69"></a><span class="ln">    69</span>			} else {
+<a id="L70"></a><span class="ln">    70</span>				tmpl = t.New(name)
+<a id="L71"></a><span class="ln">    71</span>			}
+<a id="L72"></a><span class="ln">    72</span>			_, err = tmpl.Parse(s)
+<a id="L73"></a><span class="ln">    73</span>			if err != nil {
+<a id="L74"></a><span class="ln">    74</span>				return nil, err
+<a id="L75"></a><span class="ln">    75</span>			}
+<a id="L76"></a><span class="ln">    76</span>		}
+<a id="L77"></a><span class="ln">    77</span>		return t, nil
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// ParseGlob creates a new Template and parses the template definitions from the</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// files identified by the pattern, which must match at least one file. The</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// returned template will have the (base) name and (parsed) contents of the</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// first file matched by the pattern. ParseGlob is equivalent to calling</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// ParseFiles with the list of files matched by the pattern.</span>
+<a id="L85"></a><span class="ln">    85</span>	func ParseGlob(pattern string) (*Template, error) {
+<a id="L86"></a><span class="ln">    86</span>		return parseGlob(nil, pattern)
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// ParseGlob parses the template definitions in the files identified by the</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// pattern and associates the resulting templates with t. The pattern is</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// processed by filepath.Glob and must match at least one file. ParseGlob is</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// equivalent to calling t.ParseFiles with the list of files matched by the</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// pattern.</span>
+<a id="L94"></a><span class="ln">    94</span>	func (t *Template) ParseGlob(pattern string) (*Template, error) {
+<a id="L95"></a><span class="ln">    95</span>		return parseGlob(t, pattern)
+<a id="L96"></a><span class="ln">    96</span>	}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// parseGlob is the implementation of the function and method ParseGlob.</span>
+<a id="L99"></a><span class="ln">    99</span>	func parseGlob(t *Template, pattern string) (*Template, error) {
+<a id="L100"></a><span class="ln">   100</span>		filenames, err := filepath.Glob(pattern)
+<a id="L101"></a><span class="ln">   101</span>		if err != nil {
+<a id="L102"></a><span class="ln">   102</span>			return nil, err
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>		if len(filenames) == 0 {
+<a id="L105"></a><span class="ln">   105</span>			return nil, fmt.Errorf(&#34;template: pattern matches no files: %#q&#34;, pattern)
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>		return parseFiles(t, filenames...)
+<a id="L108"></a><span class="ln">   108</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

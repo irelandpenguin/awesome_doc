@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/syscall/env_unix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/syscall/env_unix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Unix environment variables.</span>
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	package syscall
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import &#34;sync&#34;
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	var (
+<a id="L14"></a><span class="ln">    14</span>		<span class="comment">// envOnce guards initialization by copyenv, which populates env.</span>
+<a id="L15"></a><span class="ln">    15</span>		envOnce sync.Once
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>		<span class="comment">// envLock guards env and envs.</span>
+<a id="L18"></a><span class="ln">    18</span>		envLock sync.RWMutex
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// env maps from an environment variable to its first occurrence in envs.</span>
+<a id="L21"></a><span class="ln">    21</span>		env map[string]int
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// envs is provided by the runtime. elements are expected to be</span>
+<a id="L24"></a><span class="ln">    24</span>		<span class="comment">// of the form &#34;key=value&#34;.</span>
+<a id="L25"></a><span class="ln">    25</span>		envs []string
+<a id="L26"></a><span class="ln">    26</span>	)
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// setenv_c is provided by the runtime, but is a no-op if cgo isn&#39;t</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// loaded.</span>
+<a id="L30"></a><span class="ln">    30</span>	func setenv_c(k, v string)
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	func copyenv() {
+<a id="L33"></a><span class="ln">    33</span>		env = make(map[string]int)
+<a id="L34"></a><span class="ln">    34</span>		for i, s := range envs {
+<a id="L35"></a><span class="ln">    35</span>			for j := 0; j &lt; len(s); j++ {
+<a id="L36"></a><span class="ln">    36</span>				if s[j] == &#39;=&#39; {
+<a id="L37"></a><span class="ln">    37</span>					key := s[:j]
+<a id="L38"></a><span class="ln">    38</span>					if _, ok := env[key]; !ok {
+<a id="L39"></a><span class="ln">    39</span>						env[key] = i
+<a id="L40"></a><span class="ln">    40</span>					}
+<a id="L41"></a><span class="ln">    41</span>					break
+<a id="L42"></a><span class="ln">    42</span>				}
+<a id="L43"></a><span class="ln">    43</span>			}
+<a id="L44"></a><span class="ln">    44</span>		}
+<a id="L45"></a><span class="ln">    45</span>	}
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	func Getenv(key string) (value string, found bool) {
+<a id="L48"></a><span class="ln">    48</span>		envOnce.Do(copyenv)
+<a id="L49"></a><span class="ln">    49</span>		if len(key) == 0 {
+<a id="L50"></a><span class="ln">    50</span>			return &#34;&#34;, false
+<a id="L51"></a><span class="ln">    51</span>		}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>		envLock.RLock()
+<a id="L54"></a><span class="ln">    54</span>		defer envLock.RUnlock()
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>		i, ok := env[key]
+<a id="L57"></a><span class="ln">    57</span>		if !ok {
+<a id="L58"></a><span class="ln">    58</span>			return &#34;&#34;, false
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		s := envs[i]
+<a id="L61"></a><span class="ln">    61</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L62"></a><span class="ln">    62</span>			if s[i] == &#39;=&#39; {
+<a id="L63"></a><span class="ln">    63</span>				return s[i+1:], true
+<a id="L64"></a><span class="ln">    64</span>			}
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		return &#34;&#34;, false
+<a id="L67"></a><span class="ln">    67</span>	}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	func Setenv(key, value string) error {
+<a id="L70"></a><span class="ln">    70</span>		envOnce.Do(copyenv)
+<a id="L71"></a><span class="ln">    71</span>		if len(key) == 0 {
+<a id="L72"></a><span class="ln">    72</span>			return EINVAL
+<a id="L73"></a><span class="ln">    73</span>		}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>		envLock.Lock()
+<a id="L76"></a><span class="ln">    76</span>		defer envLock.Unlock()
+<a id="L77"></a><span class="ln">    77</span>	
+<a id="L78"></a><span class="ln">    78</span>		i, ok := env[key]
+<a id="L79"></a><span class="ln">    79</span>		kv := key + &#34;=&#34; + value
+<a id="L80"></a><span class="ln">    80</span>		if ok {
+<a id="L81"></a><span class="ln">    81</span>			envs[i] = kv
+<a id="L82"></a><span class="ln">    82</span>		} else {
+<a id="L83"></a><span class="ln">    83</span>			i = len(envs)
+<a id="L84"></a><span class="ln">    84</span>			envs = append(envs, kv)
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>		env[key] = i
+<a id="L87"></a><span class="ln">    87</span>		setenv_c(key, value)
+<a id="L88"></a><span class="ln">    88</span>		return nil
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	func Clearenv() {
+<a id="L92"></a><span class="ln">    92</span>		envOnce.Do(copyenv) <span class="comment">// prevent copyenv in Getenv/Setenv</span>
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>		envLock.Lock()
+<a id="L95"></a><span class="ln">    95</span>		defer envLock.Unlock()
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>		env = make(map[string]int)
+<a id="L98"></a><span class="ln">    98</span>		envs = []string{}
+<a id="L99"></a><span class="ln">    99</span>		<span class="comment">// TODO(bradfitz): pass through to C</span>
+<a id="L100"></a><span class="ln">   100</span>	}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>	func Environ() []string {
+<a id="L103"></a><span class="ln">   103</span>		envOnce.Do(copyenv)
+<a id="L104"></a><span class="ln">   104</span>		envLock.RLock()
+<a id="L105"></a><span class="ln">   105</span>		defer envLock.RUnlock()
+<a id="L106"></a><span class="ln">   106</span>		a := make([]string, len(envs))
+<a id="L107"></a><span class="ln">   107</span>		copy(a, envs)
+<a id="L108"></a><span class="ln">   108</span>		return a
+<a id="L109"></a><span class="ln">   109</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

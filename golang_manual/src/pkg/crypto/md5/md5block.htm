@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/md5/md5block.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/md5/md5block.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// MD5 block step.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// In its own file so that a faster assembly or C version</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// can be substituted easily.</span>
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	package md5
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// table[i] = int((1&lt;&lt;32) * abs(sin(i+1 radians))).</span>
+<a id="L12"></a><span class="ln">    12</span>	var table = []uint32{
+<a id="L13"></a><span class="ln">    13</span>		<span class="comment">// round 1</span>
+<a id="L14"></a><span class="ln">    14</span>		0xd76aa478,
+<a id="L15"></a><span class="ln">    15</span>		0xe8c7b756,
+<a id="L16"></a><span class="ln">    16</span>		0x242070db,
+<a id="L17"></a><span class="ln">    17</span>		0xc1bdceee,
+<a id="L18"></a><span class="ln">    18</span>		0xf57c0faf,
+<a id="L19"></a><span class="ln">    19</span>		0x4787c62a,
+<a id="L20"></a><span class="ln">    20</span>		0xa8304613,
+<a id="L21"></a><span class="ln">    21</span>		0xfd469501,
+<a id="L22"></a><span class="ln">    22</span>		0x698098d8,
+<a id="L23"></a><span class="ln">    23</span>		0x8b44f7af,
+<a id="L24"></a><span class="ln">    24</span>		0xffff5bb1,
+<a id="L25"></a><span class="ln">    25</span>		0x895cd7be,
+<a id="L26"></a><span class="ln">    26</span>		0x6b901122,
+<a id="L27"></a><span class="ln">    27</span>		0xfd987193,
+<a id="L28"></a><span class="ln">    28</span>		0xa679438e,
+<a id="L29"></a><span class="ln">    29</span>		0x49b40821,
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// round 2</span>
+<a id="L32"></a><span class="ln">    32</span>		0xf61e2562,
+<a id="L33"></a><span class="ln">    33</span>		0xc040b340,
+<a id="L34"></a><span class="ln">    34</span>		0x265e5a51,
+<a id="L35"></a><span class="ln">    35</span>		0xe9b6c7aa,
+<a id="L36"></a><span class="ln">    36</span>		0xd62f105d,
+<a id="L37"></a><span class="ln">    37</span>		0x2441453,
+<a id="L38"></a><span class="ln">    38</span>		0xd8a1e681,
+<a id="L39"></a><span class="ln">    39</span>		0xe7d3fbc8,
+<a id="L40"></a><span class="ln">    40</span>		0x21e1cde6,
+<a id="L41"></a><span class="ln">    41</span>		0xc33707d6,
+<a id="L42"></a><span class="ln">    42</span>		0xf4d50d87,
+<a id="L43"></a><span class="ln">    43</span>		0x455a14ed,
+<a id="L44"></a><span class="ln">    44</span>		0xa9e3e905,
+<a id="L45"></a><span class="ln">    45</span>		0xfcefa3f8,
+<a id="L46"></a><span class="ln">    46</span>		0x676f02d9,
+<a id="L47"></a><span class="ln">    47</span>		0x8d2a4c8a,
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>		<span class="comment">// round3</span>
+<a id="L50"></a><span class="ln">    50</span>		0xfffa3942,
+<a id="L51"></a><span class="ln">    51</span>		0x8771f681,
+<a id="L52"></a><span class="ln">    52</span>		0x6d9d6122,
+<a id="L53"></a><span class="ln">    53</span>		0xfde5380c,
+<a id="L54"></a><span class="ln">    54</span>		0xa4beea44,
+<a id="L55"></a><span class="ln">    55</span>		0x4bdecfa9,
+<a id="L56"></a><span class="ln">    56</span>		0xf6bb4b60,
+<a id="L57"></a><span class="ln">    57</span>		0xbebfbc70,
+<a id="L58"></a><span class="ln">    58</span>		0x289b7ec6,
+<a id="L59"></a><span class="ln">    59</span>		0xeaa127fa,
+<a id="L60"></a><span class="ln">    60</span>		0xd4ef3085,
+<a id="L61"></a><span class="ln">    61</span>		0x4881d05,
+<a id="L62"></a><span class="ln">    62</span>		0xd9d4d039,
+<a id="L63"></a><span class="ln">    63</span>		0xe6db99e5,
+<a id="L64"></a><span class="ln">    64</span>		0x1fa27cf8,
+<a id="L65"></a><span class="ln">    65</span>		0xc4ac5665,
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// round 4</span>
+<a id="L68"></a><span class="ln">    68</span>		0xf4292244,
+<a id="L69"></a><span class="ln">    69</span>		0x432aff97,
+<a id="L70"></a><span class="ln">    70</span>		0xab9423a7,
+<a id="L71"></a><span class="ln">    71</span>		0xfc93a039,
+<a id="L72"></a><span class="ln">    72</span>		0x655b59c3,
+<a id="L73"></a><span class="ln">    73</span>		0x8f0ccc92,
+<a id="L74"></a><span class="ln">    74</span>		0xffeff47d,
+<a id="L75"></a><span class="ln">    75</span>		0x85845dd1,
+<a id="L76"></a><span class="ln">    76</span>		0x6fa87e4f,
+<a id="L77"></a><span class="ln">    77</span>		0xfe2ce6e0,
+<a id="L78"></a><span class="ln">    78</span>		0xa3014314,
+<a id="L79"></a><span class="ln">    79</span>		0x4e0811a1,
+<a id="L80"></a><span class="ln">    80</span>		0xf7537e82,
+<a id="L81"></a><span class="ln">    81</span>		0xbd3af235,
+<a id="L82"></a><span class="ln">    82</span>		0x2ad7d2bb,
+<a id="L83"></a><span class="ln">    83</span>		0xeb86d391,
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	var shift1 = []uint{7, 12, 17, 22}
+<a id="L87"></a><span class="ln">    87</span>	var shift2 = []uint{5, 9, 14, 20}
+<a id="L88"></a><span class="ln">    88</span>	var shift3 = []uint{4, 11, 16, 23}
+<a id="L89"></a><span class="ln">    89</span>	var shift4 = []uint{6, 10, 15, 21}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	func _Block(dig *digest, p []byte) int {
+<a id="L92"></a><span class="ln">    92</span>		a := dig.s[0]
+<a id="L93"></a><span class="ln">    93</span>		b := dig.s[1]
+<a id="L94"></a><span class="ln">    94</span>		c := dig.s[2]
+<a id="L95"></a><span class="ln">    95</span>		d := dig.s[3]
+<a id="L96"></a><span class="ln">    96</span>		n := 0
+<a id="L97"></a><span class="ln">    97</span>		var X [16]uint32
+<a id="L98"></a><span class="ln">    98</span>		for len(p) &gt;= _Chunk {
+<a id="L99"></a><span class="ln">    99</span>			aa, bb, cc, dd := a, b, c, d
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>			j := 0
+<a id="L102"></a><span class="ln">   102</span>			for i := 0; i &lt; 16; i++ {
+<a id="L103"></a><span class="ln">   103</span>				X[i] = uint32(p[j]) | uint32(p[j+1])&lt;&lt;8 | uint32(p[j+2])&lt;&lt;16 | uint32(p[j+3])&lt;&lt;24
+<a id="L104"></a><span class="ln">   104</span>				j += 4
+<a id="L105"></a><span class="ln">   105</span>			}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>			<span class="comment">// If this needs to be made faster in the future,</span>
+<a id="L108"></a><span class="ln">   108</span>			<span class="comment">// the usual trick is to unroll each of these</span>
+<a id="L109"></a><span class="ln">   109</span>			<span class="comment">// loops by a factor of 4; that lets you replace</span>
+<a id="L110"></a><span class="ln">   110</span>			<span class="comment">// the shift[] lookups with constants and,</span>
+<a id="L111"></a><span class="ln">   111</span>			<span class="comment">// with suitable variable renaming in each</span>
+<a id="L112"></a><span class="ln">   112</span>			<span class="comment">// unrolled body, delete the a, b, c, d = d, a, b, c</span>
+<a id="L113"></a><span class="ln">   113</span>			<span class="comment">// (or you can let the optimizer do the renaming).</span>
+<a id="L114"></a><span class="ln">   114</span>			<span class="comment">//</span>
+<a id="L115"></a><span class="ln">   115</span>			<span class="comment">// The index variables are uint so that % by a power</span>
+<a id="L116"></a><span class="ln">   116</span>			<span class="comment">// of two can be optimized easily by a compiler.</span>
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>			<span class="comment">// Round 1.</span>
+<a id="L119"></a><span class="ln">   119</span>			for i := uint(0); i &lt; 16; i++ {
+<a id="L120"></a><span class="ln">   120</span>				x := i
+<a id="L121"></a><span class="ln">   121</span>				s := shift1[i%4]
+<a id="L122"></a><span class="ln">   122</span>				f := ((c ^ d) &amp; b) ^ d
+<a id="L123"></a><span class="ln">   123</span>				a += f + X[x] + table[i]
+<a id="L124"></a><span class="ln">   124</span>				a = a&lt;&lt;s | a&gt;&gt;(32-s) + b
+<a id="L125"></a><span class="ln">   125</span>				a, b, c, d = d, a, b, c
+<a id="L126"></a><span class="ln">   126</span>			}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>			<span class="comment">// Round 2.</span>
+<a id="L129"></a><span class="ln">   129</span>			for i := uint(0); i &lt; 16; i++ {
+<a id="L130"></a><span class="ln">   130</span>				x := (1 + 5*i) % 16
+<a id="L131"></a><span class="ln">   131</span>				s := shift2[i%4]
+<a id="L132"></a><span class="ln">   132</span>				g := ((b ^ c) &amp; d) ^ c
+<a id="L133"></a><span class="ln">   133</span>				a += g + X[x] + table[i+16]
+<a id="L134"></a><span class="ln">   134</span>				a = a&lt;&lt;s | a&gt;&gt;(32-s) + b
+<a id="L135"></a><span class="ln">   135</span>				a, b, c, d = d, a, b, c
+<a id="L136"></a><span class="ln">   136</span>			}
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>			<span class="comment">// Round 3.</span>
+<a id="L139"></a><span class="ln">   139</span>			for i := uint(0); i &lt; 16; i++ {
+<a id="L140"></a><span class="ln">   140</span>				x := (5 + 3*i) % 16
+<a id="L141"></a><span class="ln">   141</span>				s := shift3[i%4]
+<a id="L142"></a><span class="ln">   142</span>				h := b ^ c ^ d
+<a id="L143"></a><span class="ln">   143</span>				a += h + X[x] + table[i+32]
+<a id="L144"></a><span class="ln">   144</span>				a = a&lt;&lt;s | a&gt;&gt;(32-s) + b
+<a id="L145"></a><span class="ln">   145</span>				a, b, c, d = d, a, b, c
+<a id="L146"></a><span class="ln">   146</span>			}
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>			<span class="comment">// Round 4.</span>
+<a id="L149"></a><span class="ln">   149</span>			for i := uint(0); i &lt; 16; i++ {
+<a id="L150"></a><span class="ln">   150</span>				x := (7 * i) % 16
+<a id="L151"></a><span class="ln">   151</span>				s := shift4[i%4]
+<a id="L152"></a><span class="ln">   152</span>				j := c ^ (b | ^d)
+<a id="L153"></a><span class="ln">   153</span>				a += j + X[x] + table[i+48]
+<a id="L154"></a><span class="ln">   154</span>				a = a&lt;&lt;s | a&gt;&gt;(32-s) + b
+<a id="L155"></a><span class="ln">   155</span>				a, b, c, d = d, a, b, c
+<a id="L156"></a><span class="ln">   156</span>			}
+<a id="L157"></a><span class="ln">   157</span>	
+<a id="L158"></a><span class="ln">   158</span>			a += aa
+<a id="L159"></a><span class="ln">   159</span>			b += bb
+<a id="L160"></a><span class="ln">   160</span>			c += cc
+<a id="L161"></a><span class="ln">   161</span>			d += dd
+<a id="L162"></a><span class="ln">   162</span>	
+<a id="L163"></a><span class="ln">   163</span>			p = p[_Chunk:]
+<a id="L164"></a><span class="ln">   164</span>			n += _Chunk
+<a id="L165"></a><span class="ln">   165</span>		}
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>		dig.s[0] = a
+<a id="L168"></a><span class="ln">   168</span>		dig.s[1] = b
+<a id="L169"></a><span class="ln">   169</span>		dig.s[2] = c
+<a id="L170"></a><span class="ln">   170</span>		dig.s[3] = d
+<a id="L171"></a><span class="ln">   171</span>		return n
+<a id="L172"></a><span class="ln">   172</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

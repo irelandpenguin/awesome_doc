@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/unicode/utf16/utf16.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/unicode/utf16/utf16.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package utf16 implements encoding and decoding of UTF-16 sequences.</span>
+<a id="L6"></a><span class="ln">     6</span>	package utf16
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// The conditions replacementChar==unicode.ReplacementChar and</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// maxRune==unicode.MaxRune are verified in the tests.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Defining them locally avoids this package depending on package unicode.</span>
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	const (
+<a id="L13"></a><span class="ln">    13</span>		replacementChar = &#39;\uFFFD&#39;     <span class="comment">// Unicode replacement character</span>
+<a id="L14"></a><span class="ln">    14</span>		maxRune         = &#39;\U0010FFFF&#39; <span class="comment">// Maximum valid Unicode code point.</span>
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	const (
+<a id="L18"></a><span class="ln">    18</span>		<span class="comment">// 0xd800-0xdc00 encodes the high 10 bits of a pair.</span>
+<a id="L19"></a><span class="ln">    19</span>		<span class="comment">// 0xdc00-0xe000 encodes the low 10 bits of a pair.</span>
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// the value is those 20 bits plus 0x10000.</span>
+<a id="L21"></a><span class="ln">    21</span>		surr1 = 0xd800
+<a id="L22"></a><span class="ln">    22</span>		surr2 = 0xdc00
+<a id="L23"></a><span class="ln">    23</span>		surr3 = 0xe000
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>		surrSelf = 0x10000
+<a id="L26"></a><span class="ln">    26</span>	)
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// IsSurrogate returns true if the specified Unicode code point</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// can appear in a surrogate pair.</span>
+<a id="L30"></a><span class="ln">    30</span>	func IsSurrogate(r rune) bool {
+<a id="L31"></a><span class="ln">    31</span>		return surr1 &lt;= r &amp;&amp; r &lt; surr3
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// DecodeRune returns the UTF-16 decoding of a surrogate pair.</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// If the pair is not a valid UTF-16 surrogate pair, DecodeRune returns</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// the Unicode replacement code point U+FFFD.</span>
+<a id="L37"></a><span class="ln">    37</span>	func DecodeRune(r1, r2 rune) rune {
+<a id="L38"></a><span class="ln">    38</span>		if surr1 &lt;= r1 &amp;&amp; r1 &lt; surr2 &amp;&amp; surr2 &lt;= r2 &amp;&amp; r2 &lt; surr3 {
+<a id="L39"></a><span class="ln">    39</span>			return (rune(r1)-surr1)&lt;&lt;10 | (rune(r2) - surr2) + 0x10000
+<a id="L40"></a><span class="ln">    40</span>		}
+<a id="L41"></a><span class="ln">    41</span>		return replacementChar
+<a id="L42"></a><span class="ln">    42</span>	}
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// EncodeRune returns the UTF-16 surrogate pair r1, r2 for the given rune.</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// If the rune is not a valid Unicode code point or does not need encoding,</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// EncodeRune returns U+FFFD, U+FFFD.</span>
+<a id="L47"></a><span class="ln">    47</span>	func EncodeRune(r rune) (r1, r2 rune) {
+<a id="L48"></a><span class="ln">    48</span>		if r &lt; surrSelf || r &gt; maxRune || IsSurrogate(r) {
+<a id="L49"></a><span class="ln">    49</span>			return replacementChar, replacementChar
+<a id="L50"></a><span class="ln">    50</span>		}
+<a id="L51"></a><span class="ln">    51</span>		r -= surrSelf
+<a id="L52"></a><span class="ln">    52</span>		return surr1 + (r&gt;&gt;10)&amp;0x3ff, surr2 + r&amp;0x3ff
+<a id="L53"></a><span class="ln">    53</span>	}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// Encode returns the UTF-16 encoding of the Unicode code point sequence s.</span>
+<a id="L56"></a><span class="ln">    56</span>	func Encode(s []rune) []uint16 {
+<a id="L57"></a><span class="ln">    57</span>		n := len(s)
+<a id="L58"></a><span class="ln">    58</span>		for _, v := range s {
+<a id="L59"></a><span class="ln">    59</span>			if v &gt;= surrSelf {
+<a id="L60"></a><span class="ln">    60</span>				n++
+<a id="L61"></a><span class="ln">    61</span>			}
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>		a := make([]uint16, n)
+<a id="L65"></a><span class="ln">    65</span>		n = 0
+<a id="L66"></a><span class="ln">    66</span>		for _, v := range s {
+<a id="L67"></a><span class="ln">    67</span>			switch {
+<a id="L68"></a><span class="ln">    68</span>			case v &lt; 0, surr1 &lt;= v &amp;&amp; v &lt; surr3, v &gt; maxRune:
+<a id="L69"></a><span class="ln">    69</span>				v = replacementChar
+<a id="L70"></a><span class="ln">    70</span>				fallthrough
+<a id="L71"></a><span class="ln">    71</span>			case v &lt; surrSelf:
+<a id="L72"></a><span class="ln">    72</span>				a[n] = uint16(v)
+<a id="L73"></a><span class="ln">    73</span>				n++
+<a id="L74"></a><span class="ln">    74</span>			default:
+<a id="L75"></a><span class="ln">    75</span>				r1, r2 := EncodeRune(v)
+<a id="L76"></a><span class="ln">    76</span>				a[n] = uint16(r1)
+<a id="L77"></a><span class="ln">    77</span>				a[n+1] = uint16(r2)
+<a id="L78"></a><span class="ln">    78</span>				n += 2
+<a id="L79"></a><span class="ln">    79</span>			}
+<a id="L80"></a><span class="ln">    80</span>		}
+<a id="L81"></a><span class="ln">    81</span>		return a[0:n]
+<a id="L82"></a><span class="ln">    82</span>	}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// Decode returns the Unicode code point sequence represented</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// by the UTF-16 encoding s.</span>
+<a id="L86"></a><span class="ln">    86</span>	func Decode(s []uint16) []rune {
+<a id="L87"></a><span class="ln">    87</span>		a := make([]rune, len(s))
+<a id="L88"></a><span class="ln">    88</span>		n := 0
+<a id="L89"></a><span class="ln">    89</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L90"></a><span class="ln">    90</span>			switch r := s[i]; {
+<a id="L91"></a><span class="ln">    91</span>			case surr1 &lt;= r &amp;&amp; r &lt; surr2 &amp;&amp; i+1 &lt; len(s) &amp;&amp;
+<a id="L92"></a><span class="ln">    92</span>				surr2 &lt;= s[i+1] &amp;&amp; s[i+1] &lt; surr3:
+<a id="L93"></a><span class="ln">    93</span>				<span class="comment">// valid surrogate sequence</span>
+<a id="L94"></a><span class="ln">    94</span>				a[n] = DecodeRune(rune(r), rune(s[i+1]))
+<a id="L95"></a><span class="ln">    95</span>				i++
+<a id="L96"></a><span class="ln">    96</span>				n++
+<a id="L97"></a><span class="ln">    97</span>			case surr1 &lt;= r &amp;&amp; r &lt; surr3:
+<a id="L98"></a><span class="ln">    98</span>				<span class="comment">// invalid surrogate sequence</span>
+<a id="L99"></a><span class="ln">    99</span>				a[n] = replacementChar
+<a id="L100"></a><span class="ln">   100</span>				n++
+<a id="L101"></a><span class="ln">   101</span>			default:
+<a id="L102"></a><span class="ln">   102</span>				<span class="comment">// normal rune</span>
+<a id="L103"></a><span class="ln">   103</span>				a[n] = rune(r)
+<a id="L104"></a><span class="ln">   104</span>				n++
+<a id="L105"></a><span class="ln">   105</span>			}
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>		return a[0:n]
+<a id="L108"></a><span class="ln">   108</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

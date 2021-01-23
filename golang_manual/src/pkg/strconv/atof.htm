@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/strconv/atof.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/strconv/atof.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package strconv implements conversions to and from string representations</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// of basic data types.</span>
+<a id="L7"></a><span class="ln">     7</span>	package strconv
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// decimal to binary floating point conversion.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Algorithm:</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//   1) Store input in multiprecision decimal.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//   2) Multiply/divide decimal by powers of two until in range [0.5, 1)</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//   3) Multiply by 2^precision and round to get mantissa.</span>
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	import &#34;math&#34;
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	var optimize = true <span class="comment">// can change for testing</span>
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	func equalIgnoreCase(s1, s2 string) bool {
+<a id="L20"></a><span class="ln">    20</span>		if len(s1) != len(s2) {
+<a id="L21"></a><span class="ln">    21</span>			return false
+<a id="L22"></a><span class="ln">    22</span>		}
+<a id="L23"></a><span class="ln">    23</span>		for i := 0; i &lt; len(s1); i++ {
+<a id="L24"></a><span class="ln">    24</span>			c1 := s1[i]
+<a id="L25"></a><span class="ln">    25</span>			if &#39;A&#39; &lt;= c1 &amp;&amp; c1 &lt;= &#39;Z&#39; {
+<a id="L26"></a><span class="ln">    26</span>				c1 += &#39;a&#39; - &#39;A&#39;
+<a id="L27"></a><span class="ln">    27</span>			}
+<a id="L28"></a><span class="ln">    28</span>			c2 := s2[i]
+<a id="L29"></a><span class="ln">    29</span>			if &#39;A&#39; &lt;= c2 &amp;&amp; c2 &lt;= &#39;Z&#39; {
+<a id="L30"></a><span class="ln">    30</span>				c2 += &#39;a&#39; - &#39;A&#39;
+<a id="L31"></a><span class="ln">    31</span>			}
+<a id="L32"></a><span class="ln">    32</span>			if c1 != c2 {
+<a id="L33"></a><span class="ln">    33</span>				return false
+<a id="L34"></a><span class="ln">    34</span>			}
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>		return true
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	func special(s string) (f float64, ok bool) {
+<a id="L40"></a><span class="ln">    40</span>		switch {
+<a id="L41"></a><span class="ln">    41</span>		case equalIgnoreCase(s, &#34;nan&#34;):
+<a id="L42"></a><span class="ln">    42</span>			return math.NaN(), true
+<a id="L43"></a><span class="ln">    43</span>		case equalIgnoreCase(s, &#34;-inf&#34;),
+<a id="L44"></a><span class="ln">    44</span>			equalIgnoreCase(s, &#34;-infinity&#34;):
+<a id="L45"></a><span class="ln">    45</span>			return math.Inf(-1), true
+<a id="L46"></a><span class="ln">    46</span>		case equalIgnoreCase(s, &#34;+inf&#34;),
+<a id="L47"></a><span class="ln">    47</span>			equalIgnoreCase(s, &#34;+infinity&#34;),
+<a id="L48"></a><span class="ln">    48</span>			equalIgnoreCase(s, &#34;inf&#34;),
+<a id="L49"></a><span class="ln">    49</span>			equalIgnoreCase(s, &#34;infinity&#34;):
+<a id="L50"></a><span class="ln">    50</span>			return math.Inf(1), true
+<a id="L51"></a><span class="ln">    51</span>		}
+<a id="L52"></a><span class="ln">    52</span>		return
+<a id="L53"></a><span class="ln">    53</span>	}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	func (b *decimal) set(s string) (ok bool) {
+<a id="L56"></a><span class="ln">    56</span>		i := 0
+<a id="L57"></a><span class="ln">    57</span>		b.neg = false
+<a id="L58"></a><span class="ln">    58</span>		b.trunc = false
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// optional sign</span>
+<a id="L61"></a><span class="ln">    61</span>		if i &gt;= len(s) {
+<a id="L62"></a><span class="ln">    62</span>			return
+<a id="L63"></a><span class="ln">    63</span>		}
+<a id="L64"></a><span class="ln">    64</span>		switch {
+<a id="L65"></a><span class="ln">    65</span>		case s[i] == &#39;+&#39;:
+<a id="L66"></a><span class="ln">    66</span>			i++
+<a id="L67"></a><span class="ln">    67</span>		case s[i] == &#39;-&#39;:
+<a id="L68"></a><span class="ln">    68</span>			b.neg = true
+<a id="L69"></a><span class="ln">    69</span>			i++
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>		<span class="comment">// digits</span>
+<a id="L73"></a><span class="ln">    73</span>		sawdot := false
+<a id="L74"></a><span class="ln">    74</span>		sawdigits := false
+<a id="L75"></a><span class="ln">    75</span>		for ; i &lt; len(s); i++ {
+<a id="L76"></a><span class="ln">    76</span>			switch {
+<a id="L77"></a><span class="ln">    77</span>			case s[i] == &#39;.&#39;:
+<a id="L78"></a><span class="ln">    78</span>				if sawdot {
+<a id="L79"></a><span class="ln">    79</span>					return
+<a id="L80"></a><span class="ln">    80</span>				}
+<a id="L81"></a><span class="ln">    81</span>				sawdot = true
+<a id="L82"></a><span class="ln">    82</span>				b.dp = b.nd
+<a id="L83"></a><span class="ln">    83</span>				continue
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>			case &#39;0&#39; &lt;= s[i] &amp;&amp; s[i] &lt;= &#39;9&#39;:
+<a id="L86"></a><span class="ln">    86</span>				sawdigits = true
+<a id="L87"></a><span class="ln">    87</span>				if s[i] == &#39;0&#39; &amp;&amp; b.nd == 0 { <span class="comment">// ignore leading zeros</span>
+<a id="L88"></a><span class="ln">    88</span>					b.dp--
+<a id="L89"></a><span class="ln">    89</span>					continue
+<a id="L90"></a><span class="ln">    90</span>				}
+<a id="L91"></a><span class="ln">    91</span>				if b.nd &lt; len(b.d) {
+<a id="L92"></a><span class="ln">    92</span>					b.d[b.nd] = s[i]
+<a id="L93"></a><span class="ln">    93</span>					b.nd++
+<a id="L94"></a><span class="ln">    94</span>				} else if s[i] != &#39;0&#39; {
+<a id="L95"></a><span class="ln">    95</span>					b.trunc = true
+<a id="L96"></a><span class="ln">    96</span>				}
+<a id="L97"></a><span class="ln">    97</span>				continue
+<a id="L98"></a><span class="ln">    98</span>			}
+<a id="L99"></a><span class="ln">    99</span>			break
+<a id="L100"></a><span class="ln">   100</span>		}
+<a id="L101"></a><span class="ln">   101</span>		if !sawdigits {
+<a id="L102"></a><span class="ln">   102</span>			return
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>		if !sawdot {
+<a id="L105"></a><span class="ln">   105</span>			b.dp = b.nd
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>	
+<a id="L108"></a><span class="ln">   108</span>		<span class="comment">// optional exponent moves decimal point.</span>
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// if we read a very large, very long number,</span>
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">// just be sure to move the decimal point by</span>
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">// a lot (say, 100000).  it doesn&#39;t matter if it&#39;s</span>
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">// not the exact number.</span>
+<a id="L113"></a><span class="ln">   113</span>		if i &lt; len(s) &amp;&amp; (s[i] == &#39;e&#39; || s[i] == &#39;E&#39;) {
+<a id="L114"></a><span class="ln">   114</span>			i++
+<a id="L115"></a><span class="ln">   115</span>			if i &gt;= len(s) {
+<a id="L116"></a><span class="ln">   116</span>				return
+<a id="L117"></a><span class="ln">   117</span>			}
+<a id="L118"></a><span class="ln">   118</span>			esign := 1
+<a id="L119"></a><span class="ln">   119</span>			if s[i] == &#39;+&#39; {
+<a id="L120"></a><span class="ln">   120</span>				i++
+<a id="L121"></a><span class="ln">   121</span>			} else if s[i] == &#39;-&#39; {
+<a id="L122"></a><span class="ln">   122</span>				i++
+<a id="L123"></a><span class="ln">   123</span>				esign = -1
+<a id="L124"></a><span class="ln">   124</span>			}
+<a id="L125"></a><span class="ln">   125</span>			if i &gt;= len(s) || s[i] &lt; &#39;0&#39; || s[i] &gt; &#39;9&#39; {
+<a id="L126"></a><span class="ln">   126</span>				return
+<a id="L127"></a><span class="ln">   127</span>			}
+<a id="L128"></a><span class="ln">   128</span>			e := 0
+<a id="L129"></a><span class="ln">   129</span>			for ; i &lt; len(s) &amp;&amp; &#39;0&#39; &lt;= s[i] &amp;&amp; s[i] &lt;= &#39;9&#39;; i++ {
+<a id="L130"></a><span class="ln">   130</span>				if e &lt; 10000 {
+<a id="L131"></a><span class="ln">   131</span>					e = e*10 + int(s[i]) - &#39;0&#39;
+<a id="L132"></a><span class="ln">   132</span>				}
+<a id="L133"></a><span class="ln">   133</span>			}
+<a id="L134"></a><span class="ln">   134</span>			b.dp += e * esign
+<a id="L135"></a><span class="ln">   135</span>		}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>		if i != len(s) {
+<a id="L138"></a><span class="ln">   138</span>			return
+<a id="L139"></a><span class="ln">   139</span>		}
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>		ok = true
+<a id="L142"></a><span class="ln">   142</span>		return
+<a id="L143"></a><span class="ln">   143</span>	}
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// decimal power of ten to binary power of two.</span>
+<a id="L146"></a><span class="ln">   146</span>	var powtab = []int{1, 3, 6, 9, 13, 16, 19, 23, 26}
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	func (d *decimal) floatBits(flt *floatInfo) (b uint64, overflow bool) {
+<a id="L149"></a><span class="ln">   149</span>		var exp int
+<a id="L150"></a><span class="ln">   150</span>		var mant uint64
+<a id="L151"></a><span class="ln">   151</span>	
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">// Zero is always a special case.</span>
+<a id="L153"></a><span class="ln">   153</span>		if d.nd == 0 {
+<a id="L154"></a><span class="ln">   154</span>			mant = 0
+<a id="L155"></a><span class="ln">   155</span>			exp = flt.bias
+<a id="L156"></a><span class="ln">   156</span>			goto out
+<a id="L157"></a><span class="ln">   157</span>		}
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// Obvious overflow/underflow.</span>
+<a id="L160"></a><span class="ln">   160</span>		<span class="comment">// These bounds are for 64-bit floats.</span>
+<a id="L161"></a><span class="ln">   161</span>		<span class="comment">// Will have to change if we want to support 80-bit floats in the future.</span>
+<a id="L162"></a><span class="ln">   162</span>		if d.dp &gt; 310 {
+<a id="L163"></a><span class="ln">   163</span>			goto overflow
+<a id="L164"></a><span class="ln">   164</span>		}
+<a id="L165"></a><span class="ln">   165</span>		if d.dp &lt; -330 {
+<a id="L166"></a><span class="ln">   166</span>			<span class="comment">// zero</span>
+<a id="L167"></a><span class="ln">   167</span>			mant = 0
+<a id="L168"></a><span class="ln">   168</span>			exp = flt.bias
+<a id="L169"></a><span class="ln">   169</span>			goto out
+<a id="L170"></a><span class="ln">   170</span>		}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>		<span class="comment">// Scale by powers of two until in range [0.5, 1.0)</span>
+<a id="L173"></a><span class="ln">   173</span>		exp = 0
+<a id="L174"></a><span class="ln">   174</span>		for d.dp &gt; 0 {
+<a id="L175"></a><span class="ln">   175</span>			var n int
+<a id="L176"></a><span class="ln">   176</span>			if d.dp &gt;= len(powtab) {
+<a id="L177"></a><span class="ln">   177</span>				n = 27
+<a id="L178"></a><span class="ln">   178</span>			} else {
+<a id="L179"></a><span class="ln">   179</span>				n = powtab[d.dp]
+<a id="L180"></a><span class="ln">   180</span>			}
+<a id="L181"></a><span class="ln">   181</span>			d.Shift(-n)
+<a id="L182"></a><span class="ln">   182</span>			exp += n
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>		for d.dp &lt; 0 || d.dp == 0 &amp;&amp; d.d[0] &lt; &#39;5&#39; {
+<a id="L185"></a><span class="ln">   185</span>			var n int
+<a id="L186"></a><span class="ln">   186</span>			if -d.dp &gt;= len(powtab) {
+<a id="L187"></a><span class="ln">   187</span>				n = 27
+<a id="L188"></a><span class="ln">   188</span>			} else {
+<a id="L189"></a><span class="ln">   189</span>				n = powtab[-d.dp]
+<a id="L190"></a><span class="ln">   190</span>			}
+<a id="L191"></a><span class="ln">   191</span>			d.Shift(n)
+<a id="L192"></a><span class="ln">   192</span>			exp -= n
+<a id="L193"></a><span class="ln">   193</span>		}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// Our range is [0.5,1) but floating point range is [1,2).</span>
+<a id="L196"></a><span class="ln">   196</span>		exp--
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>		<span class="comment">// Minimum representable exponent is flt.bias+1.</span>
+<a id="L199"></a><span class="ln">   199</span>		<span class="comment">// If the exponent is smaller, move it up and</span>
+<a id="L200"></a><span class="ln">   200</span>		<span class="comment">// adjust d accordingly.</span>
+<a id="L201"></a><span class="ln">   201</span>		if exp &lt; flt.bias+1 {
+<a id="L202"></a><span class="ln">   202</span>			n := flt.bias + 1 - exp
+<a id="L203"></a><span class="ln">   203</span>			d.Shift(-n)
+<a id="L204"></a><span class="ln">   204</span>			exp += n
+<a id="L205"></a><span class="ln">   205</span>		}
+<a id="L206"></a><span class="ln">   206</span>	
+<a id="L207"></a><span class="ln">   207</span>		if exp-flt.bias &gt;= 1&lt;&lt;flt.expbits-1 {
+<a id="L208"></a><span class="ln">   208</span>			goto overflow
+<a id="L209"></a><span class="ln">   209</span>		}
+<a id="L210"></a><span class="ln">   210</span>	
+<a id="L211"></a><span class="ln">   211</span>		<span class="comment">// Extract 1+flt.mantbits bits.</span>
+<a id="L212"></a><span class="ln">   212</span>		d.Shift(int(1 + flt.mantbits))
+<a id="L213"></a><span class="ln">   213</span>		mant = d.RoundedInteger()
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>		<span class="comment">// Rounding might have added a bit; shift down.</span>
+<a id="L216"></a><span class="ln">   216</span>		if mant == 2&lt;&lt;flt.mantbits {
+<a id="L217"></a><span class="ln">   217</span>			mant &gt;&gt;= 1
+<a id="L218"></a><span class="ln">   218</span>			exp++
+<a id="L219"></a><span class="ln">   219</span>			if exp-flt.bias &gt;= 1&lt;&lt;flt.expbits-1 {
+<a id="L220"></a><span class="ln">   220</span>				goto overflow
+<a id="L221"></a><span class="ln">   221</span>			}
+<a id="L222"></a><span class="ln">   222</span>		}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>		<span class="comment">// Denormalized?</span>
+<a id="L225"></a><span class="ln">   225</span>		if mant&amp;(1&lt;&lt;flt.mantbits) == 0 {
+<a id="L226"></a><span class="ln">   226</span>			exp = flt.bias
+<a id="L227"></a><span class="ln">   227</span>		}
+<a id="L228"></a><span class="ln">   228</span>		goto out
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>	overflow:
+<a id="L231"></a><span class="ln">   231</span>		<span class="comment">// ±Inf</span>
+<a id="L232"></a><span class="ln">   232</span>		mant = 0
+<a id="L233"></a><span class="ln">   233</span>		exp = 1&lt;&lt;flt.expbits - 1 + flt.bias
+<a id="L234"></a><span class="ln">   234</span>		overflow = true
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>	out:
+<a id="L237"></a><span class="ln">   237</span>		<span class="comment">// Assemble bits.</span>
+<a id="L238"></a><span class="ln">   238</span>		bits := mant &amp; (uint64(1)&lt;&lt;flt.mantbits - 1)
+<a id="L239"></a><span class="ln">   239</span>		bits |= uint64((exp-flt.bias)&amp;(1&lt;&lt;flt.expbits-1)) &lt;&lt; flt.mantbits
+<a id="L240"></a><span class="ln">   240</span>		if d.neg {
+<a id="L241"></a><span class="ln">   241</span>			bits |= 1 &lt;&lt; flt.mantbits &lt;&lt; flt.expbits
+<a id="L242"></a><span class="ln">   242</span>		}
+<a id="L243"></a><span class="ln">   243</span>		return bits, overflow
+<a id="L244"></a><span class="ln">   244</span>	}
+<a id="L245"></a><span class="ln">   245</span>	
+<a id="L246"></a><span class="ln">   246</span>	<span class="comment">// Compute exact floating-point integer from d&#39;s digits.</span>
+<a id="L247"></a><span class="ln">   247</span>	<span class="comment">// Caller is responsible for avoiding overflow.</span>
+<a id="L248"></a><span class="ln">   248</span>	func (d *decimal) atof64int() float64 {
+<a id="L249"></a><span class="ln">   249</span>		f := 0.0
+<a id="L250"></a><span class="ln">   250</span>		for i := 0; i &lt; d.nd; i++ {
+<a id="L251"></a><span class="ln">   251</span>			f = f*10 + float64(d.d[i]-&#39;0&#39;)
+<a id="L252"></a><span class="ln">   252</span>		}
+<a id="L253"></a><span class="ln">   253</span>		if d.neg {
+<a id="L254"></a><span class="ln">   254</span>			f = -f
+<a id="L255"></a><span class="ln">   255</span>		}
+<a id="L256"></a><span class="ln">   256</span>		return f
+<a id="L257"></a><span class="ln">   257</span>	}
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>	func (d *decimal) atof32int() float32 {
+<a id="L260"></a><span class="ln">   260</span>		f := float32(0)
+<a id="L261"></a><span class="ln">   261</span>		for i := 0; i &lt; d.nd; i++ {
+<a id="L262"></a><span class="ln">   262</span>			f = f*10 + float32(d.d[i]-&#39;0&#39;)
+<a id="L263"></a><span class="ln">   263</span>		}
+<a id="L264"></a><span class="ln">   264</span>		if d.neg {
+<a id="L265"></a><span class="ln">   265</span>			f = -f
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>		return f
+<a id="L268"></a><span class="ln">   268</span>	}
+<a id="L269"></a><span class="ln">   269</span>	
+<a id="L270"></a><span class="ln">   270</span>	<span class="comment">// Reads a uint64 decimal mantissa, which might be truncated.</span>
+<a id="L271"></a><span class="ln">   271</span>	func (d *decimal) atou64() (mant uint64, digits int) {
+<a id="L272"></a><span class="ln">   272</span>		const uint64digits = 19
+<a id="L273"></a><span class="ln">   273</span>		for i, c := range d.d[:d.nd] {
+<a id="L274"></a><span class="ln">   274</span>			if i == uint64digits {
+<a id="L275"></a><span class="ln">   275</span>				return mant, i
+<a id="L276"></a><span class="ln">   276</span>			}
+<a id="L277"></a><span class="ln">   277</span>			mant = 10*mant + uint64(c-&#39;0&#39;)
+<a id="L278"></a><span class="ln">   278</span>		}
+<a id="L279"></a><span class="ln">   279</span>		return mant, d.nd
+<a id="L280"></a><span class="ln">   280</span>	}
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// Exact powers of 10.</span>
+<a id="L283"></a><span class="ln">   283</span>	var float64pow10 = []float64{
+<a id="L284"></a><span class="ln">   284</span>		1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
+<a id="L285"></a><span class="ln">   285</span>		1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,
+<a id="L286"></a><span class="ln">   286</span>		1e20, 1e21, 1e22,
+<a id="L287"></a><span class="ln">   287</span>	}
+<a id="L288"></a><span class="ln">   288</span>	var float32pow10 = []float32{1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10}
+<a id="L289"></a><span class="ln">   289</span>	
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">// If possible to convert decimal d to 64-bit float f exactly,</span>
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// entirely in floating-point math, do so, avoiding the expense of decimalToFloatBits.</span>
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">// Three common cases:</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">//	value is exact integer</span>
+<a id="L294"></a><span class="ln">   294</span>	<span class="comment">//	value is exact integer * exact power of ten</span>
+<a id="L295"></a><span class="ln">   295</span>	<span class="comment">//	value is exact integer / exact power of ten</span>
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">// These all produce potentially inexact but correctly rounded answers.</span>
+<a id="L297"></a><span class="ln">   297</span>	func (d *decimal) atof64() (f float64, ok bool) {
+<a id="L298"></a><span class="ln">   298</span>		<span class="comment">// Exact integers are &lt;= 10^15.</span>
+<a id="L299"></a><span class="ln">   299</span>		<span class="comment">// Exact powers of ten are &lt;= 10^22.</span>
+<a id="L300"></a><span class="ln">   300</span>		if d.nd &gt; 15 {
+<a id="L301"></a><span class="ln">   301</span>			return
+<a id="L302"></a><span class="ln">   302</span>		}
+<a id="L303"></a><span class="ln">   303</span>		switch {
+<a id="L304"></a><span class="ln">   304</span>		case d.dp == d.nd: <span class="comment">// int</span>
+<a id="L305"></a><span class="ln">   305</span>			f := d.atof64int()
+<a id="L306"></a><span class="ln">   306</span>			return f, true
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>		case d.dp &gt; d.nd &amp;&amp; d.dp &lt;= 15+22: <span class="comment">// int * 10^k</span>
+<a id="L309"></a><span class="ln">   309</span>			f := d.atof64int()
+<a id="L310"></a><span class="ln">   310</span>			k := d.dp - d.nd
+<a id="L311"></a><span class="ln">   311</span>			<span class="comment">// If exponent is big but number of digits is not,</span>
+<a id="L312"></a><span class="ln">   312</span>			<span class="comment">// can move a few zeros into the integer part.</span>
+<a id="L313"></a><span class="ln">   313</span>			if k &gt; 22 {
+<a id="L314"></a><span class="ln">   314</span>				f *= float64pow10[k-22]
+<a id="L315"></a><span class="ln">   315</span>				k = 22
+<a id="L316"></a><span class="ln">   316</span>			}
+<a id="L317"></a><span class="ln">   317</span>			return f * float64pow10[k], true
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>		case d.dp &lt; d.nd &amp;&amp; d.nd-d.dp &lt;= 22: <span class="comment">// int / 10^k</span>
+<a id="L320"></a><span class="ln">   320</span>			f := d.atof64int()
+<a id="L321"></a><span class="ln">   321</span>			return f / float64pow10[d.nd-d.dp], true
+<a id="L322"></a><span class="ln">   322</span>		}
+<a id="L323"></a><span class="ln">   323</span>		return
+<a id="L324"></a><span class="ln">   324</span>	}
+<a id="L325"></a><span class="ln">   325</span>	
+<a id="L326"></a><span class="ln">   326</span>	<span class="comment">// If possible to convert decimal d to 32-bit float f exactly,</span>
+<a id="L327"></a><span class="ln">   327</span>	<span class="comment">// entirely in floating-point math, do so, avoiding the machinery above.</span>
+<a id="L328"></a><span class="ln">   328</span>	func (d *decimal) atof32() (f float32, ok bool) {
+<a id="L329"></a><span class="ln">   329</span>		<span class="comment">// Exact integers are &lt;= 10^7.</span>
+<a id="L330"></a><span class="ln">   330</span>		<span class="comment">// Exact powers of ten are &lt;= 10^10.</span>
+<a id="L331"></a><span class="ln">   331</span>		if d.nd &gt; 7 {
+<a id="L332"></a><span class="ln">   332</span>			return
+<a id="L333"></a><span class="ln">   333</span>		}
+<a id="L334"></a><span class="ln">   334</span>		switch {
+<a id="L335"></a><span class="ln">   335</span>		case d.dp == d.nd: <span class="comment">// int</span>
+<a id="L336"></a><span class="ln">   336</span>			f := d.atof32int()
+<a id="L337"></a><span class="ln">   337</span>			return f, true
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>		case d.dp &gt; d.nd &amp;&amp; d.dp &lt;= 7+10: <span class="comment">// int * 10^k</span>
+<a id="L340"></a><span class="ln">   340</span>			f := d.atof32int()
+<a id="L341"></a><span class="ln">   341</span>			k := d.dp - d.nd
+<a id="L342"></a><span class="ln">   342</span>			<span class="comment">// If exponent is big but number of digits is not,</span>
+<a id="L343"></a><span class="ln">   343</span>			<span class="comment">// can move a few zeros into the integer part.</span>
+<a id="L344"></a><span class="ln">   344</span>			if k &gt; 10 {
+<a id="L345"></a><span class="ln">   345</span>				f *= float32pow10[k-10]
+<a id="L346"></a><span class="ln">   346</span>				k = 10
+<a id="L347"></a><span class="ln">   347</span>			}
+<a id="L348"></a><span class="ln">   348</span>			return f * float32pow10[k], true
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>		case d.dp &lt; d.nd &amp;&amp; d.nd-d.dp &lt;= 10: <span class="comment">// int / 10^k</span>
+<a id="L351"></a><span class="ln">   351</span>			f := d.atof32int()
+<a id="L352"></a><span class="ln">   352</span>			return f / float32pow10[d.nd-d.dp], true
+<a id="L353"></a><span class="ln">   353</span>		}
+<a id="L354"></a><span class="ln">   354</span>		return
+<a id="L355"></a><span class="ln">   355</span>	}
+<a id="L356"></a><span class="ln">   356</span>	
+<a id="L357"></a><span class="ln">   357</span>	const fnParseFloat = &#34;ParseFloat&#34;
+<a id="L358"></a><span class="ln">   358</span>	
+<a id="L359"></a><span class="ln">   359</span>	func atof32(s string) (f float32, err error) {
+<a id="L360"></a><span class="ln">   360</span>		if val, ok := special(s); ok {
+<a id="L361"></a><span class="ln">   361</span>			return float32(val), nil
+<a id="L362"></a><span class="ln">   362</span>		}
+<a id="L363"></a><span class="ln">   363</span>	
+<a id="L364"></a><span class="ln">   364</span>		var d decimal
+<a id="L365"></a><span class="ln">   365</span>		if !d.set(s) {
+<a id="L366"></a><span class="ln">   366</span>			return 0, syntaxError(fnParseFloat, s)
+<a id="L367"></a><span class="ln">   367</span>		}
+<a id="L368"></a><span class="ln">   368</span>		if optimize {
+<a id="L369"></a><span class="ln">   369</span>			if f, ok := d.atof32(); ok {
+<a id="L370"></a><span class="ln">   370</span>				return f, nil
+<a id="L371"></a><span class="ln">   371</span>			}
+<a id="L372"></a><span class="ln">   372</span>		}
+<a id="L373"></a><span class="ln">   373</span>		b, ovf := d.floatBits(&amp;float32info)
+<a id="L374"></a><span class="ln">   374</span>		f = math.Float32frombits(uint32(b))
+<a id="L375"></a><span class="ln">   375</span>		if ovf {
+<a id="L376"></a><span class="ln">   376</span>			err = rangeError(fnParseFloat, s)
+<a id="L377"></a><span class="ln">   377</span>		}
+<a id="L378"></a><span class="ln">   378</span>		return f, err
+<a id="L379"></a><span class="ln">   379</span>	}
+<a id="L380"></a><span class="ln">   380</span>	
+<a id="L381"></a><span class="ln">   381</span>	func atof64(s string) (f float64, err error) {
+<a id="L382"></a><span class="ln">   382</span>		if val, ok := special(s); ok {
+<a id="L383"></a><span class="ln">   383</span>			return val, nil
+<a id="L384"></a><span class="ln">   384</span>		}
+<a id="L385"></a><span class="ln">   385</span>	
+<a id="L386"></a><span class="ln">   386</span>		var d decimal
+<a id="L387"></a><span class="ln">   387</span>		if !d.set(s) {
+<a id="L388"></a><span class="ln">   388</span>			return 0, syntaxError(fnParseFloat, s)
+<a id="L389"></a><span class="ln">   389</span>		}
+<a id="L390"></a><span class="ln">   390</span>		if optimize {
+<a id="L391"></a><span class="ln">   391</span>			if f, ok := d.atof64(); ok {
+<a id="L392"></a><span class="ln">   392</span>				return f, nil
+<a id="L393"></a><span class="ln">   393</span>			}
+<a id="L394"></a><span class="ln">   394</span>	
+<a id="L395"></a><span class="ln">   395</span>			<span class="comment">// Try another fast path.</span>
+<a id="L396"></a><span class="ln">   396</span>			ext := new(extFloat)
+<a id="L397"></a><span class="ln">   397</span>			if ok := ext.AssignDecimal(&amp;d); ok {
+<a id="L398"></a><span class="ln">   398</span>				b, ovf := ext.floatBits()
+<a id="L399"></a><span class="ln">   399</span>				f = math.Float64frombits(b)
+<a id="L400"></a><span class="ln">   400</span>				if ovf {
+<a id="L401"></a><span class="ln">   401</span>					err = rangeError(fnParseFloat, s)
+<a id="L402"></a><span class="ln">   402</span>				}
+<a id="L403"></a><span class="ln">   403</span>				return f, err
+<a id="L404"></a><span class="ln">   404</span>			}
+<a id="L405"></a><span class="ln">   405</span>		}
+<a id="L406"></a><span class="ln">   406</span>		b, ovf := d.floatBits(&amp;float64info)
+<a id="L407"></a><span class="ln">   407</span>		f = math.Float64frombits(b)
+<a id="L408"></a><span class="ln">   408</span>		if ovf {
+<a id="L409"></a><span class="ln">   409</span>			err = rangeError(fnParseFloat, s)
+<a id="L410"></a><span class="ln">   410</span>		}
+<a id="L411"></a><span class="ln">   411</span>		return f, err
+<a id="L412"></a><span class="ln">   412</span>	}
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>	<span class="comment">// ParseFloat converts the string s to a floating-point number</span>
+<a id="L415"></a><span class="ln">   415</span>	<span class="comment">// with the precision specified by bitSize: 32 for float32, or 64 for float64.</span>
+<a id="L416"></a><span class="ln">   416</span>	<span class="comment">// When bitSize=32, the result still has type float64, but it will be</span>
+<a id="L417"></a><span class="ln">   417</span>	<span class="comment">// convertible to float32 without changing its value.</span>
+<a id="L418"></a><span class="ln">   418</span>	<span class="comment">//</span>
+<a id="L419"></a><span class="ln">   419</span>	<span class="comment">// If s is well-formed and near a valid floating point number,</span>
+<a id="L420"></a><span class="ln">   420</span>	<span class="comment">// ParseFloat returns the nearest floating point number rounded</span>
+<a id="L421"></a><span class="ln">   421</span>	<span class="comment">// using IEEE754 unbiased rounding.</span>
+<a id="L422"></a><span class="ln">   422</span>	<span class="comment">//</span>
+<a id="L423"></a><span class="ln">   423</span>	<span class="comment">// The errors that ParseFloat returns have concrete type *NumError</span>
+<a id="L424"></a><span class="ln">   424</span>	<span class="comment">// and include err.Num = s.</span>
+<a id="L425"></a><span class="ln">   425</span>	<span class="comment">//</span>
+<a id="L426"></a><span class="ln">   426</span>	<span class="comment">// If s is not syntactically well-formed, ParseFloat returns err.Error = ErrSyntax.</span>
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">//</span>
+<a id="L428"></a><span class="ln">   428</span>	<span class="comment">// If s is syntactically well-formed but is more than 1/2 ULP</span>
+<a id="L429"></a><span class="ln">   429</span>	<span class="comment">// away from the largest floating point number of the given size,</span>
+<a id="L430"></a><span class="ln">   430</span>	<span class="comment">// ParseFloat returns f = ±Inf, err.Error = ErrRange.</span>
+<a id="L431"></a><span class="ln">   431</span>	func ParseFloat(s string, bitSize int) (f float64, err error) {
+<a id="L432"></a><span class="ln">   432</span>		if bitSize == 32 {
+<a id="L433"></a><span class="ln">   433</span>			f1, err1 := atof32(s)
+<a id="L434"></a><span class="ln">   434</span>			return float64(f1), err1
+<a id="L435"></a><span class="ln">   435</span>		}
+<a id="L436"></a><span class="ln">   436</span>		f1, err1 := atof64(s)
+<a id="L437"></a><span class="ln">   437</span>		return f1, err1
+<a id="L438"></a><span class="ln">   438</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/rand/rand_unix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/rand/rand_unix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Unix cryptographically secure pseudorandom number</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// generator.</span>
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	package rand
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	import (
+<a id="L13"></a><span class="ln">    13</span>		&#34;bufio&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;crypto/aes&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;crypto/cipher&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;io&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;os&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;sync&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;time&#34;
+<a id="L20"></a><span class="ln">    20</span>	)
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// Easy implementation: read from /dev/urandom.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// This is sufficient on Linux, OS X, and FreeBSD.</span>
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	func init() { Reader = &amp;devReader{name: &#34;/dev/urandom&#34;} }
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// A devReader satisfies reads by reading the file named name.</span>
+<a id="L28"></a><span class="ln">    28</span>	type devReader struct {
+<a id="L29"></a><span class="ln">    29</span>		name string
+<a id="L30"></a><span class="ln">    30</span>		f    io.Reader
+<a id="L31"></a><span class="ln">    31</span>		mu   sync.Mutex
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	func (r *devReader) Read(b []byte) (n int, err error) {
+<a id="L35"></a><span class="ln">    35</span>		r.mu.Lock()
+<a id="L36"></a><span class="ln">    36</span>		defer r.mu.Unlock()
+<a id="L37"></a><span class="ln">    37</span>		if r.f == nil {
+<a id="L38"></a><span class="ln">    38</span>			f, err := os.Open(r.name)
+<a id="L39"></a><span class="ln">    39</span>			if f == nil {
+<a id="L40"></a><span class="ln">    40</span>				return 0, err
+<a id="L41"></a><span class="ln">    41</span>			}
+<a id="L42"></a><span class="ln">    42</span>			r.f = bufio.NewReader(f)
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>		return r.f.Read(b)
+<a id="L45"></a><span class="ln">    45</span>	}
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// Alternate pseudo-random implementation for use on</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// systems without a reliable /dev/urandom.  So far we</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// haven&#39;t needed it.</span>
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// newReader returns a new pseudorandom generator that</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// seeds itself by reading from entropy.  If entropy == nil,</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// the generator seeds itself by reading from the system&#39;s</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// random number generator, typically /dev/random.</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// The Read method on the returned reader always returns</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// the full amount asked for, or else it returns an error.</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// The generator uses the X9.31 algorithm with AES-128,</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// reseeding after every 1 MB of generated data.</span>
+<a id="L60"></a><span class="ln">    60</span>	func newReader(entropy io.Reader) io.Reader {
+<a id="L61"></a><span class="ln">    61</span>		if entropy == nil {
+<a id="L62"></a><span class="ln">    62</span>			entropy = &amp;devReader{name: &#34;/dev/random&#34;}
+<a id="L63"></a><span class="ln">    63</span>		}
+<a id="L64"></a><span class="ln">    64</span>		return &amp;reader{entropy: entropy}
+<a id="L65"></a><span class="ln">    65</span>	}
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	type reader struct {
+<a id="L68"></a><span class="ln">    68</span>		mu                   sync.Mutex
+<a id="L69"></a><span class="ln">    69</span>		budget               int <span class="comment">// number of bytes that can be generated</span>
+<a id="L70"></a><span class="ln">    70</span>		cipher               cipher.Block
+<a id="L71"></a><span class="ln">    71</span>		entropy              io.Reader
+<a id="L72"></a><span class="ln">    72</span>		time, seed, dst, key [aes.BlockSize]byte
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	func (r *reader) Read(b []byte) (n int, err error) {
+<a id="L76"></a><span class="ln">    76</span>		r.mu.Lock()
+<a id="L77"></a><span class="ln">    77</span>		defer r.mu.Unlock()
+<a id="L78"></a><span class="ln">    78</span>		n = len(b)
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>		for len(b) &gt; 0 {
+<a id="L81"></a><span class="ln">    81</span>			if r.budget == 0 {
+<a id="L82"></a><span class="ln">    82</span>				_, err := io.ReadFull(r.entropy, r.seed[0:])
+<a id="L83"></a><span class="ln">    83</span>				if err != nil {
+<a id="L84"></a><span class="ln">    84</span>					return n - len(b), err
+<a id="L85"></a><span class="ln">    85</span>				}
+<a id="L86"></a><span class="ln">    86</span>				_, err = io.ReadFull(r.entropy, r.key[0:])
+<a id="L87"></a><span class="ln">    87</span>				if err != nil {
+<a id="L88"></a><span class="ln">    88</span>					return n - len(b), err
+<a id="L89"></a><span class="ln">    89</span>				}
+<a id="L90"></a><span class="ln">    90</span>				r.cipher, err = aes.NewCipher(r.key[0:])
+<a id="L91"></a><span class="ln">    91</span>				if err != nil {
+<a id="L92"></a><span class="ln">    92</span>					return n - len(b), err
+<a id="L93"></a><span class="ln">    93</span>				}
+<a id="L94"></a><span class="ln">    94</span>				r.budget = 1 &lt;&lt; 20 <span class="comment">// reseed after generating 1MB</span>
+<a id="L95"></a><span class="ln">    95</span>			}
+<a id="L96"></a><span class="ln">    96</span>			r.budget -= aes.BlockSize
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>			<span class="comment">// ANSI X9.31 (== X9.17) algorithm, but using AES in place of 3DES.</span>
+<a id="L99"></a><span class="ln">    99</span>			<span class="comment">//</span>
+<a id="L100"></a><span class="ln">   100</span>			<span class="comment">// single block:</span>
+<a id="L101"></a><span class="ln">   101</span>			<span class="comment">// t = encrypt(time)</span>
+<a id="L102"></a><span class="ln">   102</span>			<span class="comment">// dst = encrypt(t^seed)</span>
+<a id="L103"></a><span class="ln">   103</span>			<span class="comment">// seed = encrypt(t^dst)</span>
+<a id="L104"></a><span class="ln">   104</span>			ns := time.Now().UnixNano()
+<a id="L105"></a><span class="ln">   105</span>			r.time[0] = byte(ns &gt;&gt; 56)
+<a id="L106"></a><span class="ln">   106</span>			r.time[1] = byte(ns &gt;&gt; 48)
+<a id="L107"></a><span class="ln">   107</span>			r.time[2] = byte(ns &gt;&gt; 40)
+<a id="L108"></a><span class="ln">   108</span>			r.time[3] = byte(ns &gt;&gt; 32)
+<a id="L109"></a><span class="ln">   109</span>			r.time[4] = byte(ns &gt;&gt; 24)
+<a id="L110"></a><span class="ln">   110</span>			r.time[5] = byte(ns &gt;&gt; 16)
+<a id="L111"></a><span class="ln">   111</span>			r.time[6] = byte(ns &gt;&gt; 8)
+<a id="L112"></a><span class="ln">   112</span>			r.time[7] = byte(ns)
+<a id="L113"></a><span class="ln">   113</span>			r.cipher.Encrypt(r.time[0:], r.time[0:])
+<a id="L114"></a><span class="ln">   114</span>			for i := 0; i &lt; aes.BlockSize; i++ {
+<a id="L115"></a><span class="ln">   115</span>				r.dst[i] = r.time[i] ^ r.seed[i]
+<a id="L116"></a><span class="ln">   116</span>			}
+<a id="L117"></a><span class="ln">   117</span>			r.cipher.Encrypt(r.dst[0:], r.dst[0:])
+<a id="L118"></a><span class="ln">   118</span>			for i := 0; i &lt; aes.BlockSize; i++ {
+<a id="L119"></a><span class="ln">   119</span>				r.seed[i] = r.time[i] ^ r.dst[i]
+<a id="L120"></a><span class="ln">   120</span>			}
+<a id="L121"></a><span class="ln">   121</span>			r.cipher.Encrypt(r.seed[0:], r.seed[0:])
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>			m := copy(b, r.dst[0:])
+<a id="L124"></a><span class="ln">   124</span>			b = b[m:]
+<a id="L125"></a><span class="ln">   125</span>		}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>		return n, nil
+<a id="L128"></a><span class="ln">   128</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/time/time.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/time/time.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package time provides functionality for measuring and displaying time.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">//</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// The calendrical calculations always assume a Gregorian calendar.</span>
+<a id="L8"></a><span class="ln">     8</span>	package time
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import &#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// A Time represents an instant in time with nanosecond precision.</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// Programs using times should typically store and pass them as values,</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// not pointers.  That is, time variables and struct fields should be of</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// type time.Time, not *time.Time.  A Time value can be used by</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// multiple goroutines simultaneously.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Time instants can be compared using the Before, After, and Equal methods.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// The Sub method subtracts two instants, producing a Duration.</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// The Add method adds a Time and a Duration, producing a Time.</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// The zero value of type Time is January 1, year 1, 00:00:00.000000000 UTC.</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// As this time is unlikely to come up in practice, the IsZero method gives</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// a simple way of detecting a time that has not been initialized explicitly.</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">//</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Each Time has associated with it a Location, consulted when computing the</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// presentation form of the time, such as in the Format, Hour, and Year methods.</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// The methods Local, UTC, and In return a Time with a specific location.</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// Changing the location in this way changes only the presentation; it does not</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// change the instant in time being denoted and therefore does not affect the</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// computations described in earlier paragraphs.</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//</span>
+<a id="L34"></a><span class="ln">    34</span>	type Time struct {
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// sec gives the number of seconds elapsed since</span>
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// January 1, year 1 00:00:00 UTC.</span>
+<a id="L37"></a><span class="ln">    37</span>		sec int64
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>		<span class="comment">// nsec specifies a non-negative nanosecond</span>
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// offset within the second named by Seconds.</span>
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">// It must be in the range [0, 999999999].</span>
+<a id="L42"></a><span class="ln">    42</span>		nsec int32
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">// loc specifies the Location that should be used to</span>
+<a id="L45"></a><span class="ln">    45</span>		<span class="comment">// determine the minute, hour, month, day, and year</span>
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// that correspond to this Time.</span>
+<a id="L47"></a><span class="ln">    47</span>		<span class="comment">// Only the zero Time has a nil Location.</span>
+<a id="L48"></a><span class="ln">    48</span>		<span class="comment">// In that case it is interpreted to mean UTC.</span>
+<a id="L49"></a><span class="ln">    49</span>		loc *Location
+<a id="L50"></a><span class="ln">    50</span>	}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// After reports whether the time instant t is after u.</span>
+<a id="L53"></a><span class="ln">    53</span>	func (t Time) After(u Time) bool {
+<a id="L54"></a><span class="ln">    54</span>		return t.sec &gt; u.sec || t.sec == u.sec &amp;&amp; t.nsec &gt; u.nsec
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// Before reports whether the time instant t is before u.</span>
+<a id="L58"></a><span class="ln">    58</span>	func (t Time) Before(u Time) bool {
+<a id="L59"></a><span class="ln">    59</span>		return t.sec &lt; u.sec || t.sec == u.sec &amp;&amp; t.nsec &lt; u.nsec
+<a id="L60"></a><span class="ln">    60</span>	}
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// Equal reports whether t and u represent the same time instant.</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// Two times can be equal even if they are in different locations.</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// For example, 6:00 +0200 CEST and 4:00 UTC are Equal.</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// This comparison is different from using t == u, which also compares</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// the locations.</span>
+<a id="L67"></a><span class="ln">    67</span>	func (t Time) Equal(u Time) bool {
+<a id="L68"></a><span class="ln">    68</span>		return t.sec == u.sec &amp;&amp; t.nsec == u.nsec
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// A Month specifies a month of the year (January = 1, ...).</span>
+<a id="L72"></a><span class="ln">    72</span>	type Month int
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	const (
+<a id="L75"></a><span class="ln">    75</span>		January Month = 1 + iota
+<a id="L76"></a><span class="ln">    76</span>		February
+<a id="L77"></a><span class="ln">    77</span>		March
+<a id="L78"></a><span class="ln">    78</span>		April
+<a id="L79"></a><span class="ln">    79</span>		May
+<a id="L80"></a><span class="ln">    80</span>		June
+<a id="L81"></a><span class="ln">    81</span>		July
+<a id="L82"></a><span class="ln">    82</span>		August
+<a id="L83"></a><span class="ln">    83</span>		September
+<a id="L84"></a><span class="ln">    84</span>		October
+<a id="L85"></a><span class="ln">    85</span>		November
+<a id="L86"></a><span class="ln">    86</span>		December
+<a id="L87"></a><span class="ln">    87</span>	)
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	var months = [...]string{
+<a id="L90"></a><span class="ln">    90</span>		&#34;January&#34;,
+<a id="L91"></a><span class="ln">    91</span>		&#34;February&#34;,
+<a id="L92"></a><span class="ln">    92</span>		&#34;March&#34;,
+<a id="L93"></a><span class="ln">    93</span>		&#34;April&#34;,
+<a id="L94"></a><span class="ln">    94</span>		&#34;May&#34;,
+<a id="L95"></a><span class="ln">    95</span>		&#34;June&#34;,
+<a id="L96"></a><span class="ln">    96</span>		&#34;July&#34;,
+<a id="L97"></a><span class="ln">    97</span>		&#34;August&#34;,
+<a id="L98"></a><span class="ln">    98</span>		&#34;September&#34;,
+<a id="L99"></a><span class="ln">    99</span>		&#34;October&#34;,
+<a id="L100"></a><span class="ln">   100</span>		&#34;November&#34;,
+<a id="L101"></a><span class="ln">   101</span>		&#34;December&#34;,
+<a id="L102"></a><span class="ln">   102</span>	}
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// String returns the English name of the month (&#34;January&#34;, &#34;February&#34;, ...).</span>
+<a id="L105"></a><span class="ln">   105</span>	func (m Month) String() string { return months[m-1] }
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// A Weekday specifies a day of the week (Sunday = 0, ...).</span>
+<a id="L108"></a><span class="ln">   108</span>	type Weekday int
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>	const (
+<a id="L111"></a><span class="ln">   111</span>		Sunday Weekday = iota
+<a id="L112"></a><span class="ln">   112</span>		Monday
+<a id="L113"></a><span class="ln">   113</span>		Tuesday
+<a id="L114"></a><span class="ln">   114</span>		Wednesday
+<a id="L115"></a><span class="ln">   115</span>		Thursday
+<a id="L116"></a><span class="ln">   116</span>		Friday
+<a id="L117"></a><span class="ln">   117</span>		Saturday
+<a id="L118"></a><span class="ln">   118</span>	)
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>	var days = [...]string{
+<a id="L121"></a><span class="ln">   121</span>		&#34;Sunday&#34;,
+<a id="L122"></a><span class="ln">   122</span>		&#34;Monday&#34;,
+<a id="L123"></a><span class="ln">   123</span>		&#34;Tuesday&#34;,
+<a id="L124"></a><span class="ln">   124</span>		&#34;Wednesday&#34;,
+<a id="L125"></a><span class="ln">   125</span>		&#34;Thursday&#34;,
+<a id="L126"></a><span class="ln">   126</span>		&#34;Friday&#34;,
+<a id="L127"></a><span class="ln">   127</span>		&#34;Saturday&#34;,
+<a id="L128"></a><span class="ln">   128</span>	}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// String returns the English name of the day (&#34;Sunday&#34;, &#34;Monday&#34;, ...).</span>
+<a id="L131"></a><span class="ln">   131</span>	func (d Weekday) String() string { return days[d] }
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// Computations on time.</span>
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">//</span>
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// The zero value for a Time is defined to be</span>
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">//	January 1, year 1, 00:00:00.000000000 UTC</span>
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// which (1) looks like a zero, or as close as you can get in a date</span>
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// (1-1-1 00:00:00 UTC), (2) is unlikely enough to arise in practice to</span>
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// be a suitable &#34;not set&#34; sentinel, unlike Jan 1 1970, and (3) has a</span>
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// non-negative year even in time zones west of UTC, unlike 1-1-0</span>
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// 00:00:00 UTC, which would be 12-31-(-1) 19:00:00 in New York.</span>
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">//</span>
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">// The zero Time value does not force a specific epoch for the time</span>
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// representation.  For example, to use the Unix epoch internally, we</span>
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// could define that to distinguish a zero value from Jan 1 1970, that</span>
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">// time would be represented by sec=-1, nsec=1e9.  However, it does</span>
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// suggest a representation, namely using 1-1-1 00:00:00 UTC as the</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// epoch, and that&#39;s what we do.</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">//</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// The Add and Sub computations are oblivious to the choice of epoch.</span>
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">//</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">// The presentation computations - year, month, minute, and so on - all</span>
+<a id="L153"></a><span class="ln">   153</span>	<span class="comment">// rely heavily on division and modulus by positive constants.  For</span>
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">// calendrical calculations we want these divisions to round down, even</span>
+<a id="L155"></a><span class="ln">   155</span>	<span class="comment">// for negative values, so that the remainder is always positive, but</span>
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// Go&#39;s division (like most hardware division instructions) rounds to</span>
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// zero.  We can still do those computations and then adjust the result</span>
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// for a negative numerator, but it&#39;s annoying to write the adjustment</span>
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">// over and over.  Instead, we can change to a different epoch so long</span>
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">// ago that all the times we care about will be positive, and then round</span>
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// to zero and round down coincide.  These presentation routines already</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// have to add the zone offset, so adding the translation to the</span>
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// alternate epoch is cheap.  For example, having a non-negative time t</span>
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// means that we can write</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">//</span>
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">//	sec = t % 60</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">//</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// instead of</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">//</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">//	sec = t % 60</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">//	if sec &lt; 0 {</span>
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">//		sec += 60</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">//	}</span>
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">//</span>
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// everywhere.</span>
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">//</span>
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// The calendar runs on an exact 400 year cycle: a 400-year calendar</span>
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// printed for 1970-2469 will apply as well to 2470-2869.  Even the days</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// of the week match up.  It simplifies the computations to choose the</span>
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">// cycle boundaries so that the exceptional years are always delayed as</span>
+<a id="L181"></a><span class="ln">   181</span>	<span class="comment">// long as possible.  That means choosing a year equal to 1 mod 400, so</span>
+<a id="L182"></a><span class="ln">   182</span>	<span class="comment">// that the first leap year is the 4th year, the first missed leap year</span>
+<a id="L183"></a><span class="ln">   183</span>	<span class="comment">// is the 100th year, and the missed missed leap year is the 400th year.</span>
+<a id="L184"></a><span class="ln">   184</span>	<span class="comment">// So we&#39;d prefer instead to print a calendar for 2001-2400 and reuse it</span>
+<a id="L185"></a><span class="ln">   185</span>	<span class="comment">// for 2401-2800.</span>
+<a id="L186"></a><span class="ln">   186</span>	<span class="comment">//</span>
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// Finally, it&#39;s convenient if the delta between the Unix epoch and</span>
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">// long-ago epoch is representable by an int64 constant.</span>
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">//</span>
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// These three considerations—choose an epoch as early as possible, that</span>
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// uses a year equal to 1 mod 400, and that is no more than 2⁶³ seconds</span>
+<a id="L192"></a><span class="ln">   192</span>	<span class="comment">// earlier than 1970—bring us to the year -292277022399.  We refer to</span>
+<a id="L193"></a><span class="ln">   193</span>	<span class="comment">// this year as the absolute zero year, and to times measured as a uint64</span>
+<a id="L194"></a><span class="ln">   194</span>	<span class="comment">// seconds since this year as absolute times.</span>
+<a id="L195"></a><span class="ln">   195</span>	<span class="comment">//</span>
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// Times measured as an int64 seconds since the year 1—the representation</span>
+<a id="L197"></a><span class="ln">   197</span>	<span class="comment">// used for Time&#39;s sec field—are called internal times.</span>
+<a id="L198"></a><span class="ln">   198</span>	<span class="comment">//</span>
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// Times measured as an int64 seconds since the year 1970 are called Unix</span>
+<a id="L200"></a><span class="ln">   200</span>	<span class="comment">// times.</span>
+<a id="L201"></a><span class="ln">   201</span>	<span class="comment">//</span>
+<a id="L202"></a><span class="ln">   202</span>	<span class="comment">// It is tempting to just use the year 1 as the absolute epoch, defining</span>
+<a id="L203"></a><span class="ln">   203</span>	<span class="comment">// that the routines are only valid for years &gt;= 1.  However, the</span>
+<a id="L204"></a><span class="ln">   204</span>	<span class="comment">// routines would then be invalid when displaying the epoch in time zones</span>
+<a id="L205"></a><span class="ln">   205</span>	<span class="comment">// west of UTC, since it is year 0.  It doesn&#39;t seem tenable to say that</span>
+<a id="L206"></a><span class="ln">   206</span>	<span class="comment">// printing the zero time correctly isn&#39;t supported in half the time</span>
+<a id="L207"></a><span class="ln">   207</span>	<span class="comment">// zones.  By comparison, it&#39;s reasonable to mishandle some times in</span>
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">// the year -292277022399.</span>
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">//</span>
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// All this is opaque to clients of the API and can be changed if a</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// better implementation presents itself.</span>
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	const (
+<a id="L214"></a><span class="ln">   214</span>		<span class="comment">// The unsigned zero year for internal calculations.</span>
+<a id="L215"></a><span class="ln">   215</span>		<span class="comment">// Must be 1 mod 400, and times before it will not compute correctly,</span>
+<a id="L216"></a><span class="ln">   216</span>		<span class="comment">// but otherwise can be changed at will.</span>
+<a id="L217"></a><span class="ln">   217</span>		absoluteZeroYear = -292277022399
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>		<span class="comment">// The year of the zero Time.</span>
+<a id="L220"></a><span class="ln">   220</span>		<span class="comment">// Assumed by the unixToInternal computation below.</span>
+<a id="L221"></a><span class="ln">   221</span>		internalYear = 1
+<a id="L222"></a><span class="ln">   222</span>	
+<a id="L223"></a><span class="ln">   223</span>		<span class="comment">// The year of the zero Unix time.</span>
+<a id="L224"></a><span class="ln">   224</span>		unixYear = 1970
+<a id="L225"></a><span class="ln">   225</span>	
+<a id="L226"></a><span class="ln">   226</span>		<span class="comment">// Offsets to convert between internal and absolute or Unix times.</span>
+<a id="L227"></a><span class="ln">   227</span>		absoluteToInternal int64 = (absoluteZeroYear - internalYear) * 365.2425 * secondsPerDay
+<a id="L228"></a><span class="ln">   228</span>		internalToAbsolute       = -absoluteToInternal
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>		unixToInternal int64 = (1969*365 + 1969/4 - 1969/100 + 1969/400) * secondsPerDay
+<a id="L231"></a><span class="ln">   231</span>		internalToUnix int64 = -unixToInternal
+<a id="L232"></a><span class="ln">   232</span>	)
+<a id="L233"></a><span class="ln">   233</span>	
+<a id="L234"></a><span class="ln">   234</span>	<span class="comment">// IsZero reports whether t represents the zero time instant,</span>
+<a id="L235"></a><span class="ln">   235</span>	<span class="comment">// January 1, year 1, 00:00:00 UTC.</span>
+<a id="L236"></a><span class="ln">   236</span>	func (t Time) IsZero() bool {
+<a id="L237"></a><span class="ln">   237</span>		return t.sec == 0 &amp;&amp; t.nsec == 0
+<a id="L238"></a><span class="ln">   238</span>	}
+<a id="L239"></a><span class="ln">   239</span>	
+<a id="L240"></a><span class="ln">   240</span>	<span class="comment">// abs returns the time t as an absolute time, adjusted by the zone offset.</span>
+<a id="L241"></a><span class="ln">   241</span>	<span class="comment">// It is called when computing a presentation property like Month or Hour.</span>
+<a id="L242"></a><span class="ln">   242</span>	func (t Time) abs() uint64 {
+<a id="L243"></a><span class="ln">   243</span>		l := t.loc
+<a id="L244"></a><span class="ln">   244</span>		if l == nil {
+<a id="L245"></a><span class="ln">   245</span>			l = &amp;utcLoc
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		<span class="comment">// Avoid function call if we hit the local time cache.</span>
+<a id="L248"></a><span class="ln">   248</span>		sec := t.sec + internalToUnix
+<a id="L249"></a><span class="ln">   249</span>		if l != &amp;utcLoc {
+<a id="L250"></a><span class="ln">   250</span>			if l.cacheZone != nil &amp;&amp; l.cacheStart &lt;= sec &amp;&amp; sec &lt; l.cacheEnd {
+<a id="L251"></a><span class="ln">   251</span>				sec += int64(l.cacheZone.offset)
+<a id="L252"></a><span class="ln">   252</span>			} else {
+<a id="L253"></a><span class="ln">   253</span>				_, offset, _, _, _ := l.lookup(sec)
+<a id="L254"></a><span class="ln">   254</span>				sec += int64(offset)
+<a id="L255"></a><span class="ln">   255</span>			}
+<a id="L256"></a><span class="ln">   256</span>		}
+<a id="L257"></a><span class="ln">   257</span>		return uint64(sec + (unixToInternal + internalToAbsolute))
+<a id="L258"></a><span class="ln">   258</span>	}
+<a id="L259"></a><span class="ln">   259</span>	
+<a id="L260"></a><span class="ln">   260</span>	<span class="comment">// Date returns the year, month, and day in which t occurs.</span>
+<a id="L261"></a><span class="ln">   261</span>	func (t Time) Date() (year int, month Month, day int) {
+<a id="L262"></a><span class="ln">   262</span>		year, month, day, _ = t.date(true)
+<a id="L263"></a><span class="ln">   263</span>		return
+<a id="L264"></a><span class="ln">   264</span>	}
+<a id="L265"></a><span class="ln">   265</span>	
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// Year returns the year in which t occurs.</span>
+<a id="L267"></a><span class="ln">   267</span>	func (t Time) Year() int {
+<a id="L268"></a><span class="ln">   268</span>		year, _, _, _ := t.date(false)
+<a id="L269"></a><span class="ln">   269</span>		return year
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// Month returns the month of the year specified by t.</span>
+<a id="L273"></a><span class="ln">   273</span>	func (t Time) Month() Month {
+<a id="L274"></a><span class="ln">   274</span>		_, month, _, _ := t.date(true)
+<a id="L275"></a><span class="ln">   275</span>		return month
+<a id="L276"></a><span class="ln">   276</span>	}
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>	<span class="comment">// Day returns the day of the month specified by t.</span>
+<a id="L279"></a><span class="ln">   279</span>	func (t Time) Day() int {
+<a id="L280"></a><span class="ln">   280</span>		_, _, day, _ := t.date(true)
+<a id="L281"></a><span class="ln">   281</span>		return day
+<a id="L282"></a><span class="ln">   282</span>	}
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>	<span class="comment">// Weekday returns the day of the week specified by t.</span>
+<a id="L285"></a><span class="ln">   285</span>	func (t Time) Weekday() Weekday {
+<a id="L286"></a><span class="ln">   286</span>		<span class="comment">// January 1 of the absolute year, like January 1 of 2001, was a Monday.</span>
+<a id="L287"></a><span class="ln">   287</span>		sec := (t.abs() + uint64(Monday)*secondsPerDay) % secondsPerWeek
+<a id="L288"></a><span class="ln">   288</span>		return Weekday(int(sec) / secondsPerDay)
+<a id="L289"></a><span class="ln">   289</span>	}
+<a id="L290"></a><span class="ln">   290</span>	
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// ISOWeek returns the ISO 8601 year and week number in which t occurs.</span>
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">// Week ranges from 1 to 53. Jan 01 to Jan 03 of year n might belong to</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// week 52 or 53 of year n-1, and Dec 29 to Dec 31 might belong to week 1</span>
+<a id="L294"></a><span class="ln">   294</span>	<span class="comment">// of year n+1.</span>
+<a id="L295"></a><span class="ln">   295</span>	func (t Time) ISOWeek() (year, week int) {
+<a id="L296"></a><span class="ln">   296</span>		year, month, day, yday := t.date(true)
+<a id="L297"></a><span class="ln">   297</span>		wday := int(t.Weekday()+6) % 7 <span class="comment">// weekday but Monday = 0.</span>
+<a id="L298"></a><span class="ln">   298</span>		const (
+<a id="L299"></a><span class="ln">   299</span>			Mon int = iota
+<a id="L300"></a><span class="ln">   300</span>			Tue
+<a id="L301"></a><span class="ln">   301</span>			Wed
+<a id="L302"></a><span class="ln">   302</span>			Thu
+<a id="L303"></a><span class="ln">   303</span>			Fri
+<a id="L304"></a><span class="ln">   304</span>			Sat
+<a id="L305"></a><span class="ln">   305</span>			Sun
+<a id="L306"></a><span class="ln">   306</span>		)
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>		<span class="comment">// Calculate week as number of Mondays in year up to</span>
+<a id="L309"></a><span class="ln">   309</span>		<span class="comment">// and including today, plus 1 because the first week is week 0.</span>
+<a id="L310"></a><span class="ln">   310</span>		<span class="comment">// Putting the + 1 inside the numerator as a + 7 keeps the</span>
+<a id="L311"></a><span class="ln">   311</span>		<span class="comment">// numerator from being negative, which would cause it to</span>
+<a id="L312"></a><span class="ln">   312</span>		<span class="comment">// round incorrectly.</span>
+<a id="L313"></a><span class="ln">   313</span>		week = (yday - wday + 7) / 7
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>		<span class="comment">// The week number is now correct under the assumption</span>
+<a id="L316"></a><span class="ln">   316</span>		<span class="comment">// that the first Monday of the year is in week 1.</span>
+<a id="L317"></a><span class="ln">   317</span>		<span class="comment">// If Jan 1 is a Tuesday, Wednesday, or Thursday, the first Monday</span>
+<a id="L318"></a><span class="ln">   318</span>		<span class="comment">// is actually in week 2.</span>
+<a id="L319"></a><span class="ln">   319</span>		jan1wday := (wday - yday + 7*53) % 7
+<a id="L320"></a><span class="ln">   320</span>		if Tue &lt;= jan1wday &amp;&amp; jan1wday &lt;= Thu {
+<a id="L321"></a><span class="ln">   321</span>			week++
+<a id="L322"></a><span class="ln">   322</span>		}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>		<span class="comment">// If the week number is still 0, we&#39;re in early January but in</span>
+<a id="L325"></a><span class="ln">   325</span>		<span class="comment">// the last week of last year.</span>
+<a id="L326"></a><span class="ln">   326</span>		if week == 0 {
+<a id="L327"></a><span class="ln">   327</span>			year--
+<a id="L328"></a><span class="ln">   328</span>			week = 52
+<a id="L329"></a><span class="ln">   329</span>			<span class="comment">// A year has 53 weeks when Jan 1 or Dec 31 is a Thursday,</span>
+<a id="L330"></a><span class="ln">   330</span>			<span class="comment">// meaning Jan 1 of the next year is a Friday</span>
+<a id="L331"></a><span class="ln">   331</span>			<span class="comment">// or it was a leap year and Jan 1 of the next year is a Saturday.</span>
+<a id="L332"></a><span class="ln">   332</span>			if jan1wday == Fri || (jan1wday == Sat &amp;&amp; isLeap(year)) {
+<a id="L333"></a><span class="ln">   333</span>				week++
+<a id="L334"></a><span class="ln">   334</span>			}
+<a id="L335"></a><span class="ln">   335</span>		}
+<a id="L336"></a><span class="ln">   336</span>	
+<a id="L337"></a><span class="ln">   337</span>		<span class="comment">// December 29 to 31 are in week 1 of next year if</span>
+<a id="L338"></a><span class="ln">   338</span>		<span class="comment">// they are after the last Thursday of the year and</span>
+<a id="L339"></a><span class="ln">   339</span>		<span class="comment">// December 31 is a Monday, Tuesday, or Wednesday.</span>
+<a id="L340"></a><span class="ln">   340</span>		if month == December &amp;&amp; day &gt;= 29 &amp;&amp; wday &lt; Thu {
+<a id="L341"></a><span class="ln">   341</span>			if dec31wday := (wday + 31 - day) % 7; Mon &lt;= dec31wday &amp;&amp; dec31wday &lt;= Wed {
+<a id="L342"></a><span class="ln">   342</span>				year++
+<a id="L343"></a><span class="ln">   343</span>				week = 1
+<a id="L344"></a><span class="ln">   344</span>			}
+<a id="L345"></a><span class="ln">   345</span>		}
+<a id="L346"></a><span class="ln">   346</span>	
+<a id="L347"></a><span class="ln">   347</span>		return
+<a id="L348"></a><span class="ln">   348</span>	}
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>	<span class="comment">// Clock returns the hour, minute, and second within the day specified by t.</span>
+<a id="L351"></a><span class="ln">   351</span>	func (t Time) Clock() (hour, min, sec int) {
+<a id="L352"></a><span class="ln">   352</span>		sec = int(t.abs() % secondsPerDay)
+<a id="L353"></a><span class="ln">   353</span>		hour = sec / secondsPerHour
+<a id="L354"></a><span class="ln">   354</span>		sec -= hour * secondsPerHour
+<a id="L355"></a><span class="ln">   355</span>		min = sec / secondsPerMinute
+<a id="L356"></a><span class="ln">   356</span>		sec -= min * secondsPerMinute
+<a id="L357"></a><span class="ln">   357</span>		return
+<a id="L358"></a><span class="ln">   358</span>	}
+<a id="L359"></a><span class="ln">   359</span>	
+<a id="L360"></a><span class="ln">   360</span>	<span class="comment">// Hour returns the hour within the day specified by t, in the range [0, 23].</span>
+<a id="L361"></a><span class="ln">   361</span>	func (t Time) Hour() int {
+<a id="L362"></a><span class="ln">   362</span>		return int(t.abs()%secondsPerDay) / secondsPerHour
+<a id="L363"></a><span class="ln">   363</span>	}
+<a id="L364"></a><span class="ln">   364</span>	
+<a id="L365"></a><span class="ln">   365</span>	<span class="comment">// Minute returns the minute offset within the hour specified by t, in the range [0, 59].</span>
+<a id="L366"></a><span class="ln">   366</span>	func (t Time) Minute() int {
+<a id="L367"></a><span class="ln">   367</span>		return int(t.abs()%secondsPerHour) / secondsPerMinute
+<a id="L368"></a><span class="ln">   368</span>	}
+<a id="L369"></a><span class="ln">   369</span>	
+<a id="L370"></a><span class="ln">   370</span>	<span class="comment">// Second returns the second offset within the minute specified by t, in the range [0, 59].</span>
+<a id="L371"></a><span class="ln">   371</span>	func (t Time) Second() int {
+<a id="L372"></a><span class="ln">   372</span>		return int(t.abs() % secondsPerMinute)
+<a id="L373"></a><span class="ln">   373</span>	}
+<a id="L374"></a><span class="ln">   374</span>	
+<a id="L375"></a><span class="ln">   375</span>	<span class="comment">// Nanosecond returns the nanosecond offset within the second specified by t,</span>
+<a id="L376"></a><span class="ln">   376</span>	<span class="comment">// in the range [0, 999999999].</span>
+<a id="L377"></a><span class="ln">   377</span>	func (t Time) Nanosecond() int {
+<a id="L378"></a><span class="ln">   378</span>		return int(t.nsec)
+<a id="L379"></a><span class="ln">   379</span>	}
+<a id="L380"></a><span class="ln">   380</span>	
+<a id="L381"></a><span class="ln">   381</span>	<span class="comment">// A Duration represents the elapsed time between two instants</span>
+<a id="L382"></a><span class="ln">   382</span>	<span class="comment">// as an int64 nanosecond count.  The representation limits the</span>
+<a id="L383"></a><span class="ln">   383</span>	<span class="comment">// largest representable duration to approximately 290 years.</span>
+<a id="L384"></a><span class="ln">   384</span>	type Duration int64
+<a id="L385"></a><span class="ln">   385</span>	
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// Common durations.  There is no definition for units of Day or larger</span>
+<a id="L387"></a><span class="ln">   387</span>	<span class="comment">// to avoid confusion across daylight savings time zone transitions.</span>
+<a id="L388"></a><span class="ln">   388</span>	<span class="comment">//</span>
+<a id="L389"></a><span class="ln">   389</span>	<span class="comment">// To count the number of units in a Duration, divide:</span>
+<a id="L390"></a><span class="ln">   390</span>	<span class="comment">//	second := time.Second</span>
+<a id="L391"></a><span class="ln">   391</span>	<span class="comment">//	fmt.Print(int64(second/time.Millisecond)) // prints 1000</span>
+<a id="L392"></a><span class="ln">   392</span>	<span class="comment">//</span>
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// To convert an integer number of units to a Duration, multiply:</span>
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">//	seconds := 10</span>
+<a id="L395"></a><span class="ln">   395</span>	<span class="comment">//	fmt.Print(time.Duration(seconds)*time.Second) // prints 10s</span>
+<a id="L396"></a><span class="ln">   396</span>	<span class="comment">//</span>
+<a id="L397"></a><span class="ln">   397</span>	const (
+<a id="L398"></a><span class="ln">   398</span>		Nanosecond  Duration = 1
+<a id="L399"></a><span class="ln">   399</span>		Microsecond          = 1000 * Nanosecond
+<a id="L400"></a><span class="ln">   400</span>		Millisecond          = 1000 * Microsecond
+<a id="L401"></a><span class="ln">   401</span>		Second               = 1000 * Millisecond
+<a id="L402"></a><span class="ln">   402</span>		Minute               = 60 * Second
+<a id="L403"></a><span class="ln">   403</span>		Hour                 = 60 * Minute
+<a id="L404"></a><span class="ln">   404</span>	)
+<a id="L405"></a><span class="ln">   405</span>	
+<a id="L406"></a><span class="ln">   406</span>	<span class="comment">// String returns a string representing the duration in the form &#34;72h3m0.5s&#34;.</span>
+<a id="L407"></a><span class="ln">   407</span>	<span class="comment">// Leading zero units are omitted.  As a special case, durations less than one</span>
+<a id="L408"></a><span class="ln">   408</span>	<span class="comment">// second format use a smaller unit (milli-, micro-, or nanoseconds) to ensure</span>
+<a id="L409"></a><span class="ln">   409</span>	<span class="comment">// that the leading digit is non-zero.  The zero duration formats as 0,</span>
+<a id="L410"></a><span class="ln">   410</span>	<span class="comment">// with no unit.</span>
+<a id="L411"></a><span class="ln">   411</span>	func (d Duration) String() string {
+<a id="L412"></a><span class="ln">   412</span>		<span class="comment">// Largest time is 2540400h10m10.000000000s</span>
+<a id="L413"></a><span class="ln">   413</span>		var buf [32]byte
+<a id="L414"></a><span class="ln">   414</span>		w := len(buf)
+<a id="L415"></a><span class="ln">   415</span>	
+<a id="L416"></a><span class="ln">   416</span>		u := uint64(d)
+<a id="L417"></a><span class="ln">   417</span>		neg := d &lt; 0
+<a id="L418"></a><span class="ln">   418</span>		if neg {
+<a id="L419"></a><span class="ln">   419</span>			u = -u
+<a id="L420"></a><span class="ln">   420</span>		}
+<a id="L421"></a><span class="ln">   421</span>	
+<a id="L422"></a><span class="ln">   422</span>		if u &lt; uint64(Second) {
+<a id="L423"></a><span class="ln">   423</span>			<span class="comment">// Special case: if duration is smaller than a second,</span>
+<a id="L424"></a><span class="ln">   424</span>			<span class="comment">// use smaller units, like 1.2ms</span>
+<a id="L425"></a><span class="ln">   425</span>			var (
+<a id="L426"></a><span class="ln">   426</span>				prec int
+<a id="L427"></a><span class="ln">   427</span>				unit byte
+<a id="L428"></a><span class="ln">   428</span>			)
+<a id="L429"></a><span class="ln">   429</span>			switch {
+<a id="L430"></a><span class="ln">   430</span>			case u == 0:
+<a id="L431"></a><span class="ln">   431</span>				return &#34;0&#34;
+<a id="L432"></a><span class="ln">   432</span>			case u &lt; uint64(Microsecond):
+<a id="L433"></a><span class="ln">   433</span>				<span class="comment">// print nanoseconds</span>
+<a id="L434"></a><span class="ln">   434</span>				prec = 0
+<a id="L435"></a><span class="ln">   435</span>				unit = &#39;n&#39;
+<a id="L436"></a><span class="ln">   436</span>			case u &lt; uint64(Millisecond):
+<a id="L437"></a><span class="ln">   437</span>				<span class="comment">// print microseconds</span>
+<a id="L438"></a><span class="ln">   438</span>				prec = 3
+<a id="L439"></a><span class="ln">   439</span>				unit = &#39;u&#39;
+<a id="L440"></a><span class="ln">   440</span>			default:
+<a id="L441"></a><span class="ln">   441</span>				<span class="comment">// print milliseconds</span>
+<a id="L442"></a><span class="ln">   442</span>				prec = 6
+<a id="L443"></a><span class="ln">   443</span>				unit = &#39;m&#39;
+<a id="L444"></a><span class="ln">   444</span>			}
+<a id="L445"></a><span class="ln">   445</span>			w -= 2
+<a id="L446"></a><span class="ln">   446</span>			buf[w] = unit
+<a id="L447"></a><span class="ln">   447</span>			buf[w+1] = &#39;s&#39;
+<a id="L448"></a><span class="ln">   448</span>			w, u = fmtFrac(buf[:w], u, prec)
+<a id="L449"></a><span class="ln">   449</span>			w = fmtInt(buf[:w], u)
+<a id="L450"></a><span class="ln">   450</span>		} else {
+<a id="L451"></a><span class="ln">   451</span>			w--
+<a id="L452"></a><span class="ln">   452</span>			buf[w] = &#39;s&#39;
+<a id="L453"></a><span class="ln">   453</span>	
+<a id="L454"></a><span class="ln">   454</span>			w, u = fmtFrac(buf[:w], u, 9)
+<a id="L455"></a><span class="ln">   455</span>	
+<a id="L456"></a><span class="ln">   456</span>			<span class="comment">// u is now integer seconds</span>
+<a id="L457"></a><span class="ln">   457</span>			w = fmtInt(buf[:w], u%60)
+<a id="L458"></a><span class="ln">   458</span>			u /= 60
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>			<span class="comment">// u is now integer minutes</span>
+<a id="L461"></a><span class="ln">   461</span>			if u &gt; 0 {
+<a id="L462"></a><span class="ln">   462</span>				w--
+<a id="L463"></a><span class="ln">   463</span>				buf[w] = &#39;m&#39;
+<a id="L464"></a><span class="ln">   464</span>				w = fmtInt(buf[:w], u%60)
+<a id="L465"></a><span class="ln">   465</span>				u /= 60
+<a id="L466"></a><span class="ln">   466</span>	
+<a id="L467"></a><span class="ln">   467</span>				<span class="comment">// u is now integer hours</span>
+<a id="L468"></a><span class="ln">   468</span>				<span class="comment">// Stop at hours because days can be different lengths.</span>
+<a id="L469"></a><span class="ln">   469</span>				if u &gt; 0 {
+<a id="L470"></a><span class="ln">   470</span>					w--
+<a id="L471"></a><span class="ln">   471</span>					buf[w] = &#39;h&#39;
+<a id="L472"></a><span class="ln">   472</span>					w = fmtInt(buf[:w], u)
+<a id="L473"></a><span class="ln">   473</span>				}
+<a id="L474"></a><span class="ln">   474</span>			}
+<a id="L475"></a><span class="ln">   475</span>		}
+<a id="L476"></a><span class="ln">   476</span>	
+<a id="L477"></a><span class="ln">   477</span>		if neg {
+<a id="L478"></a><span class="ln">   478</span>			w--
+<a id="L479"></a><span class="ln">   479</span>			buf[w] = &#39;-&#39;
+<a id="L480"></a><span class="ln">   480</span>		}
+<a id="L481"></a><span class="ln">   481</span>	
+<a id="L482"></a><span class="ln">   482</span>		return string(buf[w:])
+<a id="L483"></a><span class="ln">   483</span>	}
+<a id="L484"></a><span class="ln">   484</span>	
+<a id="L485"></a><span class="ln">   485</span>	<span class="comment">// fmtFrac formats the fraction of v/10**prec (e.g., &#34;.12345&#34;) into the</span>
+<a id="L486"></a><span class="ln">   486</span>	<span class="comment">// tail of buf, omitting trailing zeros.  it omits the decimal</span>
+<a id="L487"></a><span class="ln">   487</span>	<span class="comment">// point too when the fraction is 0.  It returns the index where the</span>
+<a id="L488"></a><span class="ln">   488</span>	<span class="comment">// output bytes begin and the value v/10**prec.</span>
+<a id="L489"></a><span class="ln">   489</span>	func fmtFrac(buf []byte, v uint64, prec int) (nw int, nv uint64) {
+<a id="L490"></a><span class="ln">   490</span>		<span class="comment">// Omit trailing zeros up to and including decimal point.</span>
+<a id="L491"></a><span class="ln">   491</span>		w := len(buf)
+<a id="L492"></a><span class="ln">   492</span>		print := false
+<a id="L493"></a><span class="ln">   493</span>		for i := 0; i &lt; prec; i++ {
+<a id="L494"></a><span class="ln">   494</span>			digit := v % 10
+<a id="L495"></a><span class="ln">   495</span>			print = print || digit != 0
+<a id="L496"></a><span class="ln">   496</span>			if print {
+<a id="L497"></a><span class="ln">   497</span>				w--
+<a id="L498"></a><span class="ln">   498</span>				buf[w] = byte(digit) + &#39;0&#39;
+<a id="L499"></a><span class="ln">   499</span>			}
+<a id="L500"></a><span class="ln">   500</span>			v /= 10
+<a id="L501"></a><span class="ln">   501</span>		}
+<a id="L502"></a><span class="ln">   502</span>		if print {
+<a id="L503"></a><span class="ln">   503</span>			w--
+<a id="L504"></a><span class="ln">   504</span>			buf[w] = &#39;.&#39;
+<a id="L505"></a><span class="ln">   505</span>		}
+<a id="L506"></a><span class="ln">   506</span>		return w, v
+<a id="L507"></a><span class="ln">   507</span>	}
+<a id="L508"></a><span class="ln">   508</span>	
+<a id="L509"></a><span class="ln">   509</span>	<span class="comment">// fmtInt formats v into the tail of buf.</span>
+<a id="L510"></a><span class="ln">   510</span>	<span class="comment">// It returns the index where the output begins.</span>
+<a id="L511"></a><span class="ln">   511</span>	func fmtInt(buf []byte, v uint64) int {
+<a id="L512"></a><span class="ln">   512</span>		w := len(buf)
+<a id="L513"></a><span class="ln">   513</span>		if v == 0 {
+<a id="L514"></a><span class="ln">   514</span>			w--
+<a id="L515"></a><span class="ln">   515</span>			buf[w] = &#39;0&#39;
+<a id="L516"></a><span class="ln">   516</span>		} else {
+<a id="L517"></a><span class="ln">   517</span>			for v &gt; 0 {
+<a id="L518"></a><span class="ln">   518</span>				w--
+<a id="L519"></a><span class="ln">   519</span>				buf[w] = byte(v%10) + &#39;0&#39;
+<a id="L520"></a><span class="ln">   520</span>				v /= 10
+<a id="L521"></a><span class="ln">   521</span>			}
+<a id="L522"></a><span class="ln">   522</span>		}
+<a id="L523"></a><span class="ln">   523</span>		return w
+<a id="L524"></a><span class="ln">   524</span>	}
+<a id="L525"></a><span class="ln">   525</span>	
+<a id="L526"></a><span class="ln">   526</span>	<span class="comment">// Nanoseconds returns the duration as an integer nanosecond count.</span>
+<a id="L527"></a><span class="ln">   527</span>	func (d Duration) Nanoseconds() int64 { return int64(d) }
+<a id="L528"></a><span class="ln">   528</span>	
+<a id="L529"></a><span class="ln">   529</span>	<span class="comment">// These methods return float64 because the dominant</span>
+<a id="L530"></a><span class="ln">   530</span>	<span class="comment">// use case is for printing a floating point number like 1.5s, and</span>
+<a id="L531"></a><span class="ln">   531</span>	<span class="comment">// a truncation to integer would make them not useful in those cases.</span>
+<a id="L532"></a><span class="ln">   532</span>	<span class="comment">// Splitting the integer and fraction ourselves guarantees that</span>
+<a id="L533"></a><span class="ln">   533</span>	<span class="comment">// converting the returned float64 to an integer rounds the same</span>
+<a id="L534"></a><span class="ln">   534</span>	<span class="comment">// way that a pure integer conversion would have, even in cases</span>
+<a id="L535"></a><span class="ln">   535</span>	<span class="comment">// where, say, float64(d.Nanoseconds())/1e9 would have rounded</span>
+<a id="L536"></a><span class="ln">   536</span>	<span class="comment">// differently.</span>
+<a id="L537"></a><span class="ln">   537</span>	
+<a id="L538"></a><span class="ln">   538</span>	<span class="comment">// Seconds returns the duration as a floating point number of seconds.</span>
+<a id="L539"></a><span class="ln">   539</span>	func (d Duration) Seconds() float64 {
+<a id="L540"></a><span class="ln">   540</span>		sec := d / Second
+<a id="L541"></a><span class="ln">   541</span>		nsec := d % Second
+<a id="L542"></a><span class="ln">   542</span>		return float64(sec) + float64(nsec)*1e-9
+<a id="L543"></a><span class="ln">   543</span>	}
+<a id="L544"></a><span class="ln">   544</span>	
+<a id="L545"></a><span class="ln">   545</span>	<span class="comment">// Minutes returns the duration as a floating point number of minutes.</span>
+<a id="L546"></a><span class="ln">   546</span>	func (d Duration) Minutes() float64 {
+<a id="L547"></a><span class="ln">   547</span>		min := d / Minute
+<a id="L548"></a><span class="ln">   548</span>		nsec := d % Minute
+<a id="L549"></a><span class="ln">   549</span>		return float64(min) + float64(nsec)*(1e-9/60)
+<a id="L550"></a><span class="ln">   550</span>	}
+<a id="L551"></a><span class="ln">   551</span>	
+<a id="L552"></a><span class="ln">   552</span>	<span class="comment">// Hours returns the duration as a floating point number of hours.</span>
+<a id="L553"></a><span class="ln">   553</span>	func (d Duration) Hours() float64 {
+<a id="L554"></a><span class="ln">   554</span>		hour := d / Hour
+<a id="L555"></a><span class="ln">   555</span>		nsec := d % Hour
+<a id="L556"></a><span class="ln">   556</span>		return float64(hour) + float64(nsec)*(1e-9/60/60)
+<a id="L557"></a><span class="ln">   557</span>	}
+<a id="L558"></a><span class="ln">   558</span>	
+<a id="L559"></a><span class="ln">   559</span>	<span class="comment">// Add returns the time t+d.</span>
+<a id="L560"></a><span class="ln">   560</span>	func (t Time) Add(d Duration) Time {
+<a id="L561"></a><span class="ln">   561</span>		t.sec += int64(d / 1e9)
+<a id="L562"></a><span class="ln">   562</span>		t.nsec += int32(d % 1e9)
+<a id="L563"></a><span class="ln">   563</span>		if t.nsec &gt;= 1e9 {
+<a id="L564"></a><span class="ln">   564</span>			t.sec++
+<a id="L565"></a><span class="ln">   565</span>			t.nsec -= 1e9
+<a id="L566"></a><span class="ln">   566</span>		} else if t.nsec &lt; 0 {
+<a id="L567"></a><span class="ln">   567</span>			t.sec--
+<a id="L568"></a><span class="ln">   568</span>			t.nsec += 1e9
+<a id="L569"></a><span class="ln">   569</span>		}
+<a id="L570"></a><span class="ln">   570</span>		return t
+<a id="L571"></a><span class="ln">   571</span>	}
+<a id="L572"></a><span class="ln">   572</span>	
+<a id="L573"></a><span class="ln">   573</span>	<span class="comment">// Sub returns the duration t-u.</span>
+<a id="L574"></a><span class="ln">   574</span>	<span class="comment">// To compute t-d for a duration d, use t.Add(-d).</span>
+<a id="L575"></a><span class="ln">   575</span>	func (t Time) Sub(u Time) Duration {
+<a id="L576"></a><span class="ln">   576</span>		return Duration(t.sec-u.sec)*Second + Duration(t.nsec-u.nsec)
+<a id="L577"></a><span class="ln">   577</span>	}
+<a id="L578"></a><span class="ln">   578</span>	
+<a id="L579"></a><span class="ln">   579</span>	<span class="comment">// Since returns the time elapsed since t.</span>
+<a id="L580"></a><span class="ln">   580</span>	<span class="comment">// It is shorthand for time.Now().Sub(t).</span>
+<a id="L581"></a><span class="ln">   581</span>	func Since(t Time) Duration {
+<a id="L582"></a><span class="ln">   582</span>		return Now().Sub(t)
+<a id="L583"></a><span class="ln">   583</span>	}
+<a id="L584"></a><span class="ln">   584</span>	
+<a id="L585"></a><span class="ln">   585</span>	<span class="comment">// AddDate returns the time corresponding to adding the</span>
+<a id="L586"></a><span class="ln">   586</span>	<span class="comment">// given number of years, months, and days to t.</span>
+<a id="L587"></a><span class="ln">   587</span>	<span class="comment">// For example, AddDate(-1, 2, 3) applied to January 1, 2011</span>
+<a id="L588"></a><span class="ln">   588</span>	<span class="comment">// returns March 4, 2010.</span>
+<a id="L589"></a><span class="ln">   589</span>	<span class="comment">//</span>
+<a id="L590"></a><span class="ln">   590</span>	<span class="comment">// AddDate normalizes its result in the same way that Date does,</span>
+<a id="L591"></a><span class="ln">   591</span>	<span class="comment">// so, for example, adding one month to October 31 yields</span>
+<a id="L592"></a><span class="ln">   592</span>	<span class="comment">// December 1, the normalized form for November 31.</span>
+<a id="L593"></a><span class="ln">   593</span>	func (t Time) AddDate(years int, months int, days int) Time {
+<a id="L594"></a><span class="ln">   594</span>		year, month, day := t.Date()
+<a id="L595"></a><span class="ln">   595</span>		hour, min, sec := t.Clock()
+<a id="L596"></a><span class="ln">   596</span>		return Date(year+years, month+Month(months), day+days, hour, min, sec, int(t.nsec), t.loc)
+<a id="L597"></a><span class="ln">   597</span>	}
+<a id="L598"></a><span class="ln">   598</span>	
+<a id="L599"></a><span class="ln">   599</span>	const (
+<a id="L600"></a><span class="ln">   600</span>		secondsPerMinute = 60
+<a id="L601"></a><span class="ln">   601</span>		secondsPerHour   = 60 * 60
+<a id="L602"></a><span class="ln">   602</span>		secondsPerDay    = 24 * secondsPerHour
+<a id="L603"></a><span class="ln">   603</span>		secondsPerWeek   = 7 * secondsPerDay
+<a id="L604"></a><span class="ln">   604</span>		daysPer400Years  = 365*400 + 97
+<a id="L605"></a><span class="ln">   605</span>		daysPer100Years  = 365*100 + 24
+<a id="L606"></a><span class="ln">   606</span>		daysPer4Years    = 365*4 + 1
+<a id="L607"></a><span class="ln">   607</span>		days1970To2001   = 31*365 + 8
+<a id="L608"></a><span class="ln">   608</span>	)
+<a id="L609"></a><span class="ln">   609</span>	
+<a id="L610"></a><span class="ln">   610</span>	<span class="comment">// date computes the year and, only when full=true,</span>
+<a id="L611"></a><span class="ln">   611</span>	<span class="comment">// the month and day in which t occurs.</span>
+<a id="L612"></a><span class="ln">   612</span>	func (t Time) date(full bool) (year int, month Month, day int, yday int) {
+<a id="L613"></a><span class="ln">   613</span>		<span class="comment">// Split into time and day.</span>
+<a id="L614"></a><span class="ln">   614</span>		d := t.abs() / secondsPerDay
+<a id="L615"></a><span class="ln">   615</span>	
+<a id="L616"></a><span class="ln">   616</span>		<span class="comment">// Account for 400 year cycles.</span>
+<a id="L617"></a><span class="ln">   617</span>		n := d / daysPer400Years
+<a id="L618"></a><span class="ln">   618</span>		y := 400 * n
+<a id="L619"></a><span class="ln">   619</span>		d -= daysPer400Years * n
+<a id="L620"></a><span class="ln">   620</span>	
+<a id="L621"></a><span class="ln">   621</span>		<span class="comment">// Cut off 100-year cycles.</span>
+<a id="L622"></a><span class="ln">   622</span>		<span class="comment">// The last cycle has one extra leap year, so on the last day</span>
+<a id="L623"></a><span class="ln">   623</span>		<span class="comment">// of that year, day / daysPer100Years will be 4 instead of 3.</span>
+<a id="L624"></a><span class="ln">   624</span>		<span class="comment">// Cut it back down to 3 by subtracting n&gt;&gt;2.</span>
+<a id="L625"></a><span class="ln">   625</span>		n = d / daysPer100Years
+<a id="L626"></a><span class="ln">   626</span>		n -= n &gt;&gt; 2
+<a id="L627"></a><span class="ln">   627</span>		y += 100 * n
+<a id="L628"></a><span class="ln">   628</span>		d -= daysPer100Years * n
+<a id="L629"></a><span class="ln">   629</span>	
+<a id="L630"></a><span class="ln">   630</span>		<span class="comment">// Cut off 4-year cycles.</span>
+<a id="L631"></a><span class="ln">   631</span>		<span class="comment">// The last cycle has a missing leap year, which does not</span>
+<a id="L632"></a><span class="ln">   632</span>		<span class="comment">// affect the computation.</span>
+<a id="L633"></a><span class="ln">   633</span>		n = d / daysPer4Years
+<a id="L634"></a><span class="ln">   634</span>		y += 4 * n
+<a id="L635"></a><span class="ln">   635</span>		d -= daysPer4Years * n
+<a id="L636"></a><span class="ln">   636</span>	
+<a id="L637"></a><span class="ln">   637</span>		<span class="comment">// Cut off years within a 4-year cycle.</span>
+<a id="L638"></a><span class="ln">   638</span>		<span class="comment">// The last year is a leap year, so on the last day of that year,</span>
+<a id="L639"></a><span class="ln">   639</span>		<span class="comment">// day / 365 will be 4 instead of 3.  Cut it back down to 3</span>
+<a id="L640"></a><span class="ln">   640</span>		<span class="comment">// by subtracting n&gt;&gt;2.</span>
+<a id="L641"></a><span class="ln">   641</span>		n = d / 365
+<a id="L642"></a><span class="ln">   642</span>		n -= n &gt;&gt; 2
+<a id="L643"></a><span class="ln">   643</span>		y += n
+<a id="L644"></a><span class="ln">   644</span>		d -= 365 * n
+<a id="L645"></a><span class="ln">   645</span>	
+<a id="L646"></a><span class="ln">   646</span>		year = int(int64(y) + absoluteZeroYear)
+<a id="L647"></a><span class="ln">   647</span>		yday = int(d)
+<a id="L648"></a><span class="ln">   648</span>	
+<a id="L649"></a><span class="ln">   649</span>		if !full {
+<a id="L650"></a><span class="ln">   650</span>			return
+<a id="L651"></a><span class="ln">   651</span>		}
+<a id="L652"></a><span class="ln">   652</span>	
+<a id="L653"></a><span class="ln">   653</span>		day = yday
+<a id="L654"></a><span class="ln">   654</span>		if isLeap(year) {
+<a id="L655"></a><span class="ln">   655</span>			<span class="comment">// Leap year</span>
+<a id="L656"></a><span class="ln">   656</span>			switch {
+<a id="L657"></a><span class="ln">   657</span>			case day &gt; 31+29-1:
+<a id="L658"></a><span class="ln">   658</span>				<span class="comment">// After leap day; pretend it wasn&#39;t there.</span>
+<a id="L659"></a><span class="ln">   659</span>				day--
+<a id="L660"></a><span class="ln">   660</span>			case day == 31+29-1:
+<a id="L661"></a><span class="ln">   661</span>				<span class="comment">// Leap day.</span>
+<a id="L662"></a><span class="ln">   662</span>				month = February
+<a id="L663"></a><span class="ln">   663</span>				day = 29
+<a id="L664"></a><span class="ln">   664</span>				return
+<a id="L665"></a><span class="ln">   665</span>			}
+<a id="L666"></a><span class="ln">   666</span>		}
+<a id="L667"></a><span class="ln">   667</span>	
+<a id="L668"></a><span class="ln">   668</span>		<span class="comment">// Estimate month on assumption that every month has 31 days.</span>
+<a id="L669"></a><span class="ln">   669</span>		<span class="comment">// The estimate may be too low by at most one month, so adjust.</span>
+<a id="L670"></a><span class="ln">   670</span>		month = Month(day / 31)
+<a id="L671"></a><span class="ln">   671</span>		end := int(daysBefore[month+1])
+<a id="L672"></a><span class="ln">   672</span>		var begin int
+<a id="L673"></a><span class="ln">   673</span>		if day &gt;= end {
+<a id="L674"></a><span class="ln">   674</span>			month++
+<a id="L675"></a><span class="ln">   675</span>			begin = end
+<a id="L676"></a><span class="ln">   676</span>		} else {
+<a id="L677"></a><span class="ln">   677</span>			begin = int(daysBefore[month])
+<a id="L678"></a><span class="ln">   678</span>		}
+<a id="L679"></a><span class="ln">   679</span>	
+<a id="L680"></a><span class="ln">   680</span>		month++ <span class="comment">// because January is 1</span>
+<a id="L681"></a><span class="ln">   681</span>		day = day - begin + 1
+<a id="L682"></a><span class="ln">   682</span>		return
+<a id="L683"></a><span class="ln">   683</span>	}
+<a id="L684"></a><span class="ln">   684</span>	
+<a id="L685"></a><span class="ln">   685</span>	<span class="comment">// daysBefore[m] counts the number of days in a non-leap year</span>
+<a id="L686"></a><span class="ln">   686</span>	<span class="comment">// before month m begins.  There is an entry for m=12, counting</span>
+<a id="L687"></a><span class="ln">   687</span>	<span class="comment">// the number of days before January of next year (365).</span>
+<a id="L688"></a><span class="ln">   688</span>	var daysBefore = [...]int32{
+<a id="L689"></a><span class="ln">   689</span>		0,
+<a id="L690"></a><span class="ln">   690</span>		31,
+<a id="L691"></a><span class="ln">   691</span>		31 + 28,
+<a id="L692"></a><span class="ln">   692</span>		31 + 28 + 31,
+<a id="L693"></a><span class="ln">   693</span>		31 + 28 + 31 + 30,
+<a id="L694"></a><span class="ln">   694</span>		31 + 28 + 31 + 30 + 31,
+<a id="L695"></a><span class="ln">   695</span>		31 + 28 + 31 + 30 + 31 + 30,
+<a id="L696"></a><span class="ln">   696</span>		31 + 28 + 31 + 30 + 31 + 30 + 31,
+<a id="L697"></a><span class="ln">   697</span>		31 + 28 + 31 + 30 + 31 + 30 + 31 + 31,
+<a id="L698"></a><span class="ln">   698</span>		31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30,
+<a id="L699"></a><span class="ln">   699</span>		31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31,
+<a id="L700"></a><span class="ln">   700</span>		31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 30,
+<a id="L701"></a><span class="ln">   701</span>		31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 30 + 31,
+<a id="L702"></a><span class="ln">   702</span>	}
+<a id="L703"></a><span class="ln">   703</span>	
+<a id="L704"></a><span class="ln">   704</span>	func daysIn(m Month, year int) int {
+<a id="L705"></a><span class="ln">   705</span>		if m == February &amp;&amp; isLeap(year) {
+<a id="L706"></a><span class="ln">   706</span>			return 29
+<a id="L707"></a><span class="ln">   707</span>		}
+<a id="L708"></a><span class="ln">   708</span>		return int(daysBefore[m] - daysBefore[m-1])
+<a id="L709"></a><span class="ln">   709</span>	}
+<a id="L710"></a><span class="ln">   710</span>	
+<a id="L711"></a><span class="ln">   711</span>	<span class="comment">// Provided by package runtime.</span>
+<a id="L712"></a><span class="ln">   712</span>	func now() (sec int64, nsec int32)
+<a id="L713"></a><span class="ln">   713</span>	
+<a id="L714"></a><span class="ln">   714</span>	<span class="comment">// Now returns the current local time.</span>
+<a id="L715"></a><span class="ln">   715</span>	func Now() Time {
+<a id="L716"></a><span class="ln">   716</span>		sec, nsec := now()
+<a id="L717"></a><span class="ln">   717</span>		return Time{sec + unixToInternal, nsec, Local}
+<a id="L718"></a><span class="ln">   718</span>	}
+<a id="L719"></a><span class="ln">   719</span>	
+<a id="L720"></a><span class="ln">   720</span>	<span class="comment">// UTC returns t with the location set to UTC.</span>
+<a id="L721"></a><span class="ln">   721</span>	func (t Time) UTC() Time {
+<a id="L722"></a><span class="ln">   722</span>		t.loc = UTC
+<a id="L723"></a><span class="ln">   723</span>		return t
+<a id="L724"></a><span class="ln">   724</span>	}
+<a id="L725"></a><span class="ln">   725</span>	
+<a id="L726"></a><span class="ln">   726</span>	<span class="comment">// Local returns t with the location set to local time.</span>
+<a id="L727"></a><span class="ln">   727</span>	func (t Time) Local() Time {
+<a id="L728"></a><span class="ln">   728</span>		t.loc = Local
+<a id="L729"></a><span class="ln">   729</span>		return t
+<a id="L730"></a><span class="ln">   730</span>	}
+<a id="L731"></a><span class="ln">   731</span>	
+<a id="L732"></a><span class="ln">   732</span>	<span class="comment">// In returns t with the location information set to loc.</span>
+<a id="L733"></a><span class="ln">   733</span>	<span class="comment">//</span>
+<a id="L734"></a><span class="ln">   734</span>	<span class="comment">// In panics if loc is nil.</span>
+<a id="L735"></a><span class="ln">   735</span>	func (t Time) In(loc *Location) Time {
+<a id="L736"></a><span class="ln">   736</span>		if loc == nil {
+<a id="L737"></a><span class="ln">   737</span>			panic(&#34;time: missing Location in call to Time.In&#34;)
+<a id="L738"></a><span class="ln">   738</span>		}
+<a id="L739"></a><span class="ln">   739</span>		t.loc = loc
+<a id="L740"></a><span class="ln">   740</span>		return t
+<a id="L741"></a><span class="ln">   741</span>	}
+<a id="L742"></a><span class="ln">   742</span>	
+<a id="L743"></a><span class="ln">   743</span>	<span class="comment">// Location returns the time zone information associated with t.</span>
+<a id="L744"></a><span class="ln">   744</span>	func (t Time) Location() *Location {
+<a id="L745"></a><span class="ln">   745</span>		l := t.loc
+<a id="L746"></a><span class="ln">   746</span>		if l == nil {
+<a id="L747"></a><span class="ln">   747</span>			l = UTC
+<a id="L748"></a><span class="ln">   748</span>		}
+<a id="L749"></a><span class="ln">   749</span>		return l
+<a id="L750"></a><span class="ln">   750</span>	}
+<a id="L751"></a><span class="ln">   751</span>	
+<a id="L752"></a><span class="ln">   752</span>	<span class="comment">// Zone computes the time zone in effect at time t, returning the abbreviated</span>
+<a id="L753"></a><span class="ln">   753</span>	<span class="comment">// name of the zone (such as &#34;CET&#34;) and its offset in seconds east of UTC.</span>
+<a id="L754"></a><span class="ln">   754</span>	func (t Time) Zone() (name string, offset int) {
+<a id="L755"></a><span class="ln">   755</span>		name, offset, _, _, _ = t.loc.lookup(t.sec + internalToUnix)
+<a id="L756"></a><span class="ln">   756</span>		return
+<a id="L757"></a><span class="ln">   757</span>	}
+<a id="L758"></a><span class="ln">   758</span>	
+<a id="L759"></a><span class="ln">   759</span>	<span class="comment">// Unix returns t as a Unix time, the number of seconds elapsed</span>
+<a id="L760"></a><span class="ln">   760</span>	<span class="comment">// since January 1, 1970 UTC.</span>
+<a id="L761"></a><span class="ln">   761</span>	func (t Time) Unix() int64 {
+<a id="L762"></a><span class="ln">   762</span>		return t.sec + internalToUnix
+<a id="L763"></a><span class="ln">   763</span>	}
+<a id="L764"></a><span class="ln">   764</span>	
+<a id="L765"></a><span class="ln">   765</span>	<span class="comment">// UnixNano returns t as a Unix time, the number of nanoseconds elapsed</span>
+<a id="L766"></a><span class="ln">   766</span>	<span class="comment">// since January 1, 1970 UTC. The result is undefined if the Unix time</span>
+<a id="L767"></a><span class="ln">   767</span>	<span class="comment">// in nanoseconds cannot be represented by an int64. Note that this</span>
+<a id="L768"></a><span class="ln">   768</span>	<span class="comment">// means the result of calling UnixNano on the zero Time is undefined.</span>
+<a id="L769"></a><span class="ln">   769</span>	func (t Time) UnixNano() int64 {
+<a id="L770"></a><span class="ln">   770</span>		return (t.sec+internalToUnix)*1e9 + int64(t.nsec)
+<a id="L771"></a><span class="ln">   771</span>	}
+<a id="L772"></a><span class="ln">   772</span>	
+<a id="L773"></a><span class="ln">   773</span>	const timeGobVersion byte = 1
+<a id="L774"></a><span class="ln">   774</span>	
+<a id="L775"></a><span class="ln">   775</span>	<span class="comment">// GobEncode implements the gob.GobEncoder interface.</span>
+<a id="L776"></a><span class="ln">   776</span>	func (t Time) GobEncode() ([]byte, error) {
+<a id="L777"></a><span class="ln">   777</span>		var offsetMin int16 <span class="comment">// minutes east of UTC. -1 is UTC.</span>
+<a id="L778"></a><span class="ln">   778</span>	
+<a id="L779"></a><span class="ln">   779</span>		if t.Location() == &amp;utcLoc {
+<a id="L780"></a><span class="ln">   780</span>			offsetMin = -1
+<a id="L781"></a><span class="ln">   781</span>		} else {
+<a id="L782"></a><span class="ln">   782</span>			_, offset := t.Zone()
+<a id="L783"></a><span class="ln">   783</span>			if offset%60 != 0 {
+<a id="L784"></a><span class="ln">   784</span>				return nil, errors.New(&#34;Time.GobEncode: zone offset has fractional minute&#34;)
+<a id="L785"></a><span class="ln">   785</span>			}
+<a id="L786"></a><span class="ln">   786</span>			offset /= 60
+<a id="L787"></a><span class="ln">   787</span>			if offset &lt; -32768 || offset == -1 || offset &gt; 32767 {
+<a id="L788"></a><span class="ln">   788</span>				return nil, errors.New(&#34;Time.GobEncode: unexpected zone offset&#34;)
+<a id="L789"></a><span class="ln">   789</span>			}
+<a id="L790"></a><span class="ln">   790</span>			offsetMin = int16(offset)
+<a id="L791"></a><span class="ln">   791</span>		}
+<a id="L792"></a><span class="ln">   792</span>	
+<a id="L793"></a><span class="ln">   793</span>		enc := []byte{
+<a id="L794"></a><span class="ln">   794</span>			timeGobVersion,    <span class="comment">// byte 0 : version</span>
+<a id="L795"></a><span class="ln">   795</span>			byte(t.sec &gt;&gt; 56), <span class="comment">// bytes 1-8: seconds</span>
+<a id="L796"></a><span class="ln">   796</span>			byte(t.sec &gt;&gt; 48),
+<a id="L797"></a><span class="ln">   797</span>			byte(t.sec &gt;&gt; 40),
+<a id="L798"></a><span class="ln">   798</span>			byte(t.sec &gt;&gt; 32),
+<a id="L799"></a><span class="ln">   799</span>			byte(t.sec &gt;&gt; 24),
+<a id="L800"></a><span class="ln">   800</span>			byte(t.sec &gt;&gt; 16),
+<a id="L801"></a><span class="ln">   801</span>			byte(t.sec &gt;&gt; 8),
+<a id="L802"></a><span class="ln">   802</span>			byte(t.sec),
+<a id="L803"></a><span class="ln">   803</span>			byte(t.nsec &gt;&gt; 24), <span class="comment">// bytes 9-12: nanoseconds</span>
+<a id="L804"></a><span class="ln">   804</span>			byte(t.nsec &gt;&gt; 16),
+<a id="L805"></a><span class="ln">   805</span>			byte(t.nsec &gt;&gt; 8),
+<a id="L806"></a><span class="ln">   806</span>			byte(t.nsec),
+<a id="L807"></a><span class="ln">   807</span>			byte(offsetMin &gt;&gt; 8), <span class="comment">// bytes 13-14: zone offset in minutes</span>
+<a id="L808"></a><span class="ln">   808</span>			byte(offsetMin),
+<a id="L809"></a><span class="ln">   809</span>		}
+<a id="L810"></a><span class="ln">   810</span>	
+<a id="L811"></a><span class="ln">   811</span>		return enc, nil
+<a id="L812"></a><span class="ln">   812</span>	}
+<a id="L813"></a><span class="ln">   813</span>	
+<a id="L814"></a><span class="ln">   814</span>	<span class="comment">// GobDecode implements the gob.GobDecoder interface.</span>
+<a id="L815"></a><span class="ln">   815</span>	func (t *Time) GobDecode(buf []byte) error {
+<a id="L816"></a><span class="ln">   816</span>		if len(buf) == 0 {
+<a id="L817"></a><span class="ln">   817</span>			return errors.New(&#34;Time.GobDecode: no data&#34;)
+<a id="L818"></a><span class="ln">   818</span>		}
+<a id="L819"></a><span class="ln">   819</span>	
+<a id="L820"></a><span class="ln">   820</span>		if buf[0] != timeGobVersion {
+<a id="L821"></a><span class="ln">   821</span>			return errors.New(&#34;Time.GobDecode: unsupported version&#34;)
+<a id="L822"></a><span class="ln">   822</span>		}
+<a id="L823"></a><span class="ln">   823</span>	
+<a id="L824"></a><span class="ln">   824</span>		if len(buf) != <span class="comment">/*version*/</span> 1+ <span class="comment">/*sec*/</span> 8+ <span class="comment">/*nsec*/</span> 4+ <span class="comment">/*zone offset*/</span> 2 {
+<a id="L825"></a><span class="ln">   825</span>			return errors.New(&#34;Time.GobDecode: invalid length&#34;)
+<a id="L826"></a><span class="ln">   826</span>		}
+<a id="L827"></a><span class="ln">   827</span>	
+<a id="L828"></a><span class="ln">   828</span>		buf = buf[1:]
+<a id="L829"></a><span class="ln">   829</span>		t.sec = int64(buf[7]) | int64(buf[6])&lt;&lt;8 | int64(buf[5])&lt;&lt;16 | int64(buf[4])&lt;&lt;24 |
+<a id="L830"></a><span class="ln">   830</span>			int64(buf[3])&lt;&lt;32 | int64(buf[2])&lt;&lt;40 | int64(buf[1])&lt;&lt;48 | int64(buf[0])&lt;&lt;56
+<a id="L831"></a><span class="ln">   831</span>	
+<a id="L832"></a><span class="ln">   832</span>		buf = buf[8:]
+<a id="L833"></a><span class="ln">   833</span>		t.nsec = int32(buf[3]) | int32(buf[2])&lt;&lt;8 | int32(buf[1])&lt;&lt;16 | int32(buf[0])&lt;&lt;24
+<a id="L834"></a><span class="ln">   834</span>	
+<a id="L835"></a><span class="ln">   835</span>		buf = buf[4:]
+<a id="L836"></a><span class="ln">   836</span>		offset := int(int16(buf[1])|int16(buf[0])&lt;&lt;8) * 60
+<a id="L837"></a><span class="ln">   837</span>	
+<a id="L838"></a><span class="ln">   838</span>		if offset == -1*60 {
+<a id="L839"></a><span class="ln">   839</span>			t.loc = &amp;utcLoc
+<a id="L840"></a><span class="ln">   840</span>		} else if _, localoff, _, _, _ := Local.lookup(t.sec + internalToUnix); offset == localoff {
+<a id="L841"></a><span class="ln">   841</span>			t.loc = Local
+<a id="L842"></a><span class="ln">   842</span>		} else {
+<a id="L843"></a><span class="ln">   843</span>			t.loc = FixedZone(&#34;&#34;, offset)
+<a id="L844"></a><span class="ln">   844</span>		}
+<a id="L845"></a><span class="ln">   845</span>	
+<a id="L846"></a><span class="ln">   846</span>		return nil
+<a id="L847"></a><span class="ln">   847</span>	}
+<a id="L848"></a><span class="ln">   848</span>	
+<a id="L849"></a><span class="ln">   849</span>	<span class="comment">// MarshalJSON implements the json.Marshaler interface.</span>
+<a id="L850"></a><span class="ln">   850</span>	<span class="comment">// Time is formatted as RFC3339.</span>
+<a id="L851"></a><span class="ln">   851</span>	func (t Time) MarshalJSON() ([]byte, error) {
+<a id="L852"></a><span class="ln">   852</span>		if y := t.Year(); y &lt; 0 || y &gt;= 10000 {
+<a id="L853"></a><span class="ln">   853</span>			return nil, errors.New(&#34;Time.MarshalJSON: year outside of range [0,9999]&#34;)
+<a id="L854"></a><span class="ln">   854</span>		}
+<a id="L855"></a><span class="ln">   855</span>		return []byte(t.Format(`&#34;` + RFC3339Nano + `&#34;`)), nil
+<a id="L856"></a><span class="ln">   856</span>	}
+<a id="L857"></a><span class="ln">   857</span>	
+<a id="L858"></a><span class="ln">   858</span>	<span class="comment">// UnmarshalJSON implements the json.Unmarshaler interface.</span>
+<a id="L859"></a><span class="ln">   859</span>	<span class="comment">// Time is expected in RFC3339 format.</span>
+<a id="L860"></a><span class="ln">   860</span>	func (t *Time) UnmarshalJSON(data []byte) (err error) {
+<a id="L861"></a><span class="ln">   861</span>		<span class="comment">// Fractional seconds are handled implicitly by Parse.</span>
+<a id="L862"></a><span class="ln">   862</span>		*t, err = Parse(`&#34;`+RFC3339+`&#34;`, string(data))
+<a id="L863"></a><span class="ln">   863</span>		return
+<a id="L864"></a><span class="ln">   864</span>	}
+<a id="L865"></a><span class="ln">   865</span>	
+<a id="L866"></a><span class="ln">   866</span>	<span class="comment">// Unix returns the local Time corresponding to the given Unix time,</span>
+<a id="L867"></a><span class="ln">   867</span>	<span class="comment">// sec seconds and nsec nanoseconds since January 1, 1970 UTC.</span>
+<a id="L868"></a><span class="ln">   868</span>	<span class="comment">// It is valid to pass nsec outside the range [0, 999999999].</span>
+<a id="L869"></a><span class="ln">   869</span>	func Unix(sec int64, nsec int64) Time {
+<a id="L870"></a><span class="ln">   870</span>		if nsec &lt; 0 || nsec &gt;= 1e9 {
+<a id="L871"></a><span class="ln">   871</span>			n := nsec / 1e9
+<a id="L872"></a><span class="ln">   872</span>			sec += n
+<a id="L873"></a><span class="ln">   873</span>			nsec -= n * 1e9
+<a id="L874"></a><span class="ln">   874</span>			if nsec &lt; 0 {
+<a id="L875"></a><span class="ln">   875</span>				nsec += 1e9
+<a id="L876"></a><span class="ln">   876</span>				sec--
+<a id="L877"></a><span class="ln">   877</span>			}
+<a id="L878"></a><span class="ln">   878</span>		}
+<a id="L879"></a><span class="ln">   879</span>		return Time{sec + unixToInternal, int32(nsec), Local}
+<a id="L880"></a><span class="ln">   880</span>	}
+<a id="L881"></a><span class="ln">   881</span>	
+<a id="L882"></a><span class="ln">   882</span>	func isLeap(year int) bool {
+<a id="L883"></a><span class="ln">   883</span>		return year%4 == 0 &amp;&amp; (year%100 != 0 || year%400 == 0)
+<a id="L884"></a><span class="ln">   884</span>	}
+<a id="L885"></a><span class="ln">   885</span>	
+<a id="L886"></a><span class="ln">   886</span>	<span class="comment">// norm returns nhi, nlo such that</span>
+<a id="L887"></a><span class="ln">   887</span>	<span class="comment">//	hi * base + lo == nhi * base + nlo</span>
+<a id="L888"></a><span class="ln">   888</span>	<span class="comment">//	0 &lt;= nlo &lt; base</span>
+<a id="L889"></a><span class="ln">   889</span>	func norm(hi, lo, base int) (nhi, nlo int) {
+<a id="L890"></a><span class="ln">   890</span>		if lo &lt; 0 {
+<a id="L891"></a><span class="ln">   891</span>			n := (-lo-1)/base + 1
+<a id="L892"></a><span class="ln">   892</span>			hi -= n
+<a id="L893"></a><span class="ln">   893</span>			lo += n * base
+<a id="L894"></a><span class="ln">   894</span>		}
+<a id="L895"></a><span class="ln">   895</span>		if lo &gt;= base {
+<a id="L896"></a><span class="ln">   896</span>			n := lo / base
+<a id="L897"></a><span class="ln">   897</span>			hi += n
+<a id="L898"></a><span class="ln">   898</span>			lo -= n * base
+<a id="L899"></a><span class="ln">   899</span>		}
+<a id="L900"></a><span class="ln">   900</span>		return hi, lo
+<a id="L901"></a><span class="ln">   901</span>	}
+<a id="L902"></a><span class="ln">   902</span>	
+<a id="L903"></a><span class="ln">   903</span>	<span class="comment">// Date returns the Time corresponding to</span>
+<a id="L904"></a><span class="ln">   904</span>	<span class="comment">//	yyyy-mm-dd hh:mm:ss + nsec nanoseconds</span>
+<a id="L905"></a><span class="ln">   905</span>	<span class="comment">// in the appropriate zone for that time in the given location.</span>
+<a id="L906"></a><span class="ln">   906</span>	<span class="comment">//</span>
+<a id="L907"></a><span class="ln">   907</span>	<span class="comment">// The month, day, hour, min, sec, and nsec values may be outside</span>
+<a id="L908"></a><span class="ln">   908</span>	<span class="comment">// their usual ranges and will be normalized during the conversion.</span>
+<a id="L909"></a><span class="ln">   909</span>	<span class="comment">// For example, October 32 converts to November 1.</span>
+<a id="L910"></a><span class="ln">   910</span>	<span class="comment">//</span>
+<a id="L911"></a><span class="ln">   911</span>	<span class="comment">// A daylight savings time transition skips or repeats times.</span>
+<a id="L912"></a><span class="ln">   912</span>	<span class="comment">// For example, in the United States, March 13, 2011 2:15am never occurred,</span>
+<a id="L913"></a><span class="ln">   913</span>	<span class="comment">// while November 6, 2011 1:15am occurred twice.  In such cases, the</span>
+<a id="L914"></a><span class="ln">   914</span>	<span class="comment">// choice of time zone, and therefore the time, is not well-defined.</span>
+<a id="L915"></a><span class="ln">   915</span>	<span class="comment">// Date returns a time that is correct in one of the two zones involved</span>
+<a id="L916"></a><span class="ln">   916</span>	<span class="comment">// in the transition, but it does not guarantee which.</span>
+<a id="L917"></a><span class="ln">   917</span>	<span class="comment">//</span>
+<a id="L918"></a><span class="ln">   918</span>	<span class="comment">// Date panics if loc is nil.</span>
+<a id="L919"></a><span class="ln">   919</span>	func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time {
+<a id="L920"></a><span class="ln">   920</span>		if loc == nil {
+<a id="L921"></a><span class="ln">   921</span>			panic(&#34;time: missing Location in call to Date&#34;)
+<a id="L922"></a><span class="ln">   922</span>		}
+<a id="L923"></a><span class="ln">   923</span>	
+<a id="L924"></a><span class="ln">   924</span>		<span class="comment">// Normalize month, overflowing into year.</span>
+<a id="L925"></a><span class="ln">   925</span>		m := int(month) - 1
+<a id="L926"></a><span class="ln">   926</span>		year, m = norm(year, m, 12)
+<a id="L927"></a><span class="ln">   927</span>		month = Month(m) + 1
+<a id="L928"></a><span class="ln">   928</span>	
+<a id="L929"></a><span class="ln">   929</span>		<span class="comment">// Normalize nsec, sec, min, hour, overflowing into day.</span>
+<a id="L930"></a><span class="ln">   930</span>		sec, nsec = norm(sec, nsec, 1e9)
+<a id="L931"></a><span class="ln">   931</span>		min, sec = norm(min, sec, 60)
+<a id="L932"></a><span class="ln">   932</span>		hour, min = norm(hour, min, 60)
+<a id="L933"></a><span class="ln">   933</span>		day, hour = norm(day, hour, 24)
+<a id="L934"></a><span class="ln">   934</span>	
+<a id="L935"></a><span class="ln">   935</span>		y := uint64(int64(year) - absoluteZeroYear)
+<a id="L936"></a><span class="ln">   936</span>	
+<a id="L937"></a><span class="ln">   937</span>		<span class="comment">// Compute days since the absolute epoch.</span>
+<a id="L938"></a><span class="ln">   938</span>	
+<a id="L939"></a><span class="ln">   939</span>		<span class="comment">// Add in days from 400-year cycles.</span>
+<a id="L940"></a><span class="ln">   940</span>		n := y / 400
+<a id="L941"></a><span class="ln">   941</span>		y -= 400 * n
+<a id="L942"></a><span class="ln">   942</span>		d := daysPer400Years * n
+<a id="L943"></a><span class="ln">   943</span>	
+<a id="L944"></a><span class="ln">   944</span>		<span class="comment">// Add in 100-year cycles.</span>
+<a id="L945"></a><span class="ln">   945</span>		n = y / 100
+<a id="L946"></a><span class="ln">   946</span>		y -= 100 * n
+<a id="L947"></a><span class="ln">   947</span>		d += daysPer100Years * n
+<a id="L948"></a><span class="ln">   948</span>	
+<a id="L949"></a><span class="ln">   949</span>		<span class="comment">// Add in 4-year cycles.</span>
+<a id="L950"></a><span class="ln">   950</span>		n = y / 4
+<a id="L951"></a><span class="ln">   951</span>		y -= 4 * n
+<a id="L952"></a><span class="ln">   952</span>		d += daysPer4Years * n
+<a id="L953"></a><span class="ln">   953</span>	
+<a id="L954"></a><span class="ln">   954</span>		<span class="comment">// Add in non-leap years.</span>
+<a id="L955"></a><span class="ln">   955</span>		n = y
+<a id="L956"></a><span class="ln">   956</span>		d += 365 * n
+<a id="L957"></a><span class="ln">   957</span>	
+<a id="L958"></a><span class="ln">   958</span>		<span class="comment">// Add in days before this month.</span>
+<a id="L959"></a><span class="ln">   959</span>		d += uint64(daysBefore[month-1])
+<a id="L960"></a><span class="ln">   960</span>		if isLeap(year) &amp;&amp; month &gt;= March {
+<a id="L961"></a><span class="ln">   961</span>			d++ <span class="comment">// February 29</span>
+<a id="L962"></a><span class="ln">   962</span>		}
+<a id="L963"></a><span class="ln">   963</span>	
+<a id="L964"></a><span class="ln">   964</span>		<span class="comment">// Add in days before today.</span>
+<a id="L965"></a><span class="ln">   965</span>		d += uint64(day - 1)
+<a id="L966"></a><span class="ln">   966</span>	
+<a id="L967"></a><span class="ln">   967</span>		<span class="comment">// Add in time elapsed today.</span>
+<a id="L968"></a><span class="ln">   968</span>		abs := d * secondsPerDay
+<a id="L969"></a><span class="ln">   969</span>		abs += uint64(hour*secondsPerHour + min*secondsPerMinute + sec)
+<a id="L970"></a><span class="ln">   970</span>	
+<a id="L971"></a><span class="ln">   971</span>		unix := int64(abs) + (absoluteToInternal + internalToUnix)
+<a id="L972"></a><span class="ln">   972</span>	
+<a id="L973"></a><span class="ln">   973</span>		<span class="comment">// Look for zone offset for t, so we can adjust to UTC.</span>
+<a id="L974"></a><span class="ln">   974</span>		<span class="comment">// The lookup function expects UTC, so we pass t in the</span>
+<a id="L975"></a><span class="ln">   975</span>		<span class="comment">// hope that it will not be too close to a zone transition,</span>
+<a id="L976"></a><span class="ln">   976</span>		<span class="comment">// and then adjust if it is.</span>
+<a id="L977"></a><span class="ln">   977</span>		_, offset, _, start, end := loc.lookup(unix)
+<a id="L978"></a><span class="ln">   978</span>		if offset != 0 {
+<a id="L979"></a><span class="ln">   979</span>			switch utc := unix - int64(offset); {
+<a id="L980"></a><span class="ln">   980</span>			case utc &lt; start:
+<a id="L981"></a><span class="ln">   981</span>				_, offset, _, _, _ = loc.lookup(start - 1)
+<a id="L982"></a><span class="ln">   982</span>			case utc &gt;= end:
+<a id="L983"></a><span class="ln">   983</span>				_, offset, _, _, _ = loc.lookup(end)
+<a id="L984"></a><span class="ln">   984</span>			}
+<a id="L985"></a><span class="ln">   985</span>			unix -= int64(offset)
+<a id="L986"></a><span class="ln">   986</span>		}
+<a id="L987"></a><span class="ln">   987</span>	
+<a id="L988"></a><span class="ln">   988</span>		return Time{unix + unixToInternal, int32(nsec), loc}
+<a id="L989"></a><span class="ln">   989</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

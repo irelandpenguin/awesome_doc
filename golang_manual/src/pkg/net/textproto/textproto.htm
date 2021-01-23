@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/textproto/textproto.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/textproto/textproto.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package textproto implements generic support for text-based request/response</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// protocols in the style of HTTP, NNTP, and SMTP.</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// The package provides:</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Error, which represents a numeric error response from</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// a server.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Pipeline, to manage pipelined requests and responses</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// in a client.</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">//</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// Reader, to read numeric response code lines,</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// key: value headers, lines wrapped with leading spaces</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// on continuation lines, and whole text blocks ending</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// with a dot on a line by itself.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// Writer, to write dot-encoded text blocks.</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// Conn, a convenient packaging of Reader, Writer, and Pipeline for use</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// with a single network connection.</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//</span>
+<a id="L26"></a><span class="ln">    26</span>	package textproto
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	import (
+<a id="L29"></a><span class="ln">    29</span>		&#34;bufio&#34;
+<a id="L30"></a><span class="ln">    30</span>		&#34;fmt&#34;
+<a id="L31"></a><span class="ln">    31</span>		&#34;io&#34;
+<a id="L32"></a><span class="ln">    32</span>		&#34;net&#34;
+<a id="L33"></a><span class="ln">    33</span>	)
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// An Error represents a numeric error response from a server.</span>
+<a id="L36"></a><span class="ln">    36</span>	type Error struct {
+<a id="L37"></a><span class="ln">    37</span>		Code int
+<a id="L38"></a><span class="ln">    38</span>		Msg  string
+<a id="L39"></a><span class="ln">    39</span>	}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	func (e *Error) Error() string {
+<a id="L42"></a><span class="ln">    42</span>		return fmt.Sprintf(&#34;%03d %s&#34;, e.Code, e.Msg)
+<a id="L43"></a><span class="ln">    43</span>	}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// A ProtocolError describes a protocol violation such</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// as an invalid response or a hung-up connection.</span>
+<a id="L47"></a><span class="ln">    47</span>	type ProtocolError string
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>	func (p ProtocolError) Error() string {
+<a id="L50"></a><span class="ln">    50</span>		return string(p)
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// A Conn represents a textual network protocol connection.</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// It consists of a Reader and Writer to manage I/O</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// and a Pipeline to sequence concurrent requests on the connection.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// These embedded types carry methods with them;</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// see the documentation of those types for details.</span>
+<a id="L58"></a><span class="ln">    58</span>	type Conn struct {
+<a id="L59"></a><span class="ln">    59</span>		Reader
+<a id="L60"></a><span class="ln">    60</span>		Writer
+<a id="L61"></a><span class="ln">    61</span>		Pipeline
+<a id="L62"></a><span class="ln">    62</span>		conn io.ReadWriteCloser
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// NewConn returns a new Conn using conn for I/O.</span>
+<a id="L66"></a><span class="ln">    66</span>	func NewConn(conn io.ReadWriteCloser) *Conn {
+<a id="L67"></a><span class="ln">    67</span>		return &amp;Conn{
+<a id="L68"></a><span class="ln">    68</span>			Reader: Reader{R: bufio.NewReader(conn)},
+<a id="L69"></a><span class="ln">    69</span>			Writer: Writer{W: bufio.NewWriter(conn)},
+<a id="L70"></a><span class="ln">    70</span>			conn:   conn,
+<a id="L71"></a><span class="ln">    71</span>		}
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// Close closes the connection.</span>
+<a id="L75"></a><span class="ln">    75</span>	func (c *Conn) Close() error {
+<a id="L76"></a><span class="ln">    76</span>		return c.conn.Close()
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// Dial connects to the given address on the given network using net.Dial</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// and then returns a new Conn for the connection.</span>
+<a id="L81"></a><span class="ln">    81</span>	func Dial(network, addr string) (*Conn, error) {
+<a id="L82"></a><span class="ln">    82</span>		c, err := net.Dial(network, addr)
+<a id="L83"></a><span class="ln">    83</span>		if err != nil {
+<a id="L84"></a><span class="ln">    84</span>			return nil, err
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>		return NewConn(c), nil
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// Cmd is a convenience method that sends a command after</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// waiting its turn in the pipeline.  The command text is the</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// result of formatting format with args and appending \r\n.</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// Cmd returns the id of the command, for use with StartResponse and EndResponse.</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">//</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// For example, a client might run a HELP command that returns a dot-body</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// by using:</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">//</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">//	id, err := c.Cmd(&#34;HELP&#34;)</span>
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">//	if err != nil {</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">//		return nil, err</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">//	}</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">//</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">//	c.StartResponse(id)</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">//	defer c.EndResponse(id)</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">//</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">//	if _, _, err = c.ReadCodeLine(110); err != nil {</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">//		return nil, err</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">//	}</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">//	text, err := c.ReadDotAll()</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">//	if err != nil {</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">//		return nil, err</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">//	}</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">//	return c.ReadCodeLine(250)</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">//</span>
+<a id="L114"></a><span class="ln">   114</span>	func (c *Conn) Cmd(format string, args ...interface{}) (id uint, err error) {
+<a id="L115"></a><span class="ln">   115</span>		id = c.Next()
+<a id="L116"></a><span class="ln">   116</span>		c.StartRequest(id)
+<a id="L117"></a><span class="ln">   117</span>		err = c.PrintfLine(format, args...)
+<a id="L118"></a><span class="ln">   118</span>		c.EndRequest(id)
+<a id="L119"></a><span class="ln">   119</span>		if err != nil {
+<a id="L120"></a><span class="ln">   120</span>			return 0, err
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		return id, nil
+<a id="L123"></a><span class="ln">   123</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

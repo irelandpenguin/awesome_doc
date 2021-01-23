@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/http/cgi/host.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/http/cgi/host.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// This file implements the host side of CGI (being the webserver</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// parent process).</span>
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// Package cgi implements CGI (Common Gateway Interface) as specified</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// in RFC 3875.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">//</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// Note that using CGI means starting a new process to handle each</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// request, which is typically less efficient than using a</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// long-running server.  This package is intended primarily for</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// compatibility with existing systems.</span>
+<a id="L15"></a><span class="ln">    15</span>	package cgi
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	import (
+<a id="L18"></a><span class="ln">    18</span>		&#34;bufio&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;fmt&#34;
+<a id="L20"></a><span class="ln">    20</span>		&#34;io&#34;
+<a id="L21"></a><span class="ln">    21</span>		&#34;log&#34;
+<a id="L22"></a><span class="ln">    22</span>		&#34;net/http&#34;
+<a id="L23"></a><span class="ln">    23</span>		&#34;os&#34;
+<a id="L24"></a><span class="ln">    24</span>		&#34;os/exec&#34;
+<a id="L25"></a><span class="ln">    25</span>		&#34;path/filepath&#34;
+<a id="L26"></a><span class="ln">    26</span>		&#34;regexp&#34;
+<a id="L27"></a><span class="ln">    27</span>		&#34;runtime&#34;
+<a id="L28"></a><span class="ln">    28</span>		&#34;strconv&#34;
+<a id="L29"></a><span class="ln">    29</span>		&#34;strings&#34;
+<a id="L30"></a><span class="ln">    30</span>	)
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	var trailingPort = regexp.MustCompile(`:([0-9]+)$`)
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	var osDefaultInheritEnv = map[string][]string{
+<a id="L35"></a><span class="ln">    35</span>		&#34;darwin&#34;:  {&#34;DYLD_LIBRARY_PATH&#34;},
+<a id="L36"></a><span class="ln">    36</span>		&#34;freebsd&#34;: {&#34;LD_LIBRARY_PATH&#34;},
+<a id="L37"></a><span class="ln">    37</span>		&#34;hpux&#34;:    {&#34;LD_LIBRARY_PATH&#34;, &#34;SHLIB_PATH&#34;},
+<a id="L38"></a><span class="ln">    38</span>		&#34;irix&#34;:    {&#34;LD_LIBRARY_PATH&#34;, &#34;LD_LIBRARYN32_PATH&#34;, &#34;LD_LIBRARY64_PATH&#34;},
+<a id="L39"></a><span class="ln">    39</span>		&#34;linux&#34;:   {&#34;LD_LIBRARY_PATH&#34;},
+<a id="L40"></a><span class="ln">    40</span>		&#34;openbsd&#34;: {&#34;LD_LIBRARY_PATH&#34;},
+<a id="L41"></a><span class="ln">    41</span>		&#34;solaris&#34;: {&#34;LD_LIBRARY_PATH&#34;, &#34;LD_LIBRARY_PATH_32&#34;, &#34;LD_LIBRARY_PATH_64&#34;},
+<a id="L42"></a><span class="ln">    42</span>		&#34;windows&#34;: {&#34;SystemRoot&#34;, &#34;COMSPEC&#34;, &#34;PATHEXT&#34;, &#34;WINDIR&#34;},
+<a id="L43"></a><span class="ln">    43</span>	}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Handler runs an executable in a subprocess with a CGI environment.</span>
+<a id="L46"></a><span class="ln">    46</span>	type Handler struct {
+<a id="L47"></a><span class="ln">    47</span>		Path string <span class="comment">// path to the CGI executable</span>
+<a id="L48"></a><span class="ln">    48</span>		Root string <span class="comment">// root URI prefix of handler or empty for &#34;/&#34;</span>
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>		<span class="comment">// Dir specifies the CGI executable&#39;s working directory.</span>
+<a id="L51"></a><span class="ln">    51</span>		<span class="comment">// If Dir is empty, the base directory of Path is used.</span>
+<a id="L52"></a><span class="ln">    52</span>		<span class="comment">// If Path has no base directory, the current working</span>
+<a id="L53"></a><span class="ln">    53</span>		<span class="comment">// directory is used.</span>
+<a id="L54"></a><span class="ln">    54</span>		Dir string
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>		Env        []string    <span class="comment">// extra environment variables to set, if any, as &#34;key=value&#34;</span>
+<a id="L57"></a><span class="ln">    57</span>		InheritEnv []string    <span class="comment">// environment variables to inherit from host, as &#34;key&#34;</span>
+<a id="L58"></a><span class="ln">    58</span>		Logger     *log.Logger <span class="comment">// optional log for errors or nil to use log.Print</span>
+<a id="L59"></a><span class="ln">    59</span>		Args       []string    <span class="comment">// optional arguments to pass to child process</span>
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>		<span class="comment">// PathLocationHandler specifies the root http Handler that</span>
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// should handle internal redirects when the CGI process</span>
+<a id="L63"></a><span class="ln">    63</span>		<span class="comment">// returns a Location header value starting with a &#34;/&#34;, as</span>
+<a id="L64"></a><span class="ln">    64</span>		<span class="comment">// specified in RFC 3875 § 6.3.2. This will likely be</span>
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// http.DefaultServeMux.</span>
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">//</span>
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// If nil, a CGI response with a local URI path is instead sent</span>
+<a id="L68"></a><span class="ln">    68</span>		<span class="comment">// back to the client and not redirected internally.</span>
+<a id="L69"></a><span class="ln">    69</span>		PathLocationHandler http.Handler
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// removeLeadingDuplicates remove leading duplicate in environments.</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// It&#39;s possible to override environment like following.</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//    cgi.Handler{</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">//      ...</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">//      Env: []string{&#34;SCRIPT_FILENAME=foo.php&#34;},</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">//    }</span>
+<a id="L78"></a><span class="ln">    78</span>	func removeLeadingDuplicates(env []string) (ret []string) {
+<a id="L79"></a><span class="ln">    79</span>		n := len(env)
+<a id="L80"></a><span class="ln">    80</span>		for i := 0; i &lt; n; i++ {
+<a id="L81"></a><span class="ln">    81</span>			e := env[i]
+<a id="L82"></a><span class="ln">    82</span>			s := strings.SplitN(e, &#34;=&#34;, 2)[0]
+<a id="L83"></a><span class="ln">    83</span>			found := false
+<a id="L84"></a><span class="ln">    84</span>			for j := i + 1; j &lt; n; j++ {
+<a id="L85"></a><span class="ln">    85</span>				if s == strings.SplitN(env[j], &#34;=&#34;, 2)[0] {
+<a id="L86"></a><span class="ln">    86</span>					found = true
+<a id="L87"></a><span class="ln">    87</span>					break
+<a id="L88"></a><span class="ln">    88</span>				}
+<a id="L89"></a><span class="ln">    89</span>			}
+<a id="L90"></a><span class="ln">    90</span>			if !found {
+<a id="L91"></a><span class="ln">    91</span>				ret = append(ret, e)
+<a id="L92"></a><span class="ln">    92</span>			}
+<a id="L93"></a><span class="ln">    93</span>		}
+<a id="L94"></a><span class="ln">    94</span>		return
+<a id="L95"></a><span class="ln">    95</span>	}
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+<a id="L98"></a><span class="ln">    98</span>		root := h.Root
+<a id="L99"></a><span class="ln">    99</span>		if root == &#34;&#34; {
+<a id="L100"></a><span class="ln">   100</span>			root = &#34;/&#34;
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>		if len(req.TransferEncoding) &gt; 0 &amp;&amp; req.TransferEncoding[0] == &#34;chunked&#34; {
+<a id="L104"></a><span class="ln">   104</span>			rw.WriteHeader(http.StatusBadRequest)
+<a id="L105"></a><span class="ln">   105</span>			rw.Write([]byte(&#34;Chunked request bodies are not supported by CGI.&#34;))
+<a id="L106"></a><span class="ln">   106</span>			return
+<a id="L107"></a><span class="ln">   107</span>		}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>		pathInfo := req.URL.Path
+<a id="L110"></a><span class="ln">   110</span>		if root != &#34;/&#34; &amp;&amp; strings.HasPrefix(pathInfo, root) {
+<a id="L111"></a><span class="ln">   111</span>			pathInfo = pathInfo[len(root):]
+<a id="L112"></a><span class="ln">   112</span>		}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>		port := &#34;80&#34;
+<a id="L115"></a><span class="ln">   115</span>		if matches := trailingPort.FindStringSubmatch(req.Host); len(matches) != 0 {
+<a id="L116"></a><span class="ln">   116</span>			port = matches[1]
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>		env := []string{
+<a id="L120"></a><span class="ln">   120</span>			&#34;SERVER_SOFTWARE=go&#34;,
+<a id="L121"></a><span class="ln">   121</span>			&#34;SERVER_NAME=&#34; + req.Host,
+<a id="L122"></a><span class="ln">   122</span>			&#34;SERVER_PROTOCOL=HTTP/1.1&#34;,
+<a id="L123"></a><span class="ln">   123</span>			&#34;HTTP_HOST=&#34; + req.Host,
+<a id="L124"></a><span class="ln">   124</span>			&#34;GATEWAY_INTERFACE=CGI/1.1&#34;,
+<a id="L125"></a><span class="ln">   125</span>			&#34;REQUEST_METHOD=&#34; + req.Method,
+<a id="L126"></a><span class="ln">   126</span>			&#34;QUERY_STRING=&#34; + req.URL.RawQuery,
+<a id="L127"></a><span class="ln">   127</span>			&#34;REQUEST_URI=&#34; + req.URL.RequestURI(),
+<a id="L128"></a><span class="ln">   128</span>			&#34;PATH_INFO=&#34; + pathInfo,
+<a id="L129"></a><span class="ln">   129</span>			&#34;SCRIPT_NAME=&#34; + root,
+<a id="L130"></a><span class="ln">   130</span>			&#34;SCRIPT_FILENAME=&#34; + h.Path,
+<a id="L131"></a><span class="ln">   131</span>			&#34;REMOTE_ADDR=&#34; + req.RemoteAddr,
+<a id="L132"></a><span class="ln">   132</span>			&#34;REMOTE_HOST=&#34; + req.RemoteAddr,
+<a id="L133"></a><span class="ln">   133</span>			&#34;SERVER_PORT=&#34; + port,
+<a id="L134"></a><span class="ln">   134</span>		}
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>		if req.TLS != nil {
+<a id="L137"></a><span class="ln">   137</span>			env = append(env, &#34;HTTPS=on&#34;)
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		for k, v := range req.Header {
+<a id="L141"></a><span class="ln">   141</span>			k = strings.Map(upperCaseAndUnderscore, k)
+<a id="L142"></a><span class="ln">   142</span>			joinStr := &#34;, &#34;
+<a id="L143"></a><span class="ln">   143</span>			if k == &#34;COOKIE&#34; {
+<a id="L144"></a><span class="ln">   144</span>				joinStr = &#34;; &#34;
+<a id="L145"></a><span class="ln">   145</span>			}
+<a id="L146"></a><span class="ln">   146</span>			env = append(env, &#34;HTTP_&#34;+k+&#34;=&#34;+strings.Join(v, joinStr))
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>		if req.ContentLength &gt; 0 {
+<a id="L150"></a><span class="ln">   150</span>			env = append(env, fmt.Sprintf(&#34;CONTENT_LENGTH=%d&#34;, req.ContentLength))
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>		if ctype := req.Header.Get(&#34;Content-Type&#34;); ctype != &#34;&#34; {
+<a id="L153"></a><span class="ln">   153</span>			env = append(env, &#34;CONTENT_TYPE=&#34;+ctype)
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>		if h.Env != nil {
+<a id="L157"></a><span class="ln">   157</span>			env = append(env, h.Env...)
+<a id="L158"></a><span class="ln">   158</span>		}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>		envPath := os.Getenv(&#34;PATH&#34;)
+<a id="L161"></a><span class="ln">   161</span>		if envPath == &#34;&#34; {
+<a id="L162"></a><span class="ln">   162</span>			envPath = &#34;/bin:/usr/bin:/usr/ucb:/usr/bsd:/usr/local/bin&#34;
+<a id="L163"></a><span class="ln">   163</span>		}
+<a id="L164"></a><span class="ln">   164</span>		env = append(env, &#34;PATH=&#34;+envPath)
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>		for _, e := range h.InheritEnv {
+<a id="L167"></a><span class="ln">   167</span>			if v := os.Getenv(e); v != &#34;&#34; {
+<a id="L168"></a><span class="ln">   168</span>				env = append(env, e+&#34;=&#34;+v)
+<a id="L169"></a><span class="ln">   169</span>			}
+<a id="L170"></a><span class="ln">   170</span>		}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>		for _, e := range osDefaultInheritEnv[runtime.GOOS] {
+<a id="L173"></a><span class="ln">   173</span>			if v := os.Getenv(e); v != &#34;&#34; {
+<a id="L174"></a><span class="ln">   174</span>				env = append(env, e+&#34;=&#34;+v)
+<a id="L175"></a><span class="ln">   175</span>			}
+<a id="L176"></a><span class="ln">   176</span>		}
+<a id="L177"></a><span class="ln">   177</span>	
+<a id="L178"></a><span class="ln">   178</span>		env = removeLeadingDuplicates(env)
+<a id="L179"></a><span class="ln">   179</span>	
+<a id="L180"></a><span class="ln">   180</span>		var cwd, path string
+<a id="L181"></a><span class="ln">   181</span>		if h.Dir != &#34;&#34; {
+<a id="L182"></a><span class="ln">   182</span>			path = h.Path
+<a id="L183"></a><span class="ln">   183</span>			cwd = h.Dir
+<a id="L184"></a><span class="ln">   184</span>		} else {
+<a id="L185"></a><span class="ln">   185</span>			cwd, path = filepath.Split(h.Path)
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		if cwd == &#34;&#34; {
+<a id="L188"></a><span class="ln">   188</span>			cwd = &#34;.&#34;
+<a id="L189"></a><span class="ln">   189</span>		}
+<a id="L190"></a><span class="ln">   190</span>	
+<a id="L191"></a><span class="ln">   191</span>		internalError := func(err error) {
+<a id="L192"></a><span class="ln">   192</span>			rw.WriteHeader(http.StatusInternalServerError)
+<a id="L193"></a><span class="ln">   193</span>			h.printf(&#34;CGI error: %v&#34;, err)
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>		cmd := &amp;exec.Cmd{
+<a id="L197"></a><span class="ln">   197</span>			Path:   path,
+<a id="L198"></a><span class="ln">   198</span>			Args:   append([]string{h.Path}, h.Args...),
+<a id="L199"></a><span class="ln">   199</span>			Dir:    cwd,
+<a id="L200"></a><span class="ln">   200</span>			Env:    env,
+<a id="L201"></a><span class="ln">   201</span>			Stderr: os.Stderr, <span class="comment">// for now</span>
+<a id="L202"></a><span class="ln">   202</span>		}
+<a id="L203"></a><span class="ln">   203</span>		if req.ContentLength != 0 {
+<a id="L204"></a><span class="ln">   204</span>			cmd.Stdin = req.Body
+<a id="L205"></a><span class="ln">   205</span>		}
+<a id="L206"></a><span class="ln">   206</span>		stdoutRead, err := cmd.StdoutPipe()
+<a id="L207"></a><span class="ln">   207</span>		if err != nil {
+<a id="L208"></a><span class="ln">   208</span>			internalError(err)
+<a id="L209"></a><span class="ln">   209</span>			return
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>		err = cmd.Start()
+<a id="L213"></a><span class="ln">   213</span>		if err != nil {
+<a id="L214"></a><span class="ln">   214</span>			internalError(err)
+<a id="L215"></a><span class="ln">   215</span>			return
+<a id="L216"></a><span class="ln">   216</span>		}
+<a id="L217"></a><span class="ln">   217</span>		defer cmd.Wait()
+<a id="L218"></a><span class="ln">   218</span>		defer stdoutRead.Close()
+<a id="L219"></a><span class="ln">   219</span>	
+<a id="L220"></a><span class="ln">   220</span>		linebody := bufio.NewReaderSize(stdoutRead, 1024)
+<a id="L221"></a><span class="ln">   221</span>		headers := make(http.Header)
+<a id="L222"></a><span class="ln">   222</span>		statusCode := 0
+<a id="L223"></a><span class="ln">   223</span>		for {
+<a id="L224"></a><span class="ln">   224</span>			line, isPrefix, err := linebody.ReadLine()
+<a id="L225"></a><span class="ln">   225</span>			if isPrefix {
+<a id="L226"></a><span class="ln">   226</span>				rw.WriteHeader(http.StatusInternalServerError)
+<a id="L227"></a><span class="ln">   227</span>				h.printf(&#34;cgi: long header line from subprocess.&#34;)
+<a id="L228"></a><span class="ln">   228</span>				return
+<a id="L229"></a><span class="ln">   229</span>			}
+<a id="L230"></a><span class="ln">   230</span>			if err == io.EOF {
+<a id="L231"></a><span class="ln">   231</span>				break
+<a id="L232"></a><span class="ln">   232</span>			}
+<a id="L233"></a><span class="ln">   233</span>			if err != nil {
+<a id="L234"></a><span class="ln">   234</span>				rw.WriteHeader(http.StatusInternalServerError)
+<a id="L235"></a><span class="ln">   235</span>				h.printf(&#34;cgi: error reading headers: %v&#34;, err)
+<a id="L236"></a><span class="ln">   236</span>				return
+<a id="L237"></a><span class="ln">   237</span>			}
+<a id="L238"></a><span class="ln">   238</span>			if len(line) == 0 {
+<a id="L239"></a><span class="ln">   239</span>				break
+<a id="L240"></a><span class="ln">   240</span>			}
+<a id="L241"></a><span class="ln">   241</span>			parts := strings.SplitN(string(line), &#34;:&#34;, 2)
+<a id="L242"></a><span class="ln">   242</span>			if len(parts) &lt; 2 {
+<a id="L243"></a><span class="ln">   243</span>				h.printf(&#34;cgi: bogus header line: %s&#34;, string(line))
+<a id="L244"></a><span class="ln">   244</span>				continue
+<a id="L245"></a><span class="ln">   245</span>			}
+<a id="L246"></a><span class="ln">   246</span>			header, val := parts[0], parts[1]
+<a id="L247"></a><span class="ln">   247</span>			header = strings.TrimSpace(header)
+<a id="L248"></a><span class="ln">   248</span>			val = strings.TrimSpace(val)
+<a id="L249"></a><span class="ln">   249</span>			switch {
+<a id="L250"></a><span class="ln">   250</span>			case header == &#34;Status&#34;:
+<a id="L251"></a><span class="ln">   251</span>				if len(val) &lt; 3 {
+<a id="L252"></a><span class="ln">   252</span>					h.printf(&#34;cgi: bogus status (short): %q&#34;, val)
+<a id="L253"></a><span class="ln">   253</span>					return
+<a id="L254"></a><span class="ln">   254</span>				}
+<a id="L255"></a><span class="ln">   255</span>				code, err := strconv.Atoi(val[0:3])
+<a id="L256"></a><span class="ln">   256</span>				if err != nil {
+<a id="L257"></a><span class="ln">   257</span>					h.printf(&#34;cgi: bogus status: %q&#34;, val)
+<a id="L258"></a><span class="ln">   258</span>					h.printf(&#34;cgi: line was %q&#34;, line)
+<a id="L259"></a><span class="ln">   259</span>					return
+<a id="L260"></a><span class="ln">   260</span>				}
+<a id="L261"></a><span class="ln">   261</span>				statusCode = code
+<a id="L262"></a><span class="ln">   262</span>			default:
+<a id="L263"></a><span class="ln">   263</span>				headers.Add(header, val)
+<a id="L264"></a><span class="ln">   264</span>			}
+<a id="L265"></a><span class="ln">   265</span>		}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>		if loc := headers.Get(&#34;Location&#34;); loc != &#34;&#34; {
+<a id="L268"></a><span class="ln">   268</span>			if strings.HasPrefix(loc, &#34;/&#34;) &amp;&amp; h.PathLocationHandler != nil {
+<a id="L269"></a><span class="ln">   269</span>				h.handleInternalRedirect(rw, req, loc)
+<a id="L270"></a><span class="ln">   270</span>				return
+<a id="L271"></a><span class="ln">   271</span>			}
+<a id="L272"></a><span class="ln">   272</span>			if statusCode == 0 {
+<a id="L273"></a><span class="ln">   273</span>				statusCode = http.StatusFound
+<a id="L274"></a><span class="ln">   274</span>			}
+<a id="L275"></a><span class="ln">   275</span>		}
+<a id="L276"></a><span class="ln">   276</span>	
+<a id="L277"></a><span class="ln">   277</span>		if statusCode == 0 {
+<a id="L278"></a><span class="ln">   278</span>			statusCode = http.StatusOK
+<a id="L279"></a><span class="ln">   279</span>		}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>		<span class="comment">// Copy headers to rw&#39;s headers, after we&#39;ve decided not to</span>
+<a id="L282"></a><span class="ln">   282</span>		<span class="comment">// go into handleInternalRedirect, which won&#39;t want its rw</span>
+<a id="L283"></a><span class="ln">   283</span>		<span class="comment">// headers to have been touched.</span>
+<a id="L284"></a><span class="ln">   284</span>		for k, vv := range headers {
+<a id="L285"></a><span class="ln">   285</span>			for _, v := range vv {
+<a id="L286"></a><span class="ln">   286</span>				rw.Header().Add(k, v)
+<a id="L287"></a><span class="ln">   287</span>			}
+<a id="L288"></a><span class="ln">   288</span>		}
+<a id="L289"></a><span class="ln">   289</span>	
+<a id="L290"></a><span class="ln">   290</span>		rw.WriteHeader(statusCode)
+<a id="L291"></a><span class="ln">   291</span>	
+<a id="L292"></a><span class="ln">   292</span>		_, err = io.Copy(rw, linebody)
+<a id="L293"></a><span class="ln">   293</span>		if err != nil {
+<a id="L294"></a><span class="ln">   294</span>			h.printf(&#34;cgi: copy error: %v&#34;, err)
+<a id="L295"></a><span class="ln">   295</span>		}
+<a id="L296"></a><span class="ln">   296</span>	}
+<a id="L297"></a><span class="ln">   297</span>	
+<a id="L298"></a><span class="ln">   298</span>	func (h *Handler) printf(format string, v ...interface{}) {
+<a id="L299"></a><span class="ln">   299</span>		if h.Logger != nil {
+<a id="L300"></a><span class="ln">   300</span>			h.Logger.Printf(format, v...)
+<a id="L301"></a><span class="ln">   301</span>		} else {
+<a id="L302"></a><span class="ln">   302</span>			log.Printf(format, v...)
+<a id="L303"></a><span class="ln">   303</span>		}
+<a id="L304"></a><span class="ln">   304</span>	}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>	func (h *Handler) handleInternalRedirect(rw http.ResponseWriter, req *http.Request, path string) {
+<a id="L307"></a><span class="ln">   307</span>		url, err := req.URL.Parse(path)
+<a id="L308"></a><span class="ln">   308</span>		if err != nil {
+<a id="L309"></a><span class="ln">   309</span>			rw.WriteHeader(http.StatusInternalServerError)
+<a id="L310"></a><span class="ln">   310</span>			h.printf(&#34;cgi: error resolving local URI path %q: %v&#34;, path, err)
+<a id="L311"></a><span class="ln">   311</span>			return
+<a id="L312"></a><span class="ln">   312</span>		}
+<a id="L313"></a><span class="ln">   313</span>		<span class="comment">// TODO: RFC 3875 isn&#39;t clear if only GET is supported, but it</span>
+<a id="L314"></a><span class="ln">   314</span>		<span class="comment">// suggests so: &#34;Note that any message-body attached to the</span>
+<a id="L315"></a><span class="ln">   315</span>		<span class="comment">// request (such as for a POST request) may not be available</span>
+<a id="L316"></a><span class="ln">   316</span>		<span class="comment">// to the resource that is the target of the redirect.&#34;  We</span>
+<a id="L317"></a><span class="ln">   317</span>		<span class="comment">// should do some tests against Apache to see how it handles</span>
+<a id="L318"></a><span class="ln">   318</span>		<span class="comment">// POST, HEAD, etc. Does the internal redirect get the same</span>
+<a id="L319"></a><span class="ln">   319</span>		<span class="comment">// method or just GET? What about incoming headers?</span>
+<a id="L320"></a><span class="ln">   320</span>		<span class="comment">// (e.g. Cookies) Which headers, if any, are copied into the</span>
+<a id="L321"></a><span class="ln">   321</span>		<span class="comment">// second request?</span>
+<a id="L322"></a><span class="ln">   322</span>		newReq := &amp;http.Request{
+<a id="L323"></a><span class="ln">   323</span>			Method:     &#34;GET&#34;,
+<a id="L324"></a><span class="ln">   324</span>			URL:        url,
+<a id="L325"></a><span class="ln">   325</span>			Proto:      &#34;HTTP/1.1&#34;,
+<a id="L326"></a><span class="ln">   326</span>			ProtoMajor: 1,
+<a id="L327"></a><span class="ln">   327</span>			ProtoMinor: 1,
+<a id="L328"></a><span class="ln">   328</span>			Header:     make(http.Header),
+<a id="L329"></a><span class="ln">   329</span>			Host:       url.Host,
+<a id="L330"></a><span class="ln">   330</span>			RemoteAddr: req.RemoteAddr,
+<a id="L331"></a><span class="ln">   331</span>			TLS:        req.TLS,
+<a id="L332"></a><span class="ln">   332</span>		}
+<a id="L333"></a><span class="ln">   333</span>		h.PathLocationHandler.ServeHTTP(rw, newReq)
+<a id="L334"></a><span class="ln">   334</span>	}
+<a id="L335"></a><span class="ln">   335</span>	
+<a id="L336"></a><span class="ln">   336</span>	func upperCaseAndUnderscore(r rune) rune {
+<a id="L337"></a><span class="ln">   337</span>		switch {
+<a id="L338"></a><span class="ln">   338</span>		case r &gt;= &#39;a&#39; &amp;&amp; r &lt;= &#39;z&#39;:
+<a id="L339"></a><span class="ln">   339</span>			return r - (&#39;a&#39; - &#39;A&#39;)
+<a id="L340"></a><span class="ln">   340</span>		case r == &#39;-&#39;:
+<a id="L341"></a><span class="ln">   341</span>			return &#39;_&#39;
+<a id="L342"></a><span class="ln">   342</span>		case r == &#39;=&#39;:
+<a id="L343"></a><span class="ln">   343</span>			<span class="comment">// Maybe not part of the CGI &#39;spec&#39; but would mess up</span>
+<a id="L344"></a><span class="ln">   344</span>			<span class="comment">// the environment in any case, as Go represents the</span>
+<a id="L345"></a><span class="ln">   345</span>			<span class="comment">// environment as a slice of &#34;key=value&#34; strings.</span>
+<a id="L346"></a><span class="ln">   346</span>			return &#39;_&#39;
+<a id="L347"></a><span class="ln">   347</span>		}
+<a id="L348"></a><span class="ln">   348</span>		<span class="comment">// TODO: other transformations in spec or practice?</span>
+<a id="L349"></a><span class="ln">   349</span>		return r
+<a id="L350"></a><span class="ln">   350</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

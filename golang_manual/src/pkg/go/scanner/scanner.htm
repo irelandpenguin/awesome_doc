@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/scanner/scanner.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/scanner/scanner.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package scanner implements a scanner for Go source text.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// It takes a []byte as source which can then be tokenized</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// through repeated calls to the Scan method.</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">//</span>
+<a id="L9"></a><span class="ln">     9</span>	package scanner
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import (
+<a id="L12"></a><span class="ln">    12</span>		&#34;bytes&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;fmt&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;go/token&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;path/filepath&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;strconv&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;unicode&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;unicode/utf8&#34;
+<a id="L19"></a><span class="ln">    19</span>	)
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// An ErrorHandler may be provided to Scanner.Init. If a syntax error is</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// encountered and a handler was installed, the handler is called with a</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// position and an error message. The position points to the beginning of</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// the offending token.</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//</span>
+<a id="L26"></a><span class="ln">    26</span>	type ErrorHandler func(pos token.Position, msg string)
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// A Scanner holds the scanner&#39;s internal state while processing</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// a given text.  It can be allocated as part of another data</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// structure but must be initialized via Init before use.</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">//</span>
+<a id="L32"></a><span class="ln">    32</span>	type Scanner struct {
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">// immutable state</span>
+<a id="L34"></a><span class="ln">    34</span>		file *token.File  <span class="comment">// source file handle</span>
+<a id="L35"></a><span class="ln">    35</span>		dir  string       <span class="comment">// directory portion of file.Name()</span>
+<a id="L36"></a><span class="ln">    36</span>		src  []byte       <span class="comment">// source</span>
+<a id="L37"></a><span class="ln">    37</span>		err  ErrorHandler <span class="comment">// error reporting; or nil</span>
+<a id="L38"></a><span class="ln">    38</span>		mode Mode         <span class="comment">// scanning mode</span>
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// scanning state</span>
+<a id="L41"></a><span class="ln">    41</span>		ch         rune <span class="comment">// current character</span>
+<a id="L42"></a><span class="ln">    42</span>		offset     int  <span class="comment">// character offset</span>
+<a id="L43"></a><span class="ln">    43</span>		rdOffset   int  <span class="comment">// reading offset (position after current character)</span>
+<a id="L44"></a><span class="ln">    44</span>		lineOffset int  <span class="comment">// current line offset</span>
+<a id="L45"></a><span class="ln">    45</span>		insertSemi bool <span class="comment">// insert a semicolon before next newline</span>
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>		<span class="comment">// public state - ok to modify</span>
+<a id="L48"></a><span class="ln">    48</span>		ErrorCount int <span class="comment">// number of errors encountered</span>
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// Read the next Unicode char into s.ch.</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// s.ch &lt; 0 means end-of-file.</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//</span>
+<a id="L54"></a><span class="ln">    54</span>	func (s *Scanner) next() {
+<a id="L55"></a><span class="ln">    55</span>		if s.rdOffset &lt; len(s.src) {
+<a id="L56"></a><span class="ln">    56</span>			s.offset = s.rdOffset
+<a id="L57"></a><span class="ln">    57</span>			if s.ch == &#39;\n&#39; {
+<a id="L58"></a><span class="ln">    58</span>				s.lineOffset = s.offset
+<a id="L59"></a><span class="ln">    59</span>				s.file.AddLine(s.offset)
+<a id="L60"></a><span class="ln">    60</span>			}
+<a id="L61"></a><span class="ln">    61</span>			r, w := rune(s.src[s.rdOffset]), 1
+<a id="L62"></a><span class="ln">    62</span>			switch {
+<a id="L63"></a><span class="ln">    63</span>			case r == 0:
+<a id="L64"></a><span class="ln">    64</span>				s.error(s.offset, &#34;illegal character NUL&#34;)
+<a id="L65"></a><span class="ln">    65</span>			case r &gt;= 0x80:
+<a id="L66"></a><span class="ln">    66</span>				<span class="comment">// not ASCII</span>
+<a id="L67"></a><span class="ln">    67</span>				r, w = utf8.DecodeRune(s.src[s.rdOffset:])
+<a id="L68"></a><span class="ln">    68</span>				if r == utf8.RuneError &amp;&amp; w == 1 {
+<a id="L69"></a><span class="ln">    69</span>					s.error(s.offset, &#34;illegal UTF-8 encoding&#34;)
+<a id="L70"></a><span class="ln">    70</span>				}
+<a id="L71"></a><span class="ln">    71</span>			}
+<a id="L72"></a><span class="ln">    72</span>			s.rdOffset += w
+<a id="L73"></a><span class="ln">    73</span>			s.ch = r
+<a id="L74"></a><span class="ln">    74</span>		} else {
+<a id="L75"></a><span class="ln">    75</span>			s.offset = len(s.src)
+<a id="L76"></a><span class="ln">    76</span>			if s.ch == &#39;\n&#39; {
+<a id="L77"></a><span class="ln">    77</span>				s.lineOffset = s.offset
+<a id="L78"></a><span class="ln">    78</span>				s.file.AddLine(s.offset)
+<a id="L79"></a><span class="ln">    79</span>			}
+<a id="L80"></a><span class="ln">    80</span>			s.ch = -1 <span class="comment">// eof</span>
+<a id="L81"></a><span class="ln">    81</span>		}
+<a id="L82"></a><span class="ln">    82</span>	}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// A mode value is set of flags (or 0).</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// They control scanner behavior.</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">//</span>
+<a id="L87"></a><span class="ln">    87</span>	type Mode uint
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	const (
+<a id="L90"></a><span class="ln">    90</span>		ScanComments    Mode = 1 &lt;&lt; iota <span class="comment">// return comments as COMMENT tokens</span>
+<a id="L91"></a><span class="ln">    91</span>		dontInsertSemis                  <span class="comment">// do not automatically insert semicolons - for testing only</span>
+<a id="L92"></a><span class="ln">    92</span>	)
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// Init prepares the scanner s to tokenize the text src by setting the</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// scanner at the beginning of src. The scanner uses the file set file</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">// for position information and it adds line information for each line.</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// It is ok to re-use the same file when re-scanning the same file as</span>
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// line information which is already present is ignored. Init causes a</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// panic if the file size does not match the src size.</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">//</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// Calls to Scan will invoke the error handler err if they encounter a</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// syntax error and err is not nil. Also, for each error encountered,</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// the Scanner field ErrorCount is incremented by one. The mode parameter</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// determines how comments are handled.</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">//</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// Note that Init may call err if there is an error in the first character</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// of the file.</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">//</span>
+<a id="L109"></a><span class="ln">   109</span>	func (s *Scanner) Init(file *token.File, src []byte, err ErrorHandler, mode Mode) {
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">// Explicitly initialize all fields since a scanner may be reused.</span>
+<a id="L111"></a><span class="ln">   111</span>		if file.Size() != len(src) {
+<a id="L112"></a><span class="ln">   112</span>			panic(fmt.Sprintf(&#34;file size (%d) does not match src len (%d)&#34;, file.Size(), len(src)))
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>		s.file = file
+<a id="L115"></a><span class="ln">   115</span>		s.dir, _ = filepath.Split(file.Name())
+<a id="L116"></a><span class="ln">   116</span>		s.src = src
+<a id="L117"></a><span class="ln">   117</span>		s.err = err
+<a id="L118"></a><span class="ln">   118</span>		s.mode = mode
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>		s.ch = &#39; &#39;
+<a id="L121"></a><span class="ln">   121</span>		s.offset = 0
+<a id="L122"></a><span class="ln">   122</span>		s.rdOffset = 0
+<a id="L123"></a><span class="ln">   123</span>		s.lineOffset = 0
+<a id="L124"></a><span class="ln">   124</span>		s.insertSemi = false
+<a id="L125"></a><span class="ln">   125</span>		s.ErrorCount = 0
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>		s.next()
+<a id="L128"></a><span class="ln">   128</span>	}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	func (s *Scanner) error(offs int, msg string) {
+<a id="L131"></a><span class="ln">   131</span>		if s.err != nil {
+<a id="L132"></a><span class="ln">   132</span>			s.err(s.file.Position(s.file.Pos(offs)), msg)
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>		s.ErrorCount++
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	var prefix = []byte(&#34;//line &#34;)
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>	func (s *Scanner) interpretLineComment(text []byte) {
+<a id="L140"></a><span class="ln">   140</span>		if bytes.HasPrefix(text, prefix) {
+<a id="L141"></a><span class="ln">   141</span>			<span class="comment">// get filename and line number, if any</span>
+<a id="L142"></a><span class="ln">   142</span>			if i := bytes.LastIndex(text, []byte{&#39;:&#39;}); i &gt; 0 {
+<a id="L143"></a><span class="ln">   143</span>				if line, err := strconv.Atoi(string(text[i+1:])); err == nil &amp;&amp; line &gt; 0 {
+<a id="L144"></a><span class="ln">   144</span>					<span class="comment">// valid //line filename:line comment;</span>
+<a id="L145"></a><span class="ln">   145</span>					filename := filepath.Clean(string(text[len(prefix):i]))
+<a id="L146"></a><span class="ln">   146</span>					if !filepath.IsAbs(filename) {
+<a id="L147"></a><span class="ln">   147</span>						<span class="comment">// make filename relative to current directory</span>
+<a id="L148"></a><span class="ln">   148</span>						filename = filepath.Join(s.dir, filename)
+<a id="L149"></a><span class="ln">   149</span>					}
+<a id="L150"></a><span class="ln">   150</span>					<span class="comment">// update scanner position</span>
+<a id="L151"></a><span class="ln">   151</span>					s.file.AddLineInfo(s.lineOffset+len(text)+1, filename, line) <span class="comment">// +len(text)+1 since comment applies to next line</span>
+<a id="L152"></a><span class="ln">   152</span>				}
+<a id="L153"></a><span class="ln">   153</span>			}
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>	}
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>	func (s *Scanner) scanComment() string {
+<a id="L158"></a><span class="ln">   158</span>		<span class="comment">// initial &#39;/&#39; already consumed; s.ch == &#39;/&#39; || s.ch == &#39;*&#39;</span>
+<a id="L159"></a><span class="ln">   159</span>		offs := s.offset - 1 <span class="comment">// position of initial &#39;/&#39;</span>
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		if s.ch == &#39;/&#39; {
+<a id="L162"></a><span class="ln">   162</span>			<span class="comment">//-style comment</span>
+<a id="L163"></a><span class="ln">   163</span>			s.next()
+<a id="L164"></a><span class="ln">   164</span>			for s.ch != &#39;\n&#39; &amp;&amp; s.ch &gt;= 0 {
+<a id="L165"></a><span class="ln">   165</span>				s.next()
+<a id="L166"></a><span class="ln">   166</span>			}
+<a id="L167"></a><span class="ln">   167</span>			if offs == s.lineOffset {
+<a id="L168"></a><span class="ln">   168</span>				<span class="comment">// comment starts at the beginning of the current line</span>
+<a id="L169"></a><span class="ln">   169</span>				s.interpretLineComment(s.src[offs:s.offset])
+<a id="L170"></a><span class="ln">   170</span>			}
+<a id="L171"></a><span class="ln">   171</span>			goto exit
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>		<span class="comment">/*-style comment */</span>
+<a id="L175"></a><span class="ln">   175</span>		s.next()
+<a id="L176"></a><span class="ln">   176</span>		for s.ch &gt;= 0 {
+<a id="L177"></a><span class="ln">   177</span>			ch := s.ch
+<a id="L178"></a><span class="ln">   178</span>			s.next()
+<a id="L179"></a><span class="ln">   179</span>			if ch == &#39;*&#39; &amp;&amp; s.ch == &#39;/&#39; {
+<a id="L180"></a><span class="ln">   180</span>				s.next()
+<a id="L181"></a><span class="ln">   181</span>				goto exit
+<a id="L182"></a><span class="ln">   182</span>			}
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>		s.error(offs, &#34;comment not terminated&#34;)
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	exit:
+<a id="L188"></a><span class="ln">   188</span>		return string(s.src[offs:s.offset])
+<a id="L189"></a><span class="ln">   189</span>	}
+<a id="L190"></a><span class="ln">   190</span>	
+<a id="L191"></a><span class="ln">   191</span>	func (s *Scanner) findLineEnd() bool {
+<a id="L192"></a><span class="ln">   192</span>		<span class="comment">// initial &#39;/&#39; already consumed</span>
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>		defer func(offs int) {
+<a id="L195"></a><span class="ln">   195</span>			<span class="comment">// reset scanner state to where it was upon calling findLineEnd</span>
+<a id="L196"></a><span class="ln">   196</span>			s.ch = &#39;/&#39;
+<a id="L197"></a><span class="ln">   197</span>			s.offset = offs
+<a id="L198"></a><span class="ln">   198</span>			s.rdOffset = offs + 1
+<a id="L199"></a><span class="ln">   199</span>			s.next() <span class="comment">// consume initial &#39;/&#39; again</span>
+<a id="L200"></a><span class="ln">   200</span>		}(s.offset - 1)
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>		<span class="comment">// read ahead until a newline, EOF, or non-comment token is found</span>
+<a id="L203"></a><span class="ln">   203</span>		for s.ch == &#39;/&#39; || s.ch == &#39;*&#39; {
+<a id="L204"></a><span class="ln">   204</span>			if s.ch == &#39;/&#39; {
+<a id="L205"></a><span class="ln">   205</span>				<span class="comment">//-style comment always contains a newline</span>
+<a id="L206"></a><span class="ln">   206</span>				return true
+<a id="L207"></a><span class="ln">   207</span>			}
+<a id="L208"></a><span class="ln">   208</span>			<span class="comment">/*-style comment: look for newline */</span>
+<a id="L209"></a><span class="ln">   209</span>			s.next()
+<a id="L210"></a><span class="ln">   210</span>			for s.ch &gt;= 0 {
+<a id="L211"></a><span class="ln">   211</span>				ch := s.ch
+<a id="L212"></a><span class="ln">   212</span>				if ch == &#39;\n&#39; {
+<a id="L213"></a><span class="ln">   213</span>					return true
+<a id="L214"></a><span class="ln">   214</span>				}
+<a id="L215"></a><span class="ln">   215</span>				s.next()
+<a id="L216"></a><span class="ln">   216</span>				if ch == &#39;*&#39; &amp;&amp; s.ch == &#39;/&#39; {
+<a id="L217"></a><span class="ln">   217</span>					s.next()
+<a id="L218"></a><span class="ln">   218</span>					break
+<a id="L219"></a><span class="ln">   219</span>				}
+<a id="L220"></a><span class="ln">   220</span>			}
+<a id="L221"></a><span class="ln">   221</span>			s.skipWhitespace() <span class="comment">// s.insertSemi is set</span>
+<a id="L222"></a><span class="ln">   222</span>			if s.ch &lt; 0 || s.ch == &#39;\n&#39; {
+<a id="L223"></a><span class="ln">   223</span>				return true
+<a id="L224"></a><span class="ln">   224</span>			}
+<a id="L225"></a><span class="ln">   225</span>			if s.ch != &#39;/&#39; {
+<a id="L226"></a><span class="ln">   226</span>				<span class="comment">// non-comment token</span>
+<a id="L227"></a><span class="ln">   227</span>				return false
+<a id="L228"></a><span class="ln">   228</span>			}
+<a id="L229"></a><span class="ln">   229</span>			s.next() <span class="comment">// consume &#39;/&#39;</span>
+<a id="L230"></a><span class="ln">   230</span>		}
+<a id="L231"></a><span class="ln">   231</span>	
+<a id="L232"></a><span class="ln">   232</span>		return false
+<a id="L233"></a><span class="ln">   233</span>	}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>	func isLetter(ch rune) bool {
+<a id="L236"></a><span class="ln">   236</span>		return &#39;a&#39; &lt;= ch &amp;&amp; ch &lt;= &#39;z&#39; || &#39;A&#39; &lt;= ch &amp;&amp; ch &lt;= &#39;Z&#39; || ch == &#39;_&#39; || ch &gt;= 0x80 &amp;&amp; unicode.IsLetter(ch)
+<a id="L237"></a><span class="ln">   237</span>	}
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	func isDigit(ch rune) bool {
+<a id="L240"></a><span class="ln">   240</span>		return &#39;0&#39; &lt;= ch &amp;&amp; ch &lt;= &#39;9&#39; || ch &gt;= 0x80 &amp;&amp; unicode.IsDigit(ch)
+<a id="L241"></a><span class="ln">   241</span>	}
+<a id="L242"></a><span class="ln">   242</span>	
+<a id="L243"></a><span class="ln">   243</span>	func (s *Scanner) scanIdentifier() string {
+<a id="L244"></a><span class="ln">   244</span>		offs := s.offset
+<a id="L245"></a><span class="ln">   245</span>		for isLetter(s.ch) || isDigit(s.ch) {
+<a id="L246"></a><span class="ln">   246</span>			s.next()
+<a id="L247"></a><span class="ln">   247</span>		}
+<a id="L248"></a><span class="ln">   248</span>		return string(s.src[offs:s.offset])
+<a id="L249"></a><span class="ln">   249</span>	}
+<a id="L250"></a><span class="ln">   250</span>	
+<a id="L251"></a><span class="ln">   251</span>	func digitVal(ch rune) int {
+<a id="L252"></a><span class="ln">   252</span>		switch {
+<a id="L253"></a><span class="ln">   253</span>		case &#39;0&#39; &lt;= ch &amp;&amp; ch &lt;= &#39;9&#39;:
+<a id="L254"></a><span class="ln">   254</span>			return int(ch - &#39;0&#39;)
+<a id="L255"></a><span class="ln">   255</span>		case &#39;a&#39; &lt;= ch &amp;&amp; ch &lt;= &#39;f&#39;:
+<a id="L256"></a><span class="ln">   256</span>			return int(ch - &#39;a&#39; + 10)
+<a id="L257"></a><span class="ln">   257</span>		case &#39;A&#39; &lt;= ch &amp;&amp; ch &lt;= &#39;F&#39;:
+<a id="L258"></a><span class="ln">   258</span>			return int(ch - &#39;A&#39; + 10)
+<a id="L259"></a><span class="ln">   259</span>		}
+<a id="L260"></a><span class="ln">   260</span>		return 16 <span class="comment">// larger than any legal digit val</span>
+<a id="L261"></a><span class="ln">   261</span>	}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>	func (s *Scanner) scanMantissa(base int) {
+<a id="L264"></a><span class="ln">   264</span>		for digitVal(s.ch) &lt; base {
+<a id="L265"></a><span class="ln">   265</span>			s.next()
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>	}
+<a id="L268"></a><span class="ln">   268</span>	
+<a id="L269"></a><span class="ln">   269</span>	func (s *Scanner) scanNumber(seenDecimalPoint bool) (token.Token, string) {
+<a id="L270"></a><span class="ln">   270</span>		<span class="comment">// digitVal(s.ch) &lt; 10</span>
+<a id="L271"></a><span class="ln">   271</span>		offs := s.offset
+<a id="L272"></a><span class="ln">   272</span>		tok := token.INT
+<a id="L273"></a><span class="ln">   273</span>	
+<a id="L274"></a><span class="ln">   274</span>		if seenDecimalPoint {
+<a id="L275"></a><span class="ln">   275</span>			offs--
+<a id="L276"></a><span class="ln">   276</span>			tok = token.FLOAT
+<a id="L277"></a><span class="ln">   277</span>			s.scanMantissa(10)
+<a id="L278"></a><span class="ln">   278</span>			goto exponent
+<a id="L279"></a><span class="ln">   279</span>		}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>		if s.ch == &#39;0&#39; {
+<a id="L282"></a><span class="ln">   282</span>			<span class="comment">// int or float</span>
+<a id="L283"></a><span class="ln">   283</span>			offs := s.offset
+<a id="L284"></a><span class="ln">   284</span>			s.next()
+<a id="L285"></a><span class="ln">   285</span>			if s.ch == &#39;x&#39; || s.ch == &#39;X&#39; {
+<a id="L286"></a><span class="ln">   286</span>				<span class="comment">// hexadecimal int</span>
+<a id="L287"></a><span class="ln">   287</span>				s.next()
+<a id="L288"></a><span class="ln">   288</span>				s.scanMantissa(16)
+<a id="L289"></a><span class="ln">   289</span>				if s.offset-offs &lt;= 2 {
+<a id="L290"></a><span class="ln">   290</span>					<span class="comment">// only scanned &#34;0x&#34; or &#34;0X&#34;</span>
+<a id="L291"></a><span class="ln">   291</span>					s.error(offs, &#34;illegal hexadecimal number&#34;)
+<a id="L292"></a><span class="ln">   292</span>				}
+<a id="L293"></a><span class="ln">   293</span>			} else {
+<a id="L294"></a><span class="ln">   294</span>				<span class="comment">// octal int or float</span>
+<a id="L295"></a><span class="ln">   295</span>				seenDecimalDigit := false
+<a id="L296"></a><span class="ln">   296</span>				s.scanMantissa(8)
+<a id="L297"></a><span class="ln">   297</span>				if s.ch == &#39;8&#39; || s.ch == &#39;9&#39; {
+<a id="L298"></a><span class="ln">   298</span>					<span class="comment">// illegal octal int or float</span>
+<a id="L299"></a><span class="ln">   299</span>					seenDecimalDigit = true
+<a id="L300"></a><span class="ln">   300</span>					s.scanMantissa(10)
+<a id="L301"></a><span class="ln">   301</span>				}
+<a id="L302"></a><span class="ln">   302</span>				if s.ch == &#39;.&#39; || s.ch == &#39;e&#39; || s.ch == &#39;E&#39; || s.ch == &#39;i&#39; {
+<a id="L303"></a><span class="ln">   303</span>					goto fraction
+<a id="L304"></a><span class="ln">   304</span>				}
+<a id="L305"></a><span class="ln">   305</span>				<span class="comment">// octal int</span>
+<a id="L306"></a><span class="ln">   306</span>				if seenDecimalDigit {
+<a id="L307"></a><span class="ln">   307</span>					s.error(offs, &#34;illegal octal number&#34;)
+<a id="L308"></a><span class="ln">   308</span>				}
+<a id="L309"></a><span class="ln">   309</span>			}
+<a id="L310"></a><span class="ln">   310</span>			goto exit
+<a id="L311"></a><span class="ln">   311</span>		}
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>		<span class="comment">// decimal int or float</span>
+<a id="L314"></a><span class="ln">   314</span>		s.scanMantissa(10)
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>	fraction:
+<a id="L317"></a><span class="ln">   317</span>		if s.ch == &#39;.&#39; {
+<a id="L318"></a><span class="ln">   318</span>			tok = token.FLOAT
+<a id="L319"></a><span class="ln">   319</span>			s.next()
+<a id="L320"></a><span class="ln">   320</span>			s.scanMantissa(10)
+<a id="L321"></a><span class="ln">   321</span>		}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>	exponent:
+<a id="L324"></a><span class="ln">   324</span>		if s.ch == &#39;e&#39; || s.ch == &#39;E&#39; {
+<a id="L325"></a><span class="ln">   325</span>			tok = token.FLOAT
+<a id="L326"></a><span class="ln">   326</span>			s.next()
+<a id="L327"></a><span class="ln">   327</span>			if s.ch == &#39;-&#39; || s.ch == &#39;+&#39; {
+<a id="L328"></a><span class="ln">   328</span>				s.next()
+<a id="L329"></a><span class="ln">   329</span>			}
+<a id="L330"></a><span class="ln">   330</span>			s.scanMantissa(10)
+<a id="L331"></a><span class="ln">   331</span>		}
+<a id="L332"></a><span class="ln">   332</span>	
+<a id="L333"></a><span class="ln">   333</span>		if s.ch == &#39;i&#39; {
+<a id="L334"></a><span class="ln">   334</span>			tok = token.IMAG
+<a id="L335"></a><span class="ln">   335</span>			s.next()
+<a id="L336"></a><span class="ln">   336</span>		}
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>	exit:
+<a id="L339"></a><span class="ln">   339</span>		return tok, string(s.src[offs:s.offset])
+<a id="L340"></a><span class="ln">   340</span>	}
+<a id="L341"></a><span class="ln">   341</span>	
+<a id="L342"></a><span class="ln">   342</span>	func (s *Scanner) scanEscape(quote rune) {
+<a id="L343"></a><span class="ln">   343</span>		offs := s.offset
+<a id="L344"></a><span class="ln">   344</span>	
+<a id="L345"></a><span class="ln">   345</span>		var i, base, max uint32
+<a id="L346"></a><span class="ln">   346</span>		switch s.ch {
+<a id="L347"></a><span class="ln">   347</span>		case &#39;a&#39;, &#39;b&#39;, &#39;f&#39;, &#39;n&#39;, &#39;r&#39;, &#39;t&#39;, &#39;v&#39;, &#39;\\&#39;, quote:
+<a id="L348"></a><span class="ln">   348</span>			s.next()
+<a id="L349"></a><span class="ln">   349</span>			return
+<a id="L350"></a><span class="ln">   350</span>		case &#39;0&#39;, &#39;1&#39;, &#39;2&#39;, &#39;3&#39;, &#39;4&#39;, &#39;5&#39;, &#39;6&#39;, &#39;7&#39;:
+<a id="L351"></a><span class="ln">   351</span>			i, base, max = 3, 8, 255
+<a id="L352"></a><span class="ln">   352</span>		case &#39;x&#39;:
+<a id="L353"></a><span class="ln">   353</span>			s.next()
+<a id="L354"></a><span class="ln">   354</span>			i, base, max = 2, 16, 255
+<a id="L355"></a><span class="ln">   355</span>		case &#39;u&#39;:
+<a id="L356"></a><span class="ln">   356</span>			s.next()
+<a id="L357"></a><span class="ln">   357</span>			i, base, max = 4, 16, unicode.MaxRune
+<a id="L358"></a><span class="ln">   358</span>		case &#39;U&#39;:
+<a id="L359"></a><span class="ln">   359</span>			s.next()
+<a id="L360"></a><span class="ln">   360</span>			i, base, max = 8, 16, unicode.MaxRune
+<a id="L361"></a><span class="ln">   361</span>		default:
+<a id="L362"></a><span class="ln">   362</span>			s.next() <span class="comment">// always make progress</span>
+<a id="L363"></a><span class="ln">   363</span>			s.error(offs, &#34;unknown escape sequence&#34;)
+<a id="L364"></a><span class="ln">   364</span>			return
+<a id="L365"></a><span class="ln">   365</span>		}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>		var x uint32
+<a id="L368"></a><span class="ln">   368</span>		for ; i &gt; 0 &amp;&amp; s.ch != quote &amp;&amp; s.ch &gt;= 0; i-- {
+<a id="L369"></a><span class="ln">   369</span>			d := uint32(digitVal(s.ch))
+<a id="L370"></a><span class="ln">   370</span>			if d &gt;= base {
+<a id="L371"></a><span class="ln">   371</span>				s.error(s.offset, &#34;illegal character in escape sequence&#34;)
+<a id="L372"></a><span class="ln">   372</span>				break
+<a id="L373"></a><span class="ln">   373</span>			}
+<a id="L374"></a><span class="ln">   374</span>			x = x*base + d
+<a id="L375"></a><span class="ln">   375</span>			s.next()
+<a id="L376"></a><span class="ln">   376</span>		}
+<a id="L377"></a><span class="ln">   377</span>		<span class="comment">// in case of an error, consume remaining chars</span>
+<a id="L378"></a><span class="ln">   378</span>		for ; i &gt; 0 &amp;&amp; s.ch != quote &amp;&amp; s.ch &gt;= 0; i-- {
+<a id="L379"></a><span class="ln">   379</span>			s.next()
+<a id="L380"></a><span class="ln">   380</span>		}
+<a id="L381"></a><span class="ln">   381</span>		if x &gt; max || 0xd800 &lt;= x &amp;&amp; x &lt; 0xe000 {
+<a id="L382"></a><span class="ln">   382</span>			s.error(offs, &#34;escape sequence is invalid Unicode code point&#34;)
+<a id="L383"></a><span class="ln">   383</span>		}
+<a id="L384"></a><span class="ln">   384</span>	}
+<a id="L385"></a><span class="ln">   385</span>	
+<a id="L386"></a><span class="ln">   386</span>	func (s *Scanner) scanChar() string {
+<a id="L387"></a><span class="ln">   387</span>		<span class="comment">// &#39;\&#39;&#39; opening already consumed</span>
+<a id="L388"></a><span class="ln">   388</span>		offs := s.offset - 1
+<a id="L389"></a><span class="ln">   389</span>	
+<a id="L390"></a><span class="ln">   390</span>		n := 0
+<a id="L391"></a><span class="ln">   391</span>		for s.ch != &#39;\&#39;&#39; {
+<a id="L392"></a><span class="ln">   392</span>			ch := s.ch
+<a id="L393"></a><span class="ln">   393</span>			n++
+<a id="L394"></a><span class="ln">   394</span>			s.next()
+<a id="L395"></a><span class="ln">   395</span>			if ch == &#39;\n&#39; || ch &lt; 0 {
+<a id="L396"></a><span class="ln">   396</span>				s.error(offs, &#34;character literal not terminated&#34;)
+<a id="L397"></a><span class="ln">   397</span>				n = 1
+<a id="L398"></a><span class="ln">   398</span>				break
+<a id="L399"></a><span class="ln">   399</span>			}
+<a id="L400"></a><span class="ln">   400</span>			if ch == &#39;\\&#39; {
+<a id="L401"></a><span class="ln">   401</span>				s.scanEscape(&#39;\&#39;&#39;)
+<a id="L402"></a><span class="ln">   402</span>			}
+<a id="L403"></a><span class="ln">   403</span>		}
+<a id="L404"></a><span class="ln">   404</span>	
+<a id="L405"></a><span class="ln">   405</span>		s.next()
+<a id="L406"></a><span class="ln">   406</span>	
+<a id="L407"></a><span class="ln">   407</span>		if n != 1 {
+<a id="L408"></a><span class="ln">   408</span>			s.error(offs, &#34;illegal character literal&#34;)
+<a id="L409"></a><span class="ln">   409</span>		}
+<a id="L410"></a><span class="ln">   410</span>	
+<a id="L411"></a><span class="ln">   411</span>		return string(s.src[offs:s.offset])
+<a id="L412"></a><span class="ln">   412</span>	}
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>	func (s *Scanner) scanString() string {
+<a id="L415"></a><span class="ln">   415</span>		<span class="comment">// &#39;&#34;&#39; opening already consumed</span>
+<a id="L416"></a><span class="ln">   416</span>		offs := s.offset - 1
+<a id="L417"></a><span class="ln">   417</span>	
+<a id="L418"></a><span class="ln">   418</span>		for s.ch != &#39;&#34;&#39; {
+<a id="L419"></a><span class="ln">   419</span>			ch := s.ch
+<a id="L420"></a><span class="ln">   420</span>			s.next()
+<a id="L421"></a><span class="ln">   421</span>			if ch == &#39;\n&#39; || ch &lt; 0 {
+<a id="L422"></a><span class="ln">   422</span>				s.error(offs, &#34;string not terminated&#34;)
+<a id="L423"></a><span class="ln">   423</span>				break
+<a id="L424"></a><span class="ln">   424</span>			}
+<a id="L425"></a><span class="ln">   425</span>			if ch == &#39;\\&#39; {
+<a id="L426"></a><span class="ln">   426</span>				s.scanEscape(&#39;&#34;&#39;)
+<a id="L427"></a><span class="ln">   427</span>			}
+<a id="L428"></a><span class="ln">   428</span>		}
+<a id="L429"></a><span class="ln">   429</span>	
+<a id="L430"></a><span class="ln">   430</span>		s.next()
+<a id="L431"></a><span class="ln">   431</span>	
+<a id="L432"></a><span class="ln">   432</span>		return string(s.src[offs:s.offset])
+<a id="L433"></a><span class="ln">   433</span>	}
+<a id="L434"></a><span class="ln">   434</span>	
+<a id="L435"></a><span class="ln">   435</span>	func stripCR(b []byte) []byte {
+<a id="L436"></a><span class="ln">   436</span>		c := make([]byte, len(b))
+<a id="L437"></a><span class="ln">   437</span>		i := 0
+<a id="L438"></a><span class="ln">   438</span>		for _, ch := range b {
+<a id="L439"></a><span class="ln">   439</span>			if ch != &#39;\r&#39; {
+<a id="L440"></a><span class="ln">   440</span>				c[i] = ch
+<a id="L441"></a><span class="ln">   441</span>				i++
+<a id="L442"></a><span class="ln">   442</span>			}
+<a id="L443"></a><span class="ln">   443</span>		}
+<a id="L444"></a><span class="ln">   444</span>		return c[:i]
+<a id="L445"></a><span class="ln">   445</span>	}
+<a id="L446"></a><span class="ln">   446</span>	
+<a id="L447"></a><span class="ln">   447</span>	func (s *Scanner) scanRawString() string {
+<a id="L448"></a><span class="ln">   448</span>		<span class="comment">// &#39;`&#39; opening already consumed</span>
+<a id="L449"></a><span class="ln">   449</span>		offs := s.offset - 1
+<a id="L450"></a><span class="ln">   450</span>	
+<a id="L451"></a><span class="ln">   451</span>		hasCR := false
+<a id="L452"></a><span class="ln">   452</span>		for s.ch != &#39;`&#39; {
+<a id="L453"></a><span class="ln">   453</span>			ch := s.ch
+<a id="L454"></a><span class="ln">   454</span>			s.next()
+<a id="L455"></a><span class="ln">   455</span>			if ch == &#39;\r&#39; {
+<a id="L456"></a><span class="ln">   456</span>				hasCR = true
+<a id="L457"></a><span class="ln">   457</span>			}
+<a id="L458"></a><span class="ln">   458</span>			if ch &lt; 0 {
+<a id="L459"></a><span class="ln">   459</span>				s.error(offs, &#34;string not terminated&#34;)
+<a id="L460"></a><span class="ln">   460</span>				break
+<a id="L461"></a><span class="ln">   461</span>			}
+<a id="L462"></a><span class="ln">   462</span>		}
+<a id="L463"></a><span class="ln">   463</span>	
+<a id="L464"></a><span class="ln">   464</span>		s.next()
+<a id="L465"></a><span class="ln">   465</span>	
+<a id="L466"></a><span class="ln">   466</span>		lit := s.src[offs:s.offset]
+<a id="L467"></a><span class="ln">   467</span>		if hasCR {
+<a id="L468"></a><span class="ln">   468</span>			lit = stripCR(lit)
+<a id="L469"></a><span class="ln">   469</span>		}
+<a id="L470"></a><span class="ln">   470</span>	
+<a id="L471"></a><span class="ln">   471</span>		return string(lit)
+<a id="L472"></a><span class="ln">   472</span>	}
+<a id="L473"></a><span class="ln">   473</span>	
+<a id="L474"></a><span class="ln">   474</span>	func (s *Scanner) skipWhitespace() {
+<a id="L475"></a><span class="ln">   475</span>		for s.ch == &#39; &#39; || s.ch == &#39;\t&#39; || s.ch == &#39;\n&#39; &amp;&amp; !s.insertSemi || s.ch == &#39;\r&#39; {
+<a id="L476"></a><span class="ln">   476</span>			s.next()
+<a id="L477"></a><span class="ln">   477</span>		}
+<a id="L478"></a><span class="ln">   478</span>	}
+<a id="L479"></a><span class="ln">   479</span>	
+<a id="L480"></a><span class="ln">   480</span>	<span class="comment">// Helper functions for scanning multi-byte tokens such as &gt;&gt; += &gt;&gt;= .</span>
+<a id="L481"></a><span class="ln">   481</span>	<span class="comment">// Different routines recognize different length tok_i based on matches</span>
+<a id="L482"></a><span class="ln">   482</span>	<span class="comment">// of ch_i. If a token ends in &#39;=&#39;, the result is tok1 or tok3</span>
+<a id="L483"></a><span class="ln">   483</span>	<span class="comment">// respectively. Otherwise, the result is tok0 if there was no other</span>
+<a id="L484"></a><span class="ln">   484</span>	<span class="comment">// matching character, or tok2 if the matching character was ch2.</span>
+<a id="L485"></a><span class="ln">   485</span>	
+<a id="L486"></a><span class="ln">   486</span>	func (s *Scanner) switch2(tok0, tok1 token.Token) token.Token {
+<a id="L487"></a><span class="ln">   487</span>		if s.ch == &#39;=&#39; {
+<a id="L488"></a><span class="ln">   488</span>			s.next()
+<a id="L489"></a><span class="ln">   489</span>			return tok1
+<a id="L490"></a><span class="ln">   490</span>		}
+<a id="L491"></a><span class="ln">   491</span>		return tok0
+<a id="L492"></a><span class="ln">   492</span>	}
+<a id="L493"></a><span class="ln">   493</span>	
+<a id="L494"></a><span class="ln">   494</span>	func (s *Scanner) switch3(tok0, tok1 token.Token, ch2 rune, tok2 token.Token) token.Token {
+<a id="L495"></a><span class="ln">   495</span>		if s.ch == &#39;=&#39; {
+<a id="L496"></a><span class="ln">   496</span>			s.next()
+<a id="L497"></a><span class="ln">   497</span>			return tok1
+<a id="L498"></a><span class="ln">   498</span>		}
+<a id="L499"></a><span class="ln">   499</span>		if s.ch == ch2 {
+<a id="L500"></a><span class="ln">   500</span>			s.next()
+<a id="L501"></a><span class="ln">   501</span>			return tok2
+<a id="L502"></a><span class="ln">   502</span>		}
+<a id="L503"></a><span class="ln">   503</span>		return tok0
+<a id="L504"></a><span class="ln">   504</span>	}
+<a id="L505"></a><span class="ln">   505</span>	
+<a id="L506"></a><span class="ln">   506</span>	func (s *Scanner) switch4(tok0, tok1 token.Token, ch2 rune, tok2, tok3 token.Token) token.Token {
+<a id="L507"></a><span class="ln">   507</span>		if s.ch == &#39;=&#39; {
+<a id="L508"></a><span class="ln">   508</span>			s.next()
+<a id="L509"></a><span class="ln">   509</span>			return tok1
+<a id="L510"></a><span class="ln">   510</span>		}
+<a id="L511"></a><span class="ln">   511</span>		if s.ch == ch2 {
+<a id="L512"></a><span class="ln">   512</span>			s.next()
+<a id="L513"></a><span class="ln">   513</span>			if s.ch == &#39;=&#39; {
+<a id="L514"></a><span class="ln">   514</span>				s.next()
+<a id="L515"></a><span class="ln">   515</span>				return tok3
+<a id="L516"></a><span class="ln">   516</span>			}
+<a id="L517"></a><span class="ln">   517</span>			return tok2
+<a id="L518"></a><span class="ln">   518</span>		}
+<a id="L519"></a><span class="ln">   519</span>		return tok0
+<a id="L520"></a><span class="ln">   520</span>	}
+<a id="L521"></a><span class="ln">   521</span>	
+<a id="L522"></a><span class="ln">   522</span>	<span class="comment">// Scan scans the next token and returns the token position, the token,</span>
+<a id="L523"></a><span class="ln">   523</span>	<span class="comment">// and its literal string if applicable. The source end is indicated by</span>
+<a id="L524"></a><span class="ln">   524</span>	<span class="comment">// token.EOF.</span>
+<a id="L525"></a><span class="ln">   525</span>	<span class="comment">//</span>
+<a id="L526"></a><span class="ln">   526</span>	<span class="comment">// If the returned token is a literal (token.IDENT, token.INT, token.FLOAT,</span>
+<a id="L527"></a><span class="ln">   527</span>	<span class="comment">// token.IMAG, token.CHAR, token.STRING) or token.COMMENT, the literal string</span>
+<a id="L528"></a><span class="ln">   528</span>	<span class="comment">// has the corresponding value.</span>
+<a id="L529"></a><span class="ln">   529</span>	<span class="comment">//</span>
+<a id="L530"></a><span class="ln">   530</span>	<span class="comment">// If the returned token is token.SEMICOLON, the corresponding</span>
+<a id="L531"></a><span class="ln">   531</span>	<span class="comment">// literal string is &#34;;&#34; if the semicolon was present in the source,</span>
+<a id="L532"></a><span class="ln">   532</span>	<span class="comment">// and &#34;\n&#34; if the semicolon was inserted because of a newline or</span>
+<a id="L533"></a><span class="ln">   533</span>	<span class="comment">// at EOF.</span>
+<a id="L534"></a><span class="ln">   534</span>	<span class="comment">//</span>
+<a id="L535"></a><span class="ln">   535</span>	<span class="comment">// If the returned token is token.ILLEGAL, the literal string is the</span>
+<a id="L536"></a><span class="ln">   536</span>	<span class="comment">// offending character.</span>
+<a id="L537"></a><span class="ln">   537</span>	<span class="comment">//</span>
+<a id="L538"></a><span class="ln">   538</span>	<span class="comment">// In all other cases, Scan returns an empty literal string.</span>
+<a id="L539"></a><span class="ln">   539</span>	<span class="comment">//</span>
+<a id="L540"></a><span class="ln">   540</span>	<span class="comment">// For more tolerant parsing, Scan will return a valid token if</span>
+<a id="L541"></a><span class="ln">   541</span>	<span class="comment">// possible even if a syntax error was encountered. Thus, even</span>
+<a id="L542"></a><span class="ln">   542</span>	<span class="comment">// if the resulting token sequence contains no illegal tokens,</span>
+<a id="L543"></a><span class="ln">   543</span>	<span class="comment">// a client may not assume that no error occurred. Instead it</span>
+<a id="L544"></a><span class="ln">   544</span>	<span class="comment">// must check the scanner&#39;s ErrorCount or the number of calls</span>
+<a id="L545"></a><span class="ln">   545</span>	<span class="comment">// of the error handler, if there was one installed.</span>
+<a id="L546"></a><span class="ln">   546</span>	<span class="comment">//</span>
+<a id="L547"></a><span class="ln">   547</span>	<span class="comment">// Scan adds line information to the file added to the file</span>
+<a id="L548"></a><span class="ln">   548</span>	<span class="comment">// set with Init. Token positions are relative to that file</span>
+<a id="L549"></a><span class="ln">   549</span>	<span class="comment">// and thus relative to the file set.</span>
+<a id="L550"></a><span class="ln">   550</span>	<span class="comment">//</span>
+<a id="L551"></a><span class="ln">   551</span>	func (s *Scanner) Scan() (pos token.Pos, tok token.Token, lit string) {
+<a id="L552"></a><span class="ln">   552</span>	scanAgain:
+<a id="L553"></a><span class="ln">   553</span>		s.skipWhitespace()
+<a id="L554"></a><span class="ln">   554</span>	
+<a id="L555"></a><span class="ln">   555</span>		<span class="comment">// current token start</span>
+<a id="L556"></a><span class="ln">   556</span>		pos = s.file.Pos(s.offset)
+<a id="L557"></a><span class="ln">   557</span>	
+<a id="L558"></a><span class="ln">   558</span>		<span class="comment">// determine token value</span>
+<a id="L559"></a><span class="ln">   559</span>		insertSemi := false
+<a id="L560"></a><span class="ln">   560</span>		switch ch := s.ch; {
+<a id="L561"></a><span class="ln">   561</span>		case isLetter(ch):
+<a id="L562"></a><span class="ln">   562</span>			lit = s.scanIdentifier()
+<a id="L563"></a><span class="ln">   563</span>			tok = token.Lookup(lit)
+<a id="L564"></a><span class="ln">   564</span>			switch tok {
+<a id="L565"></a><span class="ln">   565</span>			case token.IDENT, token.BREAK, token.CONTINUE, token.FALLTHROUGH, token.RETURN:
+<a id="L566"></a><span class="ln">   566</span>				insertSemi = true
+<a id="L567"></a><span class="ln">   567</span>			}
+<a id="L568"></a><span class="ln">   568</span>		case digitVal(ch) &lt; 10:
+<a id="L569"></a><span class="ln">   569</span>			insertSemi = true
+<a id="L570"></a><span class="ln">   570</span>			tok, lit = s.scanNumber(false)
+<a id="L571"></a><span class="ln">   571</span>		default:
+<a id="L572"></a><span class="ln">   572</span>			s.next() <span class="comment">// always make progress</span>
+<a id="L573"></a><span class="ln">   573</span>			switch ch {
+<a id="L574"></a><span class="ln">   574</span>			case -1:
+<a id="L575"></a><span class="ln">   575</span>				if s.insertSemi {
+<a id="L576"></a><span class="ln">   576</span>					s.insertSemi = false <span class="comment">// EOF consumed</span>
+<a id="L577"></a><span class="ln">   577</span>					return pos, token.SEMICOLON, &#34;\n&#34;
+<a id="L578"></a><span class="ln">   578</span>				}
+<a id="L579"></a><span class="ln">   579</span>				tok = token.EOF
+<a id="L580"></a><span class="ln">   580</span>			case &#39;\n&#39;:
+<a id="L581"></a><span class="ln">   581</span>				<span class="comment">// we only reach here if s.insertSemi was</span>
+<a id="L582"></a><span class="ln">   582</span>				<span class="comment">// set in the first place and exited early</span>
+<a id="L583"></a><span class="ln">   583</span>				<span class="comment">// from s.skipWhitespace()</span>
+<a id="L584"></a><span class="ln">   584</span>				s.insertSemi = false <span class="comment">// newline consumed</span>
+<a id="L585"></a><span class="ln">   585</span>				return pos, token.SEMICOLON, &#34;\n&#34;
+<a id="L586"></a><span class="ln">   586</span>			case &#39;&#34;&#39;:
+<a id="L587"></a><span class="ln">   587</span>				insertSemi = true
+<a id="L588"></a><span class="ln">   588</span>				tok = token.STRING
+<a id="L589"></a><span class="ln">   589</span>				lit = s.scanString()
+<a id="L590"></a><span class="ln">   590</span>			case &#39;\&#39;&#39;:
+<a id="L591"></a><span class="ln">   591</span>				insertSemi = true
+<a id="L592"></a><span class="ln">   592</span>				tok = token.CHAR
+<a id="L593"></a><span class="ln">   593</span>				lit = s.scanChar()
+<a id="L594"></a><span class="ln">   594</span>			case &#39;`&#39;:
+<a id="L595"></a><span class="ln">   595</span>				insertSemi = true
+<a id="L596"></a><span class="ln">   596</span>				tok = token.STRING
+<a id="L597"></a><span class="ln">   597</span>				lit = s.scanRawString()
+<a id="L598"></a><span class="ln">   598</span>			case &#39;:&#39;:
+<a id="L599"></a><span class="ln">   599</span>				tok = s.switch2(token.COLON, token.DEFINE)
+<a id="L600"></a><span class="ln">   600</span>			case &#39;.&#39;:
+<a id="L601"></a><span class="ln">   601</span>				if digitVal(s.ch) &lt; 10 {
+<a id="L602"></a><span class="ln">   602</span>					insertSemi = true
+<a id="L603"></a><span class="ln">   603</span>					tok, lit = s.scanNumber(true)
+<a id="L604"></a><span class="ln">   604</span>				} else if s.ch == &#39;.&#39; {
+<a id="L605"></a><span class="ln">   605</span>					s.next()
+<a id="L606"></a><span class="ln">   606</span>					if s.ch == &#39;.&#39; {
+<a id="L607"></a><span class="ln">   607</span>						s.next()
+<a id="L608"></a><span class="ln">   608</span>						tok = token.ELLIPSIS
+<a id="L609"></a><span class="ln">   609</span>					}
+<a id="L610"></a><span class="ln">   610</span>				} else {
+<a id="L611"></a><span class="ln">   611</span>					tok = token.PERIOD
+<a id="L612"></a><span class="ln">   612</span>				}
+<a id="L613"></a><span class="ln">   613</span>			case &#39;,&#39;:
+<a id="L614"></a><span class="ln">   614</span>				tok = token.COMMA
+<a id="L615"></a><span class="ln">   615</span>			case &#39;;&#39;:
+<a id="L616"></a><span class="ln">   616</span>				tok = token.SEMICOLON
+<a id="L617"></a><span class="ln">   617</span>				lit = &#34;;&#34;
+<a id="L618"></a><span class="ln">   618</span>			case &#39;(&#39;:
+<a id="L619"></a><span class="ln">   619</span>				tok = token.LPAREN
+<a id="L620"></a><span class="ln">   620</span>			case &#39;)&#39;:
+<a id="L621"></a><span class="ln">   621</span>				insertSemi = true
+<a id="L622"></a><span class="ln">   622</span>				tok = token.RPAREN
+<a id="L623"></a><span class="ln">   623</span>			case &#39;[&#39;:
+<a id="L624"></a><span class="ln">   624</span>				tok = token.LBRACK
+<a id="L625"></a><span class="ln">   625</span>			case &#39;]&#39;:
+<a id="L626"></a><span class="ln">   626</span>				insertSemi = true
+<a id="L627"></a><span class="ln">   627</span>				tok = token.RBRACK
+<a id="L628"></a><span class="ln">   628</span>			case &#39;{&#39;:
+<a id="L629"></a><span class="ln">   629</span>				tok = token.LBRACE
+<a id="L630"></a><span class="ln">   630</span>			case &#39;}&#39;:
+<a id="L631"></a><span class="ln">   631</span>				insertSemi = true
+<a id="L632"></a><span class="ln">   632</span>				tok = token.RBRACE
+<a id="L633"></a><span class="ln">   633</span>			case &#39;+&#39;:
+<a id="L634"></a><span class="ln">   634</span>				tok = s.switch3(token.ADD, token.ADD_ASSIGN, &#39;+&#39;, token.INC)
+<a id="L635"></a><span class="ln">   635</span>				if tok == token.INC {
+<a id="L636"></a><span class="ln">   636</span>					insertSemi = true
+<a id="L637"></a><span class="ln">   637</span>				}
+<a id="L638"></a><span class="ln">   638</span>			case &#39;-&#39;:
+<a id="L639"></a><span class="ln">   639</span>				tok = s.switch3(token.SUB, token.SUB_ASSIGN, &#39;-&#39;, token.DEC)
+<a id="L640"></a><span class="ln">   640</span>				if tok == token.DEC {
+<a id="L641"></a><span class="ln">   641</span>					insertSemi = true
+<a id="L642"></a><span class="ln">   642</span>				}
+<a id="L643"></a><span class="ln">   643</span>			case &#39;*&#39;:
+<a id="L644"></a><span class="ln">   644</span>				tok = s.switch2(token.MUL, token.MUL_ASSIGN)
+<a id="L645"></a><span class="ln">   645</span>			case &#39;/&#39;:
+<a id="L646"></a><span class="ln">   646</span>				if s.ch == &#39;/&#39; || s.ch == &#39;*&#39; {
+<a id="L647"></a><span class="ln">   647</span>					<span class="comment">// comment</span>
+<a id="L648"></a><span class="ln">   648</span>					if s.insertSemi &amp;&amp; s.findLineEnd() {
+<a id="L649"></a><span class="ln">   649</span>						<span class="comment">// reset position to the beginning of the comment</span>
+<a id="L650"></a><span class="ln">   650</span>						s.ch = &#39;/&#39;
+<a id="L651"></a><span class="ln">   651</span>						s.offset = s.file.Offset(pos)
+<a id="L652"></a><span class="ln">   652</span>						s.rdOffset = s.offset + 1
+<a id="L653"></a><span class="ln">   653</span>						s.insertSemi = false <span class="comment">// newline consumed</span>
+<a id="L654"></a><span class="ln">   654</span>						return pos, token.SEMICOLON, &#34;\n&#34;
+<a id="L655"></a><span class="ln">   655</span>					}
+<a id="L656"></a><span class="ln">   656</span>					lit = s.scanComment()
+<a id="L657"></a><span class="ln">   657</span>					if s.mode&amp;ScanComments == 0 {
+<a id="L658"></a><span class="ln">   658</span>						<span class="comment">// skip comment</span>
+<a id="L659"></a><span class="ln">   659</span>						s.insertSemi = false <span class="comment">// newline consumed</span>
+<a id="L660"></a><span class="ln">   660</span>						goto scanAgain
+<a id="L661"></a><span class="ln">   661</span>					}
+<a id="L662"></a><span class="ln">   662</span>					tok = token.COMMENT
+<a id="L663"></a><span class="ln">   663</span>				} else {
+<a id="L664"></a><span class="ln">   664</span>					tok = s.switch2(token.QUO, token.QUO_ASSIGN)
+<a id="L665"></a><span class="ln">   665</span>				}
+<a id="L666"></a><span class="ln">   666</span>			case &#39;%&#39;:
+<a id="L667"></a><span class="ln">   667</span>				tok = s.switch2(token.REM, token.REM_ASSIGN)
+<a id="L668"></a><span class="ln">   668</span>			case &#39;^&#39;:
+<a id="L669"></a><span class="ln">   669</span>				tok = s.switch2(token.XOR, token.XOR_ASSIGN)
+<a id="L670"></a><span class="ln">   670</span>			case &#39;&lt;&#39;:
+<a id="L671"></a><span class="ln">   671</span>				if s.ch == &#39;-&#39; {
+<a id="L672"></a><span class="ln">   672</span>					s.next()
+<a id="L673"></a><span class="ln">   673</span>					tok = token.ARROW
+<a id="L674"></a><span class="ln">   674</span>				} else {
+<a id="L675"></a><span class="ln">   675</span>					tok = s.switch4(token.LSS, token.LEQ, &#39;&lt;&#39;, token.SHL, token.SHL_ASSIGN)
+<a id="L676"></a><span class="ln">   676</span>				}
+<a id="L677"></a><span class="ln">   677</span>			case &#39;&gt;&#39;:
+<a id="L678"></a><span class="ln">   678</span>				tok = s.switch4(token.GTR, token.GEQ, &#39;&gt;&#39;, token.SHR, token.SHR_ASSIGN)
+<a id="L679"></a><span class="ln">   679</span>			case &#39;=&#39;:
+<a id="L680"></a><span class="ln">   680</span>				tok = s.switch2(token.ASSIGN, token.EQL)
+<a id="L681"></a><span class="ln">   681</span>			case &#39;!&#39;:
+<a id="L682"></a><span class="ln">   682</span>				tok = s.switch2(token.NOT, token.NEQ)
+<a id="L683"></a><span class="ln">   683</span>			case &#39;&amp;&#39;:
+<a id="L684"></a><span class="ln">   684</span>				if s.ch == &#39;^&#39; {
+<a id="L685"></a><span class="ln">   685</span>					s.next()
+<a id="L686"></a><span class="ln">   686</span>					tok = s.switch2(token.AND_NOT, token.AND_NOT_ASSIGN)
+<a id="L687"></a><span class="ln">   687</span>				} else {
+<a id="L688"></a><span class="ln">   688</span>					tok = s.switch3(token.AND, token.AND_ASSIGN, &#39;&amp;&#39;, token.LAND)
+<a id="L689"></a><span class="ln">   689</span>				}
+<a id="L690"></a><span class="ln">   690</span>			case &#39;|&#39;:
+<a id="L691"></a><span class="ln">   691</span>				tok = s.switch3(token.OR, token.OR_ASSIGN, &#39;|&#39;, token.LOR)
+<a id="L692"></a><span class="ln">   692</span>			default:
+<a id="L693"></a><span class="ln">   693</span>				s.error(s.file.Offset(pos), fmt.Sprintf(&#34;illegal character %#U&#34;, ch))
+<a id="L694"></a><span class="ln">   694</span>				insertSemi = s.insertSemi <span class="comment">// preserve insertSemi info</span>
+<a id="L695"></a><span class="ln">   695</span>				tok = token.ILLEGAL
+<a id="L696"></a><span class="ln">   696</span>				lit = string(ch)
+<a id="L697"></a><span class="ln">   697</span>			}
+<a id="L698"></a><span class="ln">   698</span>		}
+<a id="L699"></a><span class="ln">   699</span>		if s.mode&amp;dontInsertSemis == 0 {
+<a id="L700"></a><span class="ln">   700</span>			s.insertSemi = insertSemi
+<a id="L701"></a><span class="ln">   701</span>		}
+<a id="L702"></a><span class="ln">   702</span>	
+<a id="L703"></a><span class="ln">   703</span>		return
+<a id="L704"></a><span class="ln">   704</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

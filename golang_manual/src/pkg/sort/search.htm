@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/sort/search.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/sort/search.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// This file implements binary search.</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package sort
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// Search uses binary search to find and return the smallest index i</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// in [0, n) at which f(i) is true, assuming that on the range [0, n), </span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// f(i) == true implies f(i+1) == true.  That is, Search requires that</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// f is false for some (possibly empty) prefix of the input range [0, n)</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// and then true for the (possibly empty) remainder; Search returns</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// the first true index.  If there is no such index, Search returns n.</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// Search calls f(i) only for i in the range [0, n).</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">//</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// A common use of Search is to find the index i for a value x in</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// a sorted, indexable data structure such as an array or slice.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// In this case, the argument f, typically a closure, captures the value</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// to be searched for, and how the data structure is indexed and</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// ordered.</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// For instance, given a slice data sorted in ascending order,</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// the call Search(len(data), func(i int) bool { return data[i] &gt;= 23 })</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// returns the smallest index i such that data[i] &gt;= 23.  If the caller</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// wants to find whether 23 is in the slice, it must test data[i] == 23</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// separately.</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">//</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// Searching data sorted in descending order would use the &lt;=</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// operator instead of the &gt;= operator.</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">//</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// To complete the example above, the following code tries to find the value</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// x in an integer slice data sorted in ascending order:</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//	x := 23</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//	i := sort.Search(len(data), func(i int) bool { return data[i] &gt;= x })</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//	if i &lt; len(data) &amp;&amp; data[i] == x {</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//		// x is present at data[i]</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//	} else {</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//		// x is not present in data,</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//		// but i is the index where it would be inserted.</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//	}</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// As a more whimsical example, this program guesses your number:</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//	func GuessingGame() {</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//		var s string</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">//		fmt.Printf(&#34;Pick an integer from 0 to 100.\n&#34;)</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//		answer := sort.Search(100, func(i int) bool {</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//			fmt.Printf(&#34;Is your number &lt;= %d? &#34;, i)</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//			fmt.Scanf(&#34;%s&#34;, &amp;s)</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//			return s != &#34;&#34; &amp;&amp; s[0] == &#39;y&#39;</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//		})</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">//		fmt.Printf(&#34;Your number is %d.\n&#34;, answer)</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//	}</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//</span>
+<a id="L57"></a><span class="ln">    57</span>	func Search(n int, f func(int) bool) int {
+<a id="L58"></a><span class="ln">    58</span>		<span class="comment">// Define f(-1) == false and f(n) == true.</span>
+<a id="L59"></a><span class="ln">    59</span>		<span class="comment">// Invariant: f(i-1) == false, f(j) == true.</span>
+<a id="L60"></a><span class="ln">    60</span>		i, j := 0, n
+<a id="L61"></a><span class="ln">    61</span>		for i &lt; j {
+<a id="L62"></a><span class="ln">    62</span>			h := i + (j-i)/2 <span class="comment">// avoid overflow when computing h</span>
+<a id="L63"></a><span class="ln">    63</span>			<span class="comment">// i ≤ h &lt; j</span>
+<a id="L64"></a><span class="ln">    64</span>			if !f(h) {
+<a id="L65"></a><span class="ln">    65</span>				i = h + 1 <span class="comment">// preserves f(i-1) == false</span>
+<a id="L66"></a><span class="ln">    66</span>			} else {
+<a id="L67"></a><span class="ln">    67</span>				j = h <span class="comment">// preserves f(j) == true</span>
+<a id="L68"></a><span class="ln">    68</span>			}
+<a id="L69"></a><span class="ln">    69</span>		}
+<a id="L70"></a><span class="ln">    70</span>		<span class="comment">// i == j, f(i-1) == false, and f(j) (= f(i)) == true  =&gt;  answer is i.</span>
+<a id="L71"></a><span class="ln">    71</span>		return i
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// Convenience wrappers for common cases.</span>
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// SearchInts searches for x in a sorted slice of ints and returns the index</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// as specified by Search. The slice must be sorted in ascending order.</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">//</span>
+<a id="L79"></a><span class="ln">    79</span>	func SearchInts(a []int, x int) int {
+<a id="L80"></a><span class="ln">    80</span>		return Search(len(a), func(i int) bool { return a[i] &gt;= x })
+<a id="L81"></a><span class="ln">    81</span>	}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// SearchFloat64s searches for x in a sorted slice of float64s and returns the index</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// as specified by Search. The slice must be sorted in ascending order.</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// </span>
+<a id="L86"></a><span class="ln">    86</span>	func SearchFloat64s(a []float64, x float64) int {
+<a id="L87"></a><span class="ln">    87</span>		return Search(len(a), func(i int) bool { return a[i] &gt;= x })
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// SearchStrings searches for x slice a sorted slice of strings and returns the index</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// as specified by Search. The slice must be sorted in ascending order.</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// </span>
+<a id="L93"></a><span class="ln">    93</span>	func SearchStrings(a []string, x string) int {
+<a id="L94"></a><span class="ln">    94</span>		return Search(len(a), func(i int) bool { return a[i] &gt;= x })
+<a id="L95"></a><span class="ln">    95</span>	}
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// Search returns the result of applying SearchInts to the receiver and x.</span>
+<a id="L98"></a><span class="ln">    98</span>	func (p IntSlice) Search(x int) int { return SearchInts(p, x) }
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// Search returns the result of applying SearchFloat64s to the receiver and x.</span>
+<a id="L101"></a><span class="ln">   101</span>	func (p Float64Slice) Search(x float64) int { return SearchFloat64s(p, x) }
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// Search returns the result of applying SearchStrings to the receiver and x.</span>
+<a id="L104"></a><span class="ln">   104</span>	func (p StringSlice) Search(x string) int { return SearchStrings(p, x) }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

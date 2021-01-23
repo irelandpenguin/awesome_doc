@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/x509/verify.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/x509/verify.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package x509
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;runtime&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;strings&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;time&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unicode/utf8&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	type InvalidReason int
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	const (
+<a id="L17"></a><span class="ln">    17</span>		<span class="comment">// NotAuthorizedToSign results when a certificate is signed by another</span>
+<a id="L18"></a><span class="ln">    18</span>		<span class="comment">// which isn&#39;t marked as a CA certificate.</span>
+<a id="L19"></a><span class="ln">    19</span>		NotAuthorizedToSign InvalidReason = iota
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// Expired results when a certificate has expired, based on the time</span>
+<a id="L21"></a><span class="ln">    21</span>		<span class="comment">// given in the VerifyOptions.</span>
+<a id="L22"></a><span class="ln">    22</span>		Expired
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// CANotAuthorizedForThisName results when an intermediate or root</span>
+<a id="L24"></a><span class="ln">    24</span>		<span class="comment">// certificate has a name constraint which doesn&#39;t include the name</span>
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// being checked.</span>
+<a id="L26"></a><span class="ln">    26</span>		CANotAuthorizedForThisName
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// TooManyIntermediates results when a path length constraint is</span>
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// violated.</span>
+<a id="L29"></a><span class="ln">    29</span>		TooManyIntermediates
+<a id="L30"></a><span class="ln">    30</span>	)
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// CertificateInvalidError results when an odd error occurs. Users of this</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// library probably want to handle all these errors uniformly.</span>
+<a id="L34"></a><span class="ln">    34</span>	type CertificateInvalidError struct {
+<a id="L35"></a><span class="ln">    35</span>		Cert   *Certificate
+<a id="L36"></a><span class="ln">    36</span>		Reason InvalidReason
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	func (e CertificateInvalidError) Error() string {
+<a id="L40"></a><span class="ln">    40</span>		switch e.Reason {
+<a id="L41"></a><span class="ln">    41</span>		case NotAuthorizedToSign:
+<a id="L42"></a><span class="ln">    42</span>			return &#34;x509: certificate is not authorized to sign other other certificates&#34;
+<a id="L43"></a><span class="ln">    43</span>		case Expired:
+<a id="L44"></a><span class="ln">    44</span>			return &#34;x509: certificate has expired or is not yet valid&#34;
+<a id="L45"></a><span class="ln">    45</span>		case CANotAuthorizedForThisName:
+<a id="L46"></a><span class="ln">    46</span>			return &#34;x509: a root or intermediate certificate is not authorized to sign in this domain&#34;
+<a id="L47"></a><span class="ln">    47</span>		case TooManyIntermediates:
+<a id="L48"></a><span class="ln">    48</span>			return &#34;x509: too many intermediates for path length constraint&#34;
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		return &#34;x509: unknown error&#34;
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// HostnameError results when the set of authorized names doesn&#39;t match the</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// requested name.</span>
+<a id="L55"></a><span class="ln">    55</span>	type HostnameError struct {
+<a id="L56"></a><span class="ln">    56</span>		Certificate *Certificate
+<a id="L57"></a><span class="ln">    57</span>		Host        string
+<a id="L58"></a><span class="ln">    58</span>	}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>	func (h HostnameError) Error() string {
+<a id="L61"></a><span class="ln">    61</span>		var valid string
+<a id="L62"></a><span class="ln">    62</span>		c := h.Certificate
+<a id="L63"></a><span class="ln">    63</span>		if len(c.DNSNames) &gt; 0 {
+<a id="L64"></a><span class="ln">    64</span>			valid = strings.Join(c.DNSNames, &#34;, &#34;)
+<a id="L65"></a><span class="ln">    65</span>		} else {
+<a id="L66"></a><span class="ln">    66</span>			valid = c.Subject.CommonName
+<a id="L67"></a><span class="ln">    67</span>		}
+<a id="L68"></a><span class="ln">    68</span>		return &#34;certificate is valid for &#34; + valid + &#34;, not &#34; + h.Host
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// UnknownAuthorityError results when the certificate issuer is unknown</span>
+<a id="L72"></a><span class="ln">    72</span>	type UnknownAuthorityError struct {
+<a id="L73"></a><span class="ln">    73</span>		cert *Certificate
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	func (e UnknownAuthorityError) Error() string {
+<a id="L77"></a><span class="ln">    77</span>		return &#34;x509: certificate signed by unknown authority&#34;
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// VerifyOptions contains parameters for Certificate.Verify. It&#39;s a structure</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// because other PKIX verification APIs have ended up needing many options.</span>
+<a id="L82"></a><span class="ln">    82</span>	type VerifyOptions struct {
+<a id="L83"></a><span class="ln">    83</span>		DNSName       string
+<a id="L84"></a><span class="ln">    84</span>		Intermediates *CertPool
+<a id="L85"></a><span class="ln">    85</span>		Roots         *CertPool <span class="comment">// if nil, the system roots are used</span>
+<a id="L86"></a><span class="ln">    86</span>		CurrentTime   time.Time <span class="comment">// if zero, the current time is used</span>
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	const (
+<a id="L90"></a><span class="ln">    90</span>		leafCertificate = iota
+<a id="L91"></a><span class="ln">    91</span>		intermediateCertificate
+<a id="L92"></a><span class="ln">    92</span>		rootCertificate
+<a id="L93"></a><span class="ln">    93</span>	)
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// isValid performs validity checks on the c.</span>
+<a id="L96"></a><span class="ln">    96</span>	func (c *Certificate) isValid(certType int, currentChain []*Certificate, opts *VerifyOptions) error {
+<a id="L97"></a><span class="ln">    97</span>		now := opts.CurrentTime
+<a id="L98"></a><span class="ln">    98</span>		if now.IsZero() {
+<a id="L99"></a><span class="ln">    99</span>			now = time.Now()
+<a id="L100"></a><span class="ln">   100</span>		}
+<a id="L101"></a><span class="ln">   101</span>		if now.Before(c.NotBefore) || now.After(c.NotAfter) {
+<a id="L102"></a><span class="ln">   102</span>			return CertificateInvalidError{c, Expired}
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>		if len(c.PermittedDNSDomains) &gt; 0 {
+<a id="L106"></a><span class="ln">   106</span>			for _, domain := range c.PermittedDNSDomains {
+<a id="L107"></a><span class="ln">   107</span>				if opts.DNSName == domain ||
+<a id="L108"></a><span class="ln">   108</span>					(strings.HasSuffix(opts.DNSName, domain) &amp;&amp;
+<a id="L109"></a><span class="ln">   109</span>						len(opts.DNSName) &gt;= 1+len(domain) &amp;&amp;
+<a id="L110"></a><span class="ln">   110</span>						opts.DNSName[len(opts.DNSName)-len(domain)-1] == &#39;.&#39;) {
+<a id="L111"></a><span class="ln">   111</span>					continue
+<a id="L112"></a><span class="ln">   112</span>				}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>				return CertificateInvalidError{c, CANotAuthorizedForThisName}
+<a id="L115"></a><span class="ln">   115</span>			}
+<a id="L116"></a><span class="ln">   116</span>		}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>		<span class="comment">// KeyUsage status flags are ignored. From Engineering Security, Peter</span>
+<a id="L119"></a><span class="ln">   119</span>		<span class="comment">// Gutmann: A European government CA marked its signing certificates as</span>
+<a id="L120"></a><span class="ln">   120</span>		<span class="comment">// being valid for encryption only, but no-one noticed. Another</span>
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">// European CA marked its signature keys as not being valid for</span>
+<a id="L122"></a><span class="ln">   122</span>		<span class="comment">// signatures. A different CA marked its own trusted root certificate</span>
+<a id="L123"></a><span class="ln">   123</span>		<span class="comment">// as being invalid for certificate signing.  Another national CA</span>
+<a id="L124"></a><span class="ln">   124</span>		<span class="comment">// distributed a certificate to be used to encrypt data for the</span>
+<a id="L125"></a><span class="ln">   125</span>		<span class="comment">// country’s tax authority that was marked as only being usable for</span>
+<a id="L126"></a><span class="ln">   126</span>		<span class="comment">// digital signatures but not for encryption. Yet another CA reversed</span>
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// the order of the bit flags in the keyUsage due to confusion over</span>
+<a id="L128"></a><span class="ln">   128</span>		<span class="comment">// encoding endianness, essentially setting a random keyUsage in</span>
+<a id="L129"></a><span class="ln">   129</span>		<span class="comment">// certificates that it issued. Another CA created a self-invalidating</span>
+<a id="L130"></a><span class="ln">   130</span>		<span class="comment">// certificate by adding a certificate policy statement stipulating</span>
+<a id="L131"></a><span class="ln">   131</span>		<span class="comment">// that the certificate had to be used strictly as specified in the</span>
+<a id="L132"></a><span class="ln">   132</span>		<span class="comment">// keyUsage, and a keyUsage containing a flag indicating that the RSA</span>
+<a id="L133"></a><span class="ln">   133</span>		<span class="comment">// encryption key could only be used for Diffie-Hellman key agreement.</span>
+<a id="L134"></a><span class="ln">   134</span>	
+<a id="L135"></a><span class="ln">   135</span>		if certType == intermediateCertificate &amp;&amp; (!c.BasicConstraintsValid || !c.IsCA) {
+<a id="L136"></a><span class="ln">   136</span>			return CertificateInvalidError{c, NotAuthorizedToSign}
+<a id="L137"></a><span class="ln">   137</span>		}
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>		if c.BasicConstraintsValid &amp;&amp; c.MaxPathLen &gt;= 0 {
+<a id="L140"></a><span class="ln">   140</span>			numIntermediates := len(currentChain) - 1
+<a id="L141"></a><span class="ln">   141</span>			if numIntermediates &gt; c.MaxPathLen {
+<a id="L142"></a><span class="ln">   142</span>				return CertificateInvalidError{c, TooManyIntermediates}
+<a id="L143"></a><span class="ln">   143</span>			}
+<a id="L144"></a><span class="ln">   144</span>		}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>		return nil
+<a id="L147"></a><span class="ln">   147</span>	}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// Verify attempts to verify c by building one or more chains from c to a</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// certificate in opts.Roots, using certificates in opts.Intermediates if</span>
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// needed. If successful, it returns one or more chains where the first</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">// element of the chain is c and the last element is from opts.Roots.</span>
+<a id="L153"></a><span class="ln">   153</span>	<span class="comment">//</span>
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">// WARNING: this doesn&#39;t do any revocation checking.</span>
+<a id="L155"></a><span class="ln">   155</span>	func (c *Certificate) Verify(opts VerifyOptions) (chains [][]*Certificate, err error) {
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// Use Windows&#39;s own verification and chain building.</span>
+<a id="L157"></a><span class="ln">   157</span>		if opts.Roots == nil &amp;&amp; runtime.GOOS == &#34;windows&#34; {
+<a id="L158"></a><span class="ln">   158</span>			return c.systemVerify(&amp;opts)
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		if opts.Roots == nil {
+<a id="L162"></a><span class="ln">   162</span>			opts.Roots = systemRootsPool()
+<a id="L163"></a><span class="ln">   163</span>		}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>		err = c.isValid(leafCertificate, nil, &amp;opts)
+<a id="L166"></a><span class="ln">   166</span>		if err != nil {
+<a id="L167"></a><span class="ln">   167</span>			return
+<a id="L168"></a><span class="ln">   168</span>		}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>		if len(opts.DNSName) &gt; 0 {
+<a id="L171"></a><span class="ln">   171</span>			err = c.VerifyHostname(opts.DNSName)
+<a id="L172"></a><span class="ln">   172</span>			if err != nil {
+<a id="L173"></a><span class="ln">   173</span>				return
+<a id="L174"></a><span class="ln">   174</span>			}
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>		return c.buildChains(make(map[int][][]*Certificate), []*Certificate{c}, &amp;opts)
+<a id="L178"></a><span class="ln">   178</span>	}
+<a id="L179"></a><span class="ln">   179</span>	
+<a id="L180"></a><span class="ln">   180</span>	func appendToFreshChain(chain []*Certificate, cert *Certificate) []*Certificate {
+<a id="L181"></a><span class="ln">   181</span>		n := make([]*Certificate, len(chain)+1)
+<a id="L182"></a><span class="ln">   182</span>		copy(n, chain)
+<a id="L183"></a><span class="ln">   183</span>		n[len(chain)] = cert
+<a id="L184"></a><span class="ln">   184</span>		return n
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	func (c *Certificate) buildChains(cache map[int][][]*Certificate, currentChain []*Certificate, opts *VerifyOptions) (chains [][]*Certificate, err error) {
+<a id="L188"></a><span class="ln">   188</span>		for _, rootNum := range opts.Roots.findVerifiedParents(c) {
+<a id="L189"></a><span class="ln">   189</span>			root := opts.Roots.certs[rootNum]
+<a id="L190"></a><span class="ln">   190</span>			err = root.isValid(rootCertificate, currentChain, opts)
+<a id="L191"></a><span class="ln">   191</span>			if err != nil {
+<a id="L192"></a><span class="ln">   192</span>				continue
+<a id="L193"></a><span class="ln">   193</span>			}
+<a id="L194"></a><span class="ln">   194</span>			chains = append(chains, appendToFreshChain(currentChain, root))
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>	nextIntermediate:
+<a id="L198"></a><span class="ln">   198</span>		for _, intermediateNum := range opts.Intermediates.findVerifiedParents(c) {
+<a id="L199"></a><span class="ln">   199</span>			intermediate := opts.Intermediates.certs[intermediateNum]
+<a id="L200"></a><span class="ln">   200</span>			for _, cert := range currentChain {
+<a id="L201"></a><span class="ln">   201</span>				if cert == intermediate {
+<a id="L202"></a><span class="ln">   202</span>					continue nextIntermediate
+<a id="L203"></a><span class="ln">   203</span>				}
+<a id="L204"></a><span class="ln">   204</span>			}
+<a id="L205"></a><span class="ln">   205</span>			err = intermediate.isValid(intermediateCertificate, currentChain, opts)
+<a id="L206"></a><span class="ln">   206</span>			if err != nil {
+<a id="L207"></a><span class="ln">   207</span>				continue
+<a id="L208"></a><span class="ln">   208</span>			}
+<a id="L209"></a><span class="ln">   209</span>			var childChains [][]*Certificate
+<a id="L210"></a><span class="ln">   210</span>			childChains, ok := cache[intermediateNum]
+<a id="L211"></a><span class="ln">   211</span>			if !ok {
+<a id="L212"></a><span class="ln">   212</span>				childChains, err = intermediate.buildChains(cache, appendToFreshChain(currentChain, intermediate), opts)
+<a id="L213"></a><span class="ln">   213</span>				cache[intermediateNum] = childChains
+<a id="L214"></a><span class="ln">   214</span>			}
+<a id="L215"></a><span class="ln">   215</span>			chains = append(chains, childChains...)
+<a id="L216"></a><span class="ln">   216</span>		}
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>		if len(chains) &gt; 0 {
+<a id="L219"></a><span class="ln">   219</span>			err = nil
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>		if len(chains) == 0 &amp;&amp; err == nil {
+<a id="L223"></a><span class="ln">   223</span>			err = UnknownAuthorityError{c}
+<a id="L224"></a><span class="ln">   224</span>		}
+<a id="L225"></a><span class="ln">   225</span>	
+<a id="L226"></a><span class="ln">   226</span>		return
+<a id="L227"></a><span class="ln">   227</span>	}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>	func matchHostnames(pattern, host string) bool {
+<a id="L230"></a><span class="ln">   230</span>		if len(pattern) == 0 || len(host) == 0 {
+<a id="L231"></a><span class="ln">   231</span>			return false
+<a id="L232"></a><span class="ln">   232</span>		}
+<a id="L233"></a><span class="ln">   233</span>	
+<a id="L234"></a><span class="ln">   234</span>		patternParts := strings.Split(pattern, &#34;.&#34;)
+<a id="L235"></a><span class="ln">   235</span>		hostParts := strings.Split(host, &#34;.&#34;)
+<a id="L236"></a><span class="ln">   236</span>	
+<a id="L237"></a><span class="ln">   237</span>		if len(patternParts) != len(hostParts) {
+<a id="L238"></a><span class="ln">   238</span>			return false
+<a id="L239"></a><span class="ln">   239</span>		}
+<a id="L240"></a><span class="ln">   240</span>	
+<a id="L241"></a><span class="ln">   241</span>		for i, patternPart := range patternParts {
+<a id="L242"></a><span class="ln">   242</span>			if patternPart == &#34;*&#34; {
+<a id="L243"></a><span class="ln">   243</span>				continue
+<a id="L244"></a><span class="ln">   244</span>			}
+<a id="L245"></a><span class="ln">   245</span>			if patternPart != hostParts[i] {
+<a id="L246"></a><span class="ln">   246</span>				return false
+<a id="L247"></a><span class="ln">   247</span>			}
+<a id="L248"></a><span class="ln">   248</span>		}
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>		return true
+<a id="L251"></a><span class="ln">   251</span>	}
+<a id="L252"></a><span class="ln">   252</span>	
+<a id="L253"></a><span class="ln">   253</span>	<span class="comment">// toLowerCaseASCII returns a lower-case version of in. See RFC 6125 6.4.1. We use</span>
+<a id="L254"></a><span class="ln">   254</span>	<span class="comment">// an explicitly ASCII function to avoid any sharp corners resulting from</span>
+<a id="L255"></a><span class="ln">   255</span>	<span class="comment">// performing Unicode operations on DNS labels.</span>
+<a id="L256"></a><span class="ln">   256</span>	func toLowerCaseASCII(in string) string {
+<a id="L257"></a><span class="ln">   257</span>		<span class="comment">// If the string is already lower-case then there&#39;s nothing to do.</span>
+<a id="L258"></a><span class="ln">   258</span>		isAlreadyLowerCase := true
+<a id="L259"></a><span class="ln">   259</span>		for _, c := range in {
+<a id="L260"></a><span class="ln">   260</span>			if c == utf8.RuneError {
+<a id="L261"></a><span class="ln">   261</span>				<span class="comment">// If we get a UTF-8 error then there might be</span>
+<a id="L262"></a><span class="ln">   262</span>				<span class="comment">// upper-case ASCII bytes in the invalid sequence.</span>
+<a id="L263"></a><span class="ln">   263</span>				isAlreadyLowerCase = false
+<a id="L264"></a><span class="ln">   264</span>				break
+<a id="L265"></a><span class="ln">   265</span>			}
+<a id="L266"></a><span class="ln">   266</span>			if &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;Z&#39; {
+<a id="L267"></a><span class="ln">   267</span>				isAlreadyLowerCase = false
+<a id="L268"></a><span class="ln">   268</span>				break
+<a id="L269"></a><span class="ln">   269</span>			}
+<a id="L270"></a><span class="ln">   270</span>		}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>		if isAlreadyLowerCase {
+<a id="L273"></a><span class="ln">   273</span>			return in
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>	
+<a id="L276"></a><span class="ln">   276</span>		out := []byte(in)
+<a id="L277"></a><span class="ln">   277</span>		for i, c := range out {
+<a id="L278"></a><span class="ln">   278</span>			if &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;Z&#39; {
+<a id="L279"></a><span class="ln">   279</span>				out[i] += &#39;a&#39; - &#39;A&#39;
+<a id="L280"></a><span class="ln">   280</span>			}
+<a id="L281"></a><span class="ln">   281</span>		}
+<a id="L282"></a><span class="ln">   282</span>		return string(out)
+<a id="L283"></a><span class="ln">   283</span>	}
+<a id="L284"></a><span class="ln">   284</span>	
+<a id="L285"></a><span class="ln">   285</span>	<span class="comment">// VerifyHostname returns nil if c is a valid certificate for the named host.</span>
+<a id="L286"></a><span class="ln">   286</span>	<span class="comment">// Otherwise it returns an error describing the mismatch.</span>
+<a id="L287"></a><span class="ln">   287</span>	func (c *Certificate) VerifyHostname(h string) error {
+<a id="L288"></a><span class="ln">   288</span>		lowered := toLowerCaseASCII(h)
+<a id="L289"></a><span class="ln">   289</span>	
+<a id="L290"></a><span class="ln">   290</span>		if len(c.DNSNames) &gt; 0 {
+<a id="L291"></a><span class="ln">   291</span>			for _, match := range c.DNSNames {
+<a id="L292"></a><span class="ln">   292</span>				if matchHostnames(toLowerCaseASCII(match), lowered) {
+<a id="L293"></a><span class="ln">   293</span>					return nil
+<a id="L294"></a><span class="ln">   294</span>				}
+<a id="L295"></a><span class="ln">   295</span>			}
+<a id="L296"></a><span class="ln">   296</span>			<span class="comment">// If Subject Alt Name is given, we ignore the common name.</span>
+<a id="L297"></a><span class="ln">   297</span>		} else if matchHostnames(toLowerCaseASCII(c.Subject.CommonName), lowered) {
+<a id="L298"></a><span class="ln">   298</span>			return nil
+<a id="L299"></a><span class="ln">   299</span>		}
+<a id="L300"></a><span class="ln">   300</span>	
+<a id="L301"></a><span class="ln">   301</span>		return HostnameError{c, h}
+<a id="L302"></a><span class="ln">   302</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

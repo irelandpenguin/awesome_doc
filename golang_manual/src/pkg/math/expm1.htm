@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/expm1.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/expm1.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package math
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// The original C code, the long comment, and the constants</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// below are from FreeBSD&#39;s /usr/src/lib/msun/src/s_expm1.c</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// and came with this notice.  The go code is a simplified</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// version of the original C.</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// ====================================================</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">//</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// Developed at SunPro, a Sun Microsystems, Inc. business.</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// Permission to use, copy, modify, and distribute this</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// software is freely granted, provided that this notice</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// is preserved.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// ====================================================</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// expm1(x)</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// Returns exp(x)-1, the exponential of x minus 1.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// Method</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//   1. Argument reduction:</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">//      Given x, find r and integer k such that</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">//</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">//               x = k*ln2 + r,  |r| &lt;= 0.5*ln2 ~ 0.34658</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">//      Here a correction term c will be computed to compensate</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">//      the error in r when rounded to a floating-point number.</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">//</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//   2. Approximating expm1(r) by a special rational function on</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//      the interval [0,0.34658]:</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//      Since</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//          r*(exp(r)+1)/(exp(r)-1) = 2+ r**2/6 - r**4/360 + ...</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//      we define R1(r*r) by</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//          r*(exp(r)+1)/(exp(r)-1) = 2+ r**2/6 * R1(r*r)</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//      That is,</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//          R1(r**2) = 6/r *((exp(r)+1)/(exp(r)-1) - 2/r)</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//                   = 6/r * ( 1 + 2.0*(1/(exp(r)-1) - 1/r))</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//                   = 1 - r**2/60 + r**4/2520 - r**6/100800 + ...</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//      We use a special Reme algorithm on [0,0.347] to generate</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//      a polynomial of degree 5 in r*r to approximate R1. The</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//      maximum error of this polynomial approximation is bounded</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//      by 2**-61. In other words,</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//          R1(z) ~ 1.0 + Q1*z + Q2*z**2 + Q3*z**3 + Q4*z**4 + Q5*z**5</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">//      where   Q1  =  -1.6666666666666567384E-2,</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//              Q2  =   3.9682539681370365873E-4,</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//              Q3  =  -9.9206344733435987357E-6,</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//              Q4  =   2.5051361420808517002E-7,</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//              Q5  =  -6.2843505682382617102E-9;</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//      (where z=r*r, and the values of Q1 to Q5 are listed below)</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">//      with error bounded by</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//          |                  5           |     -61</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//          | 1.0+Q1*z+...+Q5*z   -  R1(z) | &lt;= 2</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//          |                              |</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">//</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">//      expm1(r) = exp(r)-1 is then computed by the following</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">//      specific way which minimize the accumulation rounding error:</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">//                             2     3</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">//                            r     r    [ 3 - (R1 + R1*r/2)  ]</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">//            expm1(r) = r + --- + --- * [--------------------]</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">//                            2     2    [ 6 - r*(3 - R1*r/2) ]</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">//</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">//      To compensate the error in the argument reduction, we use</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">//              expm1(r+c) = expm1(r) + c + expm1(r)*c</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">//                         ~ expm1(r) + c + r*c</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">//      Thus c+r*c will be added in as the correction terms for</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">//      expm1(r+c). Now rearrange the term to avoid optimization</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">//      screw up:</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//                      (      2                                    2 )</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">//                      ({  ( r    [ R1 -  (3 - R1*r/2) ]  )  }    r  )</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//       expm1(r+c)~r - ({r*(--- * [--------------------]-c)-c} - --- )</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">//                      ({  ( 2    [ 6 - r*(3 - R1*r/2) ]  )  }    2  )</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">//                      (                                             )</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">//</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">//                 = r - E</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">//   3. Scale back to obtain expm1(x):</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">//      From step 1, we have</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">//         expm1(x) = either 2**k*[expm1(r)+1] - 1</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">//                  = or     2**k*[expm1(r) + (1-2**-k)]</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">//   4. Implementation notes:</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">//      (A). To save one multiplication, we scale the coefficient Qi</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">//           to Qi*2**i, and replace z by (x**2)/2.</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">//      (B). To achieve maximum accuracy, we compute expm1(x) by</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">//        (i)   if x &lt; -56*ln2, return -1.0, (raise inexact if x!=inf)</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">//        (ii)  if k=0, return r-E</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">//        (iii) if k=-1, return 0.5*(r-E)-0.5</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">//        (iv)  if k=1 if r &lt; -0.25, return 2*((r+0.5)- E)</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">//                     else          return  1.0+2.0*(r-E);</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">//        (v)   if (k&lt;-2||k&gt;56) return 2**k(1-(E-r)) - 1 (or exp(x)-1)</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">//        (vi)  if k &lt;= 20, return 2**k((1-2**-k)-(E-r)), else</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">//        (vii) return 2**k(1-((E+2**-k)-r))</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">//</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">// Special cases:</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">//      expm1(INF) is INF, expm1(NaN) is NaN;</span>
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">//      expm1(-INF) is -1, and</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">//      for finite argument, only expm1(0)=0 is exact.</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">//</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// Accuracy:</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">//      according to an error analysis, the error is always less than</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">//      1 ulp (unit in the last place).</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">//</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// Misc. info.</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">//      For IEEE double</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">//          if x &gt;  7.09782712893383973096e+02 then expm1(x) overflow</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">//</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// Constants:</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// The hexadecimal values are the intended ones for the following</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// constants. The decimal values may be used, provided that the</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// compiler will convert from decimal to binary accurately enough</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// to produce the hexadecimal values shown.</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">//</span>
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// Expm1 returns e**x - 1, the base-e exponential of x minus 1.</span>
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">// It is more accurate than Exp(x) - 1 when x is near zero.</span>
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">//</span>
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// Special cases are:</span>
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">//	Expm1(+Inf) = +Inf</span>
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">//	Expm1(-Inf) = -1</span>
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">//	Expm1(NaN) = NaN</span>
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// Very large values overflow to -1 or +Inf.</span>
+<a id="L124"></a><span class="ln">   124</span>	func Expm1(x float64) float64
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	func expm1(x float64) float64 {
+<a id="L127"></a><span class="ln">   127</span>		const (
+<a id="L128"></a><span class="ln">   128</span>			Othreshold = 7.09782712893383973096e+02 <span class="comment">// 0x40862E42FEFA39EF</span>
+<a id="L129"></a><span class="ln">   129</span>			Ln2X56     = 3.88162421113569373274e+01 <span class="comment">// 0x4043687a9f1af2b1</span>
+<a id="L130"></a><span class="ln">   130</span>			Ln2HalfX3  = 1.03972077083991796413e+00 <span class="comment">// 0x3ff0a2b23f3bab73</span>
+<a id="L131"></a><span class="ln">   131</span>			Ln2Half    = 3.46573590279972654709e-01 <span class="comment">// 0x3fd62e42fefa39ef</span>
+<a id="L132"></a><span class="ln">   132</span>			Ln2Hi      = 6.93147180369123816490e-01 <span class="comment">// 0x3fe62e42fee00000</span>
+<a id="L133"></a><span class="ln">   133</span>			Ln2Lo      = 1.90821492927058770002e-10 <span class="comment">// 0x3dea39ef35793c76</span>
+<a id="L134"></a><span class="ln">   134</span>			InvLn2     = 1.44269504088896338700e+00 <span class="comment">// 0x3ff71547652b82fe</span>
+<a id="L135"></a><span class="ln">   135</span>			Tiny       = 1.0 / (1 &lt;&lt; 54)            <span class="comment">// 2**-54 = 0x3c90000000000000</span>
+<a id="L136"></a><span class="ln">   136</span>			<span class="comment">// scaled coefficients related to expm1</span>
+<a id="L137"></a><span class="ln">   137</span>			Q1 = -3.33333333333331316428e-02 <span class="comment">// 0xBFA11111111110F4</span>
+<a id="L138"></a><span class="ln">   138</span>			Q2 = 1.58730158725481460165e-03  <span class="comment">// 0x3F5A01A019FE5585</span>
+<a id="L139"></a><span class="ln">   139</span>			Q3 = -7.93650757867487942473e-05 <span class="comment">// 0xBF14CE199EAADBB7</span>
+<a id="L140"></a><span class="ln">   140</span>			Q4 = 4.00821782732936239552e-06  <span class="comment">// 0x3ED0CFCA86E65239</span>
+<a id="L141"></a><span class="ln">   141</span>			Q5 = -2.01099218183624371326e-07 <span class="comment">// 0xBE8AFDB76E09C32D</span>
+<a id="L142"></a><span class="ln">   142</span>		)
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>		<span class="comment">// special cases</span>
+<a id="L145"></a><span class="ln">   145</span>		switch {
+<a id="L146"></a><span class="ln">   146</span>		case IsInf(x, 1) || IsNaN(x):
+<a id="L147"></a><span class="ln">   147</span>			return x
+<a id="L148"></a><span class="ln">   148</span>		case IsInf(x, -1):
+<a id="L149"></a><span class="ln">   149</span>			return -1
+<a id="L150"></a><span class="ln">   150</span>		}
+<a id="L151"></a><span class="ln">   151</span>	
+<a id="L152"></a><span class="ln">   152</span>		absx := x
+<a id="L153"></a><span class="ln">   153</span>		sign := false
+<a id="L154"></a><span class="ln">   154</span>		if x &lt; 0 {
+<a id="L155"></a><span class="ln">   155</span>			absx = -absx
+<a id="L156"></a><span class="ln">   156</span>			sign = true
+<a id="L157"></a><span class="ln">   157</span>		}
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// filter out huge argument</span>
+<a id="L160"></a><span class="ln">   160</span>		if absx &gt;= Ln2X56 { <span class="comment">// if |x| &gt;= 56 * ln2</span>
+<a id="L161"></a><span class="ln">   161</span>			if absx &gt;= Othreshold { <span class="comment">// if |x| &gt;= 709.78...</span>
+<a id="L162"></a><span class="ln">   162</span>				return Inf(1) <span class="comment">// overflow</span>
+<a id="L163"></a><span class="ln">   163</span>			}
+<a id="L164"></a><span class="ln">   164</span>			if sign {
+<a id="L165"></a><span class="ln">   165</span>				return -1 <span class="comment">// x &lt; -56*ln2, return -1.0</span>
+<a id="L166"></a><span class="ln">   166</span>			}
+<a id="L167"></a><span class="ln">   167</span>		}
+<a id="L168"></a><span class="ln">   168</span>	
+<a id="L169"></a><span class="ln">   169</span>		<span class="comment">// argument reduction</span>
+<a id="L170"></a><span class="ln">   170</span>		var c float64
+<a id="L171"></a><span class="ln">   171</span>		var k int
+<a id="L172"></a><span class="ln">   172</span>		if absx &gt; Ln2Half { <span class="comment">// if  |x| &gt; 0.5 * ln2</span>
+<a id="L173"></a><span class="ln">   173</span>			var hi, lo float64
+<a id="L174"></a><span class="ln">   174</span>			if absx &lt; Ln2HalfX3 { <span class="comment">// and |x| &lt; 1.5 * ln2</span>
+<a id="L175"></a><span class="ln">   175</span>				if !sign {
+<a id="L176"></a><span class="ln">   176</span>					hi = x - Ln2Hi
+<a id="L177"></a><span class="ln">   177</span>					lo = Ln2Lo
+<a id="L178"></a><span class="ln">   178</span>					k = 1
+<a id="L179"></a><span class="ln">   179</span>				} else {
+<a id="L180"></a><span class="ln">   180</span>					hi = x + Ln2Hi
+<a id="L181"></a><span class="ln">   181</span>					lo = -Ln2Lo
+<a id="L182"></a><span class="ln">   182</span>					k = -1
+<a id="L183"></a><span class="ln">   183</span>				}
+<a id="L184"></a><span class="ln">   184</span>			} else {
+<a id="L185"></a><span class="ln">   185</span>				if !sign {
+<a id="L186"></a><span class="ln">   186</span>					k = int(InvLn2*x + 0.5)
+<a id="L187"></a><span class="ln">   187</span>				} else {
+<a id="L188"></a><span class="ln">   188</span>					k = int(InvLn2*x - 0.5)
+<a id="L189"></a><span class="ln">   189</span>				}
+<a id="L190"></a><span class="ln">   190</span>				t := float64(k)
+<a id="L191"></a><span class="ln">   191</span>				hi = x - t*Ln2Hi <span class="comment">// t * Ln2Hi is exact here</span>
+<a id="L192"></a><span class="ln">   192</span>				lo = t * Ln2Lo
+<a id="L193"></a><span class="ln">   193</span>			}
+<a id="L194"></a><span class="ln">   194</span>			x = hi - lo
+<a id="L195"></a><span class="ln">   195</span>			c = (hi - x) - lo
+<a id="L196"></a><span class="ln">   196</span>		} else if absx &lt; Tiny { <span class="comment">// when |x| &lt; 2**-54, return x</span>
+<a id="L197"></a><span class="ln">   197</span>			return x
+<a id="L198"></a><span class="ln">   198</span>		} else {
+<a id="L199"></a><span class="ln">   199</span>			k = 0
+<a id="L200"></a><span class="ln">   200</span>		}
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>		<span class="comment">// x is now in primary range</span>
+<a id="L203"></a><span class="ln">   203</span>		hfx := 0.5 * x
+<a id="L204"></a><span class="ln">   204</span>		hxs := x * hfx
+<a id="L205"></a><span class="ln">   205</span>		r1 := 1 + hxs*(Q1+hxs*(Q2+hxs*(Q3+hxs*(Q4+hxs*Q5))))
+<a id="L206"></a><span class="ln">   206</span>		t := 3 - r1*hfx
+<a id="L207"></a><span class="ln">   207</span>		e := hxs * ((r1 - t) / (6.0 - x*t))
+<a id="L208"></a><span class="ln">   208</span>		if k != 0 {
+<a id="L209"></a><span class="ln">   209</span>			e = (x*(e-c) - c)
+<a id="L210"></a><span class="ln">   210</span>			e -= hxs
+<a id="L211"></a><span class="ln">   211</span>			switch {
+<a id="L212"></a><span class="ln">   212</span>			case k == -1:
+<a id="L213"></a><span class="ln">   213</span>				return 0.5*(x-e) - 0.5
+<a id="L214"></a><span class="ln">   214</span>			case k == 1:
+<a id="L215"></a><span class="ln">   215</span>				if x &lt; -0.25 {
+<a id="L216"></a><span class="ln">   216</span>					return -2 * (e - (x + 0.5))
+<a id="L217"></a><span class="ln">   217</span>				}
+<a id="L218"></a><span class="ln">   218</span>				return 1 + 2*(x-e)
+<a id="L219"></a><span class="ln">   219</span>			case k &lt;= -2 || k &gt; 56: <span class="comment">// suffice to return exp(x)-1</span>
+<a id="L220"></a><span class="ln">   220</span>				y := 1 - (e - x)
+<a id="L221"></a><span class="ln">   221</span>				y = Float64frombits(Float64bits(y) + uint64(k)&lt;&lt;52) <span class="comment">// add k to y&#39;s exponent</span>
+<a id="L222"></a><span class="ln">   222</span>				return y - 1
+<a id="L223"></a><span class="ln">   223</span>			}
+<a id="L224"></a><span class="ln">   224</span>			if k &lt; 20 {
+<a id="L225"></a><span class="ln">   225</span>				t := Float64frombits(0x3ff0000000000000 - (0x20000000000000 &gt;&gt; uint(k))) <span class="comment">// t=1-2**-k</span>
+<a id="L226"></a><span class="ln">   226</span>				y := t - (e - x)
+<a id="L227"></a><span class="ln">   227</span>				y = Float64frombits(Float64bits(y) + uint64(k)&lt;&lt;52) <span class="comment">// add k to y&#39;s exponent</span>
+<a id="L228"></a><span class="ln">   228</span>				return y
+<a id="L229"></a><span class="ln">   229</span>			}
+<a id="L230"></a><span class="ln">   230</span>			t := Float64frombits(uint64((0x3ff - k) &lt;&lt; 52)) <span class="comment">// 2**-k</span>
+<a id="L231"></a><span class="ln">   231</span>			y := x - (e + t)
+<a id="L232"></a><span class="ln">   232</span>			y += 1
+<a id="L233"></a><span class="ln">   233</span>			y = Float64frombits(Float64bits(y) + uint64(k)&lt;&lt;52) <span class="comment">// add k to y&#39;s exponent</span>
+<a id="L234"></a><span class="ln">   234</span>			return y
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>		return x - (x*e - hxs) <span class="comment">// c is 0</span>
+<a id="L237"></a><span class="ln">   237</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

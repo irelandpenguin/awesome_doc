@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/compress/gzip/gzip.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/compress/gzip/gzip.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package gzip
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;compress/flate&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;errors&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;fmt&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;hash&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;hash/crc32&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;io&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// These constants are copied from the flate package, so that code that imports</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// &#34;compress/gzip&#34; does not also have to import &#34;compress/flate&#34;.</span>
+<a id="L18"></a><span class="ln">    18</span>	const (
+<a id="L19"></a><span class="ln">    19</span>		NoCompression      = flate.NoCompression
+<a id="L20"></a><span class="ln">    20</span>		BestSpeed          = flate.BestSpeed
+<a id="L21"></a><span class="ln">    21</span>		BestCompression    = flate.BestCompression
+<a id="L22"></a><span class="ln">    22</span>		DefaultCompression = flate.DefaultCompression
+<a id="L23"></a><span class="ln">    23</span>	)
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// A Writer is an io.WriteCloser that satisfies writes by compressing data written</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// to its wrapped io.Writer.</span>
+<a id="L27"></a><span class="ln">    27</span>	type Writer struct {
+<a id="L28"></a><span class="ln">    28</span>		Header
+<a id="L29"></a><span class="ln">    29</span>		w          io.Writer
+<a id="L30"></a><span class="ln">    30</span>		level      int
+<a id="L31"></a><span class="ln">    31</span>		compressor io.WriteCloser
+<a id="L32"></a><span class="ln">    32</span>		digest     hash.Hash32
+<a id="L33"></a><span class="ln">    33</span>		size       uint32
+<a id="L34"></a><span class="ln">    34</span>		closed     bool
+<a id="L35"></a><span class="ln">    35</span>		buf        [10]byte
+<a id="L36"></a><span class="ln">    36</span>		err        error
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// NewWriter creates a new Writer that satisfies writes by compressing data</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// written to w.</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// It is the caller&#39;s responsibility to call Close on the WriteCloser when done.</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// Writes may be buffered and not flushed until Close.</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Callers that wish to set the fields in Writer.Header must do so before</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// the first call to Write or Close. The Comment and Name header fields are</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// UTF-8 strings in Go, but the underlying format requires NUL-terminated ISO</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// 8859-1 (Latin-1). NUL or non-Latin-1 runes in those strings will lead to an</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// error on Write.</span>
+<a id="L50"></a><span class="ln">    50</span>	func NewWriter(w io.Writer) *Writer {
+<a id="L51"></a><span class="ln">    51</span>		z, _ := NewWriterLevel(w, DefaultCompression)
+<a id="L52"></a><span class="ln">    52</span>		return z
+<a id="L53"></a><span class="ln">    53</span>	}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// NewWriterLevel is like NewWriter but specifies the compression level instead</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// of assuming DefaultCompression.</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// The compression level can be DefaultCompression, NoCompression, or any</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// integer value between BestSpeed and BestCompression inclusive. The error</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// returned will be nil if the level is valid.</span>
+<a id="L61"></a><span class="ln">    61</span>	func NewWriterLevel(w io.Writer, level int) (*Writer, error) {
+<a id="L62"></a><span class="ln">    62</span>		if level &lt; DefaultCompression || level &gt; BestCompression {
+<a id="L63"></a><span class="ln">    63</span>			return nil, fmt.Errorf(&#34;gzip: invalid compression level: %d&#34;, level)
+<a id="L64"></a><span class="ln">    64</span>		}
+<a id="L65"></a><span class="ln">    65</span>		return &amp;Writer{
+<a id="L66"></a><span class="ln">    66</span>			Header: Header{
+<a id="L67"></a><span class="ln">    67</span>				OS: 255, <span class="comment">// unknown</span>
+<a id="L68"></a><span class="ln">    68</span>			},
+<a id="L69"></a><span class="ln">    69</span>			w:      w,
+<a id="L70"></a><span class="ln">    70</span>			level:  level,
+<a id="L71"></a><span class="ln">    71</span>			digest: crc32.NewIEEE(),
+<a id="L72"></a><span class="ln">    72</span>		}, nil
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// GZIP (RFC 1952) is little-endian, unlike ZLIB (RFC 1950).</span>
+<a id="L76"></a><span class="ln">    76</span>	func put2(p []byte, v uint16) {
+<a id="L77"></a><span class="ln">    77</span>		p[0] = uint8(v &gt;&gt; 0)
+<a id="L78"></a><span class="ln">    78</span>		p[1] = uint8(v &gt;&gt; 8)
+<a id="L79"></a><span class="ln">    79</span>	}
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	func put4(p []byte, v uint32) {
+<a id="L82"></a><span class="ln">    82</span>		p[0] = uint8(v &gt;&gt; 0)
+<a id="L83"></a><span class="ln">    83</span>		p[1] = uint8(v &gt;&gt; 8)
+<a id="L84"></a><span class="ln">    84</span>		p[2] = uint8(v &gt;&gt; 16)
+<a id="L85"></a><span class="ln">    85</span>		p[3] = uint8(v &gt;&gt; 24)
+<a id="L86"></a><span class="ln">    86</span>	}
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// writeBytes writes a length-prefixed byte slice to z.w.</span>
+<a id="L89"></a><span class="ln">    89</span>	func (z *Writer) writeBytes(b []byte) error {
+<a id="L90"></a><span class="ln">    90</span>		if len(b) &gt; 0xffff {
+<a id="L91"></a><span class="ln">    91</span>			return errors.New(&#34;gzip.Write: Extra data is too large&#34;)
+<a id="L92"></a><span class="ln">    92</span>		}
+<a id="L93"></a><span class="ln">    93</span>		put2(z.buf[0:2], uint16(len(b)))
+<a id="L94"></a><span class="ln">    94</span>		_, err := z.w.Write(z.buf[0:2])
+<a id="L95"></a><span class="ln">    95</span>		if err != nil {
+<a id="L96"></a><span class="ln">    96</span>			return err
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>		_, err = z.w.Write(b)
+<a id="L99"></a><span class="ln">    99</span>		return err
+<a id="L100"></a><span class="ln">   100</span>	}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// writeString writes a UTF-8 string s in GZIP&#39;s format to z.w.</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// GZIP (RFC 1952) specifies that strings are NUL-terminated ISO 8859-1 (Latin-1).</span>
+<a id="L104"></a><span class="ln">   104</span>	func (z *Writer) writeString(s string) (err error) {
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">// GZIP stores Latin-1 strings; error if non-Latin-1; convert if non-ASCII.</span>
+<a id="L106"></a><span class="ln">   106</span>		needconv := false
+<a id="L107"></a><span class="ln">   107</span>		for _, v := range s {
+<a id="L108"></a><span class="ln">   108</span>			if v == 0 || v &gt; 0xff {
+<a id="L109"></a><span class="ln">   109</span>				return errors.New(&#34;gzip.Write: non-Latin-1 header string&#34;)
+<a id="L110"></a><span class="ln">   110</span>			}
+<a id="L111"></a><span class="ln">   111</span>			if v &gt; 0x7f {
+<a id="L112"></a><span class="ln">   112</span>				needconv = true
+<a id="L113"></a><span class="ln">   113</span>			}
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		if needconv {
+<a id="L116"></a><span class="ln">   116</span>			b := make([]byte, 0, len(s))
+<a id="L117"></a><span class="ln">   117</span>			for _, v := range s {
+<a id="L118"></a><span class="ln">   118</span>				b = append(b, byte(v))
+<a id="L119"></a><span class="ln">   119</span>			}
+<a id="L120"></a><span class="ln">   120</span>			_, err = z.w.Write(b)
+<a id="L121"></a><span class="ln">   121</span>		} else {
+<a id="L122"></a><span class="ln">   122</span>			_, err = io.WriteString(z.w, s)
+<a id="L123"></a><span class="ln">   123</span>		}
+<a id="L124"></a><span class="ln">   124</span>		if err != nil {
+<a id="L125"></a><span class="ln">   125</span>			return err
+<a id="L126"></a><span class="ln">   126</span>		}
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// GZIP strings are NUL-terminated.</span>
+<a id="L128"></a><span class="ln">   128</span>		z.buf[0] = 0
+<a id="L129"></a><span class="ln">   129</span>		_, err = z.w.Write(z.buf[0:1])
+<a id="L130"></a><span class="ln">   130</span>		return err
+<a id="L131"></a><span class="ln">   131</span>	}
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// Write writes a compressed form of p to the underlying io.Writer. The</span>
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// compressed bytes are not necessarily flushed until the Writer is closed.</span>
+<a id="L135"></a><span class="ln">   135</span>	func (z *Writer) Write(p []byte) (int, error) {
+<a id="L136"></a><span class="ln">   136</span>		if z.err != nil {
+<a id="L137"></a><span class="ln">   137</span>			return 0, z.err
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>		var n int
+<a id="L140"></a><span class="ln">   140</span>		<span class="comment">// Write the GZIP header lazily.</span>
+<a id="L141"></a><span class="ln">   141</span>		if z.compressor == nil {
+<a id="L142"></a><span class="ln">   142</span>			z.buf[0] = gzipID1
+<a id="L143"></a><span class="ln">   143</span>			z.buf[1] = gzipID2
+<a id="L144"></a><span class="ln">   144</span>			z.buf[2] = gzipDeflate
+<a id="L145"></a><span class="ln">   145</span>			z.buf[3] = 0
+<a id="L146"></a><span class="ln">   146</span>			if z.Extra != nil {
+<a id="L147"></a><span class="ln">   147</span>				z.buf[3] |= 0x04
+<a id="L148"></a><span class="ln">   148</span>			}
+<a id="L149"></a><span class="ln">   149</span>			if z.Name != &#34;&#34; {
+<a id="L150"></a><span class="ln">   150</span>				z.buf[3] |= 0x08
+<a id="L151"></a><span class="ln">   151</span>			}
+<a id="L152"></a><span class="ln">   152</span>			if z.Comment != &#34;&#34; {
+<a id="L153"></a><span class="ln">   153</span>				z.buf[3] |= 0x10
+<a id="L154"></a><span class="ln">   154</span>			}
+<a id="L155"></a><span class="ln">   155</span>			put4(z.buf[4:8], uint32(z.ModTime.Unix()))
+<a id="L156"></a><span class="ln">   156</span>			if z.level == BestCompression {
+<a id="L157"></a><span class="ln">   157</span>				z.buf[8] = 2
+<a id="L158"></a><span class="ln">   158</span>			} else if z.level == BestSpeed {
+<a id="L159"></a><span class="ln">   159</span>				z.buf[8] = 4
+<a id="L160"></a><span class="ln">   160</span>			} else {
+<a id="L161"></a><span class="ln">   161</span>				z.buf[8] = 0
+<a id="L162"></a><span class="ln">   162</span>			}
+<a id="L163"></a><span class="ln">   163</span>			z.buf[9] = z.OS
+<a id="L164"></a><span class="ln">   164</span>			n, z.err = z.w.Write(z.buf[0:10])
+<a id="L165"></a><span class="ln">   165</span>			if z.err != nil {
+<a id="L166"></a><span class="ln">   166</span>				return n, z.err
+<a id="L167"></a><span class="ln">   167</span>			}
+<a id="L168"></a><span class="ln">   168</span>			if z.Extra != nil {
+<a id="L169"></a><span class="ln">   169</span>				z.err = z.writeBytes(z.Extra)
+<a id="L170"></a><span class="ln">   170</span>				if z.err != nil {
+<a id="L171"></a><span class="ln">   171</span>					return n, z.err
+<a id="L172"></a><span class="ln">   172</span>				}
+<a id="L173"></a><span class="ln">   173</span>			}
+<a id="L174"></a><span class="ln">   174</span>			if z.Name != &#34;&#34; {
+<a id="L175"></a><span class="ln">   175</span>				z.err = z.writeString(z.Name)
+<a id="L176"></a><span class="ln">   176</span>				if z.err != nil {
+<a id="L177"></a><span class="ln">   177</span>					return n, z.err
+<a id="L178"></a><span class="ln">   178</span>				}
+<a id="L179"></a><span class="ln">   179</span>			}
+<a id="L180"></a><span class="ln">   180</span>			if z.Comment != &#34;&#34; {
+<a id="L181"></a><span class="ln">   181</span>				z.err = z.writeString(z.Comment)
+<a id="L182"></a><span class="ln">   182</span>				if z.err != nil {
+<a id="L183"></a><span class="ln">   183</span>					return n, z.err
+<a id="L184"></a><span class="ln">   184</span>				}
+<a id="L185"></a><span class="ln">   185</span>			}
+<a id="L186"></a><span class="ln">   186</span>			z.compressor, _ = flate.NewWriter(z.w, z.level)
+<a id="L187"></a><span class="ln">   187</span>		}
+<a id="L188"></a><span class="ln">   188</span>		z.size += uint32(len(p))
+<a id="L189"></a><span class="ln">   189</span>		z.digest.Write(p)
+<a id="L190"></a><span class="ln">   190</span>		n, z.err = z.compressor.Write(p)
+<a id="L191"></a><span class="ln">   191</span>		return n, z.err
+<a id="L192"></a><span class="ln">   192</span>	}
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>	<span class="comment">// Close closes the Writer. It does not close the underlying io.Writer.</span>
+<a id="L195"></a><span class="ln">   195</span>	func (z *Writer) Close() error {
+<a id="L196"></a><span class="ln">   196</span>		if z.err != nil {
+<a id="L197"></a><span class="ln">   197</span>			return z.err
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>		if z.closed {
+<a id="L200"></a><span class="ln">   200</span>			return nil
+<a id="L201"></a><span class="ln">   201</span>		}
+<a id="L202"></a><span class="ln">   202</span>		z.closed = true
+<a id="L203"></a><span class="ln">   203</span>		if z.compressor == nil {
+<a id="L204"></a><span class="ln">   204</span>			z.Write(nil)
+<a id="L205"></a><span class="ln">   205</span>			if z.err != nil {
+<a id="L206"></a><span class="ln">   206</span>				return z.err
+<a id="L207"></a><span class="ln">   207</span>			}
+<a id="L208"></a><span class="ln">   208</span>		}
+<a id="L209"></a><span class="ln">   209</span>		z.err = z.compressor.Close()
+<a id="L210"></a><span class="ln">   210</span>		if z.err != nil {
+<a id="L211"></a><span class="ln">   211</span>			return z.err
+<a id="L212"></a><span class="ln">   212</span>		}
+<a id="L213"></a><span class="ln">   213</span>		put4(z.buf[0:4], z.digest.Sum32())
+<a id="L214"></a><span class="ln">   214</span>		put4(z.buf[4:8], z.size)
+<a id="L215"></a><span class="ln">   215</span>		_, z.err = z.w.Write(z.buf[0:8])
+<a id="L216"></a><span class="ln">   216</span>		return z.err
+<a id="L217"></a><span class="ln">   217</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

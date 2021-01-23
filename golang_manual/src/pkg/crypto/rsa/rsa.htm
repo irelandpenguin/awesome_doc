@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/rsa/rsa.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/rsa/rsa.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package rsa implements RSA encryption as specified in PKCS#1.</span>
+<a id="L6"></a><span class="ln">     6</span>	package rsa
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// TODO(agl): Add support for PSS padding.</span>
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;crypto/rand&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;crypto/subtle&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;errors&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;hash&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;io&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;math/big&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	var bigZero = big.NewInt(0)
+<a id="L20"></a><span class="ln">    20</span>	var bigOne = big.NewInt(1)
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// A PublicKey represents the public part of an RSA key.</span>
+<a id="L23"></a><span class="ln">    23</span>	type PublicKey struct {
+<a id="L24"></a><span class="ln">    24</span>		N *big.Int <span class="comment">// modulus</span>
+<a id="L25"></a><span class="ln">    25</span>		E int      <span class="comment">// public exponent</span>
+<a id="L26"></a><span class="ln">    26</span>	}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// A PrivateKey represents an RSA key</span>
+<a id="L29"></a><span class="ln">    29</span>	type PrivateKey struct {
+<a id="L30"></a><span class="ln">    30</span>		PublicKey            <span class="comment">// public part.</span>
+<a id="L31"></a><span class="ln">    31</span>		D         *big.Int   <span class="comment">// private exponent</span>
+<a id="L32"></a><span class="ln">    32</span>		Primes    []*big.Int <span class="comment">// prime factors of N, has &gt;= 2 elements.</span>
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>		<span class="comment">// Precomputed contains precomputed values that speed up private</span>
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// operations, if available.</span>
+<a id="L36"></a><span class="ln">    36</span>		Precomputed PrecomputedValues
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	type PrecomputedValues struct {
+<a id="L40"></a><span class="ln">    40</span>		Dp, Dq *big.Int <span class="comment">// D mod (P-1) (or mod Q-1) </span>
+<a id="L41"></a><span class="ln">    41</span>		Qinv   *big.Int <span class="comment">// Q^-1 mod Q</span>
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>		<span class="comment">// CRTValues is used for the 3rd and subsequent primes. Due to a</span>
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">// historical accident, the CRT for the first two primes is handled</span>
+<a id="L45"></a><span class="ln">    45</span>		<span class="comment">// differently in PKCS#1 and interoperability is sufficiently</span>
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// important that we mirror this.</span>
+<a id="L47"></a><span class="ln">    47</span>		CRTValues []CRTValue
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// CRTValue contains the precomputed chinese remainder theorem values.</span>
+<a id="L51"></a><span class="ln">    51</span>	type CRTValue struct {
+<a id="L52"></a><span class="ln">    52</span>		Exp   *big.Int <span class="comment">// D mod (prime-1).</span>
+<a id="L53"></a><span class="ln">    53</span>		Coeff *big.Int <span class="comment">// R·Coeff ≡ 1 mod Prime.</span>
+<a id="L54"></a><span class="ln">    54</span>		R     *big.Int <span class="comment">// product of primes prior to this (inc p and q).</span>
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// Validate performs basic sanity checks on the key.</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// It returns nil if the key is valid, or else an error describing a problem.</span>
+<a id="L59"></a><span class="ln">    59</span>	func (priv *PrivateKey) Validate() error {
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// Check that the prime factors are actually prime. Note that this is</span>
+<a id="L61"></a><span class="ln">    61</span>		<span class="comment">// just a sanity check. Since the random witnesses chosen by</span>
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// ProbablyPrime are deterministic, given the candidate number, it&#39;s</span>
+<a id="L63"></a><span class="ln">    63</span>		<span class="comment">// easy for an attack to generate composites that pass this test.</span>
+<a id="L64"></a><span class="ln">    64</span>		for _, prime := range priv.Primes {
+<a id="L65"></a><span class="ln">    65</span>			if !prime.ProbablyPrime(20) {
+<a id="L66"></a><span class="ln">    66</span>				return errors.New(&#34;prime factor is composite&#34;)
+<a id="L67"></a><span class="ln">    67</span>			}
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>		<span class="comment">// Check that Πprimes == n.</span>
+<a id="L71"></a><span class="ln">    71</span>		modulus := new(big.Int).Set(bigOne)
+<a id="L72"></a><span class="ln">    72</span>		for _, prime := range priv.Primes {
+<a id="L73"></a><span class="ln">    73</span>			modulus.Mul(modulus, prime)
+<a id="L74"></a><span class="ln">    74</span>		}
+<a id="L75"></a><span class="ln">    75</span>		if modulus.Cmp(priv.N) != 0 {
+<a id="L76"></a><span class="ln">    76</span>			return errors.New(&#34;invalid modulus&#34;)
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// Check that e and totient(Πprimes) are coprime.</span>
+<a id="L79"></a><span class="ln">    79</span>		totient := new(big.Int).Set(bigOne)
+<a id="L80"></a><span class="ln">    80</span>		for _, prime := range priv.Primes {
+<a id="L81"></a><span class="ln">    81</span>			pminus1 := new(big.Int).Sub(prime, bigOne)
+<a id="L82"></a><span class="ln">    82</span>			totient.Mul(totient, pminus1)
+<a id="L83"></a><span class="ln">    83</span>		}
+<a id="L84"></a><span class="ln">    84</span>		e := big.NewInt(int64(priv.E))
+<a id="L85"></a><span class="ln">    85</span>		gcd := new(big.Int)
+<a id="L86"></a><span class="ln">    86</span>		x := new(big.Int)
+<a id="L87"></a><span class="ln">    87</span>		y := new(big.Int)
+<a id="L88"></a><span class="ln">    88</span>		gcd.GCD(x, y, totient, e)
+<a id="L89"></a><span class="ln">    89</span>		if gcd.Cmp(bigOne) != 0 {
+<a id="L90"></a><span class="ln">    90</span>			return errors.New(&#34;invalid public exponent E&#34;)
+<a id="L91"></a><span class="ln">    91</span>		}
+<a id="L92"></a><span class="ln">    92</span>		<span class="comment">// Check that de ≡ 1 (mod totient(Πprimes))</span>
+<a id="L93"></a><span class="ln">    93</span>		de := new(big.Int).Mul(priv.D, e)
+<a id="L94"></a><span class="ln">    94</span>		de.Mod(de, totient)
+<a id="L95"></a><span class="ln">    95</span>		if de.Cmp(bigOne) != 0 {
+<a id="L96"></a><span class="ln">    96</span>			return errors.New(&#34;invalid private exponent D&#34;)
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>		return nil
+<a id="L99"></a><span class="ln">    99</span>	}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// GenerateKey generates an RSA keypair of the given bit size.</span>
+<a id="L102"></a><span class="ln">   102</span>	func GenerateKey(random io.Reader, bits int) (priv *PrivateKey, err error) {
+<a id="L103"></a><span class="ln">   103</span>		return GenerateMultiPrimeKey(random, 2, bits)
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// GenerateMultiPrimeKey generates a multi-prime RSA keypair of the given bit</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// size, as suggested in [1]. Although the public keys are compatible</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// (actually, indistinguishable) from the 2-prime case, the private keys are</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// not. Thus it may not be possible to export multi-prime private keys in</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// certain formats or to subsequently import them into other code.</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">//</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// Table 1 in [2] suggests maximum numbers of primes for a given size.</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">//</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// [1] US patent 4405829 (1972, expired)</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// [2] http://www.cacr.math.uwaterloo.ca/techreports/2006/cacr2006-16.pdf</span>
+<a id="L116"></a><span class="ln">   116</span>	func GenerateMultiPrimeKey(random io.Reader, nprimes int, bits int) (priv *PrivateKey, err error) {
+<a id="L117"></a><span class="ln">   117</span>		priv = new(PrivateKey)
+<a id="L118"></a><span class="ln">   118</span>		priv.E = 65537
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>		if nprimes &lt; 2 {
+<a id="L121"></a><span class="ln">   121</span>			return nil, errors.New(&#34;rsa.GenerateMultiPrimeKey: nprimes must be &gt;= 2&#34;)
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>		primes := make([]*big.Int, nprimes)
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	NextSetOfPrimes:
+<a id="L127"></a><span class="ln">   127</span>		for {
+<a id="L128"></a><span class="ln">   128</span>			todo := bits
+<a id="L129"></a><span class="ln">   129</span>			for i := 0; i &lt; nprimes; i++ {
+<a id="L130"></a><span class="ln">   130</span>				primes[i], err = rand.Prime(random, todo/(nprimes-i))
+<a id="L131"></a><span class="ln">   131</span>				if err != nil {
+<a id="L132"></a><span class="ln">   132</span>					return nil, err
+<a id="L133"></a><span class="ln">   133</span>				}
+<a id="L134"></a><span class="ln">   134</span>				todo -= primes[i].BitLen()
+<a id="L135"></a><span class="ln">   135</span>			}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>			<span class="comment">// Make sure that primes is pairwise unequal.</span>
+<a id="L138"></a><span class="ln">   138</span>			for i, prime := range primes {
+<a id="L139"></a><span class="ln">   139</span>				for j := 0; j &lt; i; j++ {
+<a id="L140"></a><span class="ln">   140</span>					if prime.Cmp(primes[j]) == 0 {
+<a id="L141"></a><span class="ln">   141</span>						continue NextSetOfPrimes
+<a id="L142"></a><span class="ln">   142</span>					}
+<a id="L143"></a><span class="ln">   143</span>				}
+<a id="L144"></a><span class="ln">   144</span>			}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>			n := new(big.Int).Set(bigOne)
+<a id="L147"></a><span class="ln">   147</span>			totient := new(big.Int).Set(bigOne)
+<a id="L148"></a><span class="ln">   148</span>			pminus1 := new(big.Int)
+<a id="L149"></a><span class="ln">   149</span>			for _, prime := range primes {
+<a id="L150"></a><span class="ln">   150</span>				n.Mul(n, prime)
+<a id="L151"></a><span class="ln">   151</span>				pminus1.Sub(prime, bigOne)
+<a id="L152"></a><span class="ln">   152</span>				totient.Mul(totient, pminus1)
+<a id="L153"></a><span class="ln">   153</span>			}
+<a id="L154"></a><span class="ln">   154</span>	
+<a id="L155"></a><span class="ln">   155</span>			g := new(big.Int)
+<a id="L156"></a><span class="ln">   156</span>			priv.D = new(big.Int)
+<a id="L157"></a><span class="ln">   157</span>			y := new(big.Int)
+<a id="L158"></a><span class="ln">   158</span>			e := big.NewInt(int64(priv.E))
+<a id="L159"></a><span class="ln">   159</span>			g.GCD(priv.D, y, e, totient)
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>			if g.Cmp(bigOne) == 0 {
+<a id="L162"></a><span class="ln">   162</span>				priv.D.Add(priv.D, totient)
+<a id="L163"></a><span class="ln">   163</span>				priv.Primes = primes
+<a id="L164"></a><span class="ln">   164</span>				priv.N = n
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>				break
+<a id="L167"></a><span class="ln">   167</span>			}
+<a id="L168"></a><span class="ln">   168</span>		}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>		priv.Precompute()
+<a id="L171"></a><span class="ln">   171</span>		return
+<a id="L172"></a><span class="ln">   172</span>	}
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">// incCounter increments a four byte, big-endian counter.</span>
+<a id="L175"></a><span class="ln">   175</span>	func incCounter(c *[4]byte) {
+<a id="L176"></a><span class="ln">   176</span>		if c[3]++; c[3] != 0 {
+<a id="L177"></a><span class="ln">   177</span>			return
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>		if c[2]++; c[2] != 0 {
+<a id="L180"></a><span class="ln">   180</span>			return
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>		if c[1]++; c[1] != 0 {
+<a id="L183"></a><span class="ln">   183</span>			return
+<a id="L184"></a><span class="ln">   184</span>		}
+<a id="L185"></a><span class="ln">   185</span>		c[0]++
+<a id="L186"></a><span class="ln">   186</span>	}
+<a id="L187"></a><span class="ln">   187</span>	
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">// mgf1XOR XORs the bytes in out with a mask generated using the MGF1 function</span>
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// specified in PKCS#1 v2.1.</span>
+<a id="L190"></a><span class="ln">   190</span>	func mgf1XOR(out []byte, hash hash.Hash, seed []byte) {
+<a id="L191"></a><span class="ln">   191</span>		var counter [4]byte
+<a id="L192"></a><span class="ln">   192</span>		var digest []byte
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>		done := 0
+<a id="L195"></a><span class="ln">   195</span>		for done &lt; len(out) {
+<a id="L196"></a><span class="ln">   196</span>			hash.Write(seed)
+<a id="L197"></a><span class="ln">   197</span>			hash.Write(counter[0:4])
+<a id="L198"></a><span class="ln">   198</span>			digest = hash.Sum(digest[:0])
+<a id="L199"></a><span class="ln">   199</span>			hash.Reset()
+<a id="L200"></a><span class="ln">   200</span>	
+<a id="L201"></a><span class="ln">   201</span>			for i := 0; i &lt; len(digest) &amp;&amp; done &lt; len(out); i++ {
+<a id="L202"></a><span class="ln">   202</span>				out[done] ^= digest[i]
+<a id="L203"></a><span class="ln">   203</span>				done++
+<a id="L204"></a><span class="ln">   204</span>			}
+<a id="L205"></a><span class="ln">   205</span>			incCounter(&amp;counter)
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>	}
+<a id="L208"></a><span class="ln">   208</span>	
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">// ErrMessageTooLong is returned when attempting to encrypt a message which is</span>
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// too large for the size of the public key.</span>
+<a id="L211"></a><span class="ln">   211</span>	var ErrMessageTooLong = errors.New(&#34;crypto/rsa: message too long for RSA public key size&#34;)
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	func encrypt(c *big.Int, pub *PublicKey, m *big.Int) *big.Int {
+<a id="L214"></a><span class="ln">   214</span>		e := big.NewInt(int64(pub.E))
+<a id="L215"></a><span class="ln">   215</span>		c.Exp(m, e, pub.N)
+<a id="L216"></a><span class="ln">   216</span>		return c
+<a id="L217"></a><span class="ln">   217</span>	}
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// EncryptOAEP encrypts the given message with RSA-OAEP.</span>
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">// The message must be no longer than the length of the public modulus less</span>
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// twice the hash length plus 2.</span>
+<a id="L222"></a><span class="ln">   222</span>	func EncryptOAEP(hash hash.Hash, random io.Reader, pub *PublicKey, msg []byte, label []byte) (out []byte, err error) {
+<a id="L223"></a><span class="ln">   223</span>		hash.Reset()
+<a id="L224"></a><span class="ln">   224</span>		k := (pub.N.BitLen() + 7) / 8
+<a id="L225"></a><span class="ln">   225</span>		if len(msg) &gt; k-2*hash.Size()-2 {
+<a id="L226"></a><span class="ln">   226</span>			err = ErrMessageTooLong
+<a id="L227"></a><span class="ln">   227</span>			return
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>		hash.Write(label)
+<a id="L231"></a><span class="ln">   231</span>		lHash := hash.Sum(nil)
+<a id="L232"></a><span class="ln">   232</span>		hash.Reset()
+<a id="L233"></a><span class="ln">   233</span>	
+<a id="L234"></a><span class="ln">   234</span>		em := make([]byte, k)
+<a id="L235"></a><span class="ln">   235</span>		seed := em[1 : 1+hash.Size()]
+<a id="L236"></a><span class="ln">   236</span>		db := em[1+hash.Size():]
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>		copy(db[0:hash.Size()], lHash)
+<a id="L239"></a><span class="ln">   239</span>		db[len(db)-len(msg)-1] = 1
+<a id="L240"></a><span class="ln">   240</span>		copy(db[len(db)-len(msg):], msg)
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>		_, err = io.ReadFull(random, seed)
+<a id="L243"></a><span class="ln">   243</span>		if err != nil {
+<a id="L244"></a><span class="ln">   244</span>			return
+<a id="L245"></a><span class="ln">   245</span>		}
+<a id="L246"></a><span class="ln">   246</span>	
+<a id="L247"></a><span class="ln">   247</span>		mgf1XOR(db, hash, seed)
+<a id="L248"></a><span class="ln">   248</span>		mgf1XOR(seed, hash, db)
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>		m := new(big.Int)
+<a id="L251"></a><span class="ln">   251</span>		m.SetBytes(em)
+<a id="L252"></a><span class="ln">   252</span>		c := encrypt(new(big.Int), pub, m)
+<a id="L253"></a><span class="ln">   253</span>		out = c.Bytes()
+<a id="L254"></a><span class="ln">   254</span>	
+<a id="L255"></a><span class="ln">   255</span>		if len(out) &lt; k {
+<a id="L256"></a><span class="ln">   256</span>			<span class="comment">// If the output is too small, we need to left-pad with zeros.</span>
+<a id="L257"></a><span class="ln">   257</span>			t := make([]byte, k)
+<a id="L258"></a><span class="ln">   258</span>			copy(t[k-len(out):], out)
+<a id="L259"></a><span class="ln">   259</span>			out = t
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>		return
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// ErrDecryption represents a failure to decrypt a message.</span>
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// It is deliberately vague to avoid adaptive attacks.</span>
+<a id="L267"></a><span class="ln">   267</span>	var ErrDecryption = errors.New(&#34;crypto/rsa: decryption error&#34;)
+<a id="L268"></a><span class="ln">   268</span>	
+<a id="L269"></a><span class="ln">   269</span>	<span class="comment">// ErrVerification represents a failure to verify a signature.</span>
+<a id="L270"></a><span class="ln">   270</span>	<span class="comment">// It is deliberately vague to avoid adaptive attacks.</span>
+<a id="L271"></a><span class="ln">   271</span>	var ErrVerification = errors.New(&#34;crypto/rsa: verification error&#34;)
+<a id="L272"></a><span class="ln">   272</span>	
+<a id="L273"></a><span class="ln">   273</span>	<span class="comment">// modInverse returns ia, the inverse of a in the multiplicative group of prime</span>
+<a id="L274"></a><span class="ln">   274</span>	<span class="comment">// order n. It requires that a be a member of the group (i.e. less than n).</span>
+<a id="L275"></a><span class="ln">   275</span>	func modInverse(a, n *big.Int) (ia *big.Int, ok bool) {
+<a id="L276"></a><span class="ln">   276</span>		g := new(big.Int)
+<a id="L277"></a><span class="ln">   277</span>		x := new(big.Int)
+<a id="L278"></a><span class="ln">   278</span>		y := new(big.Int)
+<a id="L279"></a><span class="ln">   279</span>		g.GCD(x, y, a, n)
+<a id="L280"></a><span class="ln">   280</span>		if g.Cmp(bigOne) != 0 {
+<a id="L281"></a><span class="ln">   281</span>			<span class="comment">// In this case, a and n aren&#39;t coprime and we cannot calculate</span>
+<a id="L282"></a><span class="ln">   282</span>			<span class="comment">// the inverse. This happens because the values of n are nearly</span>
+<a id="L283"></a><span class="ln">   283</span>			<span class="comment">// prime (being the product of two primes) rather than truly</span>
+<a id="L284"></a><span class="ln">   284</span>			<span class="comment">// prime.</span>
+<a id="L285"></a><span class="ln">   285</span>			return
+<a id="L286"></a><span class="ln">   286</span>		}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>		if x.Cmp(bigOne) &lt; 0 {
+<a id="L289"></a><span class="ln">   289</span>			<span class="comment">// 0 is not the multiplicative inverse of any element so, if x</span>
+<a id="L290"></a><span class="ln">   290</span>			<span class="comment">// &lt; 1, then x is negative.</span>
+<a id="L291"></a><span class="ln">   291</span>			x.Add(x, n)
+<a id="L292"></a><span class="ln">   292</span>		}
+<a id="L293"></a><span class="ln">   293</span>	
+<a id="L294"></a><span class="ln">   294</span>		return x, true
+<a id="L295"></a><span class="ln">   295</span>	}
+<a id="L296"></a><span class="ln">   296</span>	
+<a id="L297"></a><span class="ln">   297</span>	<span class="comment">// Precompute performs some calculations that speed up private key operations</span>
+<a id="L298"></a><span class="ln">   298</span>	<span class="comment">// in the future.</span>
+<a id="L299"></a><span class="ln">   299</span>	func (priv *PrivateKey) Precompute() {
+<a id="L300"></a><span class="ln">   300</span>		if priv.Precomputed.Dp != nil {
+<a id="L301"></a><span class="ln">   301</span>			return
+<a id="L302"></a><span class="ln">   302</span>		}
+<a id="L303"></a><span class="ln">   303</span>	
+<a id="L304"></a><span class="ln">   304</span>		priv.Precomputed.Dp = new(big.Int).Sub(priv.Primes[0], bigOne)
+<a id="L305"></a><span class="ln">   305</span>		priv.Precomputed.Dp.Mod(priv.D, priv.Precomputed.Dp)
+<a id="L306"></a><span class="ln">   306</span>	
+<a id="L307"></a><span class="ln">   307</span>		priv.Precomputed.Dq = new(big.Int).Sub(priv.Primes[1], bigOne)
+<a id="L308"></a><span class="ln">   308</span>		priv.Precomputed.Dq.Mod(priv.D, priv.Precomputed.Dq)
+<a id="L309"></a><span class="ln">   309</span>	
+<a id="L310"></a><span class="ln">   310</span>		priv.Precomputed.Qinv = new(big.Int).ModInverse(priv.Primes[1], priv.Primes[0])
+<a id="L311"></a><span class="ln">   311</span>	
+<a id="L312"></a><span class="ln">   312</span>		r := new(big.Int).Mul(priv.Primes[0], priv.Primes[1])
+<a id="L313"></a><span class="ln">   313</span>		priv.Precomputed.CRTValues = make([]CRTValue, len(priv.Primes)-2)
+<a id="L314"></a><span class="ln">   314</span>		for i := 2; i &lt; len(priv.Primes); i++ {
+<a id="L315"></a><span class="ln">   315</span>			prime := priv.Primes[i]
+<a id="L316"></a><span class="ln">   316</span>			values := &amp;priv.Precomputed.CRTValues[i-2]
+<a id="L317"></a><span class="ln">   317</span>	
+<a id="L318"></a><span class="ln">   318</span>			values.Exp = new(big.Int).Sub(prime, bigOne)
+<a id="L319"></a><span class="ln">   319</span>			values.Exp.Mod(priv.D, values.Exp)
+<a id="L320"></a><span class="ln">   320</span>	
+<a id="L321"></a><span class="ln">   321</span>			values.R = new(big.Int).Set(r)
+<a id="L322"></a><span class="ln">   322</span>			values.Coeff = new(big.Int).ModInverse(r, prime)
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>			r.Mul(r, prime)
+<a id="L325"></a><span class="ln">   325</span>		}
+<a id="L326"></a><span class="ln">   326</span>	}
+<a id="L327"></a><span class="ln">   327</span>	
+<a id="L328"></a><span class="ln">   328</span>	<span class="comment">// decrypt performs an RSA decryption, resulting in a plaintext integer. If a</span>
+<a id="L329"></a><span class="ln">   329</span>	<span class="comment">// random source is given, RSA blinding is used.</span>
+<a id="L330"></a><span class="ln">   330</span>	func decrypt(random io.Reader, priv *PrivateKey, c *big.Int) (m *big.Int, err error) {
+<a id="L331"></a><span class="ln">   331</span>		<span class="comment">// TODO(agl): can we get away with reusing blinds?</span>
+<a id="L332"></a><span class="ln">   332</span>		if c.Cmp(priv.N) &gt; 0 {
+<a id="L333"></a><span class="ln">   333</span>			err = ErrDecryption
+<a id="L334"></a><span class="ln">   334</span>			return
+<a id="L335"></a><span class="ln">   335</span>		}
+<a id="L336"></a><span class="ln">   336</span>	
+<a id="L337"></a><span class="ln">   337</span>		var ir *big.Int
+<a id="L338"></a><span class="ln">   338</span>		if random != nil {
+<a id="L339"></a><span class="ln">   339</span>			<span class="comment">// Blinding enabled. Blinding involves multiplying c by r^e.</span>
+<a id="L340"></a><span class="ln">   340</span>			<span class="comment">// Then the decryption operation performs (m^e * r^e)^d mod n</span>
+<a id="L341"></a><span class="ln">   341</span>			<span class="comment">// which equals mr mod n. The factor of r can then be removed</span>
+<a id="L342"></a><span class="ln">   342</span>			<span class="comment">// by multiplying by the multiplicative inverse of r.</span>
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>			var r *big.Int
+<a id="L345"></a><span class="ln">   345</span>	
+<a id="L346"></a><span class="ln">   346</span>			for {
+<a id="L347"></a><span class="ln">   347</span>				r, err = rand.Int(random, priv.N)
+<a id="L348"></a><span class="ln">   348</span>				if err != nil {
+<a id="L349"></a><span class="ln">   349</span>					return
+<a id="L350"></a><span class="ln">   350</span>				}
+<a id="L351"></a><span class="ln">   351</span>				if r.Cmp(bigZero) == 0 {
+<a id="L352"></a><span class="ln">   352</span>					r = bigOne
+<a id="L353"></a><span class="ln">   353</span>				}
+<a id="L354"></a><span class="ln">   354</span>				var ok bool
+<a id="L355"></a><span class="ln">   355</span>				ir, ok = modInverse(r, priv.N)
+<a id="L356"></a><span class="ln">   356</span>				if ok {
+<a id="L357"></a><span class="ln">   357</span>					break
+<a id="L358"></a><span class="ln">   358</span>				}
+<a id="L359"></a><span class="ln">   359</span>			}
+<a id="L360"></a><span class="ln">   360</span>			bigE := big.NewInt(int64(priv.E))
+<a id="L361"></a><span class="ln">   361</span>			rpowe := new(big.Int).Exp(r, bigE, priv.N)
+<a id="L362"></a><span class="ln">   362</span>			cCopy := new(big.Int).Set(c)
+<a id="L363"></a><span class="ln">   363</span>			cCopy.Mul(cCopy, rpowe)
+<a id="L364"></a><span class="ln">   364</span>			cCopy.Mod(cCopy, priv.N)
+<a id="L365"></a><span class="ln">   365</span>			c = cCopy
+<a id="L366"></a><span class="ln">   366</span>		}
+<a id="L367"></a><span class="ln">   367</span>	
+<a id="L368"></a><span class="ln">   368</span>		if priv.Precomputed.Dp == nil {
+<a id="L369"></a><span class="ln">   369</span>			m = new(big.Int).Exp(c, priv.D, priv.N)
+<a id="L370"></a><span class="ln">   370</span>		} else {
+<a id="L371"></a><span class="ln">   371</span>			<span class="comment">// We have the precalculated values needed for the CRT.</span>
+<a id="L372"></a><span class="ln">   372</span>			m = new(big.Int).Exp(c, priv.Precomputed.Dp, priv.Primes[0])
+<a id="L373"></a><span class="ln">   373</span>			m2 := new(big.Int).Exp(c, priv.Precomputed.Dq, priv.Primes[1])
+<a id="L374"></a><span class="ln">   374</span>			m.Sub(m, m2)
+<a id="L375"></a><span class="ln">   375</span>			if m.Sign() &lt; 0 {
+<a id="L376"></a><span class="ln">   376</span>				m.Add(m, priv.Primes[0])
+<a id="L377"></a><span class="ln">   377</span>			}
+<a id="L378"></a><span class="ln">   378</span>			m.Mul(m, priv.Precomputed.Qinv)
+<a id="L379"></a><span class="ln">   379</span>			m.Mod(m, priv.Primes[0])
+<a id="L380"></a><span class="ln">   380</span>			m.Mul(m, priv.Primes[1])
+<a id="L381"></a><span class="ln">   381</span>			m.Add(m, m2)
+<a id="L382"></a><span class="ln">   382</span>	
+<a id="L383"></a><span class="ln">   383</span>			for i, values := range priv.Precomputed.CRTValues {
+<a id="L384"></a><span class="ln">   384</span>				prime := priv.Primes[2+i]
+<a id="L385"></a><span class="ln">   385</span>				m2.Exp(c, values.Exp, prime)
+<a id="L386"></a><span class="ln">   386</span>				m2.Sub(m2, m)
+<a id="L387"></a><span class="ln">   387</span>				m2.Mul(m2, values.Coeff)
+<a id="L388"></a><span class="ln">   388</span>				m2.Mod(m2, prime)
+<a id="L389"></a><span class="ln">   389</span>				if m2.Sign() &lt; 0 {
+<a id="L390"></a><span class="ln">   390</span>					m2.Add(m2, prime)
+<a id="L391"></a><span class="ln">   391</span>				}
+<a id="L392"></a><span class="ln">   392</span>				m2.Mul(m2, values.R)
+<a id="L393"></a><span class="ln">   393</span>				m.Add(m, m2)
+<a id="L394"></a><span class="ln">   394</span>			}
+<a id="L395"></a><span class="ln">   395</span>		}
+<a id="L396"></a><span class="ln">   396</span>	
+<a id="L397"></a><span class="ln">   397</span>		if ir != nil {
+<a id="L398"></a><span class="ln">   398</span>			<span class="comment">// Unblind.</span>
+<a id="L399"></a><span class="ln">   399</span>			m.Mul(m, ir)
+<a id="L400"></a><span class="ln">   400</span>			m.Mod(m, priv.N)
+<a id="L401"></a><span class="ln">   401</span>		}
+<a id="L402"></a><span class="ln">   402</span>	
+<a id="L403"></a><span class="ln">   403</span>		return
+<a id="L404"></a><span class="ln">   404</span>	}
+<a id="L405"></a><span class="ln">   405</span>	
+<a id="L406"></a><span class="ln">   406</span>	<span class="comment">// DecryptOAEP decrypts ciphertext using RSA-OAEP.</span>
+<a id="L407"></a><span class="ln">   407</span>	<span class="comment">// If random != nil, DecryptOAEP uses RSA blinding to avoid timing side-channel attacks.</span>
+<a id="L408"></a><span class="ln">   408</span>	func DecryptOAEP(hash hash.Hash, random io.Reader, priv *PrivateKey, ciphertext []byte, label []byte) (msg []byte, err error) {
+<a id="L409"></a><span class="ln">   409</span>		k := (priv.N.BitLen() + 7) / 8
+<a id="L410"></a><span class="ln">   410</span>		if len(ciphertext) &gt; k ||
+<a id="L411"></a><span class="ln">   411</span>			k &lt; hash.Size()*2+2 {
+<a id="L412"></a><span class="ln">   412</span>			err = ErrDecryption
+<a id="L413"></a><span class="ln">   413</span>			return
+<a id="L414"></a><span class="ln">   414</span>		}
+<a id="L415"></a><span class="ln">   415</span>	
+<a id="L416"></a><span class="ln">   416</span>		c := new(big.Int).SetBytes(ciphertext)
+<a id="L417"></a><span class="ln">   417</span>	
+<a id="L418"></a><span class="ln">   418</span>		m, err := decrypt(random, priv, c)
+<a id="L419"></a><span class="ln">   419</span>		if err != nil {
+<a id="L420"></a><span class="ln">   420</span>			return
+<a id="L421"></a><span class="ln">   421</span>		}
+<a id="L422"></a><span class="ln">   422</span>	
+<a id="L423"></a><span class="ln">   423</span>		hash.Write(label)
+<a id="L424"></a><span class="ln">   424</span>		lHash := hash.Sum(nil)
+<a id="L425"></a><span class="ln">   425</span>		hash.Reset()
+<a id="L426"></a><span class="ln">   426</span>	
+<a id="L427"></a><span class="ln">   427</span>		<span class="comment">// Converting the plaintext number to bytes will strip any</span>
+<a id="L428"></a><span class="ln">   428</span>		<span class="comment">// leading zeros so we may have to left pad. We do this unconditionally</span>
+<a id="L429"></a><span class="ln">   429</span>		<span class="comment">// to avoid leaking timing information. (Although we still probably</span>
+<a id="L430"></a><span class="ln">   430</span>		<span class="comment">// leak the number of leading zeros. It&#39;s not clear that we can do</span>
+<a id="L431"></a><span class="ln">   431</span>		<span class="comment">// anything about this.)</span>
+<a id="L432"></a><span class="ln">   432</span>		em := leftPad(m.Bytes(), k)
+<a id="L433"></a><span class="ln">   433</span>	
+<a id="L434"></a><span class="ln">   434</span>		firstByteIsZero := subtle.ConstantTimeByteEq(em[0], 0)
+<a id="L435"></a><span class="ln">   435</span>	
+<a id="L436"></a><span class="ln">   436</span>		seed := em[1 : hash.Size()+1]
+<a id="L437"></a><span class="ln">   437</span>		db := em[hash.Size()+1:]
+<a id="L438"></a><span class="ln">   438</span>	
+<a id="L439"></a><span class="ln">   439</span>		mgf1XOR(seed, hash, db)
+<a id="L440"></a><span class="ln">   440</span>		mgf1XOR(db, hash, seed)
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>		lHash2 := db[0:hash.Size()]
+<a id="L443"></a><span class="ln">   443</span>	
+<a id="L444"></a><span class="ln">   444</span>		<span class="comment">// We have to validate the plaintext in constant time in order to avoid</span>
+<a id="L445"></a><span class="ln">   445</span>		<span class="comment">// attacks like: J. Manger. A Chosen Ciphertext Attack on RSA Optimal</span>
+<a id="L446"></a><span class="ln">   446</span>		<span class="comment">// Asymmetric Encryption Padding (OAEP) as Standardized in PKCS #1</span>
+<a id="L447"></a><span class="ln">   447</span>		<span class="comment">// v2.0. In J. Kilian, editor, Advances in Cryptology.</span>
+<a id="L448"></a><span class="ln">   448</span>		lHash2Good := subtle.ConstantTimeCompare(lHash, lHash2)
+<a id="L449"></a><span class="ln">   449</span>	
+<a id="L450"></a><span class="ln">   450</span>		<span class="comment">// The remainder of the plaintext must be zero or more 0x00, followed</span>
+<a id="L451"></a><span class="ln">   451</span>		<span class="comment">// by 0x01, followed by the message.</span>
+<a id="L452"></a><span class="ln">   452</span>		<span class="comment">//   lookingForIndex: 1 iff we are still looking for the 0x01</span>
+<a id="L453"></a><span class="ln">   453</span>		<span class="comment">//   index: the offset of the first 0x01 byte</span>
+<a id="L454"></a><span class="ln">   454</span>		<span class="comment">//   invalid: 1 iff we saw a non-zero byte before the 0x01.</span>
+<a id="L455"></a><span class="ln">   455</span>		var lookingForIndex, index, invalid int
+<a id="L456"></a><span class="ln">   456</span>		lookingForIndex = 1
+<a id="L457"></a><span class="ln">   457</span>		rest := db[hash.Size():]
+<a id="L458"></a><span class="ln">   458</span>	
+<a id="L459"></a><span class="ln">   459</span>		for i := 0; i &lt; len(rest); i++ {
+<a id="L460"></a><span class="ln">   460</span>			equals0 := subtle.ConstantTimeByteEq(rest[i], 0)
+<a id="L461"></a><span class="ln">   461</span>			equals1 := subtle.ConstantTimeByteEq(rest[i], 1)
+<a id="L462"></a><span class="ln">   462</span>			index = subtle.ConstantTimeSelect(lookingForIndex&amp;equals1, i, index)
+<a id="L463"></a><span class="ln">   463</span>			lookingForIndex = subtle.ConstantTimeSelect(equals1, 0, lookingForIndex)
+<a id="L464"></a><span class="ln">   464</span>			invalid = subtle.ConstantTimeSelect(lookingForIndex&amp;^equals0, 1, invalid)
+<a id="L465"></a><span class="ln">   465</span>		}
+<a id="L466"></a><span class="ln">   466</span>	
+<a id="L467"></a><span class="ln">   467</span>		if firstByteIsZero&amp;lHash2Good&amp;^invalid&amp;^lookingForIndex != 1 {
+<a id="L468"></a><span class="ln">   468</span>			err = ErrDecryption
+<a id="L469"></a><span class="ln">   469</span>			return
+<a id="L470"></a><span class="ln">   470</span>		}
+<a id="L471"></a><span class="ln">   471</span>	
+<a id="L472"></a><span class="ln">   472</span>		msg = rest[index+1:]
+<a id="L473"></a><span class="ln">   473</span>		return
+<a id="L474"></a><span class="ln">   474</span>	}
+<a id="L475"></a><span class="ln">   475</span>	
+<a id="L476"></a><span class="ln">   476</span>	<span class="comment">// leftPad returns a new slice of length size. The contents of input are right</span>
+<a id="L477"></a><span class="ln">   477</span>	<span class="comment">// aligned in the new slice.</span>
+<a id="L478"></a><span class="ln">   478</span>	func leftPad(input []byte, size int) (out []byte) {
+<a id="L479"></a><span class="ln">   479</span>		n := len(input)
+<a id="L480"></a><span class="ln">   480</span>		if n &gt; size {
+<a id="L481"></a><span class="ln">   481</span>			n = size
+<a id="L482"></a><span class="ln">   482</span>		}
+<a id="L483"></a><span class="ln">   483</span>		out = make([]byte, size)
+<a id="L484"></a><span class="ln">   484</span>		copy(out[len(out)-n:], input)
+<a id="L485"></a><span class="ln">   485</span>		return
+<a id="L486"></a><span class="ln">   486</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

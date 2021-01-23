@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/html/escape.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/html/escape.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package html provides functions for escaping and unescaping HTML text.</span>
+<a id="L6"></a><span class="ln">     6</span>	package html
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;bytes&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;strings&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unicode/utf8&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	type writer interface {
+<a id="L15"></a><span class="ln">    15</span>		WriteString(string) (int, error)
+<a id="L16"></a><span class="ln">    16</span>	}
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// These replacements permit compatibility with old numeric entities that </span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// assumed Windows-1252 encoding.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// http://www.whatwg.org/specs/web-apps/current-work/multipage/tokenization.html#consume-a-character-reference</span>
+<a id="L21"></a><span class="ln">    21</span>	var replacementTable = [...]rune{
+<a id="L22"></a><span class="ln">    22</span>		&#39;\u20AC&#39;, <span class="comment">// First entry is what 0x80 should be replaced with.</span>
+<a id="L23"></a><span class="ln">    23</span>		&#39;\u0081&#39;,
+<a id="L24"></a><span class="ln">    24</span>		&#39;\u201A&#39;,
+<a id="L25"></a><span class="ln">    25</span>		&#39;\u0192&#39;,
+<a id="L26"></a><span class="ln">    26</span>		&#39;\u201E&#39;,
+<a id="L27"></a><span class="ln">    27</span>		&#39;\u2026&#39;,
+<a id="L28"></a><span class="ln">    28</span>		&#39;\u2020&#39;,
+<a id="L29"></a><span class="ln">    29</span>		&#39;\u2021&#39;,
+<a id="L30"></a><span class="ln">    30</span>		&#39;\u02C6&#39;,
+<a id="L31"></a><span class="ln">    31</span>		&#39;\u2030&#39;,
+<a id="L32"></a><span class="ln">    32</span>		&#39;\u0160&#39;,
+<a id="L33"></a><span class="ln">    33</span>		&#39;\u2039&#39;,
+<a id="L34"></a><span class="ln">    34</span>		&#39;\u0152&#39;,
+<a id="L35"></a><span class="ln">    35</span>		&#39;\u008D&#39;,
+<a id="L36"></a><span class="ln">    36</span>		&#39;\u017D&#39;,
+<a id="L37"></a><span class="ln">    37</span>		&#39;\u008F&#39;,
+<a id="L38"></a><span class="ln">    38</span>		&#39;\u0090&#39;,
+<a id="L39"></a><span class="ln">    39</span>		&#39;\u2018&#39;,
+<a id="L40"></a><span class="ln">    40</span>		&#39;\u2019&#39;,
+<a id="L41"></a><span class="ln">    41</span>		&#39;\u201C&#39;,
+<a id="L42"></a><span class="ln">    42</span>		&#39;\u201D&#39;,
+<a id="L43"></a><span class="ln">    43</span>		&#39;\u2022&#39;,
+<a id="L44"></a><span class="ln">    44</span>		&#39;\u2013&#39;,
+<a id="L45"></a><span class="ln">    45</span>		&#39;\u2014&#39;,
+<a id="L46"></a><span class="ln">    46</span>		&#39;\u02DC&#39;,
+<a id="L47"></a><span class="ln">    47</span>		&#39;\u2122&#39;,
+<a id="L48"></a><span class="ln">    48</span>		&#39;\u0161&#39;,
+<a id="L49"></a><span class="ln">    49</span>		&#39;\u203A&#39;,
+<a id="L50"></a><span class="ln">    50</span>		&#39;\u0153&#39;,
+<a id="L51"></a><span class="ln">    51</span>		&#39;\u009D&#39;,
+<a id="L52"></a><span class="ln">    52</span>		&#39;\u017E&#39;,
+<a id="L53"></a><span class="ln">    53</span>		&#39;\u0178&#39;, <span class="comment">// Last entry is 0x9F.</span>
+<a id="L54"></a><span class="ln">    54</span>		<span class="comment">// 0x00-&gt;&#39;\uFFFD&#39; is handled programmatically. </span>
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// 0x0D-&gt;&#39;\u000D&#39; is a no-op.</span>
+<a id="L56"></a><span class="ln">    56</span>	}
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// unescapeEntity reads an entity like &#34;&amp;lt;&#34; from b[src:] and writes the</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// corresponding &#34;&lt;&#34; to b[dst:], returning the incremented dst and src cursors.</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// Precondition: b[src] == &#39;&amp;&#39; &amp;&amp; dst &lt;= src.</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// attribute should be true if parsing an attribute value.</span>
+<a id="L62"></a><span class="ln">    62</span>	func unescapeEntity(b []byte, dst, src int, attribute bool) (dst1, src1 int) {
+<a id="L63"></a><span class="ln">    63</span>		<span class="comment">// http://www.whatwg.org/specs/web-apps/current-work/multipage/tokenization.html#consume-a-character-reference</span>
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// i starts at 1 because we already know that s[0] == &#39;&amp;&#39;.</span>
+<a id="L66"></a><span class="ln">    66</span>		i, s := 1, b[src:]
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>		if len(s) &lt;= 1 {
+<a id="L69"></a><span class="ln">    69</span>			b[dst] = b[src]
+<a id="L70"></a><span class="ln">    70</span>			return dst + 1, src + 1
+<a id="L71"></a><span class="ln">    71</span>		}
+<a id="L72"></a><span class="ln">    72</span>	
+<a id="L73"></a><span class="ln">    73</span>		if s[i] == &#39;#&#39; {
+<a id="L74"></a><span class="ln">    74</span>			if len(s) &lt;= 3 { <span class="comment">// We need to have at least &#34;&amp;#.&#34;.</span>
+<a id="L75"></a><span class="ln">    75</span>				b[dst] = b[src]
+<a id="L76"></a><span class="ln">    76</span>				return dst + 1, src + 1
+<a id="L77"></a><span class="ln">    77</span>			}
+<a id="L78"></a><span class="ln">    78</span>			i++
+<a id="L79"></a><span class="ln">    79</span>			c := s[i]
+<a id="L80"></a><span class="ln">    80</span>			hex := false
+<a id="L81"></a><span class="ln">    81</span>			if c == &#39;x&#39; || c == &#39;X&#39; {
+<a id="L82"></a><span class="ln">    82</span>				hex = true
+<a id="L83"></a><span class="ln">    83</span>				i++
+<a id="L84"></a><span class="ln">    84</span>			}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>			x := &#39;\x00&#39;
+<a id="L87"></a><span class="ln">    87</span>			for i &lt; len(s) {
+<a id="L88"></a><span class="ln">    88</span>				c = s[i]
+<a id="L89"></a><span class="ln">    89</span>				i++
+<a id="L90"></a><span class="ln">    90</span>				if hex {
+<a id="L91"></a><span class="ln">    91</span>					if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L92"></a><span class="ln">    92</span>						x = 16*x + rune(c) - &#39;0&#39;
+<a id="L93"></a><span class="ln">    93</span>						continue
+<a id="L94"></a><span class="ln">    94</span>					} else if &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39; {
+<a id="L95"></a><span class="ln">    95</span>						x = 16*x + rune(c) - &#39;a&#39; + 10
+<a id="L96"></a><span class="ln">    96</span>						continue
+<a id="L97"></a><span class="ln">    97</span>					} else if &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39; {
+<a id="L98"></a><span class="ln">    98</span>						x = 16*x + rune(c) - &#39;A&#39; + 10
+<a id="L99"></a><span class="ln">    99</span>						continue
+<a id="L100"></a><span class="ln">   100</span>					}
+<a id="L101"></a><span class="ln">   101</span>				} else if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L102"></a><span class="ln">   102</span>					x = 10*x + rune(c) - &#39;0&#39;
+<a id="L103"></a><span class="ln">   103</span>					continue
+<a id="L104"></a><span class="ln">   104</span>				}
+<a id="L105"></a><span class="ln">   105</span>				if c != &#39;;&#39; {
+<a id="L106"></a><span class="ln">   106</span>					i--
+<a id="L107"></a><span class="ln">   107</span>				}
+<a id="L108"></a><span class="ln">   108</span>				break
+<a id="L109"></a><span class="ln">   109</span>			}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>			if i &lt;= 3 { <span class="comment">// No characters matched.</span>
+<a id="L112"></a><span class="ln">   112</span>				b[dst] = b[src]
+<a id="L113"></a><span class="ln">   113</span>				return dst + 1, src + 1
+<a id="L114"></a><span class="ln">   114</span>			}
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>			if 0x80 &lt;= x &amp;&amp; x &lt;= 0x9F {
+<a id="L117"></a><span class="ln">   117</span>				<span class="comment">// Replace characters from Windows-1252 with UTF-8 equivalents.</span>
+<a id="L118"></a><span class="ln">   118</span>				x = replacementTable[x-0x80]
+<a id="L119"></a><span class="ln">   119</span>			} else if x == 0 || (0xD800 &lt;= x &amp;&amp; x &lt;= 0xDFFF) || x &gt; 0x10FFFF {
+<a id="L120"></a><span class="ln">   120</span>				<span class="comment">// Replace invalid characters with the replacement character.</span>
+<a id="L121"></a><span class="ln">   121</span>				x = &#39;\uFFFD&#39;
+<a id="L122"></a><span class="ln">   122</span>			}
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>			return dst + utf8.EncodeRune(b[dst:], x), src + i
+<a id="L125"></a><span class="ln">   125</span>		}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// Consume the maximum number of characters possible, with the</span>
+<a id="L128"></a><span class="ln">   128</span>		<span class="comment">// consumed characters matching one of the named references.</span>
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>		for i &lt; len(s) {
+<a id="L131"></a><span class="ln">   131</span>			c := s[i]
+<a id="L132"></a><span class="ln">   132</span>			i++
+<a id="L133"></a><span class="ln">   133</span>			<span class="comment">// Lower-cased characters are more common in entities, so we check for them first.</span>
+<a id="L134"></a><span class="ln">   134</span>			if &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;z&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;Z&#39; || &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L135"></a><span class="ln">   135</span>				continue
+<a id="L136"></a><span class="ln">   136</span>			}
+<a id="L137"></a><span class="ln">   137</span>			if c != &#39;;&#39; {
+<a id="L138"></a><span class="ln">   138</span>				i--
+<a id="L139"></a><span class="ln">   139</span>			}
+<a id="L140"></a><span class="ln">   140</span>			break
+<a id="L141"></a><span class="ln">   141</span>		}
+<a id="L142"></a><span class="ln">   142</span>	
+<a id="L143"></a><span class="ln">   143</span>		entityName := string(s[1:i])
+<a id="L144"></a><span class="ln">   144</span>		if entityName == &#34;&#34; {
+<a id="L145"></a><span class="ln">   145</span>			<span class="comment">// No-op.</span>
+<a id="L146"></a><span class="ln">   146</span>		} else if attribute &amp;&amp; entityName[len(entityName)-1] != &#39;;&#39; &amp;&amp; len(s) &gt; i &amp;&amp; s[i] == &#39;=&#39; {
+<a id="L147"></a><span class="ln">   147</span>			<span class="comment">// No-op.</span>
+<a id="L148"></a><span class="ln">   148</span>		} else if x := entity[entityName]; x != 0 {
+<a id="L149"></a><span class="ln">   149</span>			return dst + utf8.EncodeRune(b[dst:], x), src + i
+<a id="L150"></a><span class="ln">   150</span>		} else if x := entity2[entityName]; x[0] != 0 {
+<a id="L151"></a><span class="ln">   151</span>			dst1 := dst + utf8.EncodeRune(b[dst:], x[0])
+<a id="L152"></a><span class="ln">   152</span>			return dst1 + utf8.EncodeRune(b[dst1:], x[1]), src + i
+<a id="L153"></a><span class="ln">   153</span>		} else if !attribute {
+<a id="L154"></a><span class="ln">   154</span>			maxLen := len(entityName) - 1
+<a id="L155"></a><span class="ln">   155</span>			if maxLen &gt; longestEntityWithoutSemicolon {
+<a id="L156"></a><span class="ln">   156</span>				maxLen = longestEntityWithoutSemicolon
+<a id="L157"></a><span class="ln">   157</span>			}
+<a id="L158"></a><span class="ln">   158</span>			for j := maxLen; j &gt; 1; j-- {
+<a id="L159"></a><span class="ln">   159</span>				if x := entity[entityName[:j]]; x != 0 {
+<a id="L160"></a><span class="ln">   160</span>					return dst + utf8.EncodeRune(b[dst:], x), src + j + 1
+<a id="L161"></a><span class="ln">   161</span>				}
+<a id="L162"></a><span class="ln">   162</span>			}
+<a id="L163"></a><span class="ln">   163</span>		}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>		dst1, src1 = dst+i, src+i
+<a id="L166"></a><span class="ln">   166</span>		copy(b[dst:dst1], b[src:src1])
+<a id="L167"></a><span class="ln">   167</span>		return dst1, src1
+<a id="L168"></a><span class="ln">   168</span>	}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// unescape unescapes b&#39;s entities in-place, so that &#34;a&amp;lt;b&#34; becomes &#34;a&lt;b&#34;.</span>
+<a id="L171"></a><span class="ln">   171</span>	func unescape(b []byte) []byte {
+<a id="L172"></a><span class="ln">   172</span>		for i, c := range b {
+<a id="L173"></a><span class="ln">   173</span>			if c == &#39;&amp;&#39; {
+<a id="L174"></a><span class="ln">   174</span>				dst, src := unescapeEntity(b, i, i, false)
+<a id="L175"></a><span class="ln">   175</span>				for src &lt; len(b) {
+<a id="L176"></a><span class="ln">   176</span>					c := b[src]
+<a id="L177"></a><span class="ln">   177</span>					if c == &#39;&amp;&#39; {
+<a id="L178"></a><span class="ln">   178</span>						dst, src = unescapeEntity(b, dst, src, false)
+<a id="L179"></a><span class="ln">   179</span>					} else {
+<a id="L180"></a><span class="ln">   180</span>						b[dst] = c
+<a id="L181"></a><span class="ln">   181</span>						dst, src = dst+1, src+1
+<a id="L182"></a><span class="ln">   182</span>					}
+<a id="L183"></a><span class="ln">   183</span>				}
+<a id="L184"></a><span class="ln">   184</span>				return b[0:dst]
+<a id="L185"></a><span class="ln">   185</span>			}
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		return b
+<a id="L188"></a><span class="ln">   188</span>	}
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// lower lower-cases the A-Z bytes in b in-place, so that &#34;aBc&#34; becomes &#34;abc&#34;.</span>
+<a id="L191"></a><span class="ln">   191</span>	func lower(b []byte) []byte {
+<a id="L192"></a><span class="ln">   192</span>		for i, c := range b {
+<a id="L193"></a><span class="ln">   193</span>			if &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;Z&#39; {
+<a id="L194"></a><span class="ln">   194</span>				b[i] = c + &#39;a&#39; - &#39;A&#39;
+<a id="L195"></a><span class="ln">   195</span>			}
+<a id="L196"></a><span class="ln">   196</span>		}
+<a id="L197"></a><span class="ln">   197</span>		return b
+<a id="L198"></a><span class="ln">   198</span>	}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>	const escapedChars = `&amp;&#39;&lt;&gt;&#34;`
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	func escape(w writer, s string) error {
+<a id="L203"></a><span class="ln">   203</span>		i := strings.IndexAny(s, escapedChars)
+<a id="L204"></a><span class="ln">   204</span>		for i != -1 {
+<a id="L205"></a><span class="ln">   205</span>			if _, err := w.WriteString(s[:i]); err != nil {
+<a id="L206"></a><span class="ln">   206</span>				return err
+<a id="L207"></a><span class="ln">   207</span>			}
+<a id="L208"></a><span class="ln">   208</span>			var esc string
+<a id="L209"></a><span class="ln">   209</span>			switch s[i] {
+<a id="L210"></a><span class="ln">   210</span>			case &#39;&amp;&#39;:
+<a id="L211"></a><span class="ln">   211</span>				esc = &#34;&amp;amp;&#34;
+<a id="L212"></a><span class="ln">   212</span>			case &#39;\&#39;&#39;:
+<a id="L213"></a><span class="ln">   213</span>				<span class="comment">// &#34;&amp;#39;&#34; is shorter than &#34;&amp;apos;&#34; and apos was not in HTML until HTML5.</span>
+<a id="L214"></a><span class="ln">   214</span>				esc = &#34;&amp;#39;&#34;
+<a id="L215"></a><span class="ln">   215</span>			case &#39;&lt;&#39;:
+<a id="L216"></a><span class="ln">   216</span>				esc = &#34;&amp;lt;&#34;
+<a id="L217"></a><span class="ln">   217</span>			case &#39;&gt;&#39;:
+<a id="L218"></a><span class="ln">   218</span>				esc = &#34;&amp;gt;&#34;
+<a id="L219"></a><span class="ln">   219</span>			case &#39;&#34;&#39;:
+<a id="L220"></a><span class="ln">   220</span>				<span class="comment">// &#34;&amp;#34;&#34; is shorter than &#34;&amp;quot;&#34;.</span>
+<a id="L221"></a><span class="ln">   221</span>				esc = &#34;&amp;#34;&#34;
+<a id="L222"></a><span class="ln">   222</span>			default:
+<a id="L223"></a><span class="ln">   223</span>				panic(&#34;unrecognized escape character&#34;)
+<a id="L224"></a><span class="ln">   224</span>			}
+<a id="L225"></a><span class="ln">   225</span>			s = s[i+1:]
+<a id="L226"></a><span class="ln">   226</span>			if _, err := w.WriteString(esc); err != nil {
+<a id="L227"></a><span class="ln">   227</span>				return err
+<a id="L228"></a><span class="ln">   228</span>			}
+<a id="L229"></a><span class="ln">   229</span>			i = strings.IndexAny(s, escapedChars)
+<a id="L230"></a><span class="ln">   230</span>		}
+<a id="L231"></a><span class="ln">   231</span>		_, err := w.WriteString(s)
+<a id="L232"></a><span class="ln">   232</span>		return err
+<a id="L233"></a><span class="ln">   233</span>	}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>	<span class="comment">// EscapeString escapes special characters like &#34;&lt;&#34; to become &#34;&amp;lt;&#34;. It</span>
+<a id="L236"></a><span class="ln">   236</span>	<span class="comment">// escapes only five such characters: &lt;, &gt;, &amp;, &#39; and &#34;.</span>
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">// UnescapeString(EscapeString(s)) == s always holds, but the converse isn&#39;t</span>
+<a id="L238"></a><span class="ln">   238</span>	<span class="comment">// always true.</span>
+<a id="L239"></a><span class="ln">   239</span>	func EscapeString(s string) string {
+<a id="L240"></a><span class="ln">   240</span>		if strings.IndexAny(s, escapedChars) == -1 {
+<a id="L241"></a><span class="ln">   241</span>			return s
+<a id="L242"></a><span class="ln">   242</span>		}
+<a id="L243"></a><span class="ln">   243</span>		var buf bytes.Buffer
+<a id="L244"></a><span class="ln">   244</span>		escape(&amp;buf, s)
+<a id="L245"></a><span class="ln">   245</span>		return buf.String()
+<a id="L246"></a><span class="ln">   246</span>	}
+<a id="L247"></a><span class="ln">   247</span>	
+<a id="L248"></a><span class="ln">   248</span>	<span class="comment">// UnescapeString unescapes entities like &#34;&amp;lt;&#34; to become &#34;&lt;&#34;. It unescapes a</span>
+<a id="L249"></a><span class="ln">   249</span>	<span class="comment">// larger range of entities than EscapeString escapes. For example, &#34;&amp;aacute;&#34;</span>
+<a id="L250"></a><span class="ln">   250</span>	<span class="comment">// unescapes to &#34;á&#34;, as does &#34;&amp;#225;&#34; and &#34;&amp;xE1;&#34;.</span>
+<a id="L251"></a><span class="ln">   251</span>	<span class="comment">// UnescapeString(EscapeString(s)) == s always holds, but the converse isn&#39;t</span>
+<a id="L252"></a><span class="ln">   252</span>	<span class="comment">// always true.</span>
+<a id="L253"></a><span class="ln">   253</span>	func UnescapeString(s string) string {
+<a id="L254"></a><span class="ln">   254</span>		for _, c := range s {
+<a id="L255"></a><span class="ln">   255</span>			if c == &#39;&amp;&#39; {
+<a id="L256"></a><span class="ln">   256</span>				return string(unescape([]byte(s)))
+<a id="L257"></a><span class="ln">   257</span>			}
+<a id="L258"></a><span class="ln">   258</span>		}
+<a id="L259"></a><span class="ln">   259</span>		return s
+<a id="L260"></a><span class="ln">   260</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

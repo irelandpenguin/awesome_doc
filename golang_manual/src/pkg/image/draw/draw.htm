@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/image/draw/draw.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/image/draw/draw.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package draw provides image composition functions.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">//</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// See &#34;The Go image/draw package&#34; for an introduction to this package:</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// http://golang.org/doc/articles/image_draw.html</span>
+<a id="L9"></a><span class="ln">     9</span>	package draw
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import (
+<a id="L12"></a><span class="ln">    12</span>		&#34;image&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;image/color&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// m is the maximum color value returned by image.Color.RGBA.</span>
+<a id="L17"></a><span class="ln">    17</span>	const m = 1&lt;&lt;16 - 1
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Op is a Porter-Duff compositing operator.</span>
+<a id="L20"></a><span class="ln">    20</span>	type Op int
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	const (
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// Over specifies ``(src in mask) over dst&#39;&#39;.</span>
+<a id="L24"></a><span class="ln">    24</span>		Over Op = iota
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// Src specifies ``src in mask&#39;&#39;.</span>
+<a id="L26"></a><span class="ln">    26</span>		Src
+<a id="L27"></a><span class="ln">    27</span>	)
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// A draw.Image is an image.Image with a Set method to change a single pixel.</span>
+<a id="L30"></a><span class="ln">    30</span>	type Image interface {
+<a id="L31"></a><span class="ln">    31</span>		image.Image
+<a id="L32"></a><span class="ln">    32</span>		Set(x, y int, c color.Color)
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// Draw calls DrawMask with a nil mask.</span>
+<a id="L36"></a><span class="ln">    36</span>	func Draw(dst Image, r image.Rectangle, src image.Image, sp image.Point, op Op) {
+<a id="L37"></a><span class="ln">    37</span>		DrawMask(dst, r, src, sp, nil, image.ZP, op)
+<a id="L38"></a><span class="ln">    38</span>	}
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// clip clips r against each image&#39;s bounds (after translating into the</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// destination image&#39;s co-ordinate space) and shifts the points sp and mp by</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// the same amount as the change in r.Min.</span>
+<a id="L43"></a><span class="ln">    43</span>	func clip(dst Image, r *image.Rectangle, src image.Image, sp *image.Point, mask image.Image, mp *image.Point) {
+<a id="L44"></a><span class="ln">    44</span>		orig := r.Min
+<a id="L45"></a><span class="ln">    45</span>		*r = r.Intersect(dst.Bounds())
+<a id="L46"></a><span class="ln">    46</span>		*r = r.Intersect(src.Bounds().Add(orig.Sub(*sp)))
+<a id="L47"></a><span class="ln">    47</span>		if mask != nil {
+<a id="L48"></a><span class="ln">    48</span>			*r = r.Intersect(mask.Bounds().Add(orig.Sub(*mp)))
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		dx := r.Min.X - orig.X
+<a id="L51"></a><span class="ln">    51</span>		dy := r.Min.Y - orig.Y
+<a id="L52"></a><span class="ln">    52</span>		if dx == 0 &amp;&amp; dy == 0 {
+<a id="L53"></a><span class="ln">    53</span>			return
+<a id="L54"></a><span class="ln">    54</span>		}
+<a id="L55"></a><span class="ln">    55</span>		(*sp).X += dx
+<a id="L56"></a><span class="ln">    56</span>		(*sp).Y += dy
+<a id="L57"></a><span class="ln">    57</span>		(*mp).X += dx
+<a id="L58"></a><span class="ln">    58</span>		(*mp).Y += dy
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// DrawMask aligns r.Min in dst with sp in src and mp in mask and then replaces the rectangle r</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// in dst with the result of a Porter-Duff composition. A nil mask is treated as opaque.</span>
+<a id="L63"></a><span class="ln">    63</span>	func DrawMask(dst Image, r image.Rectangle, src image.Image, sp image.Point, mask image.Image, mp image.Point, op Op) {
+<a id="L64"></a><span class="ln">    64</span>		clip(dst, &amp;r, src, &amp;sp, mask, &amp;mp)
+<a id="L65"></a><span class="ln">    65</span>		if r.Empty() {
+<a id="L66"></a><span class="ln">    66</span>			return
+<a id="L67"></a><span class="ln">    67</span>		}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>		<span class="comment">// Fast paths for special cases. If none of them apply, then we fall back to a general but slow implementation.</span>
+<a id="L70"></a><span class="ln">    70</span>		if dst0, ok := dst.(*image.RGBA); ok {
+<a id="L71"></a><span class="ln">    71</span>			if op == Over {
+<a id="L72"></a><span class="ln">    72</span>				if mask == nil {
+<a id="L73"></a><span class="ln">    73</span>					switch src0 := src.(type) {
+<a id="L74"></a><span class="ln">    74</span>					case *image.Uniform:
+<a id="L75"></a><span class="ln">    75</span>						drawFillOver(dst0, r, src0)
+<a id="L76"></a><span class="ln">    76</span>						return
+<a id="L77"></a><span class="ln">    77</span>					case *image.RGBA:
+<a id="L78"></a><span class="ln">    78</span>						drawCopyOver(dst0, r, src0, sp)
+<a id="L79"></a><span class="ln">    79</span>						return
+<a id="L80"></a><span class="ln">    80</span>					case *image.NRGBA:
+<a id="L81"></a><span class="ln">    81</span>						drawNRGBAOver(dst0, r, src0, sp)
+<a id="L82"></a><span class="ln">    82</span>						return
+<a id="L83"></a><span class="ln">    83</span>					case *image.YCbCr:
+<a id="L84"></a><span class="ln">    84</span>						drawYCbCr(dst0, r, src0, sp)
+<a id="L85"></a><span class="ln">    85</span>						return
+<a id="L86"></a><span class="ln">    86</span>					}
+<a id="L87"></a><span class="ln">    87</span>				} else if mask0, ok := mask.(*image.Alpha); ok {
+<a id="L88"></a><span class="ln">    88</span>					switch src0 := src.(type) {
+<a id="L89"></a><span class="ln">    89</span>					case *image.Uniform:
+<a id="L90"></a><span class="ln">    90</span>						drawGlyphOver(dst0, r, src0, mask0, mp)
+<a id="L91"></a><span class="ln">    91</span>						return
+<a id="L92"></a><span class="ln">    92</span>					}
+<a id="L93"></a><span class="ln">    93</span>				}
+<a id="L94"></a><span class="ln">    94</span>			} else {
+<a id="L95"></a><span class="ln">    95</span>				if mask == nil {
+<a id="L96"></a><span class="ln">    96</span>					switch src0 := src.(type) {
+<a id="L97"></a><span class="ln">    97</span>					case *image.Uniform:
+<a id="L98"></a><span class="ln">    98</span>						drawFillSrc(dst0, r, src0)
+<a id="L99"></a><span class="ln">    99</span>						return
+<a id="L100"></a><span class="ln">   100</span>					case *image.RGBA:
+<a id="L101"></a><span class="ln">   101</span>						drawCopySrc(dst0, r, src0, sp)
+<a id="L102"></a><span class="ln">   102</span>						return
+<a id="L103"></a><span class="ln">   103</span>					case *image.NRGBA:
+<a id="L104"></a><span class="ln">   104</span>						drawNRGBASrc(dst0, r, src0, sp)
+<a id="L105"></a><span class="ln">   105</span>						return
+<a id="L106"></a><span class="ln">   106</span>					case *image.YCbCr:
+<a id="L107"></a><span class="ln">   107</span>						drawYCbCr(dst0, r, src0, sp)
+<a id="L108"></a><span class="ln">   108</span>						return
+<a id="L109"></a><span class="ln">   109</span>					}
+<a id="L110"></a><span class="ln">   110</span>				}
+<a id="L111"></a><span class="ln">   111</span>			}
+<a id="L112"></a><span class="ln">   112</span>			drawRGBA(dst0, r, src, sp, mask, mp, op)
+<a id="L113"></a><span class="ln">   113</span>			return
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>		x0, x1, dx := r.Min.X, r.Max.X, 1
+<a id="L117"></a><span class="ln">   117</span>		y0, y1, dy := r.Min.Y, r.Max.Y, 1
+<a id="L118"></a><span class="ln">   118</span>		if image.Image(dst) == src &amp;&amp; r.Overlaps(r.Add(sp.Sub(r.Min))) {
+<a id="L119"></a><span class="ln">   119</span>			<span class="comment">// Rectangles overlap: process backward?</span>
+<a id="L120"></a><span class="ln">   120</span>			if sp.Y &lt; r.Min.Y || sp.Y == r.Min.Y &amp;&amp; sp.X &lt; r.Min.X {
+<a id="L121"></a><span class="ln">   121</span>				x0, x1, dx = x1-1, x0-1, -1
+<a id="L122"></a><span class="ln">   122</span>				y0, y1, dy = y1-1, y0-1, -1
+<a id="L123"></a><span class="ln">   123</span>			}
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>		var out *color.RGBA64
+<a id="L127"></a><span class="ln">   127</span>		sy := sp.Y + y0 - r.Min.Y
+<a id="L128"></a><span class="ln">   128</span>		my := mp.Y + y0 - r.Min.Y
+<a id="L129"></a><span class="ln">   129</span>		for y := y0; y != y1; y, sy, my = y+dy, sy+dy, my+dy {
+<a id="L130"></a><span class="ln">   130</span>			sx := sp.X + x0 - r.Min.X
+<a id="L131"></a><span class="ln">   131</span>			mx := mp.X + x0 - r.Min.X
+<a id="L132"></a><span class="ln">   132</span>			for x := x0; x != x1; x, sx, mx = x+dx, sx+dx, mx+dx {
+<a id="L133"></a><span class="ln">   133</span>				ma := uint32(m)
+<a id="L134"></a><span class="ln">   134</span>				if mask != nil {
+<a id="L135"></a><span class="ln">   135</span>					_, _, _, ma = mask.At(mx, my).RGBA()
+<a id="L136"></a><span class="ln">   136</span>				}
+<a id="L137"></a><span class="ln">   137</span>				switch {
+<a id="L138"></a><span class="ln">   138</span>				case ma == 0:
+<a id="L139"></a><span class="ln">   139</span>					if op == Over {
+<a id="L140"></a><span class="ln">   140</span>						<span class="comment">// No-op.</span>
+<a id="L141"></a><span class="ln">   141</span>					} else {
+<a id="L142"></a><span class="ln">   142</span>						dst.Set(x, y, color.Transparent)
+<a id="L143"></a><span class="ln">   143</span>					}
+<a id="L144"></a><span class="ln">   144</span>				case ma == m &amp;&amp; op == Src:
+<a id="L145"></a><span class="ln">   145</span>					dst.Set(x, y, src.At(sx, sy))
+<a id="L146"></a><span class="ln">   146</span>				default:
+<a id="L147"></a><span class="ln">   147</span>					sr, sg, sb, sa := src.At(sx, sy).RGBA()
+<a id="L148"></a><span class="ln">   148</span>					if out == nil {
+<a id="L149"></a><span class="ln">   149</span>						out = new(color.RGBA64)
+<a id="L150"></a><span class="ln">   150</span>					}
+<a id="L151"></a><span class="ln">   151</span>					if op == Over {
+<a id="L152"></a><span class="ln">   152</span>						dr, dg, db, da := dst.At(x, y).RGBA()
+<a id="L153"></a><span class="ln">   153</span>						a := m - (sa * ma / m)
+<a id="L154"></a><span class="ln">   154</span>						out.R = uint16((dr*a + sr*ma) / m)
+<a id="L155"></a><span class="ln">   155</span>						out.G = uint16((dg*a + sg*ma) / m)
+<a id="L156"></a><span class="ln">   156</span>						out.B = uint16((db*a + sb*ma) / m)
+<a id="L157"></a><span class="ln">   157</span>						out.A = uint16((da*a + sa*ma) / m)
+<a id="L158"></a><span class="ln">   158</span>					} else {
+<a id="L159"></a><span class="ln">   159</span>						out.R = uint16(sr * ma / m)
+<a id="L160"></a><span class="ln">   160</span>						out.G = uint16(sg * ma / m)
+<a id="L161"></a><span class="ln">   161</span>						out.B = uint16(sb * ma / m)
+<a id="L162"></a><span class="ln">   162</span>						out.A = uint16(sa * ma / m)
+<a id="L163"></a><span class="ln">   163</span>					}
+<a id="L164"></a><span class="ln">   164</span>					dst.Set(x, y, out)
+<a id="L165"></a><span class="ln">   165</span>				}
+<a id="L166"></a><span class="ln">   166</span>			}
+<a id="L167"></a><span class="ln">   167</span>		}
+<a id="L168"></a><span class="ln">   168</span>	}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>	func drawFillOver(dst *image.RGBA, r image.Rectangle, src *image.Uniform) {
+<a id="L171"></a><span class="ln">   171</span>		sr, sg, sb, sa := src.RGBA()
+<a id="L172"></a><span class="ln">   172</span>		<span class="comment">// The 0x101 is here for the same reason as in drawRGBA.</span>
+<a id="L173"></a><span class="ln">   173</span>		a := (m - sa) * 0x101
+<a id="L174"></a><span class="ln">   174</span>		i0 := dst.PixOffset(r.Min.X, r.Min.Y)
+<a id="L175"></a><span class="ln">   175</span>		i1 := i0 + r.Dx()*4
+<a id="L176"></a><span class="ln">   176</span>		for y := r.Min.Y; y != r.Max.Y; y++ {
+<a id="L177"></a><span class="ln">   177</span>			for i := i0; i &lt; i1; i += 4 {
+<a id="L178"></a><span class="ln">   178</span>				dr := uint32(dst.Pix[i+0])
+<a id="L179"></a><span class="ln">   179</span>				dg := uint32(dst.Pix[i+1])
+<a id="L180"></a><span class="ln">   180</span>				db := uint32(dst.Pix[i+2])
+<a id="L181"></a><span class="ln">   181</span>				da := uint32(dst.Pix[i+3])
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>				dst.Pix[i+0] = uint8((dr*a/m + sr) &gt;&gt; 8)
+<a id="L184"></a><span class="ln">   184</span>				dst.Pix[i+1] = uint8((dg*a/m + sg) &gt;&gt; 8)
+<a id="L185"></a><span class="ln">   185</span>				dst.Pix[i+2] = uint8((db*a/m + sb) &gt;&gt; 8)
+<a id="L186"></a><span class="ln">   186</span>				dst.Pix[i+3] = uint8((da*a/m + sa) &gt;&gt; 8)
+<a id="L187"></a><span class="ln">   187</span>			}
+<a id="L188"></a><span class="ln">   188</span>			i0 += dst.Stride
+<a id="L189"></a><span class="ln">   189</span>			i1 += dst.Stride
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	func drawFillSrc(dst *image.RGBA, r image.Rectangle, src *image.Uniform) {
+<a id="L194"></a><span class="ln">   194</span>		sr, sg, sb, sa := src.RGBA()
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// The built-in copy function is faster than a straightforward for loop to fill the destination with</span>
+<a id="L196"></a><span class="ln">   196</span>		<span class="comment">// the color, but copy requires a slice source. We therefore use a for loop to fill the first row, and</span>
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// then use the first row as the slice source for the remaining rows.</span>
+<a id="L198"></a><span class="ln">   198</span>		i0 := dst.PixOffset(r.Min.X, r.Min.Y)
+<a id="L199"></a><span class="ln">   199</span>		i1 := i0 + r.Dx()*4
+<a id="L200"></a><span class="ln">   200</span>		for i := i0; i &lt; i1; i += 4 {
+<a id="L201"></a><span class="ln">   201</span>			dst.Pix[i+0] = uint8(sr &gt;&gt; 8)
+<a id="L202"></a><span class="ln">   202</span>			dst.Pix[i+1] = uint8(sg &gt;&gt; 8)
+<a id="L203"></a><span class="ln">   203</span>			dst.Pix[i+2] = uint8(sb &gt;&gt; 8)
+<a id="L204"></a><span class="ln">   204</span>			dst.Pix[i+3] = uint8(sa &gt;&gt; 8)
+<a id="L205"></a><span class="ln">   205</span>		}
+<a id="L206"></a><span class="ln">   206</span>		firstRow := dst.Pix[i0:i1]
+<a id="L207"></a><span class="ln">   207</span>		for y := r.Min.Y + 1; y &lt; r.Max.Y; y++ {
+<a id="L208"></a><span class="ln">   208</span>			i0 += dst.Stride
+<a id="L209"></a><span class="ln">   209</span>			i1 += dst.Stride
+<a id="L210"></a><span class="ln">   210</span>			copy(dst.Pix[i0:i1], firstRow)
+<a id="L211"></a><span class="ln">   211</span>		}
+<a id="L212"></a><span class="ln">   212</span>	}
+<a id="L213"></a><span class="ln">   213</span>	
+<a id="L214"></a><span class="ln">   214</span>	func drawCopyOver(dst *image.RGBA, r image.Rectangle, src *image.RGBA, sp image.Point) {
+<a id="L215"></a><span class="ln">   215</span>		dx, dy := r.Dx(), r.Dy()
+<a id="L216"></a><span class="ln">   216</span>		d0 := dst.PixOffset(r.Min.X, r.Min.Y)
+<a id="L217"></a><span class="ln">   217</span>		s0 := src.PixOffset(sp.X, sp.Y)
+<a id="L218"></a><span class="ln">   218</span>		var (
+<a id="L219"></a><span class="ln">   219</span>			ddelta, sdelta int
+<a id="L220"></a><span class="ln">   220</span>			i0, i1, idelta int
+<a id="L221"></a><span class="ln">   221</span>		)
+<a id="L222"></a><span class="ln">   222</span>		if r.Min.Y &lt; sp.Y || r.Min.Y == sp.Y &amp;&amp; r.Min.X &lt;= sp.X {
+<a id="L223"></a><span class="ln">   223</span>			ddelta = dst.Stride
+<a id="L224"></a><span class="ln">   224</span>			sdelta = src.Stride
+<a id="L225"></a><span class="ln">   225</span>			i0, i1, idelta = 0, dx*4, +4
+<a id="L226"></a><span class="ln">   226</span>		} else {
+<a id="L227"></a><span class="ln">   227</span>			<span class="comment">// If the source start point is higher than the destination start point, or equal height but to the left,</span>
+<a id="L228"></a><span class="ln">   228</span>			<span class="comment">// then we compose the rows in right-to-left, bottom-up order instead of left-to-right, top-down.</span>
+<a id="L229"></a><span class="ln">   229</span>			d0 += (dy - 1) * dst.Stride
+<a id="L230"></a><span class="ln">   230</span>			s0 += (dy - 1) * src.Stride
+<a id="L231"></a><span class="ln">   231</span>			ddelta = -dst.Stride
+<a id="L232"></a><span class="ln">   232</span>			sdelta = -src.Stride
+<a id="L233"></a><span class="ln">   233</span>			i0, i1, idelta = (dx-1)*4, -4, -4
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>		for ; dy &gt; 0; dy-- {
+<a id="L236"></a><span class="ln">   236</span>			dpix := dst.Pix[d0:]
+<a id="L237"></a><span class="ln">   237</span>			spix := src.Pix[s0:]
+<a id="L238"></a><span class="ln">   238</span>			for i := i0; i != i1; i += idelta {
+<a id="L239"></a><span class="ln">   239</span>				sr := uint32(spix[i+0]) * 0x101
+<a id="L240"></a><span class="ln">   240</span>				sg := uint32(spix[i+1]) * 0x101
+<a id="L241"></a><span class="ln">   241</span>				sb := uint32(spix[i+2]) * 0x101
+<a id="L242"></a><span class="ln">   242</span>				sa := uint32(spix[i+3]) * 0x101
+<a id="L243"></a><span class="ln">   243</span>	
+<a id="L244"></a><span class="ln">   244</span>				dr := uint32(dpix[i+0])
+<a id="L245"></a><span class="ln">   245</span>				dg := uint32(dpix[i+1])
+<a id="L246"></a><span class="ln">   246</span>				db := uint32(dpix[i+2])
+<a id="L247"></a><span class="ln">   247</span>				da := uint32(dpix[i+3])
+<a id="L248"></a><span class="ln">   248</span>	
+<a id="L249"></a><span class="ln">   249</span>				<span class="comment">// The 0x101 is here for the same reason as in drawRGBA.</span>
+<a id="L250"></a><span class="ln">   250</span>				a := (m - sa) * 0x101
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>				dpix[i+0] = uint8((dr*a/m + sr) &gt;&gt; 8)
+<a id="L253"></a><span class="ln">   253</span>				dpix[i+1] = uint8((dg*a/m + sg) &gt;&gt; 8)
+<a id="L254"></a><span class="ln">   254</span>				dpix[i+2] = uint8((db*a/m + sb) &gt;&gt; 8)
+<a id="L255"></a><span class="ln">   255</span>				dpix[i+3] = uint8((da*a/m + sa) &gt;&gt; 8)
+<a id="L256"></a><span class="ln">   256</span>			}
+<a id="L257"></a><span class="ln">   257</span>			d0 += ddelta
+<a id="L258"></a><span class="ln">   258</span>			s0 += sdelta
+<a id="L259"></a><span class="ln">   259</span>		}
+<a id="L260"></a><span class="ln">   260</span>	}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>	func drawCopySrc(dst *image.RGBA, r image.Rectangle, src *image.RGBA, sp image.Point) {
+<a id="L263"></a><span class="ln">   263</span>		n, dy := 4*r.Dx(), r.Dy()
+<a id="L264"></a><span class="ln">   264</span>		d0 := dst.PixOffset(r.Min.X, r.Min.Y)
+<a id="L265"></a><span class="ln">   265</span>		s0 := src.PixOffset(sp.X, sp.Y)
+<a id="L266"></a><span class="ln">   266</span>		var ddelta, sdelta int
+<a id="L267"></a><span class="ln">   267</span>		if r.Min.Y &lt;= sp.Y {
+<a id="L268"></a><span class="ln">   268</span>			ddelta = dst.Stride
+<a id="L269"></a><span class="ln">   269</span>			sdelta = src.Stride
+<a id="L270"></a><span class="ln">   270</span>		} else {
+<a id="L271"></a><span class="ln">   271</span>			<span class="comment">// If the source start point is higher than the destination start point, then we compose the rows</span>
+<a id="L272"></a><span class="ln">   272</span>			<span class="comment">// in bottom-up order instead of top-down. Unlike the drawCopyOver function, we don&#39;t have to</span>
+<a id="L273"></a><span class="ln">   273</span>			<span class="comment">// check the x co-ordinates because the built-in copy function can handle overlapping slices.</span>
+<a id="L274"></a><span class="ln">   274</span>			d0 += (dy - 1) * dst.Stride
+<a id="L275"></a><span class="ln">   275</span>			s0 += (dy - 1) * src.Stride
+<a id="L276"></a><span class="ln">   276</span>			ddelta = -dst.Stride
+<a id="L277"></a><span class="ln">   277</span>			sdelta = -src.Stride
+<a id="L278"></a><span class="ln">   278</span>		}
+<a id="L279"></a><span class="ln">   279</span>		for ; dy &gt; 0; dy-- {
+<a id="L280"></a><span class="ln">   280</span>			copy(dst.Pix[d0:d0+n], src.Pix[s0:s0+n])
+<a id="L281"></a><span class="ln">   281</span>			d0 += ddelta
+<a id="L282"></a><span class="ln">   282</span>			s0 += sdelta
+<a id="L283"></a><span class="ln">   283</span>		}
+<a id="L284"></a><span class="ln">   284</span>	}
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>	func drawNRGBAOver(dst *image.RGBA, r image.Rectangle, src *image.NRGBA, sp image.Point) {
+<a id="L287"></a><span class="ln">   287</span>		i0 := (r.Min.X - dst.Rect.Min.X) * 4
+<a id="L288"></a><span class="ln">   288</span>		i1 := (r.Max.X - dst.Rect.Min.X) * 4
+<a id="L289"></a><span class="ln">   289</span>		si0 := (sp.X - src.Rect.Min.X) * 4
+<a id="L290"></a><span class="ln">   290</span>		yMax := r.Max.Y - dst.Rect.Min.Y
+<a id="L291"></a><span class="ln">   291</span>	
+<a id="L292"></a><span class="ln">   292</span>		y := r.Min.Y - dst.Rect.Min.Y
+<a id="L293"></a><span class="ln">   293</span>		sy := sp.Y - src.Rect.Min.Y
+<a id="L294"></a><span class="ln">   294</span>		for ; y != yMax; y, sy = y+1, sy+1 {
+<a id="L295"></a><span class="ln">   295</span>			dpix := dst.Pix[y*dst.Stride:]
+<a id="L296"></a><span class="ln">   296</span>			spix := src.Pix[sy*src.Stride:]
+<a id="L297"></a><span class="ln">   297</span>	
+<a id="L298"></a><span class="ln">   298</span>			for i, si := i0, si0; i &lt; i1; i, si = i+4, si+4 {
+<a id="L299"></a><span class="ln">   299</span>				<span class="comment">// Convert from non-premultiplied color to pre-multiplied color.</span>
+<a id="L300"></a><span class="ln">   300</span>				sa := uint32(spix[si+3]) * 0x101
+<a id="L301"></a><span class="ln">   301</span>				sr := uint32(spix[si+0]) * sa / 0xff
+<a id="L302"></a><span class="ln">   302</span>				sg := uint32(spix[si+1]) * sa / 0xff
+<a id="L303"></a><span class="ln">   303</span>				sb := uint32(spix[si+2]) * sa / 0xff
+<a id="L304"></a><span class="ln">   304</span>	
+<a id="L305"></a><span class="ln">   305</span>				dr := uint32(dpix[i+0])
+<a id="L306"></a><span class="ln">   306</span>				dg := uint32(dpix[i+1])
+<a id="L307"></a><span class="ln">   307</span>				db := uint32(dpix[i+2])
+<a id="L308"></a><span class="ln">   308</span>				da := uint32(dpix[i+3])
+<a id="L309"></a><span class="ln">   309</span>	
+<a id="L310"></a><span class="ln">   310</span>				<span class="comment">// The 0x101 is here for the same reason as in drawRGBA.</span>
+<a id="L311"></a><span class="ln">   311</span>				a := (m - sa) * 0x101
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>				dpix[i+0] = uint8((dr*a/m + sr) &gt;&gt; 8)
+<a id="L314"></a><span class="ln">   314</span>				dpix[i+1] = uint8((dg*a/m + sg) &gt;&gt; 8)
+<a id="L315"></a><span class="ln">   315</span>				dpix[i+2] = uint8((db*a/m + sb) &gt;&gt; 8)
+<a id="L316"></a><span class="ln">   316</span>				dpix[i+3] = uint8((da*a/m + sa) &gt;&gt; 8)
+<a id="L317"></a><span class="ln">   317</span>			}
+<a id="L318"></a><span class="ln">   318</span>		}
+<a id="L319"></a><span class="ln">   319</span>	}
+<a id="L320"></a><span class="ln">   320</span>	
+<a id="L321"></a><span class="ln">   321</span>	func drawNRGBASrc(dst *image.RGBA, r image.Rectangle, src *image.NRGBA, sp image.Point) {
+<a id="L322"></a><span class="ln">   322</span>		i0 := (r.Min.X - dst.Rect.Min.X) * 4
+<a id="L323"></a><span class="ln">   323</span>		i1 := (r.Max.X - dst.Rect.Min.X) * 4
+<a id="L324"></a><span class="ln">   324</span>		si0 := (sp.X - src.Rect.Min.X) * 4
+<a id="L325"></a><span class="ln">   325</span>		yMax := r.Max.Y - dst.Rect.Min.Y
+<a id="L326"></a><span class="ln">   326</span>	
+<a id="L327"></a><span class="ln">   327</span>		y := r.Min.Y - dst.Rect.Min.Y
+<a id="L328"></a><span class="ln">   328</span>		sy := sp.Y - src.Rect.Min.Y
+<a id="L329"></a><span class="ln">   329</span>		for ; y != yMax; y, sy = y+1, sy+1 {
+<a id="L330"></a><span class="ln">   330</span>			dpix := dst.Pix[y*dst.Stride:]
+<a id="L331"></a><span class="ln">   331</span>			spix := src.Pix[sy*src.Stride:]
+<a id="L332"></a><span class="ln">   332</span>	
+<a id="L333"></a><span class="ln">   333</span>			for i, si := i0, si0; i &lt; i1; i, si = i+4, si+4 {
+<a id="L334"></a><span class="ln">   334</span>				<span class="comment">// Convert from non-premultiplied color to pre-multiplied color.</span>
+<a id="L335"></a><span class="ln">   335</span>				sa := uint32(spix[si+3]) * 0x101
+<a id="L336"></a><span class="ln">   336</span>				sr := uint32(spix[si+0]) * sa / 0xff
+<a id="L337"></a><span class="ln">   337</span>				sg := uint32(spix[si+1]) * sa / 0xff
+<a id="L338"></a><span class="ln">   338</span>				sb := uint32(spix[si+2]) * sa / 0xff
+<a id="L339"></a><span class="ln">   339</span>	
+<a id="L340"></a><span class="ln">   340</span>				dpix[i+0] = uint8(sr &gt;&gt; 8)
+<a id="L341"></a><span class="ln">   341</span>				dpix[i+1] = uint8(sg &gt;&gt; 8)
+<a id="L342"></a><span class="ln">   342</span>				dpix[i+2] = uint8(sb &gt;&gt; 8)
+<a id="L343"></a><span class="ln">   343</span>				dpix[i+3] = uint8(sa &gt;&gt; 8)
+<a id="L344"></a><span class="ln">   344</span>			}
+<a id="L345"></a><span class="ln">   345</span>		}
+<a id="L346"></a><span class="ln">   346</span>	}
+<a id="L347"></a><span class="ln">   347</span>	
+<a id="L348"></a><span class="ln">   348</span>	func drawYCbCr(dst *image.RGBA, r image.Rectangle, src *image.YCbCr, sp image.Point) {
+<a id="L349"></a><span class="ln">   349</span>		<span class="comment">// An image.YCbCr is always fully opaque, and so if the mask is implicitly nil</span>
+<a id="L350"></a><span class="ln">   350</span>		<span class="comment">// (i.e. fully opaque) then the op is effectively always Src.</span>
+<a id="L351"></a><span class="ln">   351</span>		x0 := (r.Min.X - dst.Rect.Min.X) * 4
+<a id="L352"></a><span class="ln">   352</span>		x1 := (r.Max.X - dst.Rect.Min.X) * 4
+<a id="L353"></a><span class="ln">   353</span>		y0 := r.Min.Y - dst.Rect.Min.Y
+<a id="L354"></a><span class="ln">   354</span>		y1 := r.Max.Y - dst.Rect.Min.Y
+<a id="L355"></a><span class="ln">   355</span>		switch src.SubsampleRatio {
+<a id="L356"></a><span class="ln">   356</span>		case image.YCbCrSubsampleRatio422:
+<a id="L357"></a><span class="ln">   357</span>			for y, sy := y0, sp.Y; y != y1; y, sy = y+1, sy+1 {
+<a id="L358"></a><span class="ln">   358</span>				dpix := dst.Pix[y*dst.Stride:]
+<a id="L359"></a><span class="ln">   359</span>				yi := (sy-src.Rect.Min.Y)*src.YStride + (sp.X - src.Rect.Min.X)
+<a id="L360"></a><span class="ln">   360</span>				ciBase := (sy-src.Rect.Min.Y)*src.CStride - src.Rect.Min.X/2
+<a id="L361"></a><span class="ln">   361</span>				for x, sx := x0, sp.X; x != x1; x, sx, yi = x+4, sx+1, yi+1 {
+<a id="L362"></a><span class="ln">   362</span>					ci := ciBase + sx/2
+<a id="L363"></a><span class="ln">   363</span>					rr, gg, bb := color.YCbCrToRGB(src.Y[yi], src.Cb[ci], src.Cr[ci])
+<a id="L364"></a><span class="ln">   364</span>					dpix[x+0] = rr
+<a id="L365"></a><span class="ln">   365</span>					dpix[x+1] = gg
+<a id="L366"></a><span class="ln">   366</span>					dpix[x+2] = bb
+<a id="L367"></a><span class="ln">   367</span>					dpix[x+3] = 255
+<a id="L368"></a><span class="ln">   368</span>				}
+<a id="L369"></a><span class="ln">   369</span>			}
+<a id="L370"></a><span class="ln">   370</span>		case image.YCbCrSubsampleRatio420:
+<a id="L371"></a><span class="ln">   371</span>			for y, sy := y0, sp.Y; y != y1; y, sy = y+1, sy+1 {
+<a id="L372"></a><span class="ln">   372</span>				dpix := dst.Pix[y*dst.Stride:]
+<a id="L373"></a><span class="ln">   373</span>				yi := (sy-src.Rect.Min.Y)*src.YStride + (sp.X - src.Rect.Min.X)
+<a id="L374"></a><span class="ln">   374</span>				ciBase := (sy/2-src.Rect.Min.Y/2)*src.CStride - src.Rect.Min.X/2
+<a id="L375"></a><span class="ln">   375</span>				for x, sx := x0, sp.X; x != x1; x, sx, yi = x+4, sx+1, yi+1 {
+<a id="L376"></a><span class="ln">   376</span>					ci := ciBase + sx/2
+<a id="L377"></a><span class="ln">   377</span>					rr, gg, bb := color.YCbCrToRGB(src.Y[yi], src.Cb[ci], src.Cr[ci])
+<a id="L378"></a><span class="ln">   378</span>					dpix[x+0] = rr
+<a id="L379"></a><span class="ln">   379</span>					dpix[x+1] = gg
+<a id="L380"></a><span class="ln">   380</span>					dpix[x+2] = bb
+<a id="L381"></a><span class="ln">   381</span>					dpix[x+3] = 255
+<a id="L382"></a><span class="ln">   382</span>				}
+<a id="L383"></a><span class="ln">   383</span>			}
+<a id="L384"></a><span class="ln">   384</span>		default:
+<a id="L385"></a><span class="ln">   385</span>			<span class="comment">// Default to 4:4:4 subsampling.</span>
+<a id="L386"></a><span class="ln">   386</span>			for y, sy := y0, sp.Y; y != y1; y, sy = y+1, sy+1 {
+<a id="L387"></a><span class="ln">   387</span>				dpix := dst.Pix[y*dst.Stride:]
+<a id="L388"></a><span class="ln">   388</span>				yi := (sy-src.Rect.Min.Y)*src.YStride + (sp.X - src.Rect.Min.X)
+<a id="L389"></a><span class="ln">   389</span>				ci := (sy-src.Rect.Min.Y)*src.CStride + (sp.X - src.Rect.Min.X)
+<a id="L390"></a><span class="ln">   390</span>				for x := x0; x != x1; x, yi, ci = x+4, yi+1, ci+1 {
+<a id="L391"></a><span class="ln">   391</span>					rr, gg, bb := color.YCbCrToRGB(src.Y[yi], src.Cb[ci], src.Cr[ci])
+<a id="L392"></a><span class="ln">   392</span>					dpix[x+0] = rr
+<a id="L393"></a><span class="ln">   393</span>					dpix[x+1] = gg
+<a id="L394"></a><span class="ln">   394</span>					dpix[x+2] = bb
+<a id="L395"></a><span class="ln">   395</span>					dpix[x+3] = 255
+<a id="L396"></a><span class="ln">   396</span>				}
+<a id="L397"></a><span class="ln">   397</span>			}
+<a id="L398"></a><span class="ln">   398</span>		}
+<a id="L399"></a><span class="ln">   399</span>	}
+<a id="L400"></a><span class="ln">   400</span>	
+<a id="L401"></a><span class="ln">   401</span>	func drawGlyphOver(dst *image.RGBA, r image.Rectangle, src *image.Uniform, mask *image.Alpha, mp image.Point) {
+<a id="L402"></a><span class="ln">   402</span>		i0 := dst.PixOffset(r.Min.X, r.Min.Y)
+<a id="L403"></a><span class="ln">   403</span>		i1 := i0 + r.Dx()*4
+<a id="L404"></a><span class="ln">   404</span>		mi0 := mask.PixOffset(mp.X, mp.Y)
+<a id="L405"></a><span class="ln">   405</span>		sr, sg, sb, sa := src.RGBA()
+<a id="L406"></a><span class="ln">   406</span>		for y, my := r.Min.Y, mp.Y; y != r.Max.Y; y, my = y+1, my+1 {
+<a id="L407"></a><span class="ln">   407</span>			for i, mi := i0, mi0; i &lt; i1; i, mi = i+4, mi+1 {
+<a id="L408"></a><span class="ln">   408</span>				ma := uint32(mask.Pix[mi])
+<a id="L409"></a><span class="ln">   409</span>				if ma == 0 {
+<a id="L410"></a><span class="ln">   410</span>					continue
+<a id="L411"></a><span class="ln">   411</span>				}
+<a id="L412"></a><span class="ln">   412</span>				ma |= ma &lt;&lt; 8
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>				dr := uint32(dst.Pix[i+0])
+<a id="L415"></a><span class="ln">   415</span>				dg := uint32(dst.Pix[i+1])
+<a id="L416"></a><span class="ln">   416</span>				db := uint32(dst.Pix[i+2])
+<a id="L417"></a><span class="ln">   417</span>				da := uint32(dst.Pix[i+3])
+<a id="L418"></a><span class="ln">   418</span>	
+<a id="L419"></a><span class="ln">   419</span>				<span class="comment">// The 0x101 is here for the same reason as in drawRGBA.</span>
+<a id="L420"></a><span class="ln">   420</span>				a := (m - (sa * ma / m)) * 0x101
+<a id="L421"></a><span class="ln">   421</span>	
+<a id="L422"></a><span class="ln">   422</span>				dst.Pix[i+0] = uint8((dr*a + sr*ma) / m &gt;&gt; 8)
+<a id="L423"></a><span class="ln">   423</span>				dst.Pix[i+1] = uint8((dg*a + sg*ma) / m &gt;&gt; 8)
+<a id="L424"></a><span class="ln">   424</span>				dst.Pix[i+2] = uint8((db*a + sb*ma) / m &gt;&gt; 8)
+<a id="L425"></a><span class="ln">   425</span>				dst.Pix[i+3] = uint8((da*a + sa*ma) / m &gt;&gt; 8)
+<a id="L426"></a><span class="ln">   426</span>			}
+<a id="L427"></a><span class="ln">   427</span>			i0 += dst.Stride
+<a id="L428"></a><span class="ln">   428</span>			i1 += dst.Stride
+<a id="L429"></a><span class="ln">   429</span>			mi0 += mask.Stride
+<a id="L430"></a><span class="ln">   430</span>		}
+<a id="L431"></a><span class="ln">   431</span>	}
+<a id="L432"></a><span class="ln">   432</span>	
+<a id="L433"></a><span class="ln">   433</span>	func drawRGBA(dst *image.RGBA, r image.Rectangle, src image.Image, sp image.Point, mask image.Image, mp image.Point, op Op) {
+<a id="L434"></a><span class="ln">   434</span>		x0, x1, dx := r.Min.X, r.Max.X, 1
+<a id="L435"></a><span class="ln">   435</span>		y0, y1, dy := r.Min.Y, r.Max.Y, 1
+<a id="L436"></a><span class="ln">   436</span>		if image.Image(dst) == src &amp;&amp; r.Overlaps(r.Add(sp.Sub(r.Min))) {
+<a id="L437"></a><span class="ln">   437</span>			if sp.Y &lt; r.Min.Y || sp.Y == r.Min.Y &amp;&amp; sp.X &lt; r.Min.X {
+<a id="L438"></a><span class="ln">   438</span>				x0, x1, dx = x1-1, x0-1, -1
+<a id="L439"></a><span class="ln">   439</span>				y0, y1, dy = y1-1, y0-1, -1
+<a id="L440"></a><span class="ln">   440</span>			}
+<a id="L441"></a><span class="ln">   441</span>		}
+<a id="L442"></a><span class="ln">   442</span>	
+<a id="L443"></a><span class="ln">   443</span>		sy := sp.Y + y0 - r.Min.Y
+<a id="L444"></a><span class="ln">   444</span>		my := mp.Y + y0 - r.Min.Y
+<a id="L445"></a><span class="ln">   445</span>		sx0 := sp.X + x0 - r.Min.X
+<a id="L446"></a><span class="ln">   446</span>		mx0 := mp.X + x0 - r.Min.X
+<a id="L447"></a><span class="ln">   447</span>		sx1 := sx0 + (x1 - x0)
+<a id="L448"></a><span class="ln">   448</span>		i0 := dst.PixOffset(x0, y0)
+<a id="L449"></a><span class="ln">   449</span>		di := dx * 4
+<a id="L450"></a><span class="ln">   450</span>		for y := y0; y != y1; y, sy, my = y+dy, sy+dy, my+dy {
+<a id="L451"></a><span class="ln">   451</span>			for i, sx, mx := i0, sx0, mx0; sx != sx1; i, sx, mx = i+di, sx+dx, mx+dx {
+<a id="L452"></a><span class="ln">   452</span>				ma := uint32(m)
+<a id="L453"></a><span class="ln">   453</span>				if mask != nil {
+<a id="L454"></a><span class="ln">   454</span>					_, _, _, ma = mask.At(mx, my).RGBA()
+<a id="L455"></a><span class="ln">   455</span>				}
+<a id="L456"></a><span class="ln">   456</span>				sr, sg, sb, sa := src.At(sx, sy).RGBA()
+<a id="L457"></a><span class="ln">   457</span>				if op == Over {
+<a id="L458"></a><span class="ln">   458</span>					dr := uint32(dst.Pix[i+0])
+<a id="L459"></a><span class="ln">   459</span>					dg := uint32(dst.Pix[i+1])
+<a id="L460"></a><span class="ln">   460</span>					db := uint32(dst.Pix[i+2])
+<a id="L461"></a><span class="ln">   461</span>					da := uint32(dst.Pix[i+3])
+<a id="L462"></a><span class="ln">   462</span>	
+<a id="L463"></a><span class="ln">   463</span>					<span class="comment">// dr, dg, db and da are all 8-bit color at the moment, ranging in [0,255].</span>
+<a id="L464"></a><span class="ln">   464</span>					<span class="comment">// We work in 16-bit color, and so would normally do:</span>
+<a id="L465"></a><span class="ln">   465</span>					<span class="comment">// dr |= dr &lt;&lt; 8</span>
+<a id="L466"></a><span class="ln">   466</span>					<span class="comment">// and similarly for dg, db and da, but instead we multiply a</span>
+<a id="L467"></a><span class="ln">   467</span>					<span class="comment">// (which is a 16-bit color, ranging in [0,65535]) by 0x101.</span>
+<a id="L468"></a><span class="ln">   468</span>					<span class="comment">// This yields the same result, but is fewer arithmetic operations.</span>
+<a id="L469"></a><span class="ln">   469</span>					a := (m - (sa * ma / m)) * 0x101
+<a id="L470"></a><span class="ln">   470</span>	
+<a id="L471"></a><span class="ln">   471</span>					dst.Pix[i+0] = uint8((dr*a + sr*ma) / m &gt;&gt; 8)
+<a id="L472"></a><span class="ln">   472</span>					dst.Pix[i+1] = uint8((dg*a + sg*ma) / m &gt;&gt; 8)
+<a id="L473"></a><span class="ln">   473</span>					dst.Pix[i+2] = uint8((db*a + sb*ma) / m &gt;&gt; 8)
+<a id="L474"></a><span class="ln">   474</span>					dst.Pix[i+3] = uint8((da*a + sa*ma) / m &gt;&gt; 8)
+<a id="L475"></a><span class="ln">   475</span>	
+<a id="L476"></a><span class="ln">   476</span>				} else {
+<a id="L477"></a><span class="ln">   477</span>					dst.Pix[i+0] = uint8(sr * ma / m &gt;&gt; 8)
+<a id="L478"></a><span class="ln">   478</span>					dst.Pix[i+1] = uint8(sg * ma / m &gt;&gt; 8)
+<a id="L479"></a><span class="ln">   479</span>					dst.Pix[i+2] = uint8(sb * ma / m &gt;&gt; 8)
+<a id="L480"></a><span class="ln">   480</span>					dst.Pix[i+3] = uint8(sa * ma / m &gt;&gt; 8)
+<a id="L481"></a><span class="ln">   481</span>				}
+<a id="L482"></a><span class="ln">   482</span>			}
+<a id="L483"></a><span class="ln">   483</span>			i0 += dy * dst.Stride
+<a id="L484"></a><span class="ln">   484</span>		}
+<a id="L485"></a><span class="ln">   485</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/fd_linux.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/fd_linux.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Waiting for FDs via epoll(7).</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package net
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;os&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;syscall&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	const (
+<a id="L15"></a><span class="ln">    15</span>		readFlags  = syscall.EPOLLIN | syscall.EPOLLRDHUP
+<a id="L16"></a><span class="ln">    16</span>		writeFlags = syscall.EPOLLOUT
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	type pollster struct {
+<a id="L20"></a><span class="ln">    20</span>		epfd int
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>		<span class="comment">// Events we&#39;re already waiting for</span>
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// Must hold pollServer lock</span>
+<a id="L24"></a><span class="ln">    24</span>		events map[int]uint32
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>		<span class="comment">// An event buffer for EpollWait.</span>
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// Used without a lock, may only be used by WaitFD.</span>
+<a id="L28"></a><span class="ln">    28</span>		waitEventBuf [10]syscall.EpollEvent
+<a id="L29"></a><span class="ln">    29</span>		waitEvents   []syscall.EpollEvent
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>		<span class="comment">// An event buffer for EpollCtl, to avoid a malloc.</span>
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// Must hold pollServer lock.</span>
+<a id="L33"></a><span class="ln">    33</span>		ctlEvent syscall.EpollEvent
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	func newpollster() (p *pollster, err error) {
+<a id="L37"></a><span class="ln">    37</span>		p = new(pollster)
+<a id="L38"></a><span class="ln">    38</span>		if p.epfd, err = syscall.EpollCreate1(syscall.EPOLL_CLOEXEC); err != nil {
+<a id="L39"></a><span class="ln">    39</span>			if err != syscall.ENOSYS {
+<a id="L40"></a><span class="ln">    40</span>				return nil, os.NewSyscallError(&#34;epoll_create1&#34;, err)
+<a id="L41"></a><span class="ln">    41</span>			}
+<a id="L42"></a><span class="ln">    42</span>			<span class="comment">// The arg to epoll_create is a hint to the kernel</span>
+<a id="L43"></a><span class="ln">    43</span>			<span class="comment">// about the number of FDs we will care about.</span>
+<a id="L44"></a><span class="ln">    44</span>			<span class="comment">// We don&#39;t know, and since 2.6.8 the kernel ignores it anyhow.</span>
+<a id="L45"></a><span class="ln">    45</span>			if p.epfd, err = syscall.EpollCreate(16); err != nil {
+<a id="L46"></a><span class="ln">    46</span>				return nil, os.NewSyscallError(&#34;epoll_create&#34;, err)
+<a id="L47"></a><span class="ln">    47</span>			}
+<a id="L48"></a><span class="ln">    48</span>			syscall.CloseOnExec(p.epfd)
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		p.events = make(map[int]uint32)
+<a id="L51"></a><span class="ln">    51</span>		return p, nil
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	func (p *pollster) AddFD(fd int, mode int, repeat bool) (bool, error) {
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// pollServer is locked.</span>
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>		var already bool
+<a id="L58"></a><span class="ln">    58</span>		p.ctlEvent.Fd = int32(fd)
+<a id="L59"></a><span class="ln">    59</span>		p.ctlEvent.Events, already = p.events[fd]
+<a id="L60"></a><span class="ln">    60</span>		if !repeat {
+<a id="L61"></a><span class="ln">    61</span>			p.ctlEvent.Events |= syscall.EPOLLONESHOT
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>		if mode == &#39;r&#39; {
+<a id="L64"></a><span class="ln">    64</span>			p.ctlEvent.Events |= readFlags
+<a id="L65"></a><span class="ln">    65</span>		} else {
+<a id="L66"></a><span class="ln">    66</span>			p.ctlEvent.Events |= writeFlags
+<a id="L67"></a><span class="ln">    67</span>		}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>		var op int
+<a id="L70"></a><span class="ln">    70</span>		if already {
+<a id="L71"></a><span class="ln">    71</span>			op = syscall.EPOLL_CTL_MOD
+<a id="L72"></a><span class="ln">    72</span>		} else {
+<a id="L73"></a><span class="ln">    73</span>			op = syscall.EPOLL_CTL_ADD
+<a id="L74"></a><span class="ln">    74</span>		}
+<a id="L75"></a><span class="ln">    75</span>		if err := syscall.EpollCtl(p.epfd, op, fd, &amp;p.ctlEvent); err != nil {
+<a id="L76"></a><span class="ln">    76</span>			return false, os.NewSyscallError(&#34;epoll_ctl&#34;, err)
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		p.events[fd] = p.ctlEvent.Events
+<a id="L79"></a><span class="ln">    79</span>		return false, nil
+<a id="L80"></a><span class="ln">    80</span>	}
+<a id="L81"></a><span class="ln">    81</span>	
+<a id="L82"></a><span class="ln">    82</span>	func (p *pollster) StopWaiting(fd int, bits uint) {
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// pollServer is locked.</span>
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>		events, already := p.events[fd]
+<a id="L86"></a><span class="ln">    86</span>		if !already {
+<a id="L87"></a><span class="ln">    87</span>			<span class="comment">// The fd returned by the kernel may have been</span>
+<a id="L88"></a><span class="ln">    88</span>			<span class="comment">// cancelled already; return silently.</span>
+<a id="L89"></a><span class="ln">    89</span>			return
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>		<span class="comment">// If syscall.EPOLLONESHOT is not set, the wait</span>
+<a id="L93"></a><span class="ln">    93</span>		<span class="comment">// is a repeating wait, so don&#39;t change it.</span>
+<a id="L94"></a><span class="ln">    94</span>		if events&amp;syscall.EPOLLONESHOT == 0 {
+<a id="L95"></a><span class="ln">    95</span>			return
+<a id="L96"></a><span class="ln">    96</span>		}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>		<span class="comment">// Disable the given bits.</span>
+<a id="L99"></a><span class="ln">    99</span>		<span class="comment">// If we&#39;re still waiting for other events, modify the fd</span>
+<a id="L100"></a><span class="ln">   100</span>		<span class="comment">// event in the kernel.  Otherwise, delete it.</span>
+<a id="L101"></a><span class="ln">   101</span>		events &amp;= ^uint32(bits)
+<a id="L102"></a><span class="ln">   102</span>		if int32(events)&amp;^syscall.EPOLLONESHOT != 0 {
+<a id="L103"></a><span class="ln">   103</span>			p.ctlEvent.Fd = int32(fd)
+<a id="L104"></a><span class="ln">   104</span>			p.ctlEvent.Events = events
+<a id="L105"></a><span class="ln">   105</span>			if err := syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_MOD, fd, &amp;p.ctlEvent); err != nil {
+<a id="L106"></a><span class="ln">   106</span>				print(&#34;Epoll modify fd=&#34;, fd, &#34;: &#34;, err.Error(), &#34;\n&#34;)
+<a id="L107"></a><span class="ln">   107</span>			}
+<a id="L108"></a><span class="ln">   108</span>			p.events[fd] = events
+<a id="L109"></a><span class="ln">   109</span>		} else {
+<a id="L110"></a><span class="ln">   110</span>			if err := syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_DEL, fd, nil); err != nil {
+<a id="L111"></a><span class="ln">   111</span>				print(&#34;Epoll delete fd=&#34;, fd, &#34;: &#34;, err.Error(), &#34;\n&#34;)
+<a id="L112"></a><span class="ln">   112</span>			}
+<a id="L113"></a><span class="ln">   113</span>			delete(p.events, fd)
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>	}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	func (p *pollster) DelFD(fd int, mode int) {
+<a id="L118"></a><span class="ln">   118</span>		<span class="comment">// pollServer is locked.</span>
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>		if mode == &#39;r&#39; {
+<a id="L121"></a><span class="ln">   121</span>			p.StopWaiting(fd, readFlags)
+<a id="L122"></a><span class="ln">   122</span>		} else {
+<a id="L123"></a><span class="ln">   123</span>			p.StopWaiting(fd, writeFlags)
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>		<span class="comment">// Discard any queued up events.</span>
+<a id="L127"></a><span class="ln">   127</span>		i := 0
+<a id="L128"></a><span class="ln">   128</span>		for i &lt; len(p.waitEvents) {
+<a id="L129"></a><span class="ln">   129</span>			if fd == int(p.waitEvents[i].Fd) {
+<a id="L130"></a><span class="ln">   130</span>				copy(p.waitEvents[i:], p.waitEvents[i+1:])
+<a id="L131"></a><span class="ln">   131</span>				p.waitEvents = p.waitEvents[:len(p.waitEvents)-1]
+<a id="L132"></a><span class="ln">   132</span>			} else {
+<a id="L133"></a><span class="ln">   133</span>				i++
+<a id="L134"></a><span class="ln">   134</span>			}
+<a id="L135"></a><span class="ln">   135</span>		}
+<a id="L136"></a><span class="ln">   136</span>	}
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>	func (p *pollster) WaitFD(s *pollServer, nsec int64) (fd int, mode int, err error) {
+<a id="L139"></a><span class="ln">   139</span>		for len(p.waitEvents) == 0 {
+<a id="L140"></a><span class="ln">   140</span>			var msec int = -1
+<a id="L141"></a><span class="ln">   141</span>			if nsec &gt; 0 {
+<a id="L142"></a><span class="ln">   142</span>				msec = int((nsec + 1e6 - 1) / 1e6)
+<a id="L143"></a><span class="ln">   143</span>			}
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>			s.Unlock()
+<a id="L146"></a><span class="ln">   146</span>			n, err := syscall.EpollWait(p.epfd, p.waitEventBuf[0:], msec)
+<a id="L147"></a><span class="ln">   147</span>			s.Lock()
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>			if err != nil {
+<a id="L150"></a><span class="ln">   150</span>				if err == syscall.EAGAIN || err == syscall.EINTR {
+<a id="L151"></a><span class="ln">   151</span>					continue
+<a id="L152"></a><span class="ln">   152</span>				}
+<a id="L153"></a><span class="ln">   153</span>				return -1, 0, os.NewSyscallError(&#34;epoll_wait&#34;, err)
+<a id="L154"></a><span class="ln">   154</span>			}
+<a id="L155"></a><span class="ln">   155</span>			if n == 0 {
+<a id="L156"></a><span class="ln">   156</span>				return -1, 0, nil
+<a id="L157"></a><span class="ln">   157</span>			}
+<a id="L158"></a><span class="ln">   158</span>			p.waitEvents = p.waitEventBuf[0:n]
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		ev := &amp;p.waitEvents[0]
+<a id="L162"></a><span class="ln">   162</span>		p.waitEvents = p.waitEvents[1:]
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>		fd = int(ev.Fd)
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>		if ev.Events&amp;writeFlags != 0 {
+<a id="L167"></a><span class="ln">   167</span>			p.StopWaiting(fd, writeFlags)
+<a id="L168"></a><span class="ln">   168</span>			return fd, &#39;w&#39;, nil
+<a id="L169"></a><span class="ln">   169</span>		}
+<a id="L170"></a><span class="ln">   170</span>		if ev.Events&amp;readFlags != 0 {
+<a id="L171"></a><span class="ln">   171</span>			p.StopWaiting(fd, readFlags)
+<a id="L172"></a><span class="ln">   172</span>			return fd, &#39;r&#39;, nil
+<a id="L173"></a><span class="ln">   173</span>		}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>		<span class="comment">// Other events are error conditions - wake whoever is waiting.</span>
+<a id="L176"></a><span class="ln">   176</span>		events, _ := p.events[fd]
+<a id="L177"></a><span class="ln">   177</span>		if events&amp;writeFlags != 0 {
+<a id="L178"></a><span class="ln">   178</span>			p.StopWaiting(fd, writeFlags)
+<a id="L179"></a><span class="ln">   179</span>			return fd, &#39;w&#39;, nil
+<a id="L180"></a><span class="ln">   180</span>		}
+<a id="L181"></a><span class="ln">   181</span>		p.StopWaiting(fd, readFlags)
+<a id="L182"></a><span class="ln">   182</span>		return fd, &#39;r&#39;, nil
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	func (p *pollster) Close() error {
+<a id="L186"></a><span class="ln">   186</span>		return os.NewSyscallError(&#34;close&#34;, syscall.Close(p.epfd))
+<a id="L187"></a><span class="ln">   187</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

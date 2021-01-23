@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/cmplx/pow.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/cmplx/pow.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package cmplx
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;math&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// The original C code, the long comment, and the constants</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// below are from http://netlib.sandia.gov/cephes/c9x-complex/clog.c.</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// The go code is a simplified version of the original C.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Cephes Math Library Release 2.8:  June, 2000</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// Copyright 1984, 1987, 1989, 1992, 2000 by Stephen L. Moshier</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">//</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// The readme file at http://netlib.sandia.gov/cephes/ says:</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">//    Some software in this archive may be from the book _Methods and</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// Programs for Mathematical Functions_ (Prentice-Hall or Simon &amp; Schuster</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// International, 1989) or from the Cephes Mathematical Library, a</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// commercial product. In either event, it is copyrighted by the author.</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// What you see here may be used freely but it comes with no support or</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// guarantee.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">//   The two known misprints in the book are repaired here in the</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// source listings for the gamma function and the incomplete beta</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// integral.</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">//</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">//   Stephen L. Moshier</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//   moshier@na-net.ornl.gov</span>
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// Complex power function</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">//</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// DESCRIPTION:</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// Raises complex A to the complex Zth power.</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// Definition is per AMS55 # 4.2.8,</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// analytically equivalent to cpow(a,z) = cexp(z clog(a)).</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// ACCURACY:</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//                      Relative error:</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// arithmetic   domain     # trials      peak         rms</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//    IEEE      -10,+10     30000       9.4e-15     1.5e-15</span>
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Pow returns x**y, the base-x exponential of y.</span>
+<a id="L46"></a><span class="ln">    46</span>	func Pow(x, y complex128) complex128 {
+<a id="L47"></a><span class="ln">    47</span>		modulus := Abs(x)
+<a id="L48"></a><span class="ln">    48</span>		if modulus == 0 {
+<a id="L49"></a><span class="ln">    49</span>			return complex(0, 0)
+<a id="L50"></a><span class="ln">    50</span>		}
+<a id="L51"></a><span class="ln">    51</span>		r := math.Pow(modulus, real(y))
+<a id="L52"></a><span class="ln">    52</span>		arg := Phase(x)
+<a id="L53"></a><span class="ln">    53</span>		theta := real(y) * arg
+<a id="L54"></a><span class="ln">    54</span>		if imag(y) != 0 {
+<a id="L55"></a><span class="ln">    55</span>			r *= math.Exp(-imag(y) * arg)
+<a id="L56"></a><span class="ln">    56</span>			theta += imag(y) * math.Log(modulus)
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>		s, c := math.Sincos(theta)
+<a id="L59"></a><span class="ln">    59</span>		return complex(r*c, r*s)
+<a id="L60"></a><span class="ln">    60</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

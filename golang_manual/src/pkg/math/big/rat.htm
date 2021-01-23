@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/big/rat.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/big/rat.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// This file implements multi-precision rational numbers.</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package big
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;encoding/binary&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;errors&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;fmt&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strings&#34;
+<a id="L14"></a><span class="ln">    14</span>	)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// A Rat represents a quotient a/b of arbitrary precision.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// The zero value for a Rat represents the value 0.</span>
+<a id="L18"></a><span class="ln">    18</span>	type Rat struct {
+<a id="L19"></a><span class="ln">    19</span>		a Int
+<a id="L20"></a><span class="ln">    20</span>		b nat <span class="comment">// len(b) == 0 acts like b == 1</span>
+<a id="L21"></a><span class="ln">    21</span>	}
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// NewRat creates a new Rat with numerator a and denominator b.</span>
+<a id="L24"></a><span class="ln">    24</span>	func NewRat(a, b int64) *Rat {
+<a id="L25"></a><span class="ln">    25</span>		return new(Rat).SetFrac64(a, b)
+<a id="L26"></a><span class="ln">    26</span>	}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// SetFrac sets z to a/b and returns z.</span>
+<a id="L29"></a><span class="ln">    29</span>	func (z *Rat) SetFrac(a, b *Int) *Rat {
+<a id="L30"></a><span class="ln">    30</span>		z.a.neg = a.neg != b.neg
+<a id="L31"></a><span class="ln">    31</span>		babs := b.abs
+<a id="L32"></a><span class="ln">    32</span>		if len(babs) == 0 {
+<a id="L33"></a><span class="ln">    33</span>			panic(&#34;division by zero&#34;)
+<a id="L34"></a><span class="ln">    34</span>		}
+<a id="L35"></a><span class="ln">    35</span>		if &amp;z.a == b || alias(z.a.abs, babs) {
+<a id="L36"></a><span class="ln">    36</span>			babs = nat(nil).set(babs) <span class="comment">// make a copy</span>
+<a id="L37"></a><span class="ln">    37</span>		}
+<a id="L38"></a><span class="ln">    38</span>		z.a.abs = z.a.abs.set(a.abs)
+<a id="L39"></a><span class="ln">    39</span>		z.b = z.b.set(babs)
+<a id="L40"></a><span class="ln">    40</span>		return z.norm()
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// SetFrac64 sets z to a/b and returns z.</span>
+<a id="L44"></a><span class="ln">    44</span>	func (z *Rat) SetFrac64(a, b int64) *Rat {
+<a id="L45"></a><span class="ln">    45</span>		z.a.SetInt64(a)
+<a id="L46"></a><span class="ln">    46</span>		if b == 0 {
+<a id="L47"></a><span class="ln">    47</span>			panic(&#34;division by zero&#34;)
+<a id="L48"></a><span class="ln">    48</span>		}
+<a id="L49"></a><span class="ln">    49</span>		if b &lt; 0 {
+<a id="L50"></a><span class="ln">    50</span>			b = -b
+<a id="L51"></a><span class="ln">    51</span>			z.a.neg = !z.a.neg
+<a id="L52"></a><span class="ln">    52</span>		}
+<a id="L53"></a><span class="ln">    53</span>		z.b = z.b.setUint64(uint64(b))
+<a id="L54"></a><span class="ln">    54</span>		return z.norm()
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// SetInt sets z to x (by making a copy of x) and returns z.</span>
+<a id="L58"></a><span class="ln">    58</span>	func (z *Rat) SetInt(x *Int) *Rat {
+<a id="L59"></a><span class="ln">    59</span>		z.a.Set(x)
+<a id="L60"></a><span class="ln">    60</span>		z.b = z.b.make(0)
+<a id="L61"></a><span class="ln">    61</span>		return z
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// SetInt64 sets z to x and returns z.</span>
+<a id="L65"></a><span class="ln">    65</span>	func (z *Rat) SetInt64(x int64) *Rat {
+<a id="L66"></a><span class="ln">    66</span>		z.a.SetInt64(x)
+<a id="L67"></a><span class="ln">    67</span>		z.b = z.b.make(0)
+<a id="L68"></a><span class="ln">    68</span>		return z
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// Set sets z to x (by making a copy of x) and returns z.</span>
+<a id="L72"></a><span class="ln">    72</span>	func (z *Rat) Set(x *Rat) *Rat {
+<a id="L73"></a><span class="ln">    73</span>		if z != x {
+<a id="L74"></a><span class="ln">    74</span>			z.a.Set(&amp;x.a)
+<a id="L75"></a><span class="ln">    75</span>			z.b = z.b.set(x.b)
+<a id="L76"></a><span class="ln">    76</span>		}
+<a id="L77"></a><span class="ln">    77</span>		return z
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// Abs sets z to |x| (the absolute value of x) and returns z.</span>
+<a id="L81"></a><span class="ln">    81</span>	func (z *Rat) Abs(x *Rat) *Rat {
+<a id="L82"></a><span class="ln">    82</span>		z.Set(x)
+<a id="L83"></a><span class="ln">    83</span>		z.a.neg = false
+<a id="L84"></a><span class="ln">    84</span>		return z
+<a id="L85"></a><span class="ln">    85</span>	}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// Neg sets z to -x and returns z.</span>
+<a id="L88"></a><span class="ln">    88</span>	func (z *Rat) Neg(x *Rat) *Rat {
+<a id="L89"></a><span class="ln">    89</span>		z.Set(x)
+<a id="L90"></a><span class="ln">    90</span>		z.a.neg = len(z.a.abs) &gt; 0 &amp;&amp; !z.a.neg <span class="comment">// 0 has no sign</span>
+<a id="L91"></a><span class="ln">    91</span>		return z
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// Inv sets z to 1/x and returns z.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (z *Rat) Inv(x *Rat) *Rat {
+<a id="L96"></a><span class="ln">    96</span>		if len(x.a.abs) == 0 {
+<a id="L97"></a><span class="ln">    97</span>			panic(&#34;division by zero&#34;)
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		z.Set(x)
+<a id="L100"></a><span class="ln">   100</span>		a := z.b
+<a id="L101"></a><span class="ln">   101</span>		if len(a) == 0 {
+<a id="L102"></a><span class="ln">   102</span>			a = a.setWord(1) <span class="comment">// materialize numerator</span>
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>		b := z.a.abs
+<a id="L105"></a><span class="ln">   105</span>		if b.cmp(natOne) == 0 {
+<a id="L106"></a><span class="ln">   106</span>			b = b.make(0) <span class="comment">// normalize denominator</span>
+<a id="L107"></a><span class="ln">   107</span>		}
+<a id="L108"></a><span class="ln">   108</span>		z.a.abs, z.b = a, b <span class="comment">// sign doesn&#39;t change</span>
+<a id="L109"></a><span class="ln">   109</span>		return z
+<a id="L110"></a><span class="ln">   110</span>	}
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// Sign returns:</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">//</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">//	-1 if x &lt;  0</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">//	 0 if x == 0</span>
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">//	+1 if x &gt;  0</span>
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">//</span>
+<a id="L118"></a><span class="ln">   118</span>	func (x *Rat) Sign() int {
+<a id="L119"></a><span class="ln">   119</span>		return x.a.Sign()
+<a id="L120"></a><span class="ln">   120</span>	}
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// IsInt returns true if the denominator of x is 1.</span>
+<a id="L123"></a><span class="ln">   123</span>	func (x *Rat) IsInt() bool {
+<a id="L124"></a><span class="ln">   124</span>		return len(x.b) == 0 || x.b.cmp(natOne) == 0
+<a id="L125"></a><span class="ln">   125</span>	}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// Num returns the numerator of x; it may be &lt;= 0.</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// The result is a reference to x&#39;s numerator; it</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// may change if a new value is assigned to x.</span>
+<a id="L130"></a><span class="ln">   130</span>	func (x *Rat) Num() *Int {
+<a id="L131"></a><span class="ln">   131</span>		return &amp;x.a
+<a id="L132"></a><span class="ln">   132</span>	}
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// Denom returns the denominator of x; it is always &gt; 0.</span>
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// The result is a reference to x&#39;s denominator; it</span>
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// may change if a new value is assigned to x.</span>
+<a id="L137"></a><span class="ln">   137</span>	func (x *Rat) Denom() *Int {
+<a id="L138"></a><span class="ln">   138</span>		if len(x.b) == 0 {
+<a id="L139"></a><span class="ln">   139</span>			return &amp;Int{abs: nat{1}}
+<a id="L140"></a><span class="ln">   140</span>		}
+<a id="L141"></a><span class="ln">   141</span>		return &amp;Int{abs: x.b}
+<a id="L142"></a><span class="ln">   142</span>	}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>	func gcd(x, y nat) nat {
+<a id="L145"></a><span class="ln">   145</span>		<span class="comment">// Euclidean algorithm.</span>
+<a id="L146"></a><span class="ln">   146</span>		var a, b nat
+<a id="L147"></a><span class="ln">   147</span>		a = a.set(x)
+<a id="L148"></a><span class="ln">   148</span>		b = b.set(y)
+<a id="L149"></a><span class="ln">   149</span>		for len(b) != 0 {
+<a id="L150"></a><span class="ln">   150</span>			var q, r nat
+<a id="L151"></a><span class="ln">   151</span>			_, r = q.div(r, a, b)
+<a id="L152"></a><span class="ln">   152</span>			a = b
+<a id="L153"></a><span class="ln">   153</span>			b = r
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>		return a
+<a id="L156"></a><span class="ln">   156</span>	}
+<a id="L157"></a><span class="ln">   157</span>	
+<a id="L158"></a><span class="ln">   158</span>	func (z *Rat) norm() *Rat {
+<a id="L159"></a><span class="ln">   159</span>		switch {
+<a id="L160"></a><span class="ln">   160</span>		case len(z.a.abs) == 0:
+<a id="L161"></a><span class="ln">   161</span>			<span class="comment">// z == 0 - normalize sign and denominator</span>
+<a id="L162"></a><span class="ln">   162</span>			z.a.neg = false
+<a id="L163"></a><span class="ln">   163</span>			z.b = z.b.make(0)
+<a id="L164"></a><span class="ln">   164</span>		case len(z.b) == 0:
+<a id="L165"></a><span class="ln">   165</span>			<span class="comment">// z is normalized int - nothing to do</span>
+<a id="L166"></a><span class="ln">   166</span>		case z.b.cmp(natOne) == 0:
+<a id="L167"></a><span class="ln">   167</span>			<span class="comment">// z is int - normalize denominator</span>
+<a id="L168"></a><span class="ln">   168</span>			z.b = z.b.make(0)
+<a id="L169"></a><span class="ln">   169</span>		default:
+<a id="L170"></a><span class="ln">   170</span>			if f := gcd(z.a.abs, z.b); f.cmp(natOne) != 0 {
+<a id="L171"></a><span class="ln">   171</span>				z.a.abs, _ = z.a.abs.div(nil, z.a.abs, f)
+<a id="L172"></a><span class="ln">   172</span>				z.b, _ = z.b.div(nil, z.b, f)
+<a id="L173"></a><span class="ln">   173</span>			}
+<a id="L174"></a><span class="ln">   174</span>		}
+<a id="L175"></a><span class="ln">   175</span>		return z
+<a id="L176"></a><span class="ln">   176</span>	}
+<a id="L177"></a><span class="ln">   177</span>	
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// mulDenom sets z to the denominator product x*y (by taking into</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// account that 0 values for x or y must be interpreted as 1) and</span>
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">// returns z.</span>
+<a id="L181"></a><span class="ln">   181</span>	func mulDenom(z, x, y nat) nat {
+<a id="L182"></a><span class="ln">   182</span>		switch {
+<a id="L183"></a><span class="ln">   183</span>		case len(x) == 0:
+<a id="L184"></a><span class="ln">   184</span>			return z.set(y)
+<a id="L185"></a><span class="ln">   185</span>		case len(y) == 0:
+<a id="L186"></a><span class="ln">   186</span>			return z.set(x)
+<a id="L187"></a><span class="ln">   187</span>		}
+<a id="L188"></a><span class="ln">   188</span>		return z.mul(x, y)
+<a id="L189"></a><span class="ln">   189</span>	}
+<a id="L190"></a><span class="ln">   190</span>	
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// scaleDenom computes x*f.</span>
+<a id="L192"></a><span class="ln">   192</span>	<span class="comment">// If f == 0 (zero value of denominator), the result is (a copy of) x.</span>
+<a id="L193"></a><span class="ln">   193</span>	func scaleDenom(x *Int, f nat) *Int {
+<a id="L194"></a><span class="ln">   194</span>		var z Int
+<a id="L195"></a><span class="ln">   195</span>		if len(f) == 0 {
+<a id="L196"></a><span class="ln">   196</span>			return z.Set(x)
+<a id="L197"></a><span class="ln">   197</span>		}
+<a id="L198"></a><span class="ln">   198</span>		z.abs = z.abs.mul(x.abs, f)
+<a id="L199"></a><span class="ln">   199</span>		z.neg = x.neg
+<a id="L200"></a><span class="ln">   200</span>		return &amp;z
+<a id="L201"></a><span class="ln">   201</span>	}
+<a id="L202"></a><span class="ln">   202</span>	
+<a id="L203"></a><span class="ln">   203</span>	<span class="comment">// Cmp compares x and y and returns:</span>
+<a id="L204"></a><span class="ln">   204</span>	<span class="comment">//</span>
+<a id="L205"></a><span class="ln">   205</span>	<span class="comment">//   -1 if x &lt;  y</span>
+<a id="L206"></a><span class="ln">   206</span>	<span class="comment">//    0 if x == y</span>
+<a id="L207"></a><span class="ln">   207</span>	<span class="comment">//   +1 if x &gt;  y</span>
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">//</span>
+<a id="L209"></a><span class="ln">   209</span>	func (x *Rat) Cmp(y *Rat) int {
+<a id="L210"></a><span class="ln">   210</span>		return scaleDenom(&amp;x.a, y.b).Cmp(scaleDenom(&amp;y.a, x.b))
+<a id="L211"></a><span class="ln">   211</span>	}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// Add sets z to the sum x+y and returns z.</span>
+<a id="L214"></a><span class="ln">   214</span>	func (z *Rat) Add(x, y *Rat) *Rat {
+<a id="L215"></a><span class="ln">   215</span>		a1 := scaleDenom(&amp;x.a, y.b)
+<a id="L216"></a><span class="ln">   216</span>		a2 := scaleDenom(&amp;y.a, x.b)
+<a id="L217"></a><span class="ln">   217</span>		z.a.Add(a1, a2)
+<a id="L218"></a><span class="ln">   218</span>		z.b = mulDenom(z.b, x.b, y.b)
+<a id="L219"></a><span class="ln">   219</span>		return z.norm()
+<a id="L220"></a><span class="ln">   220</span>	}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// Sub sets z to the difference x-y and returns z.</span>
+<a id="L223"></a><span class="ln">   223</span>	func (z *Rat) Sub(x, y *Rat) *Rat {
+<a id="L224"></a><span class="ln">   224</span>		a1 := scaleDenom(&amp;x.a, y.b)
+<a id="L225"></a><span class="ln">   225</span>		a2 := scaleDenom(&amp;y.a, x.b)
+<a id="L226"></a><span class="ln">   226</span>		z.a.Sub(a1, a2)
+<a id="L227"></a><span class="ln">   227</span>		z.b = mulDenom(z.b, x.b, y.b)
+<a id="L228"></a><span class="ln">   228</span>		return z.norm()
+<a id="L229"></a><span class="ln">   229</span>	}
+<a id="L230"></a><span class="ln">   230</span>	
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// Mul sets z to the product x*y and returns z.</span>
+<a id="L232"></a><span class="ln">   232</span>	func (z *Rat) Mul(x, y *Rat) *Rat {
+<a id="L233"></a><span class="ln">   233</span>		z.a.Mul(&amp;x.a, &amp;y.a)
+<a id="L234"></a><span class="ln">   234</span>		z.b = mulDenom(z.b, x.b, y.b)
+<a id="L235"></a><span class="ln">   235</span>		return z.norm()
+<a id="L236"></a><span class="ln">   236</span>	}
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>	<span class="comment">// Quo sets z to the quotient x/y and returns z.</span>
+<a id="L239"></a><span class="ln">   239</span>	<span class="comment">// If y == 0, a division-by-zero run-time panic occurs.</span>
+<a id="L240"></a><span class="ln">   240</span>	func (z *Rat) Quo(x, y *Rat) *Rat {
+<a id="L241"></a><span class="ln">   241</span>		if len(y.a.abs) == 0 {
+<a id="L242"></a><span class="ln">   242</span>			panic(&#34;division by zero&#34;)
+<a id="L243"></a><span class="ln">   243</span>		}
+<a id="L244"></a><span class="ln">   244</span>		a := scaleDenom(&amp;x.a, y.b)
+<a id="L245"></a><span class="ln">   245</span>		b := scaleDenom(&amp;y.a, x.b)
+<a id="L246"></a><span class="ln">   246</span>		z.a.abs = a.abs
+<a id="L247"></a><span class="ln">   247</span>		z.b = b.abs
+<a id="L248"></a><span class="ln">   248</span>		z.a.neg = a.neg != b.neg
+<a id="L249"></a><span class="ln">   249</span>		return z.norm()
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	func ratTok(ch rune) bool {
+<a id="L253"></a><span class="ln">   253</span>		return strings.IndexRune(&#34;+-/0123456789.eE&#34;, ch) &gt;= 0
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	<span class="comment">// Scan is a support routine for fmt.Scanner. It accepts the formats</span>
+<a id="L257"></a><span class="ln">   257</span>	<span class="comment">// &#39;e&#39;, &#39;E&#39;, &#39;f&#39;, &#39;F&#39;, &#39;g&#39;, &#39;G&#39;, and &#39;v&#39;. All formats are equivalent.</span>
+<a id="L258"></a><span class="ln">   258</span>	func (z *Rat) Scan(s fmt.ScanState, ch rune) error {
+<a id="L259"></a><span class="ln">   259</span>		tok, err := s.Token(true, ratTok)
+<a id="L260"></a><span class="ln">   260</span>		if err != nil {
+<a id="L261"></a><span class="ln">   261</span>			return err
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>		if strings.IndexRune(&#34;efgEFGv&#34;, ch) &lt; 0 {
+<a id="L264"></a><span class="ln">   264</span>			return errors.New(&#34;Rat.Scan: invalid verb&#34;)
+<a id="L265"></a><span class="ln">   265</span>		}
+<a id="L266"></a><span class="ln">   266</span>		if _, ok := z.SetString(string(tok)); !ok {
+<a id="L267"></a><span class="ln">   267</span>			return errors.New(&#34;Rat.Scan: invalid syntax&#34;)
+<a id="L268"></a><span class="ln">   268</span>		}
+<a id="L269"></a><span class="ln">   269</span>		return nil
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// SetString sets z to the value of s and returns z and a boolean indicating</span>
+<a id="L273"></a><span class="ln">   273</span>	<span class="comment">// success. s can be given as a fraction &#34;a/b&#34; or as a floating-point number</span>
+<a id="L274"></a><span class="ln">   274</span>	<span class="comment">// optionally followed by an exponent. If the operation failed, the value of</span>
+<a id="L275"></a><span class="ln">   275</span>	<span class="comment">// z is undefined but the returned value is nil.</span>
+<a id="L276"></a><span class="ln">   276</span>	func (z *Rat) SetString(s string) (*Rat, bool) {
+<a id="L277"></a><span class="ln">   277</span>		if len(s) == 0 {
+<a id="L278"></a><span class="ln">   278</span>			return nil, false
+<a id="L279"></a><span class="ln">   279</span>		}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>		<span class="comment">// check for a quotient</span>
+<a id="L282"></a><span class="ln">   282</span>		sep := strings.Index(s, &#34;/&#34;)
+<a id="L283"></a><span class="ln">   283</span>		if sep &gt;= 0 {
+<a id="L284"></a><span class="ln">   284</span>			if _, ok := z.a.SetString(s[0:sep], 10); !ok {
+<a id="L285"></a><span class="ln">   285</span>				return nil, false
+<a id="L286"></a><span class="ln">   286</span>			}
+<a id="L287"></a><span class="ln">   287</span>			s = s[sep+1:]
+<a id="L288"></a><span class="ln">   288</span>			var err error
+<a id="L289"></a><span class="ln">   289</span>			if z.b, _, err = z.b.scan(strings.NewReader(s), 10); err != nil {
+<a id="L290"></a><span class="ln">   290</span>				return nil, false
+<a id="L291"></a><span class="ln">   291</span>			}
+<a id="L292"></a><span class="ln">   292</span>			return z.norm(), true
+<a id="L293"></a><span class="ln">   293</span>		}
+<a id="L294"></a><span class="ln">   294</span>	
+<a id="L295"></a><span class="ln">   295</span>		<span class="comment">// check for a decimal point</span>
+<a id="L296"></a><span class="ln">   296</span>		sep = strings.Index(s, &#34;.&#34;)
+<a id="L297"></a><span class="ln">   297</span>		<span class="comment">// check for an exponent</span>
+<a id="L298"></a><span class="ln">   298</span>		e := strings.IndexAny(s, &#34;eE&#34;)
+<a id="L299"></a><span class="ln">   299</span>		var exp Int
+<a id="L300"></a><span class="ln">   300</span>		if e &gt;= 0 {
+<a id="L301"></a><span class="ln">   301</span>			if e &lt; sep {
+<a id="L302"></a><span class="ln">   302</span>				<span class="comment">// The E must come after the decimal point.</span>
+<a id="L303"></a><span class="ln">   303</span>				return nil, false
+<a id="L304"></a><span class="ln">   304</span>			}
+<a id="L305"></a><span class="ln">   305</span>			if _, ok := exp.SetString(s[e+1:], 10); !ok {
+<a id="L306"></a><span class="ln">   306</span>				return nil, false
+<a id="L307"></a><span class="ln">   307</span>			}
+<a id="L308"></a><span class="ln">   308</span>			s = s[0:e]
+<a id="L309"></a><span class="ln">   309</span>		}
+<a id="L310"></a><span class="ln">   310</span>		if sep &gt;= 0 {
+<a id="L311"></a><span class="ln">   311</span>			s = s[0:sep] + s[sep+1:]
+<a id="L312"></a><span class="ln">   312</span>			exp.Sub(&amp;exp, NewInt(int64(len(s)-sep)))
+<a id="L313"></a><span class="ln">   313</span>		}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>		if _, ok := z.a.SetString(s, 10); !ok {
+<a id="L316"></a><span class="ln">   316</span>			return nil, false
+<a id="L317"></a><span class="ln">   317</span>		}
+<a id="L318"></a><span class="ln">   318</span>		powTen := nat(nil).expNN(natTen, exp.abs, nil)
+<a id="L319"></a><span class="ln">   319</span>		if exp.neg {
+<a id="L320"></a><span class="ln">   320</span>			z.b = powTen
+<a id="L321"></a><span class="ln">   321</span>			z.norm()
+<a id="L322"></a><span class="ln">   322</span>		} else {
+<a id="L323"></a><span class="ln">   323</span>			z.a.abs = z.a.abs.mul(z.a.abs, powTen)
+<a id="L324"></a><span class="ln">   324</span>			z.b = z.b.make(0)
+<a id="L325"></a><span class="ln">   325</span>		}
+<a id="L326"></a><span class="ln">   326</span>	
+<a id="L327"></a><span class="ln">   327</span>		return z, true
+<a id="L328"></a><span class="ln">   328</span>	}
+<a id="L329"></a><span class="ln">   329</span>	
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">// String returns a string representation of z in the form &#34;a/b&#34; (even if b == 1).</span>
+<a id="L331"></a><span class="ln">   331</span>	func (x *Rat) String() string {
+<a id="L332"></a><span class="ln">   332</span>		s := &#34;/1&#34;
+<a id="L333"></a><span class="ln">   333</span>		if len(x.b) != 0 {
+<a id="L334"></a><span class="ln">   334</span>			s = &#34;/&#34; + x.b.decimalString()
+<a id="L335"></a><span class="ln">   335</span>		}
+<a id="L336"></a><span class="ln">   336</span>		return x.a.String() + s
+<a id="L337"></a><span class="ln">   337</span>	}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>	<span class="comment">// RatString returns a string representation of z in the form &#34;a/b&#34; if b != 1,</span>
+<a id="L340"></a><span class="ln">   340</span>	<span class="comment">// and in the form &#34;a&#34; if b == 1.</span>
+<a id="L341"></a><span class="ln">   341</span>	func (x *Rat) RatString() string {
+<a id="L342"></a><span class="ln">   342</span>		if x.IsInt() {
+<a id="L343"></a><span class="ln">   343</span>			return x.a.String()
+<a id="L344"></a><span class="ln">   344</span>		}
+<a id="L345"></a><span class="ln">   345</span>		return x.String()
+<a id="L346"></a><span class="ln">   346</span>	}
+<a id="L347"></a><span class="ln">   347</span>	
+<a id="L348"></a><span class="ln">   348</span>	<span class="comment">// FloatString returns a string representation of z in decimal form with prec</span>
+<a id="L349"></a><span class="ln">   349</span>	<span class="comment">// digits of precision after the decimal point and the last digit rounded.</span>
+<a id="L350"></a><span class="ln">   350</span>	func (x *Rat) FloatString(prec int) string {
+<a id="L351"></a><span class="ln">   351</span>		if x.IsInt() {
+<a id="L352"></a><span class="ln">   352</span>			s := x.a.String()
+<a id="L353"></a><span class="ln">   353</span>			if prec &gt; 0 {
+<a id="L354"></a><span class="ln">   354</span>				s += &#34;.&#34; + strings.Repeat(&#34;0&#34;, prec)
+<a id="L355"></a><span class="ln">   355</span>			}
+<a id="L356"></a><span class="ln">   356</span>			return s
+<a id="L357"></a><span class="ln">   357</span>		}
+<a id="L358"></a><span class="ln">   358</span>		<span class="comment">// x.b != 0</span>
+<a id="L359"></a><span class="ln">   359</span>	
+<a id="L360"></a><span class="ln">   360</span>		q, r := nat(nil).div(nat(nil), x.a.abs, x.b)
+<a id="L361"></a><span class="ln">   361</span>	
+<a id="L362"></a><span class="ln">   362</span>		p := natOne
+<a id="L363"></a><span class="ln">   363</span>		if prec &gt; 0 {
+<a id="L364"></a><span class="ln">   364</span>			p = nat(nil).expNN(natTen, nat(nil).setUint64(uint64(prec)), nil)
+<a id="L365"></a><span class="ln">   365</span>		}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>		r = r.mul(r, p)
+<a id="L368"></a><span class="ln">   368</span>		r, r2 := r.div(nat(nil), r, x.b)
+<a id="L369"></a><span class="ln">   369</span>	
+<a id="L370"></a><span class="ln">   370</span>		<span class="comment">// see if we need to round up</span>
+<a id="L371"></a><span class="ln">   371</span>		r2 = r2.add(r2, r2)
+<a id="L372"></a><span class="ln">   372</span>		if x.b.cmp(r2) &lt;= 0 {
+<a id="L373"></a><span class="ln">   373</span>			r = r.add(r, natOne)
+<a id="L374"></a><span class="ln">   374</span>			if r.cmp(p) &gt;= 0 {
+<a id="L375"></a><span class="ln">   375</span>				q = nat(nil).add(q, natOne)
+<a id="L376"></a><span class="ln">   376</span>				r = nat(nil).sub(r, p)
+<a id="L377"></a><span class="ln">   377</span>			}
+<a id="L378"></a><span class="ln">   378</span>		}
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>		s := q.decimalString()
+<a id="L381"></a><span class="ln">   381</span>		if x.a.neg {
+<a id="L382"></a><span class="ln">   382</span>			s = &#34;-&#34; + s
+<a id="L383"></a><span class="ln">   383</span>		}
+<a id="L384"></a><span class="ln">   384</span>	
+<a id="L385"></a><span class="ln">   385</span>		if prec &gt; 0 {
+<a id="L386"></a><span class="ln">   386</span>			rs := r.decimalString()
+<a id="L387"></a><span class="ln">   387</span>			leadingZeros := prec - len(rs)
+<a id="L388"></a><span class="ln">   388</span>			s += &#34;.&#34; + strings.Repeat(&#34;0&#34;, leadingZeros) + rs
+<a id="L389"></a><span class="ln">   389</span>		}
+<a id="L390"></a><span class="ln">   390</span>	
+<a id="L391"></a><span class="ln">   391</span>		return s
+<a id="L392"></a><span class="ln">   392</span>	}
+<a id="L393"></a><span class="ln">   393</span>	
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">// Gob codec version. Permits backward-compatible changes to the encoding.</span>
+<a id="L395"></a><span class="ln">   395</span>	const ratGobVersion byte = 1
+<a id="L396"></a><span class="ln">   396</span>	
+<a id="L397"></a><span class="ln">   397</span>	<span class="comment">// GobEncode implements the gob.GobEncoder interface.</span>
+<a id="L398"></a><span class="ln">   398</span>	func (x *Rat) GobEncode() ([]byte, error) {
+<a id="L399"></a><span class="ln">   399</span>		buf := make([]byte, 1+4+(len(x.a.abs)+len(x.b))*_S) <span class="comment">// extra bytes for version and sign bit (1), and numerator length (4)</span>
+<a id="L400"></a><span class="ln">   400</span>		i := x.b.bytes(buf)
+<a id="L401"></a><span class="ln">   401</span>		j := x.a.abs.bytes(buf[0:i])
+<a id="L402"></a><span class="ln">   402</span>		n := i - j
+<a id="L403"></a><span class="ln">   403</span>		if int(uint32(n)) != n {
+<a id="L404"></a><span class="ln">   404</span>			<span class="comment">// this should never happen</span>
+<a id="L405"></a><span class="ln">   405</span>			return nil, errors.New(&#34;Rat.GobEncode: numerator too large&#34;)
+<a id="L406"></a><span class="ln">   406</span>		}
+<a id="L407"></a><span class="ln">   407</span>		binary.BigEndian.PutUint32(buf[j-4:j], uint32(n))
+<a id="L408"></a><span class="ln">   408</span>		j -= 1 + 4
+<a id="L409"></a><span class="ln">   409</span>		b := ratGobVersion &lt;&lt; 1 <span class="comment">// make space for sign bit</span>
+<a id="L410"></a><span class="ln">   410</span>		if x.a.neg {
+<a id="L411"></a><span class="ln">   411</span>			b |= 1
+<a id="L412"></a><span class="ln">   412</span>		}
+<a id="L413"></a><span class="ln">   413</span>		buf[j] = b
+<a id="L414"></a><span class="ln">   414</span>		return buf[j:], nil
+<a id="L415"></a><span class="ln">   415</span>	}
+<a id="L416"></a><span class="ln">   416</span>	
+<a id="L417"></a><span class="ln">   417</span>	<span class="comment">// GobDecode implements the gob.GobDecoder interface.</span>
+<a id="L418"></a><span class="ln">   418</span>	func (z *Rat) GobDecode(buf []byte) error {
+<a id="L419"></a><span class="ln">   419</span>		if len(buf) == 0 {
+<a id="L420"></a><span class="ln">   420</span>			return errors.New(&#34;Rat.GobDecode: no data&#34;)
+<a id="L421"></a><span class="ln">   421</span>		}
+<a id="L422"></a><span class="ln">   422</span>		b := buf[0]
+<a id="L423"></a><span class="ln">   423</span>		if b&gt;&gt;1 != ratGobVersion {
+<a id="L424"></a><span class="ln">   424</span>			return errors.New(fmt.Sprintf(&#34;Rat.GobDecode: encoding version %d not supported&#34;, b&gt;&gt;1))
+<a id="L425"></a><span class="ln">   425</span>		}
+<a id="L426"></a><span class="ln">   426</span>		const j = 1 + 4
+<a id="L427"></a><span class="ln">   427</span>		i := j + binary.BigEndian.Uint32(buf[j-4:j])
+<a id="L428"></a><span class="ln">   428</span>		z.a.neg = b&amp;1 != 0
+<a id="L429"></a><span class="ln">   429</span>		z.a.abs = z.a.abs.setBytes(buf[j:i])
+<a id="L430"></a><span class="ln">   430</span>		z.b = z.b.setBytes(buf[i:])
+<a id="L431"></a><span class="ln">   431</span>		return nil
+<a id="L432"></a><span class="ln">   432</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

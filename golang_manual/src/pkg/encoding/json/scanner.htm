@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/json/scanner.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/json/scanner.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package json
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// JSON value parser state machine.</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// Just about at the limit of what is reasonable to write by hand.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// Some parts are a bit tedious, but overall it nicely factors out the</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// otherwise common code from the multiple scanning functions</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// in this package (Compact, Indent, checkValid, nextValue, etc).</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// This file starts with two simple examples using the scanner</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// before diving into the scanner itself.</span>
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	import &#34;strconv&#34;
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// checkValid verifies that data is valid JSON-encoded data.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// scan is passed in for use by checkValid to avoid an allocation.</span>
+<a id="L20"></a><span class="ln">    20</span>	func checkValid(data []byte, scan *scanner) error {
+<a id="L21"></a><span class="ln">    21</span>		scan.reset()
+<a id="L22"></a><span class="ln">    22</span>		for _, c := range data {
+<a id="L23"></a><span class="ln">    23</span>			scan.bytes++
+<a id="L24"></a><span class="ln">    24</span>			if scan.step(scan, int(c)) == scanError {
+<a id="L25"></a><span class="ln">    25</span>				return scan.err
+<a id="L26"></a><span class="ln">    26</span>			}
+<a id="L27"></a><span class="ln">    27</span>		}
+<a id="L28"></a><span class="ln">    28</span>		if scan.eof() == scanError {
+<a id="L29"></a><span class="ln">    29</span>			return scan.err
+<a id="L30"></a><span class="ln">    30</span>		}
+<a id="L31"></a><span class="ln">    31</span>		return nil
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// nextValue splits data after the next whole JSON value,</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// returning that value and the bytes that follow it as separate slices.</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// scan is passed in for use by nextValue to avoid an allocation.</span>
+<a id="L37"></a><span class="ln">    37</span>	func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
+<a id="L38"></a><span class="ln">    38</span>		scan.reset()
+<a id="L39"></a><span class="ln">    39</span>		for i, c := range data {
+<a id="L40"></a><span class="ln">    40</span>			v := scan.step(scan, int(c))
+<a id="L41"></a><span class="ln">    41</span>			if v &gt;= scanEnd {
+<a id="L42"></a><span class="ln">    42</span>				switch v {
+<a id="L43"></a><span class="ln">    43</span>				case scanError:
+<a id="L44"></a><span class="ln">    44</span>					return nil, nil, scan.err
+<a id="L45"></a><span class="ln">    45</span>				case scanEnd:
+<a id="L46"></a><span class="ln">    46</span>					return data[0:i], data[i:], nil
+<a id="L47"></a><span class="ln">    47</span>				}
+<a id="L48"></a><span class="ln">    48</span>			}
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		if scan.eof() == scanError {
+<a id="L51"></a><span class="ln">    51</span>			return nil, nil, scan.err
+<a id="L52"></a><span class="ln">    52</span>		}
+<a id="L53"></a><span class="ln">    53</span>		return data, nil, nil
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// A SyntaxError is a description of a JSON syntax error.</span>
+<a id="L57"></a><span class="ln">    57</span>	type SyntaxError struct {
+<a id="L58"></a><span class="ln">    58</span>		msg    string <span class="comment">// description of error</span>
+<a id="L59"></a><span class="ln">    59</span>		Offset int64  <span class="comment">// error occurred after reading Offset bytes</span>
+<a id="L60"></a><span class="ln">    60</span>	}
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>	func (e *SyntaxError) Error() string { return e.msg }
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// A scanner is a JSON scanning state machine.</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// Callers call scan.reset() and then pass bytes in one at a time</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// by calling scan.step(&amp;scan, c) for each byte.</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// The return value, referred to as an opcode, tells the</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// caller about significant parsing events like beginning</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// and ending literals, objects, and arrays, so that the</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// caller can follow along if it wishes.</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// The return value scanEnd indicates that a single top-level</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// JSON value has been completed, *before* the byte that</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// just got passed in.  (The indication must be delayed in order</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// to recognize the end of numbers: is 123 a whole value or</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// the beginning of 12345e+6?).</span>
+<a id="L76"></a><span class="ln">    76</span>	type scanner struct {
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">// The step is a func to be called to execute the next transition.</span>
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">// Also tried using an integer constant and a single func</span>
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// with a switch, but using the func directly was 10% faster</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// on a 64-bit Mac Mini, and it&#39;s nicer to read.</span>
+<a id="L81"></a><span class="ln">    81</span>		step func(*scanner, int) int
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// Reached end of top-level value.</span>
+<a id="L84"></a><span class="ln">    84</span>		endTop bool
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// Stack of what we&#39;re in the middle of - array values, object keys, object values.</span>
+<a id="L87"></a><span class="ln">    87</span>		parseState []int
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>		<span class="comment">// Error that happened, if any.</span>
+<a id="L90"></a><span class="ln">    90</span>		err error
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>		<span class="comment">// 1-byte redo (see undo method)</span>
+<a id="L93"></a><span class="ln">    93</span>		redo      bool
+<a id="L94"></a><span class="ln">    94</span>		redoCode  int
+<a id="L95"></a><span class="ln">    95</span>		redoState func(*scanner, int) int
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>		<span class="comment">// total bytes consumed, updated by decoder.Decode</span>
+<a id="L98"></a><span class="ln">    98</span>		bytes int64
+<a id="L99"></a><span class="ln">    99</span>	}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// These values are returned by the state transition functions</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// assigned to scanner.state and the method scanner.eof.</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// They give details about the current state of the scan that</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// callers might be interested to know about.</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// It is okay to ignore the return value of any particular</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// call to scanner.state: if one call returns scanError,</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// every subsequent call will return scanError too.</span>
+<a id="L108"></a><span class="ln">   108</span>	const (
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// Continue.</span>
+<a id="L110"></a><span class="ln">   110</span>		scanContinue     = iota <span class="comment">// uninteresting byte</span>
+<a id="L111"></a><span class="ln">   111</span>		scanBeginLiteral        <span class="comment">// end implied by next result != scanContinue</span>
+<a id="L112"></a><span class="ln">   112</span>		scanBeginObject         <span class="comment">// begin object</span>
+<a id="L113"></a><span class="ln">   113</span>		scanObjectKey           <span class="comment">// just finished object key (string)</span>
+<a id="L114"></a><span class="ln">   114</span>		scanObjectValue         <span class="comment">// just finished non-last object value</span>
+<a id="L115"></a><span class="ln">   115</span>		scanEndObject           <span class="comment">// end object (implies scanObjectValue if possible)</span>
+<a id="L116"></a><span class="ln">   116</span>		scanBeginArray          <span class="comment">// begin array</span>
+<a id="L117"></a><span class="ln">   117</span>		scanArrayValue          <span class="comment">// just finished array value</span>
+<a id="L118"></a><span class="ln">   118</span>		scanEndArray            <span class="comment">// end array (implies scanArrayValue if possible)</span>
+<a id="L119"></a><span class="ln">   119</span>		scanSkipSpace           <span class="comment">// space byte; can skip; known to be last &#34;continue&#34; result</span>
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">// Stop.</span>
+<a id="L122"></a><span class="ln">   122</span>		scanEnd   <span class="comment">// top-level value ended *before* this byte; known to be first &#34;stop&#34; result</span>
+<a id="L123"></a><span class="ln">   123</span>		scanError <span class="comment">// hit an error, scanner.err.</span>
+<a id="L124"></a><span class="ln">   124</span>	)
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// These values are stored in the parseState stack.</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// They give the current state of a composite value</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// being scanned.  If the parser is inside a nested value</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// the parseState describes the nested state, outermost at entry 0.</span>
+<a id="L130"></a><span class="ln">   130</span>	const (
+<a id="L131"></a><span class="ln">   131</span>		parseObjectKey   = iota <span class="comment">// parsing object key (before colon)</span>
+<a id="L132"></a><span class="ln">   132</span>		parseObjectValue        <span class="comment">// parsing object value (after colon)</span>
+<a id="L133"></a><span class="ln">   133</span>		parseArrayValue         <span class="comment">// parsing array value</span>
+<a id="L134"></a><span class="ln">   134</span>	)
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// reset prepares the scanner for use.</span>
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// It must be called before calling s.step.</span>
+<a id="L138"></a><span class="ln">   138</span>	func (s *scanner) reset() {
+<a id="L139"></a><span class="ln">   139</span>		s.step = stateBeginValue
+<a id="L140"></a><span class="ln">   140</span>		s.parseState = s.parseState[0:0]
+<a id="L141"></a><span class="ln">   141</span>		s.err = nil
+<a id="L142"></a><span class="ln">   142</span>		s.redo = false
+<a id="L143"></a><span class="ln">   143</span>		s.endTop = false
+<a id="L144"></a><span class="ln">   144</span>	}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">// eof tells the scanner that the end of input has been reached.</span>
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// It returns a scan status just as s.step does.</span>
+<a id="L148"></a><span class="ln">   148</span>	func (s *scanner) eof() int {
+<a id="L149"></a><span class="ln">   149</span>		if s.err != nil {
+<a id="L150"></a><span class="ln">   150</span>			return scanError
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>		if s.endTop {
+<a id="L153"></a><span class="ln">   153</span>			return scanEnd
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>		s.step(s, &#39; &#39;)
+<a id="L156"></a><span class="ln">   156</span>		if s.endTop {
+<a id="L157"></a><span class="ln">   157</span>			return scanEnd
+<a id="L158"></a><span class="ln">   158</span>		}
+<a id="L159"></a><span class="ln">   159</span>		if s.err == nil {
+<a id="L160"></a><span class="ln">   160</span>			s.err = &amp;SyntaxError{&#34;unexpected end of JSON input&#34;, s.bytes}
+<a id="L161"></a><span class="ln">   161</span>		}
+<a id="L162"></a><span class="ln">   162</span>		return scanError
+<a id="L163"></a><span class="ln">   163</span>	}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// pushParseState pushes a new parse state p onto the parse stack.</span>
+<a id="L166"></a><span class="ln">   166</span>	func (s *scanner) pushParseState(p int) {
+<a id="L167"></a><span class="ln">   167</span>		s.parseState = append(s.parseState, p)
+<a id="L168"></a><span class="ln">   168</span>	}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// popParseState pops a parse state (already obtained) off the stack</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">// and updates s.step accordingly.</span>
+<a id="L172"></a><span class="ln">   172</span>	func (s *scanner) popParseState() {
+<a id="L173"></a><span class="ln">   173</span>		n := len(s.parseState) - 1
+<a id="L174"></a><span class="ln">   174</span>		s.parseState = s.parseState[0:n]
+<a id="L175"></a><span class="ln">   175</span>		s.redo = false
+<a id="L176"></a><span class="ln">   176</span>		if n == 0 {
+<a id="L177"></a><span class="ln">   177</span>			s.step = stateEndTop
+<a id="L178"></a><span class="ln">   178</span>			s.endTop = true
+<a id="L179"></a><span class="ln">   179</span>		} else {
+<a id="L180"></a><span class="ln">   180</span>			s.step = stateEndValue
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>	}
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>	func isSpace(c rune) bool {
+<a id="L185"></a><span class="ln">   185</span>		return c == &#39; &#39; || c == &#39;\t&#39; || c == &#39;\r&#39; || c == &#39;\n&#39;
+<a id="L186"></a><span class="ln">   186</span>	}
+<a id="L187"></a><span class="ln">   187</span>	
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">// stateBeginValueOrEmpty is the state after reading `[`.</span>
+<a id="L189"></a><span class="ln">   189</span>	func stateBeginValueOrEmpty(s *scanner, c int) int {
+<a id="L190"></a><span class="ln">   190</span>		if c &lt;= &#39; &#39; &amp;&amp; isSpace(rune(c)) {
+<a id="L191"></a><span class="ln">   191</span>			return scanSkipSpace
+<a id="L192"></a><span class="ln">   192</span>		}
+<a id="L193"></a><span class="ln">   193</span>		if c == &#39;]&#39; {
+<a id="L194"></a><span class="ln">   194</span>			return stateEndValue(s, c)
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>		return stateBeginValue(s, c)
+<a id="L197"></a><span class="ln">   197</span>	}
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// stateBeginValue is the state at the beginning of the input.</span>
+<a id="L200"></a><span class="ln">   200</span>	func stateBeginValue(s *scanner, c int) int {
+<a id="L201"></a><span class="ln">   201</span>		if c &lt;= &#39; &#39; &amp;&amp; isSpace(rune(c)) {
+<a id="L202"></a><span class="ln">   202</span>			return scanSkipSpace
+<a id="L203"></a><span class="ln">   203</span>		}
+<a id="L204"></a><span class="ln">   204</span>		switch c {
+<a id="L205"></a><span class="ln">   205</span>		case &#39;{&#39;:
+<a id="L206"></a><span class="ln">   206</span>			s.step = stateBeginStringOrEmpty
+<a id="L207"></a><span class="ln">   207</span>			s.pushParseState(parseObjectKey)
+<a id="L208"></a><span class="ln">   208</span>			return scanBeginObject
+<a id="L209"></a><span class="ln">   209</span>		case &#39;[&#39;:
+<a id="L210"></a><span class="ln">   210</span>			s.step = stateBeginValueOrEmpty
+<a id="L211"></a><span class="ln">   211</span>			s.pushParseState(parseArrayValue)
+<a id="L212"></a><span class="ln">   212</span>			return scanBeginArray
+<a id="L213"></a><span class="ln">   213</span>		case &#39;&#34;&#39;:
+<a id="L214"></a><span class="ln">   214</span>			s.step = stateInString
+<a id="L215"></a><span class="ln">   215</span>			return scanBeginLiteral
+<a id="L216"></a><span class="ln">   216</span>		case &#39;-&#39;:
+<a id="L217"></a><span class="ln">   217</span>			s.step = stateNeg
+<a id="L218"></a><span class="ln">   218</span>			return scanBeginLiteral
+<a id="L219"></a><span class="ln">   219</span>		case &#39;0&#39;: <span class="comment">// beginning of 0.123</span>
+<a id="L220"></a><span class="ln">   220</span>			s.step = state0
+<a id="L221"></a><span class="ln">   221</span>			return scanBeginLiteral
+<a id="L222"></a><span class="ln">   222</span>		case &#39;t&#39;: <span class="comment">// beginning of true</span>
+<a id="L223"></a><span class="ln">   223</span>			s.step = stateT
+<a id="L224"></a><span class="ln">   224</span>			return scanBeginLiteral
+<a id="L225"></a><span class="ln">   225</span>		case &#39;f&#39;: <span class="comment">// beginning of false</span>
+<a id="L226"></a><span class="ln">   226</span>			s.step = stateF
+<a id="L227"></a><span class="ln">   227</span>			return scanBeginLiteral
+<a id="L228"></a><span class="ln">   228</span>		case &#39;n&#39;: <span class="comment">// beginning of null</span>
+<a id="L229"></a><span class="ln">   229</span>			s.step = stateN
+<a id="L230"></a><span class="ln">   230</span>			return scanBeginLiteral
+<a id="L231"></a><span class="ln">   231</span>		}
+<a id="L232"></a><span class="ln">   232</span>		if &#39;1&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; { <span class="comment">// beginning of 1234.5</span>
+<a id="L233"></a><span class="ln">   233</span>			s.step = state1
+<a id="L234"></a><span class="ln">   234</span>			return scanBeginLiteral
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>		return s.error(c, &#34;looking for beginning of value&#34;)
+<a id="L237"></a><span class="ln">   237</span>	}
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	<span class="comment">// stateBeginStringOrEmpty is the state after reading `{`.</span>
+<a id="L240"></a><span class="ln">   240</span>	func stateBeginStringOrEmpty(s *scanner, c int) int {
+<a id="L241"></a><span class="ln">   241</span>		if c &lt;= &#39; &#39; &amp;&amp; isSpace(rune(c)) {
+<a id="L242"></a><span class="ln">   242</span>			return scanSkipSpace
+<a id="L243"></a><span class="ln">   243</span>		}
+<a id="L244"></a><span class="ln">   244</span>		if c == &#39;}&#39; {
+<a id="L245"></a><span class="ln">   245</span>			n := len(s.parseState)
+<a id="L246"></a><span class="ln">   246</span>			s.parseState[n-1] = parseObjectValue
+<a id="L247"></a><span class="ln">   247</span>			return stateEndValue(s, c)
+<a id="L248"></a><span class="ln">   248</span>		}
+<a id="L249"></a><span class="ln">   249</span>		return stateBeginString(s, c)
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	<span class="comment">// stateBeginString is the state after reading `{&#34;key&#34;: value,`.</span>
+<a id="L253"></a><span class="ln">   253</span>	func stateBeginString(s *scanner, c int) int {
+<a id="L254"></a><span class="ln">   254</span>		if c &lt;= &#39; &#39; &amp;&amp; isSpace(rune(c)) {
+<a id="L255"></a><span class="ln">   255</span>			return scanSkipSpace
+<a id="L256"></a><span class="ln">   256</span>		}
+<a id="L257"></a><span class="ln">   257</span>		if c == &#39;&#34;&#39; {
+<a id="L258"></a><span class="ln">   258</span>			s.step = stateInString
+<a id="L259"></a><span class="ln">   259</span>			return scanBeginLiteral
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>		return s.error(c, &#34;looking for beginning of object key string&#34;)
+<a id="L262"></a><span class="ln">   262</span>	}
+<a id="L263"></a><span class="ln">   263</span>	
+<a id="L264"></a><span class="ln">   264</span>	<span class="comment">// stateEndValue is the state after completing a value,</span>
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// such as after reading `{}` or `true` or `[&#34;x&#34;`.</span>
+<a id="L266"></a><span class="ln">   266</span>	func stateEndValue(s *scanner, c int) int {
+<a id="L267"></a><span class="ln">   267</span>		n := len(s.parseState)
+<a id="L268"></a><span class="ln">   268</span>		if n == 0 {
+<a id="L269"></a><span class="ln">   269</span>			<span class="comment">// Completed top-level before the current byte.</span>
+<a id="L270"></a><span class="ln">   270</span>			s.step = stateEndTop
+<a id="L271"></a><span class="ln">   271</span>			s.endTop = true
+<a id="L272"></a><span class="ln">   272</span>			return stateEndTop(s, c)
+<a id="L273"></a><span class="ln">   273</span>		}
+<a id="L274"></a><span class="ln">   274</span>		if c &lt;= &#39; &#39; &amp;&amp; isSpace(rune(c)) {
+<a id="L275"></a><span class="ln">   275</span>			s.step = stateEndValue
+<a id="L276"></a><span class="ln">   276</span>			return scanSkipSpace
+<a id="L277"></a><span class="ln">   277</span>		}
+<a id="L278"></a><span class="ln">   278</span>		ps := s.parseState[n-1]
+<a id="L279"></a><span class="ln">   279</span>		switch ps {
+<a id="L280"></a><span class="ln">   280</span>		case parseObjectKey:
+<a id="L281"></a><span class="ln">   281</span>			if c == &#39;:&#39; {
+<a id="L282"></a><span class="ln">   282</span>				s.parseState[n-1] = parseObjectValue
+<a id="L283"></a><span class="ln">   283</span>				s.step = stateBeginValue
+<a id="L284"></a><span class="ln">   284</span>				return scanObjectKey
+<a id="L285"></a><span class="ln">   285</span>			}
+<a id="L286"></a><span class="ln">   286</span>			return s.error(c, &#34;after object key&#34;)
+<a id="L287"></a><span class="ln">   287</span>		case parseObjectValue:
+<a id="L288"></a><span class="ln">   288</span>			if c == &#39;,&#39; {
+<a id="L289"></a><span class="ln">   289</span>				s.parseState[n-1] = parseObjectKey
+<a id="L290"></a><span class="ln">   290</span>				s.step = stateBeginString
+<a id="L291"></a><span class="ln">   291</span>				return scanObjectValue
+<a id="L292"></a><span class="ln">   292</span>			}
+<a id="L293"></a><span class="ln">   293</span>			if c == &#39;}&#39; {
+<a id="L294"></a><span class="ln">   294</span>				s.popParseState()
+<a id="L295"></a><span class="ln">   295</span>				return scanEndObject
+<a id="L296"></a><span class="ln">   296</span>			}
+<a id="L297"></a><span class="ln">   297</span>			return s.error(c, &#34;after object key:value pair&#34;)
+<a id="L298"></a><span class="ln">   298</span>		case parseArrayValue:
+<a id="L299"></a><span class="ln">   299</span>			if c == &#39;,&#39; {
+<a id="L300"></a><span class="ln">   300</span>				s.step = stateBeginValue
+<a id="L301"></a><span class="ln">   301</span>				return scanArrayValue
+<a id="L302"></a><span class="ln">   302</span>			}
+<a id="L303"></a><span class="ln">   303</span>			if c == &#39;]&#39; {
+<a id="L304"></a><span class="ln">   304</span>				s.popParseState()
+<a id="L305"></a><span class="ln">   305</span>				return scanEndArray
+<a id="L306"></a><span class="ln">   306</span>			}
+<a id="L307"></a><span class="ln">   307</span>			return s.error(c, &#34;after array element&#34;)
+<a id="L308"></a><span class="ln">   308</span>		}
+<a id="L309"></a><span class="ln">   309</span>		return s.error(c, &#34;&#34;)
+<a id="L310"></a><span class="ln">   310</span>	}
+<a id="L311"></a><span class="ln">   311</span>	
+<a id="L312"></a><span class="ln">   312</span>	<span class="comment">// stateEndTop is the state after finishing the top-level value,</span>
+<a id="L313"></a><span class="ln">   313</span>	<span class="comment">// such as after reading `{}` or `[1,2,3]`.</span>
+<a id="L314"></a><span class="ln">   314</span>	<span class="comment">// Only space characters should be seen now.</span>
+<a id="L315"></a><span class="ln">   315</span>	func stateEndTop(s *scanner, c int) int {
+<a id="L316"></a><span class="ln">   316</span>		if c != &#39; &#39; &amp;&amp; c != &#39;\t&#39; &amp;&amp; c != &#39;\r&#39; &amp;&amp; c != &#39;\n&#39; {
+<a id="L317"></a><span class="ln">   317</span>			<span class="comment">// Complain about non-space byte on next call.</span>
+<a id="L318"></a><span class="ln">   318</span>			s.error(c, &#34;after top-level value&#34;)
+<a id="L319"></a><span class="ln">   319</span>		}
+<a id="L320"></a><span class="ln">   320</span>		return scanEnd
+<a id="L321"></a><span class="ln">   321</span>	}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// stateInString is the state after reading `&#34;`.</span>
+<a id="L324"></a><span class="ln">   324</span>	func stateInString(s *scanner, c int) int {
+<a id="L325"></a><span class="ln">   325</span>		if c == &#39;&#34;&#39; {
+<a id="L326"></a><span class="ln">   326</span>			s.step = stateEndValue
+<a id="L327"></a><span class="ln">   327</span>			return scanContinue
+<a id="L328"></a><span class="ln">   328</span>		}
+<a id="L329"></a><span class="ln">   329</span>		if c == &#39;\\&#39; {
+<a id="L330"></a><span class="ln">   330</span>			s.step = stateInStringEsc
+<a id="L331"></a><span class="ln">   331</span>			return scanContinue
+<a id="L332"></a><span class="ln">   332</span>		}
+<a id="L333"></a><span class="ln">   333</span>		if c &lt; 0x20 {
+<a id="L334"></a><span class="ln">   334</span>			return s.error(c, &#34;in string literal&#34;)
+<a id="L335"></a><span class="ln">   335</span>		}
+<a id="L336"></a><span class="ln">   336</span>		return scanContinue
+<a id="L337"></a><span class="ln">   337</span>	}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>	<span class="comment">// stateInStringEsc is the state after reading `&#34;\` during a quoted string.</span>
+<a id="L340"></a><span class="ln">   340</span>	func stateInStringEsc(s *scanner, c int) int {
+<a id="L341"></a><span class="ln">   341</span>		switch c {
+<a id="L342"></a><span class="ln">   342</span>		case &#39;b&#39;, &#39;f&#39;, &#39;n&#39;, &#39;r&#39;, &#39;t&#39;, &#39;\\&#39;, &#39;/&#39;, &#39;&#34;&#39;:
+<a id="L343"></a><span class="ln">   343</span>			s.step = stateInString
+<a id="L344"></a><span class="ln">   344</span>			return scanContinue
+<a id="L345"></a><span class="ln">   345</span>		}
+<a id="L346"></a><span class="ln">   346</span>		if c == &#39;u&#39; {
+<a id="L347"></a><span class="ln">   347</span>			s.step = stateInStringEscU
+<a id="L348"></a><span class="ln">   348</span>			return scanContinue
+<a id="L349"></a><span class="ln">   349</span>		}
+<a id="L350"></a><span class="ln">   350</span>		return s.error(c, &#34;in string escape code&#34;)
+<a id="L351"></a><span class="ln">   351</span>	}
+<a id="L352"></a><span class="ln">   352</span>	
+<a id="L353"></a><span class="ln">   353</span>	<span class="comment">// stateInStringEscU is the state after reading `&#34;\u` during a quoted string.</span>
+<a id="L354"></a><span class="ln">   354</span>	func stateInStringEscU(s *scanner, c int) int {
+<a id="L355"></a><span class="ln">   355</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; || &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39; {
+<a id="L356"></a><span class="ln">   356</span>			s.step = stateInStringEscU1
+<a id="L357"></a><span class="ln">   357</span>			return scanContinue
+<a id="L358"></a><span class="ln">   358</span>		}
+<a id="L359"></a><span class="ln">   359</span>		<span class="comment">// numbers</span>
+<a id="L360"></a><span class="ln">   360</span>		return s.error(c, &#34;in \\u hexadecimal character escape&#34;)
+<a id="L361"></a><span class="ln">   361</span>	}
+<a id="L362"></a><span class="ln">   362</span>	
+<a id="L363"></a><span class="ln">   363</span>	<span class="comment">// stateInStringEscU1 is the state after reading `&#34;\u1` during a quoted string.</span>
+<a id="L364"></a><span class="ln">   364</span>	func stateInStringEscU1(s *scanner, c int) int {
+<a id="L365"></a><span class="ln">   365</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; || &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39; {
+<a id="L366"></a><span class="ln">   366</span>			s.step = stateInStringEscU12
+<a id="L367"></a><span class="ln">   367</span>			return scanContinue
+<a id="L368"></a><span class="ln">   368</span>		}
+<a id="L369"></a><span class="ln">   369</span>		<span class="comment">// numbers</span>
+<a id="L370"></a><span class="ln">   370</span>		return s.error(c, &#34;in \\u hexadecimal character escape&#34;)
+<a id="L371"></a><span class="ln">   371</span>	}
+<a id="L372"></a><span class="ln">   372</span>	
+<a id="L373"></a><span class="ln">   373</span>	<span class="comment">// stateInStringEscU12 is the state after reading `&#34;\u12` during a quoted string.</span>
+<a id="L374"></a><span class="ln">   374</span>	func stateInStringEscU12(s *scanner, c int) int {
+<a id="L375"></a><span class="ln">   375</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; || &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39; {
+<a id="L376"></a><span class="ln">   376</span>			s.step = stateInStringEscU123
+<a id="L377"></a><span class="ln">   377</span>			return scanContinue
+<a id="L378"></a><span class="ln">   378</span>		}
+<a id="L379"></a><span class="ln">   379</span>		<span class="comment">// numbers</span>
+<a id="L380"></a><span class="ln">   380</span>		return s.error(c, &#34;in \\u hexadecimal character escape&#34;)
+<a id="L381"></a><span class="ln">   381</span>	}
+<a id="L382"></a><span class="ln">   382</span>	
+<a id="L383"></a><span class="ln">   383</span>	<span class="comment">// stateInStringEscU123 is the state after reading `&#34;\u123` during a quoted string.</span>
+<a id="L384"></a><span class="ln">   384</span>	func stateInStringEscU123(s *scanner, c int) int {
+<a id="L385"></a><span class="ln">   385</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; || &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39; {
+<a id="L386"></a><span class="ln">   386</span>			s.step = stateInString
+<a id="L387"></a><span class="ln">   387</span>			return scanContinue
+<a id="L388"></a><span class="ln">   388</span>		}
+<a id="L389"></a><span class="ln">   389</span>		<span class="comment">// numbers</span>
+<a id="L390"></a><span class="ln">   390</span>		return s.error(c, &#34;in \\u hexadecimal character escape&#34;)
+<a id="L391"></a><span class="ln">   391</span>	}
+<a id="L392"></a><span class="ln">   392</span>	
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// stateInStringEscU123 is the state after reading `-` during a number.</span>
+<a id="L394"></a><span class="ln">   394</span>	func stateNeg(s *scanner, c int) int {
+<a id="L395"></a><span class="ln">   395</span>		if c == &#39;0&#39; {
+<a id="L396"></a><span class="ln">   396</span>			s.step = state0
+<a id="L397"></a><span class="ln">   397</span>			return scanContinue
+<a id="L398"></a><span class="ln">   398</span>		}
+<a id="L399"></a><span class="ln">   399</span>		if &#39;1&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L400"></a><span class="ln">   400</span>			s.step = state1
+<a id="L401"></a><span class="ln">   401</span>			return scanContinue
+<a id="L402"></a><span class="ln">   402</span>		}
+<a id="L403"></a><span class="ln">   403</span>		return s.error(c, &#34;in numeric literal&#34;)
+<a id="L404"></a><span class="ln">   404</span>	}
+<a id="L405"></a><span class="ln">   405</span>	
+<a id="L406"></a><span class="ln">   406</span>	<span class="comment">// state1 is the state after reading a non-zero integer during a number,</span>
+<a id="L407"></a><span class="ln">   407</span>	<span class="comment">// such as after reading `1` or `100` but not `0`.</span>
+<a id="L408"></a><span class="ln">   408</span>	func state1(s *scanner, c int) int {
+<a id="L409"></a><span class="ln">   409</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L410"></a><span class="ln">   410</span>			s.step = state1
+<a id="L411"></a><span class="ln">   411</span>			return scanContinue
+<a id="L412"></a><span class="ln">   412</span>		}
+<a id="L413"></a><span class="ln">   413</span>		return state0(s, c)
+<a id="L414"></a><span class="ln">   414</span>	}
+<a id="L415"></a><span class="ln">   415</span>	
+<a id="L416"></a><span class="ln">   416</span>	<span class="comment">// state0 is the state after reading `0` during a number.</span>
+<a id="L417"></a><span class="ln">   417</span>	func state0(s *scanner, c int) int {
+<a id="L418"></a><span class="ln">   418</span>		if c == &#39;.&#39; {
+<a id="L419"></a><span class="ln">   419</span>			s.step = stateDot
+<a id="L420"></a><span class="ln">   420</span>			return scanContinue
+<a id="L421"></a><span class="ln">   421</span>		}
+<a id="L422"></a><span class="ln">   422</span>		if c == &#39;e&#39; || c == &#39;E&#39; {
+<a id="L423"></a><span class="ln">   423</span>			s.step = stateE
+<a id="L424"></a><span class="ln">   424</span>			return scanContinue
+<a id="L425"></a><span class="ln">   425</span>		}
+<a id="L426"></a><span class="ln">   426</span>		return stateEndValue(s, c)
+<a id="L427"></a><span class="ln">   427</span>	}
+<a id="L428"></a><span class="ln">   428</span>	
+<a id="L429"></a><span class="ln">   429</span>	<span class="comment">// stateDot is the state after reading the integer and decimal point in a number,</span>
+<a id="L430"></a><span class="ln">   430</span>	<span class="comment">// such as after reading `1.`.</span>
+<a id="L431"></a><span class="ln">   431</span>	func stateDot(s *scanner, c int) int {
+<a id="L432"></a><span class="ln">   432</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L433"></a><span class="ln">   433</span>			s.step = stateDot0
+<a id="L434"></a><span class="ln">   434</span>			return scanContinue
+<a id="L435"></a><span class="ln">   435</span>		}
+<a id="L436"></a><span class="ln">   436</span>		return s.error(c, &#34;after decimal point in numeric literal&#34;)
+<a id="L437"></a><span class="ln">   437</span>	}
+<a id="L438"></a><span class="ln">   438</span>	
+<a id="L439"></a><span class="ln">   439</span>	<span class="comment">// stateDot0 is the state after reading the integer, decimal point, and subsequent</span>
+<a id="L440"></a><span class="ln">   440</span>	<span class="comment">// digits of a number, such as after reading `3.14`.</span>
+<a id="L441"></a><span class="ln">   441</span>	func stateDot0(s *scanner, c int) int {
+<a id="L442"></a><span class="ln">   442</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L443"></a><span class="ln">   443</span>			s.step = stateDot0
+<a id="L444"></a><span class="ln">   444</span>			return scanContinue
+<a id="L445"></a><span class="ln">   445</span>		}
+<a id="L446"></a><span class="ln">   446</span>		if c == &#39;e&#39; || c == &#39;E&#39; {
+<a id="L447"></a><span class="ln">   447</span>			s.step = stateE
+<a id="L448"></a><span class="ln">   448</span>			return scanContinue
+<a id="L449"></a><span class="ln">   449</span>		}
+<a id="L450"></a><span class="ln">   450</span>		return stateEndValue(s, c)
+<a id="L451"></a><span class="ln">   451</span>	}
+<a id="L452"></a><span class="ln">   452</span>	
+<a id="L453"></a><span class="ln">   453</span>	<span class="comment">// stateE is the state after reading the mantissa and e in a number,</span>
+<a id="L454"></a><span class="ln">   454</span>	<span class="comment">// such as after reading `314e` or `0.314e`.</span>
+<a id="L455"></a><span class="ln">   455</span>	func stateE(s *scanner, c int) int {
+<a id="L456"></a><span class="ln">   456</span>		if c == &#39;+&#39; {
+<a id="L457"></a><span class="ln">   457</span>			s.step = stateESign
+<a id="L458"></a><span class="ln">   458</span>			return scanContinue
+<a id="L459"></a><span class="ln">   459</span>		}
+<a id="L460"></a><span class="ln">   460</span>		if c == &#39;-&#39; {
+<a id="L461"></a><span class="ln">   461</span>			s.step = stateESign
+<a id="L462"></a><span class="ln">   462</span>			return scanContinue
+<a id="L463"></a><span class="ln">   463</span>		}
+<a id="L464"></a><span class="ln">   464</span>		return stateESign(s, c)
+<a id="L465"></a><span class="ln">   465</span>	}
+<a id="L466"></a><span class="ln">   466</span>	
+<a id="L467"></a><span class="ln">   467</span>	<span class="comment">// stateESign is the state after reading the mantissa, e, and sign in a number,</span>
+<a id="L468"></a><span class="ln">   468</span>	<span class="comment">// such as after reading `314e-` or `0.314e+`.</span>
+<a id="L469"></a><span class="ln">   469</span>	func stateESign(s *scanner, c int) int {
+<a id="L470"></a><span class="ln">   470</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L471"></a><span class="ln">   471</span>			s.step = stateE0
+<a id="L472"></a><span class="ln">   472</span>			return scanContinue
+<a id="L473"></a><span class="ln">   473</span>		}
+<a id="L474"></a><span class="ln">   474</span>		return s.error(c, &#34;in exponent of numeric literal&#34;)
+<a id="L475"></a><span class="ln">   475</span>	}
+<a id="L476"></a><span class="ln">   476</span>	
+<a id="L477"></a><span class="ln">   477</span>	<span class="comment">// stateE0 is the state after reading the mantissa, e, optional sign,</span>
+<a id="L478"></a><span class="ln">   478</span>	<span class="comment">// and at least one digit of the exponent in a number,</span>
+<a id="L479"></a><span class="ln">   479</span>	<span class="comment">// such as after reading `314e-2` or `0.314e+1` or `3.14e0`.</span>
+<a id="L480"></a><span class="ln">   480</span>	func stateE0(s *scanner, c int) int {
+<a id="L481"></a><span class="ln">   481</span>		if &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L482"></a><span class="ln">   482</span>			s.step = stateE0
+<a id="L483"></a><span class="ln">   483</span>			return scanContinue
+<a id="L484"></a><span class="ln">   484</span>		}
+<a id="L485"></a><span class="ln">   485</span>		return stateEndValue(s, c)
+<a id="L486"></a><span class="ln">   486</span>	}
+<a id="L487"></a><span class="ln">   487</span>	
+<a id="L488"></a><span class="ln">   488</span>	<span class="comment">// stateT is the state after reading `t`.</span>
+<a id="L489"></a><span class="ln">   489</span>	func stateT(s *scanner, c int) int {
+<a id="L490"></a><span class="ln">   490</span>		if c == &#39;r&#39; {
+<a id="L491"></a><span class="ln">   491</span>			s.step = stateTr
+<a id="L492"></a><span class="ln">   492</span>			return scanContinue
+<a id="L493"></a><span class="ln">   493</span>		}
+<a id="L494"></a><span class="ln">   494</span>		return s.error(c, &#34;in literal true (expecting &#39;r&#39;)&#34;)
+<a id="L495"></a><span class="ln">   495</span>	}
+<a id="L496"></a><span class="ln">   496</span>	
+<a id="L497"></a><span class="ln">   497</span>	<span class="comment">// stateTr is the state after reading `tr`.</span>
+<a id="L498"></a><span class="ln">   498</span>	func stateTr(s *scanner, c int) int {
+<a id="L499"></a><span class="ln">   499</span>		if c == &#39;u&#39; {
+<a id="L500"></a><span class="ln">   500</span>			s.step = stateTru
+<a id="L501"></a><span class="ln">   501</span>			return scanContinue
+<a id="L502"></a><span class="ln">   502</span>		}
+<a id="L503"></a><span class="ln">   503</span>		return s.error(c, &#34;in literal true (expecting &#39;u&#39;)&#34;)
+<a id="L504"></a><span class="ln">   504</span>	}
+<a id="L505"></a><span class="ln">   505</span>	
+<a id="L506"></a><span class="ln">   506</span>	<span class="comment">// stateTru is the state after reading `tru`.</span>
+<a id="L507"></a><span class="ln">   507</span>	func stateTru(s *scanner, c int) int {
+<a id="L508"></a><span class="ln">   508</span>		if c == &#39;e&#39; {
+<a id="L509"></a><span class="ln">   509</span>			s.step = stateEndValue
+<a id="L510"></a><span class="ln">   510</span>			return scanContinue
+<a id="L511"></a><span class="ln">   511</span>		}
+<a id="L512"></a><span class="ln">   512</span>		return s.error(c, &#34;in literal true (expecting &#39;e&#39;)&#34;)
+<a id="L513"></a><span class="ln">   513</span>	}
+<a id="L514"></a><span class="ln">   514</span>	
+<a id="L515"></a><span class="ln">   515</span>	<span class="comment">// stateF is the state after reading `f`.</span>
+<a id="L516"></a><span class="ln">   516</span>	func stateF(s *scanner, c int) int {
+<a id="L517"></a><span class="ln">   517</span>		if c == &#39;a&#39; {
+<a id="L518"></a><span class="ln">   518</span>			s.step = stateFa
+<a id="L519"></a><span class="ln">   519</span>			return scanContinue
+<a id="L520"></a><span class="ln">   520</span>		}
+<a id="L521"></a><span class="ln">   521</span>		return s.error(c, &#34;in literal false (expecting &#39;a&#39;)&#34;)
+<a id="L522"></a><span class="ln">   522</span>	}
+<a id="L523"></a><span class="ln">   523</span>	
+<a id="L524"></a><span class="ln">   524</span>	<span class="comment">// stateFa is the state after reading `fa`.</span>
+<a id="L525"></a><span class="ln">   525</span>	func stateFa(s *scanner, c int) int {
+<a id="L526"></a><span class="ln">   526</span>		if c == &#39;l&#39; {
+<a id="L527"></a><span class="ln">   527</span>			s.step = stateFal
+<a id="L528"></a><span class="ln">   528</span>			return scanContinue
+<a id="L529"></a><span class="ln">   529</span>		}
+<a id="L530"></a><span class="ln">   530</span>		return s.error(c, &#34;in literal false (expecting &#39;l&#39;)&#34;)
+<a id="L531"></a><span class="ln">   531</span>	}
+<a id="L532"></a><span class="ln">   532</span>	
+<a id="L533"></a><span class="ln">   533</span>	<span class="comment">// stateFal is the state after reading `fal`.</span>
+<a id="L534"></a><span class="ln">   534</span>	func stateFal(s *scanner, c int) int {
+<a id="L535"></a><span class="ln">   535</span>		if c == &#39;s&#39; {
+<a id="L536"></a><span class="ln">   536</span>			s.step = stateFals
+<a id="L537"></a><span class="ln">   537</span>			return scanContinue
+<a id="L538"></a><span class="ln">   538</span>		}
+<a id="L539"></a><span class="ln">   539</span>		return s.error(c, &#34;in literal false (expecting &#39;s&#39;)&#34;)
+<a id="L540"></a><span class="ln">   540</span>	}
+<a id="L541"></a><span class="ln">   541</span>	
+<a id="L542"></a><span class="ln">   542</span>	<span class="comment">// stateFals is the state after reading `fals`.</span>
+<a id="L543"></a><span class="ln">   543</span>	func stateFals(s *scanner, c int) int {
+<a id="L544"></a><span class="ln">   544</span>		if c == &#39;e&#39; {
+<a id="L545"></a><span class="ln">   545</span>			s.step = stateEndValue
+<a id="L546"></a><span class="ln">   546</span>			return scanContinue
+<a id="L547"></a><span class="ln">   547</span>		}
+<a id="L548"></a><span class="ln">   548</span>		return s.error(c, &#34;in literal false (expecting &#39;e&#39;)&#34;)
+<a id="L549"></a><span class="ln">   549</span>	}
+<a id="L550"></a><span class="ln">   550</span>	
+<a id="L551"></a><span class="ln">   551</span>	<span class="comment">// stateN is the state after reading `n`.</span>
+<a id="L552"></a><span class="ln">   552</span>	func stateN(s *scanner, c int) int {
+<a id="L553"></a><span class="ln">   553</span>		if c == &#39;u&#39; {
+<a id="L554"></a><span class="ln">   554</span>			s.step = stateNu
+<a id="L555"></a><span class="ln">   555</span>			return scanContinue
+<a id="L556"></a><span class="ln">   556</span>		}
+<a id="L557"></a><span class="ln">   557</span>		return s.error(c, &#34;in literal null (expecting &#39;u&#39;)&#34;)
+<a id="L558"></a><span class="ln">   558</span>	}
+<a id="L559"></a><span class="ln">   559</span>	
+<a id="L560"></a><span class="ln">   560</span>	<span class="comment">// stateNu is the state after reading `nu`.</span>
+<a id="L561"></a><span class="ln">   561</span>	func stateNu(s *scanner, c int) int {
+<a id="L562"></a><span class="ln">   562</span>		if c == &#39;l&#39; {
+<a id="L563"></a><span class="ln">   563</span>			s.step = stateNul
+<a id="L564"></a><span class="ln">   564</span>			return scanContinue
+<a id="L565"></a><span class="ln">   565</span>		}
+<a id="L566"></a><span class="ln">   566</span>		return s.error(c, &#34;in literal null (expecting &#39;l&#39;)&#34;)
+<a id="L567"></a><span class="ln">   567</span>	}
+<a id="L568"></a><span class="ln">   568</span>	
+<a id="L569"></a><span class="ln">   569</span>	<span class="comment">// stateNul is the state after reading `nul`.</span>
+<a id="L570"></a><span class="ln">   570</span>	func stateNul(s *scanner, c int) int {
+<a id="L571"></a><span class="ln">   571</span>		if c == &#39;l&#39; {
+<a id="L572"></a><span class="ln">   572</span>			s.step = stateEndValue
+<a id="L573"></a><span class="ln">   573</span>			return scanContinue
+<a id="L574"></a><span class="ln">   574</span>		}
+<a id="L575"></a><span class="ln">   575</span>		return s.error(c, &#34;in literal null (expecting &#39;l&#39;)&#34;)
+<a id="L576"></a><span class="ln">   576</span>	}
+<a id="L577"></a><span class="ln">   577</span>	
+<a id="L578"></a><span class="ln">   578</span>	<span class="comment">// stateError is the state after reaching a syntax error,</span>
+<a id="L579"></a><span class="ln">   579</span>	<span class="comment">// such as after reading `[1}` or `5.1.2`.</span>
+<a id="L580"></a><span class="ln">   580</span>	func stateError(s *scanner, c int) int {
+<a id="L581"></a><span class="ln">   581</span>		return scanError
+<a id="L582"></a><span class="ln">   582</span>	}
+<a id="L583"></a><span class="ln">   583</span>	
+<a id="L584"></a><span class="ln">   584</span>	<span class="comment">// error records an error and switches to the error state.</span>
+<a id="L585"></a><span class="ln">   585</span>	func (s *scanner) error(c int, context string) int {
+<a id="L586"></a><span class="ln">   586</span>		s.step = stateError
+<a id="L587"></a><span class="ln">   587</span>		s.err = &amp;SyntaxError{&#34;invalid character &#34; + quoteChar(c) + &#34; &#34; + context, s.bytes}
+<a id="L588"></a><span class="ln">   588</span>		return scanError
+<a id="L589"></a><span class="ln">   589</span>	}
+<a id="L590"></a><span class="ln">   590</span>	
+<a id="L591"></a><span class="ln">   591</span>	<span class="comment">// quoteChar formats c as a quoted character literal</span>
+<a id="L592"></a><span class="ln">   592</span>	func quoteChar(c int) string {
+<a id="L593"></a><span class="ln">   593</span>		<span class="comment">// special cases - different from quoted strings</span>
+<a id="L594"></a><span class="ln">   594</span>		if c == &#39;\&#39;&#39; {
+<a id="L595"></a><span class="ln">   595</span>			return `&#39;\&#39;&#39;`
+<a id="L596"></a><span class="ln">   596</span>		}
+<a id="L597"></a><span class="ln">   597</span>		if c == &#39;&#34;&#39; {
+<a id="L598"></a><span class="ln">   598</span>			return `&#39;&#34;&#39;`
+<a id="L599"></a><span class="ln">   599</span>		}
+<a id="L600"></a><span class="ln">   600</span>	
+<a id="L601"></a><span class="ln">   601</span>		<span class="comment">// use quoted string with different quotation marks</span>
+<a id="L602"></a><span class="ln">   602</span>		s := strconv.Quote(string(c))
+<a id="L603"></a><span class="ln">   603</span>		return &#34;&#39;&#34; + s[1:len(s)-1] + &#34;&#39;&#34;
+<a id="L604"></a><span class="ln">   604</span>	}
+<a id="L605"></a><span class="ln">   605</span>	
+<a id="L606"></a><span class="ln">   606</span>	<span class="comment">// undo causes the scanner to return scanCode from the next state transition.</span>
+<a id="L607"></a><span class="ln">   607</span>	<span class="comment">// This gives callers a simple 1-byte undo mechanism.</span>
+<a id="L608"></a><span class="ln">   608</span>	func (s *scanner) undo(scanCode int) {
+<a id="L609"></a><span class="ln">   609</span>		if s.redo {
+<a id="L610"></a><span class="ln">   610</span>			panic(&#34;json: invalid use of scanner&#34;)
+<a id="L611"></a><span class="ln">   611</span>		}
+<a id="L612"></a><span class="ln">   612</span>		s.redoCode = scanCode
+<a id="L613"></a><span class="ln">   613</span>		s.redoState = s.step
+<a id="L614"></a><span class="ln">   614</span>		s.step = stateRedo
+<a id="L615"></a><span class="ln">   615</span>		s.redo = true
+<a id="L616"></a><span class="ln">   616</span>	}
+<a id="L617"></a><span class="ln">   617</span>	
+<a id="L618"></a><span class="ln">   618</span>	<span class="comment">// stateRedo helps implement the scanner&#39;s 1-byte undo.</span>
+<a id="L619"></a><span class="ln">   619</span>	func stateRedo(s *scanner, c int) int {
+<a id="L620"></a><span class="ln">   620</span>		s.redo = false
+<a id="L621"></a><span class="ln">   621</span>		s.step = s.redoState
+<a id="L622"></a><span class="ln">   622</span>		return s.redoCode
+<a id="L623"></a><span class="ln">   623</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

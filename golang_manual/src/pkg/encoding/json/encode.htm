@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/json/encode.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/json/encode.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package json implements encoding and decoding of JSON objects as defined in</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// RFC 4627.</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">//</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// See &#34;JSON and Go&#34; for an introduction to this package:</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// http://golang.org/doc/articles/json_and_go.html</span>
+<a id="L10"></a><span class="ln">    10</span>	package json
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	import (
+<a id="L13"></a><span class="ln">    13</span>		&#34;bytes&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;encoding/base64&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;math&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;reflect&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;runtime&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;sort&#34;
+<a id="L19"></a><span class="ln">    19</span>		&#34;strconv&#34;
+<a id="L20"></a><span class="ln">    20</span>		&#34;strings&#34;
+<a id="L21"></a><span class="ln">    21</span>		&#34;sync&#34;
+<a id="L22"></a><span class="ln">    22</span>		&#34;unicode&#34;
+<a id="L23"></a><span class="ln">    23</span>		&#34;unicode/utf8&#34;
+<a id="L24"></a><span class="ln">    24</span>	)
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Marshal returns the JSON encoding of v.</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">//</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// Marshal traverses the value v recursively.</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// If an encountered value implements the Marshaler interface</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// and is not a nil pointer, Marshal calls its MarshalJSON method</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// to produce JSON.  The nil pointer exception is not strictly necessary</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// but mimics a similar, necessary exception in the behavior of</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// UnmarshalJSON.</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// Otherwise, Marshal uses the following type-dependent default encodings:</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// Boolean values encode as JSON booleans.</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Floating point and integer values encode as JSON numbers.</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// String values encode as JSON strings, with each invalid UTF-8 sequence</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// replaced by the encoding of the Unicode replacement character U+FFFD.</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// The angle brackets &#34;&lt;&#34; and &#34;&gt;&#34; are escaped to &#34;\u003c&#34; and &#34;\u003e&#34;</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// to keep some browsers from misinterpreting JSON output as HTML.</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// Array and slice values encode as JSON arrays, except that</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// []byte encodes as a base64-encoded string, and a nil slice</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// encodes as the null JSON object.</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// Struct values encode as JSON objects. Each exported struct field</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// becomes a member of the object unless</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//   - the field&#39;s tag is &#34;-&#34;, or</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//   - the field is empty and its tag specifies the &#34;omitempty&#34; option.</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// The empty values are false, 0, any</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// nil pointer or interface value, and any array, slice, map, or string of</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// length zero. The object&#39;s default key string is the struct field name</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// but can be specified in the struct field&#39;s tag value. The &#34;json&#34; key in</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// struct field&#39;s tag value is the key name, followed by an optional comma</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// and options. Examples:</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">//</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">//   // Field is ignored by this package.</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">//   Field int `json:&#34;-&#34;`</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">//</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">//   // Field appears in JSON as key &#34;myName&#34;.</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">//   Field int `json:&#34;myName&#34;`</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">//</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">//   // Field appears in JSON as key &#34;myName&#34; and</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">//   // the field is omitted from the object if its value is empty,</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">//   // as defined above.</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">//   Field int `json:&#34;myName,omitempty&#34;`</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">//</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//   // Field appears in JSON as key &#34;Field&#34; (the default), but</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">//   // the field is skipped if empty.</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//   // Note the leading comma.</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">//   Field int `json:&#34;,omitempty&#34;`</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">//</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// The &#34;string&#34; option signals that a field is stored as JSON inside a</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// JSON-encoded string.  This extra level of encoding is sometimes</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// used when communicating with JavaScript programs:</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">//</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">//    Int64String int64 `json:&#34;,string&#34;`</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">//</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// The key name will be used if it&#39;s a non-empty string consisting of</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// only Unicode letters, digits, dollar signs, percent signs, hyphens,</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// underscores and slashes.</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">//</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// Map values encode as JSON objects.</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// The map&#39;s key type must be string; the object keys are used directly</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// as map keys.</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">//</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// Pointer values encode as the value pointed to.</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// A nil pointer encodes as the null JSON object.</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">//</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// Interface values encode as the value contained in the interface.</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// A nil interface value encodes as the null JSON object.</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">//</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// Channel, complex, and function values cannot be encoded in JSON.</span>
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// Attempting to encode such a value causes Marshal to return</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// an InvalidTypeError.</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">//</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// JSON cannot represent cyclic data structures and Marshal does not</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// handle them.  Passing cyclic structures to Marshal will result in</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// an infinite recursion.</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">//</span>
+<a id="L105"></a><span class="ln">   105</span>	func Marshal(v interface{}) ([]byte, error) {
+<a id="L106"></a><span class="ln">   106</span>		e := &amp;encodeState{}
+<a id="L107"></a><span class="ln">   107</span>		err := e.marshal(v)
+<a id="L108"></a><span class="ln">   108</span>		if err != nil {
+<a id="L109"></a><span class="ln">   109</span>			return nil, err
+<a id="L110"></a><span class="ln">   110</span>		}
+<a id="L111"></a><span class="ln">   111</span>		return e.Bytes(), nil
+<a id="L112"></a><span class="ln">   112</span>	}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// MarshalIndent is like Marshal but applies Indent to format the output.</span>
+<a id="L115"></a><span class="ln">   115</span>	func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
+<a id="L116"></a><span class="ln">   116</span>		b, err := Marshal(v)
+<a id="L117"></a><span class="ln">   117</span>		if err != nil {
+<a id="L118"></a><span class="ln">   118</span>			return nil, err
+<a id="L119"></a><span class="ln">   119</span>		}
+<a id="L120"></a><span class="ln">   120</span>		var buf bytes.Buffer
+<a id="L121"></a><span class="ln">   121</span>		err = Indent(&amp;buf, b, prefix, indent)
+<a id="L122"></a><span class="ln">   122</span>		if err != nil {
+<a id="L123"></a><span class="ln">   123</span>			return nil, err
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>		return buf.Bytes(), nil
+<a id="L126"></a><span class="ln">   126</span>	}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// HTMLEscape appends to dst the JSON-encoded src with &lt;, &gt;, and &amp;</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// characters inside string literals changed to \u003c, \u003e, \u0026</span>
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// so that the JSON will be safe to embed inside HTML &lt;script&gt; tags.</span>
+<a id="L131"></a><span class="ln">   131</span>	<span class="comment">// For historical reasons, web browsers don&#39;t honor standard HTML</span>
+<a id="L132"></a><span class="ln">   132</span>	<span class="comment">// escaping within &lt;script&gt; tags, so an alternative JSON encoding must</span>
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// be used.</span>
+<a id="L134"></a><span class="ln">   134</span>	func HTMLEscape(dst *bytes.Buffer, src []byte) {
+<a id="L135"></a><span class="ln">   135</span>		<span class="comment">// &lt; &gt; &amp; can only appear in string literals,</span>
+<a id="L136"></a><span class="ln">   136</span>		<span class="comment">// so just scan the string one byte at a time.</span>
+<a id="L137"></a><span class="ln">   137</span>		start := 0
+<a id="L138"></a><span class="ln">   138</span>		for i, c := range src {
+<a id="L139"></a><span class="ln">   139</span>			if c == &#39;&lt;&#39; || c == &#39;&gt;&#39; || c == &#39;&amp;&#39; {
+<a id="L140"></a><span class="ln">   140</span>				if start &lt; i {
+<a id="L141"></a><span class="ln">   141</span>					dst.Write(src[start:i])
+<a id="L142"></a><span class="ln">   142</span>				}
+<a id="L143"></a><span class="ln">   143</span>				dst.WriteString(`\u00`)
+<a id="L144"></a><span class="ln">   144</span>				dst.WriteByte(hex[c&gt;&gt;4])
+<a id="L145"></a><span class="ln">   145</span>				dst.WriteByte(hex[c&amp;0xF])
+<a id="L146"></a><span class="ln">   146</span>				start = i + 1
+<a id="L147"></a><span class="ln">   147</span>			}
+<a id="L148"></a><span class="ln">   148</span>		}
+<a id="L149"></a><span class="ln">   149</span>		if start &lt; len(src) {
+<a id="L150"></a><span class="ln">   150</span>			dst.Write(src[start:])
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>	}
+<a id="L153"></a><span class="ln">   153</span>	
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">// Marshaler is the interface implemented by objects that</span>
+<a id="L155"></a><span class="ln">   155</span>	<span class="comment">// can marshal themselves into valid JSON.</span>
+<a id="L156"></a><span class="ln">   156</span>	type Marshaler interface {
+<a id="L157"></a><span class="ln">   157</span>		MarshalJSON() ([]byte, error)
+<a id="L158"></a><span class="ln">   158</span>	}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>	type UnsupportedTypeError struct {
+<a id="L161"></a><span class="ln">   161</span>		Type reflect.Type
+<a id="L162"></a><span class="ln">   162</span>	}
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	func (e *UnsupportedTypeError) Error() string {
+<a id="L165"></a><span class="ln">   165</span>		return &#34;json: unsupported type: &#34; + e.Type.String()
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	type UnsupportedValueError struct {
+<a id="L169"></a><span class="ln">   169</span>		Value reflect.Value
+<a id="L170"></a><span class="ln">   170</span>		Str   string
+<a id="L171"></a><span class="ln">   171</span>	}
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>	func (e *UnsupportedValueError) Error() string {
+<a id="L174"></a><span class="ln">   174</span>		return &#34;json: unsupported value: &#34; + e.Str
+<a id="L175"></a><span class="ln">   175</span>	}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>	type InvalidUTF8Error struct {
+<a id="L178"></a><span class="ln">   178</span>		S string
+<a id="L179"></a><span class="ln">   179</span>	}
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>	func (e *InvalidUTF8Error) Error() string {
+<a id="L182"></a><span class="ln">   182</span>		return &#34;json: invalid UTF-8 in string: &#34; + strconv.Quote(e.S)
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	type MarshalerError struct {
+<a id="L186"></a><span class="ln">   186</span>		Type reflect.Type
+<a id="L187"></a><span class="ln">   187</span>		Err  error
+<a id="L188"></a><span class="ln">   188</span>	}
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	func (e *MarshalerError) Error() string {
+<a id="L191"></a><span class="ln">   191</span>		return &#34;json: error calling MarshalJSON for type &#34; + e.Type.String() + &#34;: &#34; + e.Err.Error()
+<a id="L192"></a><span class="ln">   192</span>	}
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>	var hex = &#34;0123456789abcdef&#34;
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// An encodeState encodes JSON into a bytes.Buffer.</span>
+<a id="L197"></a><span class="ln">   197</span>	type encodeState struct {
+<a id="L198"></a><span class="ln">   198</span>		bytes.Buffer <span class="comment">// accumulated output</span>
+<a id="L199"></a><span class="ln">   199</span>		scratch      [64]byte
+<a id="L200"></a><span class="ln">   200</span>	}
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	func (e *encodeState) marshal(v interface{}) (err error) {
+<a id="L203"></a><span class="ln">   203</span>		defer func() {
+<a id="L204"></a><span class="ln">   204</span>			if r := recover(); r != nil {
+<a id="L205"></a><span class="ln">   205</span>				if _, ok := r.(runtime.Error); ok {
+<a id="L206"></a><span class="ln">   206</span>					panic(r)
+<a id="L207"></a><span class="ln">   207</span>				}
+<a id="L208"></a><span class="ln">   208</span>				err = r.(error)
+<a id="L209"></a><span class="ln">   209</span>			}
+<a id="L210"></a><span class="ln">   210</span>		}()
+<a id="L211"></a><span class="ln">   211</span>		e.reflectValue(reflect.ValueOf(v))
+<a id="L212"></a><span class="ln">   212</span>		return nil
+<a id="L213"></a><span class="ln">   213</span>	}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>	func (e *encodeState) error(err error) {
+<a id="L216"></a><span class="ln">   216</span>		panic(err)
+<a id="L217"></a><span class="ln">   217</span>	}
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>	var byteSliceType = reflect.TypeOf([]byte(nil))
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>	func isEmptyValue(v reflect.Value) bool {
+<a id="L222"></a><span class="ln">   222</span>		switch v.Kind() {
+<a id="L223"></a><span class="ln">   223</span>		case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+<a id="L224"></a><span class="ln">   224</span>			return v.Len() == 0
+<a id="L225"></a><span class="ln">   225</span>		case reflect.Bool:
+<a id="L226"></a><span class="ln">   226</span>			return !v.Bool()
+<a id="L227"></a><span class="ln">   227</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L228"></a><span class="ln">   228</span>			return v.Int() == 0
+<a id="L229"></a><span class="ln">   229</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L230"></a><span class="ln">   230</span>			return v.Uint() == 0
+<a id="L231"></a><span class="ln">   231</span>		case reflect.Float32, reflect.Float64:
+<a id="L232"></a><span class="ln">   232</span>			return v.Float() == 0
+<a id="L233"></a><span class="ln">   233</span>		case reflect.Interface, reflect.Ptr:
+<a id="L234"></a><span class="ln">   234</span>			return v.IsNil()
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>		return false
+<a id="L237"></a><span class="ln">   237</span>	}
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	func (e *encodeState) reflectValue(v reflect.Value) {
+<a id="L240"></a><span class="ln">   240</span>		e.reflectValueQuoted(v, false)
+<a id="L241"></a><span class="ln">   241</span>	}
+<a id="L242"></a><span class="ln">   242</span>	
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// reflectValueQuoted writes the value in v to the output.</span>
+<a id="L244"></a><span class="ln">   244</span>	<span class="comment">// If quoted is true, the serialization is wrapped in a JSON string.</span>
+<a id="L245"></a><span class="ln">   245</span>	func (e *encodeState) reflectValueQuoted(v reflect.Value, quoted bool) {
+<a id="L246"></a><span class="ln">   246</span>		if !v.IsValid() {
+<a id="L247"></a><span class="ln">   247</span>			e.WriteString(&#34;null&#34;)
+<a id="L248"></a><span class="ln">   248</span>			return
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>	
+<a id="L251"></a><span class="ln">   251</span>		m, ok := v.Interface().(Marshaler)
+<a id="L252"></a><span class="ln">   252</span>		if !ok {
+<a id="L253"></a><span class="ln">   253</span>			<span class="comment">// T doesn&#39;t match the interface. Check against *T too.</span>
+<a id="L254"></a><span class="ln">   254</span>			if v.Kind() != reflect.Ptr &amp;&amp; v.CanAddr() {
+<a id="L255"></a><span class="ln">   255</span>				m, ok = v.Addr().Interface().(Marshaler)
+<a id="L256"></a><span class="ln">   256</span>				if ok {
+<a id="L257"></a><span class="ln">   257</span>					v = v.Addr()
+<a id="L258"></a><span class="ln">   258</span>				}
+<a id="L259"></a><span class="ln">   259</span>			}
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>		if ok &amp;&amp; (v.Kind() != reflect.Ptr || !v.IsNil()) {
+<a id="L262"></a><span class="ln">   262</span>			b, err := m.MarshalJSON()
+<a id="L263"></a><span class="ln">   263</span>			if err == nil {
+<a id="L264"></a><span class="ln">   264</span>				<span class="comment">// copy JSON into buffer, checking validity.</span>
+<a id="L265"></a><span class="ln">   265</span>				err = compact(&amp;e.Buffer, b, true)
+<a id="L266"></a><span class="ln">   266</span>			}
+<a id="L267"></a><span class="ln">   267</span>			if err != nil {
+<a id="L268"></a><span class="ln">   268</span>				e.error(&amp;MarshalerError{v.Type(), err})
+<a id="L269"></a><span class="ln">   269</span>			}
+<a id="L270"></a><span class="ln">   270</span>			return
+<a id="L271"></a><span class="ln">   271</span>		}
+<a id="L272"></a><span class="ln">   272</span>	
+<a id="L273"></a><span class="ln">   273</span>		writeString := (*encodeState).WriteString
+<a id="L274"></a><span class="ln">   274</span>		if quoted {
+<a id="L275"></a><span class="ln">   275</span>			writeString = (*encodeState).string
+<a id="L276"></a><span class="ln">   276</span>		}
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>		switch v.Kind() {
+<a id="L279"></a><span class="ln">   279</span>		case reflect.Bool:
+<a id="L280"></a><span class="ln">   280</span>			x := v.Bool()
+<a id="L281"></a><span class="ln">   281</span>			if x {
+<a id="L282"></a><span class="ln">   282</span>				writeString(e, &#34;true&#34;)
+<a id="L283"></a><span class="ln">   283</span>			} else {
+<a id="L284"></a><span class="ln">   284</span>				writeString(e, &#34;false&#34;)
+<a id="L285"></a><span class="ln">   285</span>			}
+<a id="L286"></a><span class="ln">   286</span>	
+<a id="L287"></a><span class="ln">   287</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L288"></a><span class="ln">   288</span>			b := strconv.AppendInt(e.scratch[:0], v.Int(), 10)
+<a id="L289"></a><span class="ln">   289</span>			if quoted {
+<a id="L290"></a><span class="ln">   290</span>				writeString(e, string(b))
+<a id="L291"></a><span class="ln">   291</span>			} else {
+<a id="L292"></a><span class="ln">   292</span>				e.Write(b)
+<a id="L293"></a><span class="ln">   293</span>			}
+<a id="L294"></a><span class="ln">   294</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L295"></a><span class="ln">   295</span>			b := strconv.AppendUint(e.scratch[:0], v.Uint(), 10)
+<a id="L296"></a><span class="ln">   296</span>			if quoted {
+<a id="L297"></a><span class="ln">   297</span>				writeString(e, string(b))
+<a id="L298"></a><span class="ln">   298</span>			} else {
+<a id="L299"></a><span class="ln">   299</span>				e.Write(b)
+<a id="L300"></a><span class="ln">   300</span>			}
+<a id="L301"></a><span class="ln">   301</span>		case reflect.Float32, reflect.Float64:
+<a id="L302"></a><span class="ln">   302</span>			f := v.Float()
+<a id="L303"></a><span class="ln">   303</span>			if math.IsInf(f, 0) || math.IsNaN(f) {
+<a id="L304"></a><span class="ln">   304</span>				e.error(&amp;UnsupportedValueError{v, strconv.FormatFloat(f, &#39;g&#39;, -1, v.Type().Bits())})
+<a id="L305"></a><span class="ln">   305</span>			}
+<a id="L306"></a><span class="ln">   306</span>			b := strconv.AppendFloat(e.scratch[:0], f, &#39;g&#39;, -1, v.Type().Bits())
+<a id="L307"></a><span class="ln">   307</span>			if quoted {
+<a id="L308"></a><span class="ln">   308</span>				writeString(e, string(b))
+<a id="L309"></a><span class="ln">   309</span>			} else {
+<a id="L310"></a><span class="ln">   310</span>				e.Write(b)
+<a id="L311"></a><span class="ln">   311</span>			}
+<a id="L312"></a><span class="ln">   312</span>		case reflect.String:
+<a id="L313"></a><span class="ln">   313</span>			if quoted {
+<a id="L314"></a><span class="ln">   314</span>				sb, err := Marshal(v.String())
+<a id="L315"></a><span class="ln">   315</span>				if err != nil {
+<a id="L316"></a><span class="ln">   316</span>					e.error(err)
+<a id="L317"></a><span class="ln">   317</span>				}
+<a id="L318"></a><span class="ln">   318</span>				e.string(string(sb))
+<a id="L319"></a><span class="ln">   319</span>			} else {
+<a id="L320"></a><span class="ln">   320</span>				e.string(v.String())
+<a id="L321"></a><span class="ln">   321</span>			}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>		case reflect.Struct:
+<a id="L324"></a><span class="ln">   324</span>			e.WriteByte(&#39;{&#39;)
+<a id="L325"></a><span class="ln">   325</span>			first := true
+<a id="L326"></a><span class="ln">   326</span>			for _, ef := range encodeFields(v.Type()) {
+<a id="L327"></a><span class="ln">   327</span>				fieldValue := v.Field(ef.i)
+<a id="L328"></a><span class="ln">   328</span>				if ef.omitEmpty &amp;&amp; isEmptyValue(fieldValue) {
+<a id="L329"></a><span class="ln">   329</span>					continue
+<a id="L330"></a><span class="ln">   330</span>				}
+<a id="L331"></a><span class="ln">   331</span>				if first {
+<a id="L332"></a><span class="ln">   332</span>					first = false
+<a id="L333"></a><span class="ln">   333</span>				} else {
+<a id="L334"></a><span class="ln">   334</span>					e.WriteByte(&#39;,&#39;)
+<a id="L335"></a><span class="ln">   335</span>				}
+<a id="L336"></a><span class="ln">   336</span>				e.string(ef.tag)
+<a id="L337"></a><span class="ln">   337</span>				e.WriteByte(&#39;:&#39;)
+<a id="L338"></a><span class="ln">   338</span>				e.reflectValueQuoted(fieldValue, ef.quoted)
+<a id="L339"></a><span class="ln">   339</span>			}
+<a id="L340"></a><span class="ln">   340</span>			e.WriteByte(&#39;}&#39;)
+<a id="L341"></a><span class="ln">   341</span>	
+<a id="L342"></a><span class="ln">   342</span>		case reflect.Map:
+<a id="L343"></a><span class="ln">   343</span>			if v.Type().Key().Kind() != reflect.String {
+<a id="L344"></a><span class="ln">   344</span>				e.error(&amp;UnsupportedTypeError{v.Type()})
+<a id="L345"></a><span class="ln">   345</span>			}
+<a id="L346"></a><span class="ln">   346</span>			if v.IsNil() {
+<a id="L347"></a><span class="ln">   347</span>				e.WriteString(&#34;null&#34;)
+<a id="L348"></a><span class="ln">   348</span>				break
+<a id="L349"></a><span class="ln">   349</span>			}
+<a id="L350"></a><span class="ln">   350</span>			e.WriteByte(&#39;{&#39;)
+<a id="L351"></a><span class="ln">   351</span>			var sv stringValues = v.MapKeys()
+<a id="L352"></a><span class="ln">   352</span>			sort.Sort(sv)
+<a id="L353"></a><span class="ln">   353</span>			for i, k := range sv {
+<a id="L354"></a><span class="ln">   354</span>				if i &gt; 0 {
+<a id="L355"></a><span class="ln">   355</span>					e.WriteByte(&#39;,&#39;)
+<a id="L356"></a><span class="ln">   356</span>				}
+<a id="L357"></a><span class="ln">   357</span>				e.string(k.String())
+<a id="L358"></a><span class="ln">   358</span>				e.WriteByte(&#39;:&#39;)
+<a id="L359"></a><span class="ln">   359</span>				e.reflectValue(v.MapIndex(k))
+<a id="L360"></a><span class="ln">   360</span>			}
+<a id="L361"></a><span class="ln">   361</span>			e.WriteByte(&#39;}&#39;)
+<a id="L362"></a><span class="ln">   362</span>	
+<a id="L363"></a><span class="ln">   363</span>		case reflect.Slice:
+<a id="L364"></a><span class="ln">   364</span>			if v.IsNil() {
+<a id="L365"></a><span class="ln">   365</span>				e.WriteString(&#34;null&#34;)
+<a id="L366"></a><span class="ln">   366</span>				break
+<a id="L367"></a><span class="ln">   367</span>			}
+<a id="L368"></a><span class="ln">   368</span>			if v.Type().Elem().Kind() == reflect.Uint8 {
+<a id="L369"></a><span class="ln">   369</span>				<span class="comment">// Byte slices get special treatment; arrays don&#39;t.</span>
+<a id="L370"></a><span class="ln">   370</span>				s := v.Bytes()
+<a id="L371"></a><span class="ln">   371</span>				e.WriteByte(&#39;&#34;&#39;)
+<a id="L372"></a><span class="ln">   372</span>				if len(s) &lt; 1024 {
+<a id="L373"></a><span class="ln">   373</span>					<span class="comment">// for small buffers, using Encode directly is much faster.</span>
+<a id="L374"></a><span class="ln">   374</span>					dst := make([]byte, base64.StdEncoding.EncodedLen(len(s)))
+<a id="L375"></a><span class="ln">   375</span>					base64.StdEncoding.Encode(dst, s)
+<a id="L376"></a><span class="ln">   376</span>					e.Write(dst)
+<a id="L377"></a><span class="ln">   377</span>				} else {
+<a id="L378"></a><span class="ln">   378</span>					<span class="comment">// for large buffers, avoid unnecessary extra temporary</span>
+<a id="L379"></a><span class="ln">   379</span>					<span class="comment">// buffer space.</span>
+<a id="L380"></a><span class="ln">   380</span>					enc := base64.NewEncoder(base64.StdEncoding, e)
+<a id="L381"></a><span class="ln">   381</span>					enc.Write(s)
+<a id="L382"></a><span class="ln">   382</span>					enc.Close()
+<a id="L383"></a><span class="ln">   383</span>				}
+<a id="L384"></a><span class="ln">   384</span>				e.WriteByte(&#39;&#34;&#39;)
+<a id="L385"></a><span class="ln">   385</span>				break
+<a id="L386"></a><span class="ln">   386</span>			}
+<a id="L387"></a><span class="ln">   387</span>			<span class="comment">// Slices can be marshalled as nil, but otherwise are handled</span>
+<a id="L388"></a><span class="ln">   388</span>			<span class="comment">// as arrays.</span>
+<a id="L389"></a><span class="ln">   389</span>			fallthrough
+<a id="L390"></a><span class="ln">   390</span>		case reflect.Array:
+<a id="L391"></a><span class="ln">   391</span>			e.WriteByte(&#39;[&#39;)
+<a id="L392"></a><span class="ln">   392</span>			n := v.Len()
+<a id="L393"></a><span class="ln">   393</span>			for i := 0; i &lt; n; i++ {
+<a id="L394"></a><span class="ln">   394</span>				if i &gt; 0 {
+<a id="L395"></a><span class="ln">   395</span>					e.WriteByte(&#39;,&#39;)
+<a id="L396"></a><span class="ln">   396</span>				}
+<a id="L397"></a><span class="ln">   397</span>				e.reflectValue(v.Index(i))
+<a id="L398"></a><span class="ln">   398</span>			}
+<a id="L399"></a><span class="ln">   399</span>			e.WriteByte(&#39;]&#39;)
+<a id="L400"></a><span class="ln">   400</span>	
+<a id="L401"></a><span class="ln">   401</span>		case reflect.Interface, reflect.Ptr:
+<a id="L402"></a><span class="ln">   402</span>			if v.IsNil() {
+<a id="L403"></a><span class="ln">   403</span>				e.WriteString(&#34;null&#34;)
+<a id="L404"></a><span class="ln">   404</span>				return
+<a id="L405"></a><span class="ln">   405</span>			}
+<a id="L406"></a><span class="ln">   406</span>			e.reflectValue(v.Elem())
+<a id="L407"></a><span class="ln">   407</span>	
+<a id="L408"></a><span class="ln">   408</span>		default:
+<a id="L409"></a><span class="ln">   409</span>			e.error(&amp;UnsupportedTypeError{v.Type()})
+<a id="L410"></a><span class="ln">   410</span>		}
+<a id="L411"></a><span class="ln">   411</span>		return
+<a id="L412"></a><span class="ln">   412</span>	}
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>	func isValidTag(s string) bool {
+<a id="L415"></a><span class="ln">   415</span>		if s == &#34;&#34; {
+<a id="L416"></a><span class="ln">   416</span>			return false
+<a id="L417"></a><span class="ln">   417</span>		}
+<a id="L418"></a><span class="ln">   418</span>		for _, c := range s {
+<a id="L419"></a><span class="ln">   419</span>			switch {
+<a id="L420"></a><span class="ln">   420</span>			case strings.ContainsRune(&#34;!#$%&amp;()*+-./:&lt;=&gt;?@[]^_{|}~&#34;, c):
+<a id="L421"></a><span class="ln">   421</span>				<span class="comment">// Backslash and quote chars are reserved, but</span>
+<a id="L422"></a><span class="ln">   422</span>				<span class="comment">// otherwise any punctuation chars are allowed</span>
+<a id="L423"></a><span class="ln">   423</span>				<span class="comment">// in a tag name.</span>
+<a id="L424"></a><span class="ln">   424</span>			default:
+<a id="L425"></a><span class="ln">   425</span>				if !unicode.IsLetter(c) &amp;&amp; !unicode.IsDigit(c) {
+<a id="L426"></a><span class="ln">   426</span>					return false
+<a id="L427"></a><span class="ln">   427</span>				}
+<a id="L428"></a><span class="ln">   428</span>			}
+<a id="L429"></a><span class="ln">   429</span>		}
+<a id="L430"></a><span class="ln">   430</span>		return true
+<a id="L431"></a><span class="ln">   431</span>	}
+<a id="L432"></a><span class="ln">   432</span>	
+<a id="L433"></a><span class="ln">   433</span>	<span class="comment">// stringValues is a slice of reflect.Value holding *reflect.StringValue.</span>
+<a id="L434"></a><span class="ln">   434</span>	<span class="comment">// It implements the methods to sort by string.</span>
+<a id="L435"></a><span class="ln">   435</span>	type stringValues []reflect.Value
+<a id="L436"></a><span class="ln">   436</span>	
+<a id="L437"></a><span class="ln">   437</span>	func (sv stringValues) Len() int           { return len(sv) }
+<a id="L438"></a><span class="ln">   438</span>	func (sv stringValues) Swap(i, j int)      { sv[i], sv[j] = sv[j], sv[i] }
+<a id="L439"></a><span class="ln">   439</span>	func (sv stringValues) Less(i, j int) bool { return sv.get(i) &lt; sv.get(j) }
+<a id="L440"></a><span class="ln">   440</span>	func (sv stringValues) get(i int) string   { return sv[i].String() }
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>	func (e *encodeState) string(s string) (int, error) {
+<a id="L443"></a><span class="ln">   443</span>		len0 := e.Len()
+<a id="L444"></a><span class="ln">   444</span>		e.WriteByte(&#39;&#34;&#39;)
+<a id="L445"></a><span class="ln">   445</span>		start := 0
+<a id="L446"></a><span class="ln">   446</span>		for i := 0; i &lt; len(s); {
+<a id="L447"></a><span class="ln">   447</span>			if b := s[i]; b &lt; utf8.RuneSelf {
+<a id="L448"></a><span class="ln">   448</span>				if 0x20 &lt;= b &amp;&amp; b != &#39;\\&#39; &amp;&amp; b != &#39;&#34;&#39; &amp;&amp; b != &#39;&lt;&#39; &amp;&amp; b != &#39;&gt;&#39; {
+<a id="L449"></a><span class="ln">   449</span>					i++
+<a id="L450"></a><span class="ln">   450</span>					continue
+<a id="L451"></a><span class="ln">   451</span>				}
+<a id="L452"></a><span class="ln">   452</span>				if start &lt; i {
+<a id="L453"></a><span class="ln">   453</span>					e.WriteString(s[start:i])
+<a id="L454"></a><span class="ln">   454</span>				}
+<a id="L455"></a><span class="ln">   455</span>				switch b {
+<a id="L456"></a><span class="ln">   456</span>				case &#39;\\&#39;, &#39;&#34;&#39;:
+<a id="L457"></a><span class="ln">   457</span>					e.WriteByte(&#39;\\&#39;)
+<a id="L458"></a><span class="ln">   458</span>					e.WriteByte(b)
+<a id="L459"></a><span class="ln">   459</span>				case &#39;\n&#39;:
+<a id="L460"></a><span class="ln">   460</span>					e.WriteByte(&#39;\\&#39;)
+<a id="L461"></a><span class="ln">   461</span>					e.WriteByte(&#39;n&#39;)
+<a id="L462"></a><span class="ln">   462</span>				case &#39;\r&#39;:
+<a id="L463"></a><span class="ln">   463</span>					e.WriteByte(&#39;\\&#39;)
+<a id="L464"></a><span class="ln">   464</span>					e.WriteByte(&#39;r&#39;)
+<a id="L465"></a><span class="ln">   465</span>				default:
+<a id="L466"></a><span class="ln">   466</span>					<span class="comment">// This encodes bytes &lt; 0x20 except for \n and \r,</span>
+<a id="L467"></a><span class="ln">   467</span>					<span class="comment">// as well as &lt; and &gt;. The latter are escaped because they</span>
+<a id="L468"></a><span class="ln">   468</span>					<span class="comment">// can lead to security holes when user-controlled strings</span>
+<a id="L469"></a><span class="ln">   469</span>					<span class="comment">// are rendered into JSON and served to some browsers.</span>
+<a id="L470"></a><span class="ln">   470</span>					e.WriteString(`\u00`)
+<a id="L471"></a><span class="ln">   471</span>					e.WriteByte(hex[b&gt;&gt;4])
+<a id="L472"></a><span class="ln">   472</span>					e.WriteByte(hex[b&amp;0xF])
+<a id="L473"></a><span class="ln">   473</span>				}
+<a id="L474"></a><span class="ln">   474</span>				i++
+<a id="L475"></a><span class="ln">   475</span>				start = i
+<a id="L476"></a><span class="ln">   476</span>				continue
+<a id="L477"></a><span class="ln">   477</span>			}
+<a id="L478"></a><span class="ln">   478</span>			c, size := utf8.DecodeRuneInString(s[i:])
+<a id="L479"></a><span class="ln">   479</span>			if c == utf8.RuneError &amp;&amp; size == 1 {
+<a id="L480"></a><span class="ln">   480</span>				e.error(&amp;InvalidUTF8Error{s})
+<a id="L481"></a><span class="ln">   481</span>			}
+<a id="L482"></a><span class="ln">   482</span>			i += size
+<a id="L483"></a><span class="ln">   483</span>		}
+<a id="L484"></a><span class="ln">   484</span>		if start &lt; len(s) {
+<a id="L485"></a><span class="ln">   485</span>			e.WriteString(s[start:])
+<a id="L486"></a><span class="ln">   486</span>		}
+<a id="L487"></a><span class="ln">   487</span>		e.WriteByte(&#39;&#34;&#39;)
+<a id="L488"></a><span class="ln">   488</span>		return e.Len() - len0, nil
+<a id="L489"></a><span class="ln">   489</span>	}
+<a id="L490"></a><span class="ln">   490</span>	
+<a id="L491"></a><span class="ln">   491</span>	<span class="comment">// encodeField contains information about how to encode a field of a</span>
+<a id="L492"></a><span class="ln">   492</span>	<span class="comment">// struct.</span>
+<a id="L493"></a><span class="ln">   493</span>	type encodeField struct {
+<a id="L494"></a><span class="ln">   494</span>		i         int <span class="comment">// field index in struct</span>
+<a id="L495"></a><span class="ln">   495</span>		tag       string
+<a id="L496"></a><span class="ln">   496</span>		quoted    bool
+<a id="L497"></a><span class="ln">   497</span>		omitEmpty bool
+<a id="L498"></a><span class="ln">   498</span>	}
+<a id="L499"></a><span class="ln">   499</span>	
+<a id="L500"></a><span class="ln">   500</span>	var (
+<a id="L501"></a><span class="ln">   501</span>		typeCacheLock     sync.RWMutex
+<a id="L502"></a><span class="ln">   502</span>		encodeFieldsCache = make(map[reflect.Type][]encodeField)
+<a id="L503"></a><span class="ln">   503</span>	)
+<a id="L504"></a><span class="ln">   504</span>	
+<a id="L505"></a><span class="ln">   505</span>	<span class="comment">// encodeFields returns a slice of encodeField for a given</span>
+<a id="L506"></a><span class="ln">   506</span>	<span class="comment">// struct type.</span>
+<a id="L507"></a><span class="ln">   507</span>	func encodeFields(t reflect.Type) []encodeField {
+<a id="L508"></a><span class="ln">   508</span>		typeCacheLock.RLock()
+<a id="L509"></a><span class="ln">   509</span>		fs, ok := encodeFieldsCache[t]
+<a id="L510"></a><span class="ln">   510</span>		typeCacheLock.RUnlock()
+<a id="L511"></a><span class="ln">   511</span>		if ok {
+<a id="L512"></a><span class="ln">   512</span>			return fs
+<a id="L513"></a><span class="ln">   513</span>		}
+<a id="L514"></a><span class="ln">   514</span>	
+<a id="L515"></a><span class="ln">   515</span>		typeCacheLock.Lock()
+<a id="L516"></a><span class="ln">   516</span>		defer typeCacheLock.Unlock()
+<a id="L517"></a><span class="ln">   517</span>		fs, ok = encodeFieldsCache[t]
+<a id="L518"></a><span class="ln">   518</span>		if ok {
+<a id="L519"></a><span class="ln">   519</span>			return fs
+<a id="L520"></a><span class="ln">   520</span>		}
+<a id="L521"></a><span class="ln">   521</span>	
+<a id="L522"></a><span class="ln">   522</span>		v := reflect.Zero(t)
+<a id="L523"></a><span class="ln">   523</span>		n := v.NumField()
+<a id="L524"></a><span class="ln">   524</span>		for i := 0; i &lt; n; i++ {
+<a id="L525"></a><span class="ln">   525</span>			f := t.Field(i)
+<a id="L526"></a><span class="ln">   526</span>			if f.PkgPath != &#34;&#34; {
+<a id="L527"></a><span class="ln">   527</span>				continue
+<a id="L528"></a><span class="ln">   528</span>			}
+<a id="L529"></a><span class="ln">   529</span>			if f.Anonymous {
+<a id="L530"></a><span class="ln">   530</span>				<span class="comment">// We want to do a better job with these later,</span>
+<a id="L531"></a><span class="ln">   531</span>				<span class="comment">// so for now pretend they don&#39;t exist.</span>
+<a id="L532"></a><span class="ln">   532</span>				continue
+<a id="L533"></a><span class="ln">   533</span>			}
+<a id="L534"></a><span class="ln">   534</span>			var ef encodeField
+<a id="L535"></a><span class="ln">   535</span>			ef.i = i
+<a id="L536"></a><span class="ln">   536</span>			ef.tag = f.Name
+<a id="L537"></a><span class="ln">   537</span>	
+<a id="L538"></a><span class="ln">   538</span>			tv := f.Tag.Get(&#34;json&#34;)
+<a id="L539"></a><span class="ln">   539</span>			if tv != &#34;&#34; {
+<a id="L540"></a><span class="ln">   540</span>				if tv == &#34;-&#34; {
+<a id="L541"></a><span class="ln">   541</span>					continue
+<a id="L542"></a><span class="ln">   542</span>				}
+<a id="L543"></a><span class="ln">   543</span>				name, opts := parseTag(tv)
+<a id="L544"></a><span class="ln">   544</span>				if isValidTag(name) {
+<a id="L545"></a><span class="ln">   545</span>					ef.tag = name
+<a id="L546"></a><span class="ln">   546</span>				}
+<a id="L547"></a><span class="ln">   547</span>				ef.omitEmpty = opts.Contains(&#34;omitempty&#34;)
+<a id="L548"></a><span class="ln">   548</span>				ef.quoted = opts.Contains(&#34;string&#34;)
+<a id="L549"></a><span class="ln">   549</span>			}
+<a id="L550"></a><span class="ln">   550</span>			fs = append(fs, ef)
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>		encodeFieldsCache[t] = fs
+<a id="L553"></a><span class="ln">   553</span>		return fs
+<a id="L554"></a><span class="ln">   554</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

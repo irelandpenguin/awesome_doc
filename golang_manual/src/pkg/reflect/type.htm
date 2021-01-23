@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/reflect/type.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/reflect/type.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package reflect implements run-time reflection, allowing a program to</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// manipulate objects with arbitrary types.  The typical use is to take a value</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// with static type interface{} and extract its dynamic type information by</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// calling TypeOf, which returns a Type.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// A call to ValueOf returns a Value representing the run-time data.</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// Zero takes a Type and returns a Value representing a zero value</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// for that type.</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// See &#34;The Laws of Reflection&#34; for an introduction to reflection in Go:</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// http://golang.org/doc/articles/laws_of_reflection.html</span>
+<a id="L16"></a><span class="ln">    16</span>	package reflect
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	import (
+<a id="L19"></a><span class="ln">    19</span>		&#34;strconv&#34;
+<a id="L20"></a><span class="ln">    20</span>		&#34;sync&#34;
+<a id="L21"></a><span class="ln">    21</span>		&#34;unsafe&#34;
+<a id="L22"></a><span class="ln">    22</span>	)
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// Type is the representation of a Go type.</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// Not all methods apply to all kinds of types.  Restrictions,</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// if any, are noted in the documentation for each method.</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// Use the Kind method to find out the kind of type before</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// calling kind-specific methods.  Calling a method</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// inappropriate to the kind of type causes a run-time panic.</span>
+<a id="L31"></a><span class="ln">    31</span>	type Type interface {
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// Methods applicable to all types.</span>
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>		<span class="comment">// Align returns the alignment in bytes of a value of</span>
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// this type when allocated in memory.</span>
+<a id="L36"></a><span class="ln">    36</span>		Align() int
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>		<span class="comment">// FieldAlign returns the alignment in bytes of a value of</span>
+<a id="L39"></a><span class="ln">    39</span>		<span class="comment">// this type when used as a field in a struct.</span>
+<a id="L40"></a><span class="ln">    40</span>		FieldAlign() int
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>		<span class="comment">// Method returns the i&#39;th method in the type&#39;s method set.</span>
+<a id="L43"></a><span class="ln">    43</span>		<span class="comment">// It panics if i is not in the range [0, NumMethod()).</span>
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">//</span>
+<a id="L45"></a><span class="ln">    45</span>		<span class="comment">// For a non-interface type T or *T, the returned Method&#39;s Type and Func</span>
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// fields describe a function whose first argument is the receiver.</span>
+<a id="L47"></a><span class="ln">    47</span>		<span class="comment">//</span>
+<a id="L48"></a><span class="ln">    48</span>		<span class="comment">// For an interface type, the returned Method&#39;s Type field gives the</span>
+<a id="L49"></a><span class="ln">    49</span>		<span class="comment">// method signature, without a receiver, and the Func field is nil.</span>
+<a id="L50"></a><span class="ln">    50</span>		Method(int) Method
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>		<span class="comment">// MethodByName returns the method with that name in the type&#39;s</span>
+<a id="L53"></a><span class="ln">    53</span>		<span class="comment">// method set and a boolean indicating if the method was found.</span>
+<a id="L54"></a><span class="ln">    54</span>		<span class="comment">//</span>
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// For a non-interface type T or *T, the returned Method&#39;s Type and Func</span>
+<a id="L56"></a><span class="ln">    56</span>		<span class="comment">// fields describe a function whose first argument is the receiver.</span>
+<a id="L57"></a><span class="ln">    57</span>		<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>		<span class="comment">// For an interface type, the returned Method&#39;s Type field gives the</span>
+<a id="L59"></a><span class="ln">    59</span>		<span class="comment">// method signature, without a receiver, and the Func field is nil.</span>
+<a id="L60"></a><span class="ln">    60</span>		MethodByName(string) (Method, bool)
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// NumMethod returns the number of methods in the type&#39;s method set.</span>
+<a id="L63"></a><span class="ln">    63</span>		NumMethod() int
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// Name returns the type&#39;s name within its package.</span>
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">// It returns an empty string for unnamed types.</span>
+<a id="L67"></a><span class="ln">    67</span>		Name() string
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>		<span class="comment">// PkgPath returns a named type&#39;s package path, that is, the import path</span>
+<a id="L70"></a><span class="ln">    70</span>		<span class="comment">// that uniquely identifies the package, such as &#34;encoding/base64&#34;.</span>
+<a id="L71"></a><span class="ln">    71</span>		<span class="comment">// If the type was predeclared (string, error) or unnamed (*T, struct{}, []int),</span>
+<a id="L72"></a><span class="ln">    72</span>		<span class="comment">// the package path will be the empty string.</span>
+<a id="L73"></a><span class="ln">    73</span>		PkgPath() string
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>		<span class="comment">// Size returns the number of bytes needed to store</span>
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">// a value of the given type; it is analogous to unsafe.Sizeof.</span>
+<a id="L77"></a><span class="ln">    77</span>		Size() uintptr
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">// String returns a string representation of the type.</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// The string representation may use shortened package names</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// (e.g., base64 instead of &#34;encoding/base64&#34;) and is not</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">// guaranteed to be unique among types.  To test for equality,</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// compare the Types directly.</span>
+<a id="L84"></a><span class="ln">    84</span>		String() string
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// Kind returns the specific kind of this type.</span>
+<a id="L87"></a><span class="ln">    87</span>		Kind() Kind
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>		<span class="comment">// Implements returns true if the type implements the interface type u.</span>
+<a id="L90"></a><span class="ln">    90</span>		Implements(u Type) bool
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>		<span class="comment">// AssignableTo returns true if a value of the type is assignable to type u.</span>
+<a id="L93"></a><span class="ln">    93</span>		AssignableTo(u Type) bool
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>		<span class="comment">// Methods applicable only to some types, depending on Kind.</span>
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// The methods allowed for each kind are:</span>
+<a id="L97"></a><span class="ln">    97</span>		<span class="comment">//</span>
+<a id="L98"></a><span class="ln">    98</span>		<span class="comment">//	Int*, Uint*, Float*, Complex*: Bits</span>
+<a id="L99"></a><span class="ln">    99</span>		<span class="comment">//	Array: Elem, Len</span>
+<a id="L100"></a><span class="ln">   100</span>		<span class="comment">//	Chan: ChanDir, Elem</span>
+<a id="L101"></a><span class="ln">   101</span>		<span class="comment">//	Func: In, NumIn, Out, NumOut, IsVariadic.</span>
+<a id="L102"></a><span class="ln">   102</span>		<span class="comment">//	Map: Key, Elem</span>
+<a id="L103"></a><span class="ln">   103</span>		<span class="comment">//	Ptr: Elem</span>
+<a id="L104"></a><span class="ln">   104</span>		<span class="comment">//	Slice: Elem</span>
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">//	Struct: Field, FieldByIndex, FieldByName, FieldByNameFunc, NumField</span>
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>		<span class="comment">// Bits returns the size of the type in bits.</span>
+<a id="L108"></a><span class="ln">   108</span>		<span class="comment">// It panics if the type&#39;s Kind is not one of the</span>
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// sized or unsized Int, Uint, Float, or Complex kinds.</span>
+<a id="L110"></a><span class="ln">   110</span>		Bits() int
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">// ChanDir returns a channel type&#39;s direction.</span>
+<a id="L113"></a><span class="ln">   113</span>		<span class="comment">// It panics if the type&#39;s Kind is not Chan.</span>
+<a id="L114"></a><span class="ln">   114</span>		ChanDir() ChanDir
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>		<span class="comment">// IsVariadic returns true if a function type&#39;s final input parameter</span>
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// is a &#34;...&#34; parameter.  If so, t.In(t.NumIn() - 1) returns the parameter&#39;s</span>
+<a id="L118"></a><span class="ln">   118</span>		<span class="comment">// implicit actual type []T.</span>
+<a id="L119"></a><span class="ln">   119</span>		<span class="comment">//</span>
+<a id="L120"></a><span class="ln">   120</span>		<span class="comment">// For concreteness, if t represents func(x int, y ... float64), then</span>
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">//</span>
+<a id="L122"></a><span class="ln">   122</span>		<span class="comment">//	t.NumIn() == 2</span>
+<a id="L123"></a><span class="ln">   123</span>		<span class="comment">//	t.In(0) is the reflect.Type for &#34;int&#34;</span>
+<a id="L124"></a><span class="ln">   124</span>		<span class="comment">//	t.In(1) is the reflect.Type for &#34;[]float64&#34;</span>
+<a id="L125"></a><span class="ln">   125</span>		<span class="comment">//	t.IsVariadic() == true</span>
+<a id="L126"></a><span class="ln">   126</span>		<span class="comment">//</span>
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// IsVariadic panics if the type&#39;s Kind is not Func.</span>
+<a id="L128"></a><span class="ln">   128</span>		IsVariadic() bool
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>		<span class="comment">// Elem returns a type&#39;s element type.</span>
+<a id="L131"></a><span class="ln">   131</span>		<span class="comment">// It panics if the type&#39;s Kind is not Array, Chan, Map, Ptr, or Slice.</span>
+<a id="L132"></a><span class="ln">   132</span>		Elem() Type
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>		<span class="comment">// Field returns a struct type&#39;s i&#39;th field.</span>
+<a id="L135"></a><span class="ln">   135</span>		<span class="comment">// It panics if the type&#39;s Kind is not Struct.</span>
+<a id="L136"></a><span class="ln">   136</span>		<span class="comment">// It panics if i is not in the range [0, NumField()).</span>
+<a id="L137"></a><span class="ln">   137</span>		Field(i int) StructField
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>		<span class="comment">// FieldByIndex returns the nested field corresponding</span>
+<a id="L140"></a><span class="ln">   140</span>		<span class="comment">// to the index sequence.  It is equivalent to calling Field</span>
+<a id="L141"></a><span class="ln">   141</span>		<span class="comment">// successively for each index i.</span>
+<a id="L142"></a><span class="ln">   142</span>		<span class="comment">// It panics if the type&#39;s Kind is not Struct.</span>
+<a id="L143"></a><span class="ln">   143</span>		FieldByIndex(index []int) StructField
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>		<span class="comment">// FieldByName returns the struct field with the given name</span>
+<a id="L146"></a><span class="ln">   146</span>		<span class="comment">// and a boolean indicating if the field was found.</span>
+<a id="L147"></a><span class="ln">   147</span>		FieldByName(name string) (StructField, bool)
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>		<span class="comment">// FieldByNameFunc returns the first struct field with a name</span>
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// that satisfies the match function and a boolean indicating if</span>
+<a id="L151"></a><span class="ln">   151</span>		<span class="comment">// the field was found.</span>
+<a id="L152"></a><span class="ln">   152</span>		FieldByNameFunc(match func(string) bool) (StructField, bool)
+<a id="L153"></a><span class="ln">   153</span>	
+<a id="L154"></a><span class="ln">   154</span>		<span class="comment">// In returns the type of a function type&#39;s i&#39;th input parameter.</span>
+<a id="L155"></a><span class="ln">   155</span>		<span class="comment">// It panics if the type&#39;s Kind is not Func.</span>
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// It panics if i is not in the range [0, NumIn()).</span>
+<a id="L157"></a><span class="ln">   157</span>		In(i int) Type
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// Key returns a map type&#39;s key type.</span>
+<a id="L160"></a><span class="ln">   160</span>		<span class="comment">// It panics if the type&#39;s Kind is not Map.</span>
+<a id="L161"></a><span class="ln">   161</span>		Key() Type
+<a id="L162"></a><span class="ln">   162</span>	
+<a id="L163"></a><span class="ln">   163</span>		<span class="comment">// Len returns an array type&#39;s length.</span>
+<a id="L164"></a><span class="ln">   164</span>		<span class="comment">// It panics if the type&#39;s Kind is not Array.</span>
+<a id="L165"></a><span class="ln">   165</span>		Len() int
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>		<span class="comment">// NumField returns a struct type&#39;s field count.</span>
+<a id="L168"></a><span class="ln">   168</span>		<span class="comment">// It panics if the type&#39;s Kind is not Struct.</span>
+<a id="L169"></a><span class="ln">   169</span>		NumField() int
+<a id="L170"></a><span class="ln">   170</span>	
+<a id="L171"></a><span class="ln">   171</span>		<span class="comment">// NumIn returns a function type&#39;s input parameter count.</span>
+<a id="L172"></a><span class="ln">   172</span>		<span class="comment">// It panics if the type&#39;s Kind is not Func.</span>
+<a id="L173"></a><span class="ln">   173</span>		NumIn() int
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>		<span class="comment">// NumOut returns a function type&#39;s output parameter count.</span>
+<a id="L176"></a><span class="ln">   176</span>		<span class="comment">// It panics if the type&#39;s Kind is not Func.</span>
+<a id="L177"></a><span class="ln">   177</span>		NumOut() int
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>		<span class="comment">// Out returns the type of a function type&#39;s i&#39;th output parameter.</span>
+<a id="L180"></a><span class="ln">   180</span>		<span class="comment">// It panics if the type&#39;s Kind is not Func.</span>
+<a id="L181"></a><span class="ln">   181</span>		<span class="comment">// It panics if i is not in the range [0, NumOut()).</span>
+<a id="L182"></a><span class="ln">   182</span>		Out(i int) Type
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>		runtimeType() *runtimeType
+<a id="L185"></a><span class="ln">   185</span>		common() *commonType
+<a id="L186"></a><span class="ln">   186</span>		uncommon() *uncommonType
+<a id="L187"></a><span class="ln">   187</span>	}
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// A Kind represents the specific kind of type that a Type represents.</span>
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// The zero Kind is not a valid kind.</span>
+<a id="L191"></a><span class="ln">   191</span>	type Kind uint
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	const (
+<a id="L194"></a><span class="ln">   194</span>		Invalid Kind = iota
+<a id="L195"></a><span class="ln">   195</span>		Bool
+<a id="L196"></a><span class="ln">   196</span>		Int
+<a id="L197"></a><span class="ln">   197</span>		Int8
+<a id="L198"></a><span class="ln">   198</span>		Int16
+<a id="L199"></a><span class="ln">   199</span>		Int32
+<a id="L200"></a><span class="ln">   200</span>		Int64
+<a id="L201"></a><span class="ln">   201</span>		Uint
+<a id="L202"></a><span class="ln">   202</span>		Uint8
+<a id="L203"></a><span class="ln">   203</span>		Uint16
+<a id="L204"></a><span class="ln">   204</span>		Uint32
+<a id="L205"></a><span class="ln">   205</span>		Uint64
+<a id="L206"></a><span class="ln">   206</span>		Uintptr
+<a id="L207"></a><span class="ln">   207</span>		Float32
+<a id="L208"></a><span class="ln">   208</span>		Float64
+<a id="L209"></a><span class="ln">   209</span>		Complex64
+<a id="L210"></a><span class="ln">   210</span>		Complex128
+<a id="L211"></a><span class="ln">   211</span>		Array
+<a id="L212"></a><span class="ln">   212</span>		Chan
+<a id="L213"></a><span class="ln">   213</span>		Func
+<a id="L214"></a><span class="ln">   214</span>		Interface
+<a id="L215"></a><span class="ln">   215</span>		Map
+<a id="L216"></a><span class="ln">   216</span>		Ptr
+<a id="L217"></a><span class="ln">   217</span>		Slice
+<a id="L218"></a><span class="ln">   218</span>		String
+<a id="L219"></a><span class="ln">   219</span>		Struct
+<a id="L220"></a><span class="ln">   220</span>		UnsafePointer
+<a id="L221"></a><span class="ln">   221</span>	)
+<a id="L222"></a><span class="ln">   222</span>	
+<a id="L223"></a><span class="ln">   223</span>	<span class="comment">/*
+</span><a id="L224"></a><span class="ln">   224</span>	<span class="comment"> * These data structures are known to the compiler (../../cmd/gc/reflect.c).
+</span><a id="L225"></a><span class="ln">   225</span>	<span class="comment"> * A few are known to ../runtime/type.go to convey to debuggers.
+</span><a id="L226"></a><span class="ln">   226</span>	<span class="comment"> */</span>
+<a id="L227"></a><span class="ln">   227</span>	
+<a id="L228"></a><span class="ln">   228</span>	<span class="comment">// The compiler can only construct empty interface values at</span>
+<a id="L229"></a><span class="ln">   229</span>	<span class="comment">// compile time; non-empty interface values get created</span>
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// during initialization.  Type is an empty interface</span>
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// so that the compiler can lay out references as data.</span>
+<a id="L232"></a><span class="ln">   232</span>	<span class="comment">// The underlying type is *reflect.ArrayType and so on.</span>
+<a id="L233"></a><span class="ln">   233</span>	type runtimeType interface{}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>	<span class="comment">// commonType is the common implementation of most values.</span>
+<a id="L236"></a><span class="ln">   236</span>	<span class="comment">// It is embedded in other, public struct types, but always</span>
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">// with a unique tag like `reflect:&#34;array&#34;` or `reflect:&#34;ptr&#34;`</span>
+<a id="L238"></a><span class="ln">   238</span>	<span class="comment">// so that code cannot convert from, say, *arrayType to *ptrType.</span>
+<a id="L239"></a><span class="ln">   239</span>	type commonType struct {
+<a id="L240"></a><span class="ln">   240</span>		size          uintptr      <span class="comment">// size in bytes</span>
+<a id="L241"></a><span class="ln">   241</span>		hash          uint32       <span class="comment">// hash of type; avoids computation in hash tables</span>
+<a id="L242"></a><span class="ln">   242</span>		_             uint8        <span class="comment">// unused/padding</span>
+<a id="L243"></a><span class="ln">   243</span>		align         uint8        <span class="comment">// alignment of variable with this type</span>
+<a id="L244"></a><span class="ln">   244</span>		fieldAlign    uint8        <span class="comment">// alignment of struct field with this type</span>
+<a id="L245"></a><span class="ln">   245</span>		kind          uint8        <span class="comment">// enumeration for C</span>
+<a id="L246"></a><span class="ln">   246</span>		alg           *uintptr     <span class="comment">// algorithm table (../runtime/runtime.h:/Alg)</span>
+<a id="L247"></a><span class="ln">   247</span>		string        *string      <span class="comment">// string form; unnecessary but undeniably useful</span>
+<a id="L248"></a><span class="ln">   248</span>		*uncommonType              <span class="comment">// (relatively) uncommon fields</span>
+<a id="L249"></a><span class="ln">   249</span>		ptrToThis     *runtimeType <span class="comment">// pointer to this type, if used in binary or has methods</span>
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	<span class="comment">// Method on non-interface type</span>
+<a id="L253"></a><span class="ln">   253</span>	type method struct {
+<a id="L254"></a><span class="ln">   254</span>		name    *string        <span class="comment">// name of method</span>
+<a id="L255"></a><span class="ln">   255</span>		pkgPath *string        <span class="comment">// nil for exported Names; otherwise import path</span>
+<a id="L256"></a><span class="ln">   256</span>		mtyp    *runtimeType   <span class="comment">// method type (without receiver)</span>
+<a id="L257"></a><span class="ln">   257</span>		typ     *runtimeType   <span class="comment">// .(*FuncType) underneath (with receiver)</span>
+<a id="L258"></a><span class="ln">   258</span>		ifn     unsafe.Pointer <span class="comment">// fn used in interface call (one-word receiver)</span>
+<a id="L259"></a><span class="ln">   259</span>		tfn     unsafe.Pointer <span class="comment">// fn used for normal method call</span>
+<a id="L260"></a><span class="ln">   260</span>	}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>	<span class="comment">// uncommonType is present only for types with names or methods</span>
+<a id="L263"></a><span class="ln">   263</span>	<span class="comment">// (if T is a named type, the uncommonTypes for T and *T have methods).</span>
+<a id="L264"></a><span class="ln">   264</span>	<span class="comment">// Using a pointer to this struct reduces the overall size required</span>
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// to describe an unnamed type with no methods.</span>
+<a id="L266"></a><span class="ln">   266</span>	type uncommonType struct {
+<a id="L267"></a><span class="ln">   267</span>		name    *string  <span class="comment">// name of type</span>
+<a id="L268"></a><span class="ln">   268</span>		pkgPath *string  <span class="comment">// import path; nil for built-in types like int, string</span>
+<a id="L269"></a><span class="ln">   269</span>		methods []method <span class="comment">// methods associated with type</span>
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// ChanDir represents a channel type&#39;s direction.</span>
+<a id="L273"></a><span class="ln">   273</span>	type ChanDir int
+<a id="L274"></a><span class="ln">   274</span>	
+<a id="L275"></a><span class="ln">   275</span>	const (
+<a id="L276"></a><span class="ln">   276</span>		RecvDir ChanDir             = 1 &lt;&lt; iota <span class="comment">// &lt;-chan</span>
+<a id="L277"></a><span class="ln">   277</span>		SendDir                                 <span class="comment">// chan&lt;-</span>
+<a id="L278"></a><span class="ln">   278</span>		BothDir = RecvDir | SendDir             <span class="comment">// chan</span>
+<a id="L279"></a><span class="ln">   279</span>	)
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// arrayType represents a fixed array type.</span>
+<a id="L282"></a><span class="ln">   282</span>	type arrayType struct {
+<a id="L283"></a><span class="ln">   283</span>		commonType `reflect:&#34;array&#34;`
+<a id="L284"></a><span class="ln">   284</span>		elem       *runtimeType <span class="comment">// array element type</span>
+<a id="L285"></a><span class="ln">   285</span>		slice      *runtimeType <span class="comment">// slice type</span>
+<a id="L286"></a><span class="ln">   286</span>		len        uintptr
+<a id="L287"></a><span class="ln">   287</span>	}
+<a id="L288"></a><span class="ln">   288</span>	
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// chanType represents a channel type.</span>
+<a id="L290"></a><span class="ln">   290</span>	type chanType struct {
+<a id="L291"></a><span class="ln">   291</span>		commonType `reflect:&#34;chan&#34;`
+<a id="L292"></a><span class="ln">   292</span>		elem       *runtimeType <span class="comment">// channel element type</span>
+<a id="L293"></a><span class="ln">   293</span>		dir        uintptr      <span class="comment">// channel direction (ChanDir)</span>
+<a id="L294"></a><span class="ln">   294</span>	}
+<a id="L295"></a><span class="ln">   295</span>	
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">// funcType represents a function type.</span>
+<a id="L297"></a><span class="ln">   297</span>	type funcType struct {
+<a id="L298"></a><span class="ln">   298</span>		commonType `reflect:&#34;func&#34;`
+<a id="L299"></a><span class="ln">   299</span>		dotdotdot  bool           <span class="comment">// last input parameter is ...</span>
+<a id="L300"></a><span class="ln">   300</span>		in         []*runtimeType <span class="comment">// input parameter types</span>
+<a id="L301"></a><span class="ln">   301</span>		out        []*runtimeType <span class="comment">// output parameter types</span>
+<a id="L302"></a><span class="ln">   302</span>	}
+<a id="L303"></a><span class="ln">   303</span>	
+<a id="L304"></a><span class="ln">   304</span>	<span class="comment">// imethod represents a method on an interface type</span>
+<a id="L305"></a><span class="ln">   305</span>	type imethod struct {
+<a id="L306"></a><span class="ln">   306</span>		name    *string      <span class="comment">// name of method</span>
+<a id="L307"></a><span class="ln">   307</span>		pkgPath *string      <span class="comment">// nil for exported Names; otherwise import path</span>
+<a id="L308"></a><span class="ln">   308</span>		typ     *runtimeType <span class="comment">// .(*FuncType) underneath</span>
+<a id="L309"></a><span class="ln">   309</span>	}
+<a id="L310"></a><span class="ln">   310</span>	
+<a id="L311"></a><span class="ln">   311</span>	<span class="comment">// interfaceType represents an interface type.</span>
+<a id="L312"></a><span class="ln">   312</span>	type interfaceType struct {
+<a id="L313"></a><span class="ln">   313</span>		commonType `reflect:&#34;interface&#34;`
+<a id="L314"></a><span class="ln">   314</span>		methods    []imethod <span class="comment">// sorted by hash</span>
+<a id="L315"></a><span class="ln">   315</span>	}
+<a id="L316"></a><span class="ln">   316</span>	
+<a id="L317"></a><span class="ln">   317</span>	<span class="comment">// mapType represents a map type.</span>
+<a id="L318"></a><span class="ln">   318</span>	type mapType struct {
+<a id="L319"></a><span class="ln">   319</span>		commonType `reflect:&#34;map&#34;`
+<a id="L320"></a><span class="ln">   320</span>		key        *runtimeType <span class="comment">// map key type</span>
+<a id="L321"></a><span class="ln">   321</span>		elem       *runtimeType <span class="comment">// map element (value) type</span>
+<a id="L322"></a><span class="ln">   322</span>	}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">// ptrType represents a pointer type.</span>
+<a id="L325"></a><span class="ln">   325</span>	type ptrType struct {
+<a id="L326"></a><span class="ln">   326</span>		commonType `reflect:&#34;ptr&#34;`
+<a id="L327"></a><span class="ln">   327</span>		elem       *runtimeType <span class="comment">// pointer element (pointed at) type</span>
+<a id="L328"></a><span class="ln">   328</span>	}
+<a id="L329"></a><span class="ln">   329</span>	
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">// sliceType represents a slice type.</span>
+<a id="L331"></a><span class="ln">   331</span>	type sliceType struct {
+<a id="L332"></a><span class="ln">   332</span>		commonType `reflect:&#34;slice&#34;`
+<a id="L333"></a><span class="ln">   333</span>		elem       *runtimeType <span class="comment">// slice element type</span>
+<a id="L334"></a><span class="ln">   334</span>	}
+<a id="L335"></a><span class="ln">   335</span>	
+<a id="L336"></a><span class="ln">   336</span>	<span class="comment">// Struct field</span>
+<a id="L337"></a><span class="ln">   337</span>	type structField struct {
+<a id="L338"></a><span class="ln">   338</span>		name    *string      <span class="comment">// nil for embedded fields</span>
+<a id="L339"></a><span class="ln">   339</span>		pkgPath *string      <span class="comment">// nil for exported Names; otherwise import path</span>
+<a id="L340"></a><span class="ln">   340</span>		typ     *runtimeType <span class="comment">// type of field</span>
+<a id="L341"></a><span class="ln">   341</span>		tag     *string      <span class="comment">// nil if no tag</span>
+<a id="L342"></a><span class="ln">   342</span>		offset  uintptr      <span class="comment">// byte offset of field within struct</span>
+<a id="L343"></a><span class="ln">   343</span>	}
+<a id="L344"></a><span class="ln">   344</span>	
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// structType represents a struct type.</span>
+<a id="L346"></a><span class="ln">   346</span>	type structType struct {
+<a id="L347"></a><span class="ln">   347</span>		commonType `reflect:&#34;struct&#34;`
+<a id="L348"></a><span class="ln">   348</span>		fields     []structField <span class="comment">// sorted by offset</span>
+<a id="L349"></a><span class="ln">   349</span>	}
+<a id="L350"></a><span class="ln">   350</span>	
+<a id="L351"></a><span class="ln">   351</span>	<span class="comment">/*
+</span><a id="L352"></a><span class="ln">   352</span>	<span class="comment"> * The compiler knows the exact layout of all the data structures above.
+</span><a id="L353"></a><span class="ln">   353</span>	<span class="comment"> * The compiler does not know about the data structures and methods below.
+</span><a id="L354"></a><span class="ln">   354</span>	<span class="comment"> */</span>
+<a id="L355"></a><span class="ln">   355</span>	
+<a id="L356"></a><span class="ln">   356</span>	<span class="comment">// Method represents a single method.</span>
+<a id="L357"></a><span class="ln">   357</span>	type Method struct {
+<a id="L358"></a><span class="ln">   358</span>		<span class="comment">// Name is the method name.</span>
+<a id="L359"></a><span class="ln">   359</span>		<span class="comment">// PkgPath is the package path that qualifies a lower case (unexported)</span>
+<a id="L360"></a><span class="ln">   360</span>		<span class="comment">// method name.  It is empty for upper case (exported) method names.</span>
+<a id="L361"></a><span class="ln">   361</span>		<span class="comment">// The combination of PkgPath and Name uniquely identifies a method</span>
+<a id="L362"></a><span class="ln">   362</span>		<span class="comment">// in a method set. </span>
+<a id="L363"></a><span class="ln">   363</span>		<span class="comment">// See http://golang.org/ref/spec#Uniqueness_of_identifiers</span>
+<a id="L364"></a><span class="ln">   364</span>		Name    string
+<a id="L365"></a><span class="ln">   365</span>		PkgPath string
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>		Type  Type  <span class="comment">// method type</span>
+<a id="L368"></a><span class="ln">   368</span>		Func  Value <span class="comment">// func with receiver as first argument</span>
+<a id="L369"></a><span class="ln">   369</span>		Index int   <span class="comment">// index for Type.Method</span>
+<a id="L370"></a><span class="ln">   370</span>	}
+<a id="L371"></a><span class="ln">   371</span>	
+<a id="L372"></a><span class="ln">   372</span>	<span class="comment">// High bit says whether type has</span>
+<a id="L373"></a><span class="ln">   373</span>	<span class="comment">// embedded pointers,to help garbage collector.</span>
+<a id="L374"></a><span class="ln">   374</span>	const kindMask = 0x7f
+<a id="L375"></a><span class="ln">   375</span>	
+<a id="L376"></a><span class="ln">   376</span>	func (k Kind) String() string {
+<a id="L377"></a><span class="ln">   377</span>		if int(k) &lt; len(kindNames) {
+<a id="L378"></a><span class="ln">   378</span>			return kindNames[k]
+<a id="L379"></a><span class="ln">   379</span>		}
+<a id="L380"></a><span class="ln">   380</span>		return &#34;kind&#34; + strconv.Itoa(int(k))
+<a id="L381"></a><span class="ln">   381</span>	}
+<a id="L382"></a><span class="ln">   382</span>	
+<a id="L383"></a><span class="ln">   383</span>	var kindNames = []string{
+<a id="L384"></a><span class="ln">   384</span>		Invalid:       &#34;invalid&#34;,
+<a id="L385"></a><span class="ln">   385</span>		Bool:          &#34;bool&#34;,
+<a id="L386"></a><span class="ln">   386</span>		Int:           &#34;int&#34;,
+<a id="L387"></a><span class="ln">   387</span>		Int8:          &#34;int8&#34;,
+<a id="L388"></a><span class="ln">   388</span>		Int16:         &#34;int16&#34;,
+<a id="L389"></a><span class="ln">   389</span>		Int32:         &#34;int32&#34;,
+<a id="L390"></a><span class="ln">   390</span>		Int64:         &#34;int64&#34;,
+<a id="L391"></a><span class="ln">   391</span>		Uint:          &#34;uint&#34;,
+<a id="L392"></a><span class="ln">   392</span>		Uint8:         &#34;uint8&#34;,
+<a id="L393"></a><span class="ln">   393</span>		Uint16:        &#34;uint16&#34;,
+<a id="L394"></a><span class="ln">   394</span>		Uint32:        &#34;uint32&#34;,
+<a id="L395"></a><span class="ln">   395</span>		Uint64:        &#34;uint64&#34;,
+<a id="L396"></a><span class="ln">   396</span>		Uintptr:       &#34;uintptr&#34;,
+<a id="L397"></a><span class="ln">   397</span>		Float32:       &#34;float32&#34;,
+<a id="L398"></a><span class="ln">   398</span>		Float64:       &#34;float64&#34;,
+<a id="L399"></a><span class="ln">   399</span>		Complex64:     &#34;complex64&#34;,
+<a id="L400"></a><span class="ln">   400</span>		Complex128:    &#34;complex128&#34;,
+<a id="L401"></a><span class="ln">   401</span>		Array:         &#34;array&#34;,
+<a id="L402"></a><span class="ln">   402</span>		Chan:          &#34;chan&#34;,
+<a id="L403"></a><span class="ln">   403</span>		Func:          &#34;func&#34;,
+<a id="L404"></a><span class="ln">   404</span>		Interface:     &#34;interface&#34;,
+<a id="L405"></a><span class="ln">   405</span>		Map:           &#34;map&#34;,
+<a id="L406"></a><span class="ln">   406</span>		Ptr:           &#34;ptr&#34;,
+<a id="L407"></a><span class="ln">   407</span>		Slice:         &#34;slice&#34;,
+<a id="L408"></a><span class="ln">   408</span>		String:        &#34;string&#34;,
+<a id="L409"></a><span class="ln">   409</span>		Struct:        &#34;struct&#34;,
+<a id="L410"></a><span class="ln">   410</span>		UnsafePointer: &#34;unsafe.Pointer&#34;,
+<a id="L411"></a><span class="ln">   411</span>	}
+<a id="L412"></a><span class="ln">   412</span>	
+<a id="L413"></a><span class="ln">   413</span>	func (t *uncommonType) uncommon() *uncommonType {
+<a id="L414"></a><span class="ln">   414</span>		return t
+<a id="L415"></a><span class="ln">   415</span>	}
+<a id="L416"></a><span class="ln">   416</span>	
+<a id="L417"></a><span class="ln">   417</span>	func (t *uncommonType) PkgPath() string {
+<a id="L418"></a><span class="ln">   418</span>		if t == nil || t.pkgPath == nil {
+<a id="L419"></a><span class="ln">   419</span>			return &#34;&#34;
+<a id="L420"></a><span class="ln">   420</span>		}
+<a id="L421"></a><span class="ln">   421</span>		return *t.pkgPath
+<a id="L422"></a><span class="ln">   422</span>	}
+<a id="L423"></a><span class="ln">   423</span>	
+<a id="L424"></a><span class="ln">   424</span>	func (t *uncommonType) Name() string {
+<a id="L425"></a><span class="ln">   425</span>		if t == nil || t.name == nil {
+<a id="L426"></a><span class="ln">   426</span>			return &#34;&#34;
+<a id="L427"></a><span class="ln">   427</span>		}
+<a id="L428"></a><span class="ln">   428</span>		return *t.name
+<a id="L429"></a><span class="ln">   429</span>	}
+<a id="L430"></a><span class="ln">   430</span>	
+<a id="L431"></a><span class="ln">   431</span>	func (t *commonType) toType() Type {
+<a id="L432"></a><span class="ln">   432</span>		if t == nil {
+<a id="L433"></a><span class="ln">   433</span>			return nil
+<a id="L434"></a><span class="ln">   434</span>		}
+<a id="L435"></a><span class="ln">   435</span>		return t
+<a id="L436"></a><span class="ln">   436</span>	}
+<a id="L437"></a><span class="ln">   437</span>	
+<a id="L438"></a><span class="ln">   438</span>	func (t *commonType) String() string { return *t.string }
+<a id="L439"></a><span class="ln">   439</span>	
+<a id="L440"></a><span class="ln">   440</span>	func (t *commonType) Size() uintptr { return t.size }
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>	func (t *commonType) Bits() int {
+<a id="L443"></a><span class="ln">   443</span>		if t == nil {
+<a id="L444"></a><span class="ln">   444</span>			panic(&#34;reflect: Bits of nil Type&#34;)
+<a id="L445"></a><span class="ln">   445</span>		}
+<a id="L446"></a><span class="ln">   446</span>		k := t.Kind()
+<a id="L447"></a><span class="ln">   447</span>		if k &lt; Int || k &gt; Complex128 {
+<a id="L448"></a><span class="ln">   448</span>			panic(&#34;reflect: Bits of non-arithmetic Type &#34; + t.String())
+<a id="L449"></a><span class="ln">   449</span>		}
+<a id="L450"></a><span class="ln">   450</span>		return int(t.size) * 8
+<a id="L451"></a><span class="ln">   451</span>	}
+<a id="L452"></a><span class="ln">   452</span>	
+<a id="L453"></a><span class="ln">   453</span>	func (t *commonType) Align() int { return int(t.align) }
+<a id="L454"></a><span class="ln">   454</span>	
+<a id="L455"></a><span class="ln">   455</span>	func (t *commonType) FieldAlign() int { return int(t.fieldAlign) }
+<a id="L456"></a><span class="ln">   456</span>	
+<a id="L457"></a><span class="ln">   457</span>	func (t *commonType) Kind() Kind { return Kind(t.kind &amp; kindMask) }
+<a id="L458"></a><span class="ln">   458</span>	
+<a id="L459"></a><span class="ln">   459</span>	func (t *commonType) common() *commonType { return t }
+<a id="L460"></a><span class="ln">   460</span>	
+<a id="L461"></a><span class="ln">   461</span>	func (t *uncommonType) Method(i int) (m Method) {
+<a id="L462"></a><span class="ln">   462</span>		if t == nil || i &lt; 0 || i &gt;= len(t.methods) {
+<a id="L463"></a><span class="ln">   463</span>			panic(&#34;reflect: Method index out of range&#34;)
+<a id="L464"></a><span class="ln">   464</span>		}
+<a id="L465"></a><span class="ln">   465</span>		p := &amp;t.methods[i]
+<a id="L466"></a><span class="ln">   466</span>		if p.name != nil {
+<a id="L467"></a><span class="ln">   467</span>			m.Name = *p.name
+<a id="L468"></a><span class="ln">   468</span>		}
+<a id="L469"></a><span class="ln">   469</span>		fl := flag(Func) &lt;&lt; flagKindShift
+<a id="L470"></a><span class="ln">   470</span>		if p.pkgPath != nil {
+<a id="L471"></a><span class="ln">   471</span>			m.PkgPath = *p.pkgPath
+<a id="L472"></a><span class="ln">   472</span>			fl |= flagRO
+<a id="L473"></a><span class="ln">   473</span>		}
+<a id="L474"></a><span class="ln">   474</span>		mt := toCommonType(p.typ)
+<a id="L475"></a><span class="ln">   475</span>		m.Type = mt
+<a id="L476"></a><span class="ln">   476</span>		fn := p.tfn
+<a id="L477"></a><span class="ln">   477</span>		m.Func = Value{mt, fn, fl}
+<a id="L478"></a><span class="ln">   478</span>		m.Index = i
+<a id="L479"></a><span class="ln">   479</span>		return
+<a id="L480"></a><span class="ln">   480</span>	}
+<a id="L481"></a><span class="ln">   481</span>	
+<a id="L482"></a><span class="ln">   482</span>	func (t *uncommonType) NumMethod() int {
+<a id="L483"></a><span class="ln">   483</span>		if t == nil {
+<a id="L484"></a><span class="ln">   484</span>			return 0
+<a id="L485"></a><span class="ln">   485</span>		}
+<a id="L486"></a><span class="ln">   486</span>		return len(t.methods)
+<a id="L487"></a><span class="ln">   487</span>	}
+<a id="L488"></a><span class="ln">   488</span>	
+<a id="L489"></a><span class="ln">   489</span>	func (t *uncommonType) MethodByName(name string) (m Method, ok bool) {
+<a id="L490"></a><span class="ln">   490</span>		if t == nil {
+<a id="L491"></a><span class="ln">   491</span>			return
+<a id="L492"></a><span class="ln">   492</span>		}
+<a id="L493"></a><span class="ln">   493</span>		var p *method
+<a id="L494"></a><span class="ln">   494</span>		for i := range t.methods {
+<a id="L495"></a><span class="ln">   495</span>			p = &amp;t.methods[i]
+<a id="L496"></a><span class="ln">   496</span>			if p.name != nil &amp;&amp; *p.name == name {
+<a id="L497"></a><span class="ln">   497</span>				return t.Method(i), true
+<a id="L498"></a><span class="ln">   498</span>			}
+<a id="L499"></a><span class="ln">   499</span>		}
+<a id="L500"></a><span class="ln">   500</span>		return
+<a id="L501"></a><span class="ln">   501</span>	}
+<a id="L502"></a><span class="ln">   502</span>	
+<a id="L503"></a><span class="ln">   503</span>	<span class="comment">// TODO(rsc): 6g supplies these, but they are not</span>
+<a id="L504"></a><span class="ln">   504</span>	<span class="comment">// as efficient as they could be: they have commonType</span>
+<a id="L505"></a><span class="ln">   505</span>	<span class="comment">// as the receiver instead of *commonType.</span>
+<a id="L506"></a><span class="ln">   506</span>	func (t *commonType) NumMethod() int {
+<a id="L507"></a><span class="ln">   507</span>		if t.Kind() == Interface {
+<a id="L508"></a><span class="ln">   508</span>			tt := (*interfaceType)(unsafe.Pointer(t))
+<a id="L509"></a><span class="ln">   509</span>			return tt.NumMethod()
+<a id="L510"></a><span class="ln">   510</span>		}
+<a id="L511"></a><span class="ln">   511</span>		return t.uncommonType.NumMethod()
+<a id="L512"></a><span class="ln">   512</span>	}
+<a id="L513"></a><span class="ln">   513</span>	
+<a id="L514"></a><span class="ln">   514</span>	func (t *commonType) Method(i int) (m Method) {
+<a id="L515"></a><span class="ln">   515</span>		if t.Kind() == Interface {
+<a id="L516"></a><span class="ln">   516</span>			tt := (*interfaceType)(unsafe.Pointer(t))
+<a id="L517"></a><span class="ln">   517</span>			return tt.Method(i)
+<a id="L518"></a><span class="ln">   518</span>		}
+<a id="L519"></a><span class="ln">   519</span>		return t.uncommonType.Method(i)
+<a id="L520"></a><span class="ln">   520</span>	}
+<a id="L521"></a><span class="ln">   521</span>	
+<a id="L522"></a><span class="ln">   522</span>	func (t *commonType) MethodByName(name string) (m Method, ok bool) {
+<a id="L523"></a><span class="ln">   523</span>		if t.Kind() == Interface {
+<a id="L524"></a><span class="ln">   524</span>			tt := (*interfaceType)(unsafe.Pointer(t))
+<a id="L525"></a><span class="ln">   525</span>			return tt.MethodByName(name)
+<a id="L526"></a><span class="ln">   526</span>		}
+<a id="L527"></a><span class="ln">   527</span>		return t.uncommonType.MethodByName(name)
+<a id="L528"></a><span class="ln">   528</span>	}
+<a id="L529"></a><span class="ln">   529</span>	
+<a id="L530"></a><span class="ln">   530</span>	func (t *commonType) PkgPath() string {
+<a id="L531"></a><span class="ln">   531</span>		return t.uncommonType.PkgPath()
+<a id="L532"></a><span class="ln">   532</span>	}
+<a id="L533"></a><span class="ln">   533</span>	
+<a id="L534"></a><span class="ln">   534</span>	func (t *commonType) Name() string {
+<a id="L535"></a><span class="ln">   535</span>		return t.uncommonType.Name()
+<a id="L536"></a><span class="ln">   536</span>	}
+<a id="L537"></a><span class="ln">   537</span>	
+<a id="L538"></a><span class="ln">   538</span>	func (t *commonType) ChanDir() ChanDir {
+<a id="L539"></a><span class="ln">   539</span>		if t.Kind() != Chan {
+<a id="L540"></a><span class="ln">   540</span>			panic(&#34;reflect: ChanDir of non-chan type&#34;)
+<a id="L541"></a><span class="ln">   541</span>		}
+<a id="L542"></a><span class="ln">   542</span>		tt := (*chanType)(unsafe.Pointer(t))
+<a id="L543"></a><span class="ln">   543</span>		return ChanDir(tt.dir)
+<a id="L544"></a><span class="ln">   544</span>	}
+<a id="L545"></a><span class="ln">   545</span>	
+<a id="L546"></a><span class="ln">   546</span>	func (t *commonType) IsVariadic() bool {
+<a id="L547"></a><span class="ln">   547</span>		if t.Kind() != Func {
+<a id="L548"></a><span class="ln">   548</span>			panic(&#34;reflect: IsVariadic of non-func type&#34;)
+<a id="L549"></a><span class="ln">   549</span>		}
+<a id="L550"></a><span class="ln">   550</span>		tt := (*funcType)(unsafe.Pointer(t))
+<a id="L551"></a><span class="ln">   551</span>		return tt.dotdotdot
+<a id="L552"></a><span class="ln">   552</span>	}
+<a id="L553"></a><span class="ln">   553</span>	
+<a id="L554"></a><span class="ln">   554</span>	func (t *commonType) Elem() Type {
+<a id="L555"></a><span class="ln">   555</span>		switch t.Kind() {
+<a id="L556"></a><span class="ln">   556</span>		case Array:
+<a id="L557"></a><span class="ln">   557</span>			tt := (*arrayType)(unsafe.Pointer(t))
+<a id="L558"></a><span class="ln">   558</span>			return toType(tt.elem)
+<a id="L559"></a><span class="ln">   559</span>		case Chan:
+<a id="L560"></a><span class="ln">   560</span>			tt := (*chanType)(unsafe.Pointer(t))
+<a id="L561"></a><span class="ln">   561</span>			return toType(tt.elem)
+<a id="L562"></a><span class="ln">   562</span>		case Map:
+<a id="L563"></a><span class="ln">   563</span>			tt := (*mapType)(unsafe.Pointer(t))
+<a id="L564"></a><span class="ln">   564</span>			return toType(tt.elem)
+<a id="L565"></a><span class="ln">   565</span>		case Ptr:
+<a id="L566"></a><span class="ln">   566</span>			tt := (*ptrType)(unsafe.Pointer(t))
+<a id="L567"></a><span class="ln">   567</span>			return toType(tt.elem)
+<a id="L568"></a><span class="ln">   568</span>		case Slice:
+<a id="L569"></a><span class="ln">   569</span>			tt := (*sliceType)(unsafe.Pointer(t))
+<a id="L570"></a><span class="ln">   570</span>			return toType(tt.elem)
+<a id="L571"></a><span class="ln">   571</span>		}
+<a id="L572"></a><span class="ln">   572</span>		panic(&#34;reflect: Elem of invalid type&#34;)
+<a id="L573"></a><span class="ln">   573</span>	}
+<a id="L574"></a><span class="ln">   574</span>	
+<a id="L575"></a><span class="ln">   575</span>	func (t *commonType) Field(i int) StructField {
+<a id="L576"></a><span class="ln">   576</span>		if t.Kind() != Struct {
+<a id="L577"></a><span class="ln">   577</span>			panic(&#34;reflect: Field of non-struct type&#34;)
+<a id="L578"></a><span class="ln">   578</span>		}
+<a id="L579"></a><span class="ln">   579</span>		tt := (*structType)(unsafe.Pointer(t))
+<a id="L580"></a><span class="ln">   580</span>		return tt.Field(i)
+<a id="L581"></a><span class="ln">   581</span>	}
+<a id="L582"></a><span class="ln">   582</span>	
+<a id="L583"></a><span class="ln">   583</span>	func (t *commonType) FieldByIndex(index []int) StructField {
+<a id="L584"></a><span class="ln">   584</span>		if t.Kind() != Struct {
+<a id="L585"></a><span class="ln">   585</span>			panic(&#34;reflect: FieldByIndex of non-struct type&#34;)
+<a id="L586"></a><span class="ln">   586</span>		}
+<a id="L587"></a><span class="ln">   587</span>		tt := (*structType)(unsafe.Pointer(t))
+<a id="L588"></a><span class="ln">   588</span>		return tt.FieldByIndex(index)
+<a id="L589"></a><span class="ln">   589</span>	}
+<a id="L590"></a><span class="ln">   590</span>	
+<a id="L591"></a><span class="ln">   591</span>	func (t *commonType) FieldByName(name string) (StructField, bool) {
+<a id="L592"></a><span class="ln">   592</span>		if t.Kind() != Struct {
+<a id="L593"></a><span class="ln">   593</span>			panic(&#34;reflect: FieldByName of non-struct type&#34;)
+<a id="L594"></a><span class="ln">   594</span>		}
+<a id="L595"></a><span class="ln">   595</span>		tt := (*structType)(unsafe.Pointer(t))
+<a id="L596"></a><span class="ln">   596</span>		return tt.FieldByName(name)
+<a id="L597"></a><span class="ln">   597</span>	}
+<a id="L598"></a><span class="ln">   598</span>	
+<a id="L599"></a><span class="ln">   599</span>	func (t *commonType) FieldByNameFunc(match func(string) bool) (StructField, bool) {
+<a id="L600"></a><span class="ln">   600</span>		if t.Kind() != Struct {
+<a id="L601"></a><span class="ln">   601</span>			panic(&#34;reflect: FieldByNameFunc of non-struct type&#34;)
+<a id="L602"></a><span class="ln">   602</span>		}
+<a id="L603"></a><span class="ln">   603</span>		tt := (*structType)(unsafe.Pointer(t))
+<a id="L604"></a><span class="ln">   604</span>		return tt.FieldByNameFunc(match)
+<a id="L605"></a><span class="ln">   605</span>	}
+<a id="L606"></a><span class="ln">   606</span>	
+<a id="L607"></a><span class="ln">   607</span>	func (t *commonType) In(i int) Type {
+<a id="L608"></a><span class="ln">   608</span>		if t.Kind() != Func {
+<a id="L609"></a><span class="ln">   609</span>			panic(&#34;reflect: In of non-func type&#34;)
+<a id="L610"></a><span class="ln">   610</span>		}
+<a id="L611"></a><span class="ln">   611</span>		tt := (*funcType)(unsafe.Pointer(t))
+<a id="L612"></a><span class="ln">   612</span>		return toType(tt.in[i])
+<a id="L613"></a><span class="ln">   613</span>	}
+<a id="L614"></a><span class="ln">   614</span>	
+<a id="L615"></a><span class="ln">   615</span>	func (t *commonType) Key() Type {
+<a id="L616"></a><span class="ln">   616</span>		if t.Kind() != Map {
+<a id="L617"></a><span class="ln">   617</span>			panic(&#34;reflect: Key of non-map type&#34;)
+<a id="L618"></a><span class="ln">   618</span>		}
+<a id="L619"></a><span class="ln">   619</span>		tt := (*mapType)(unsafe.Pointer(t))
+<a id="L620"></a><span class="ln">   620</span>		return toType(tt.key)
+<a id="L621"></a><span class="ln">   621</span>	}
+<a id="L622"></a><span class="ln">   622</span>	
+<a id="L623"></a><span class="ln">   623</span>	func (t *commonType) Len() int {
+<a id="L624"></a><span class="ln">   624</span>		if t.Kind() != Array {
+<a id="L625"></a><span class="ln">   625</span>			panic(&#34;reflect: Len of non-array type&#34;)
+<a id="L626"></a><span class="ln">   626</span>		}
+<a id="L627"></a><span class="ln">   627</span>		tt := (*arrayType)(unsafe.Pointer(t))
+<a id="L628"></a><span class="ln">   628</span>		return int(tt.len)
+<a id="L629"></a><span class="ln">   629</span>	}
+<a id="L630"></a><span class="ln">   630</span>	
+<a id="L631"></a><span class="ln">   631</span>	func (t *commonType) NumField() int {
+<a id="L632"></a><span class="ln">   632</span>		if t.Kind() != Struct {
+<a id="L633"></a><span class="ln">   633</span>			panic(&#34;reflect: NumField of non-struct type&#34;)
+<a id="L634"></a><span class="ln">   634</span>		}
+<a id="L635"></a><span class="ln">   635</span>		tt := (*structType)(unsafe.Pointer(t))
+<a id="L636"></a><span class="ln">   636</span>		return len(tt.fields)
+<a id="L637"></a><span class="ln">   637</span>	}
+<a id="L638"></a><span class="ln">   638</span>	
+<a id="L639"></a><span class="ln">   639</span>	func (t *commonType) NumIn() int {
+<a id="L640"></a><span class="ln">   640</span>		if t.Kind() != Func {
+<a id="L641"></a><span class="ln">   641</span>			panic(&#34;reflect: NumIn of non-func type&#34;)
+<a id="L642"></a><span class="ln">   642</span>		}
+<a id="L643"></a><span class="ln">   643</span>		tt := (*funcType)(unsafe.Pointer(t))
+<a id="L644"></a><span class="ln">   644</span>		return len(tt.in)
+<a id="L645"></a><span class="ln">   645</span>	}
+<a id="L646"></a><span class="ln">   646</span>	
+<a id="L647"></a><span class="ln">   647</span>	func (t *commonType) NumOut() int {
+<a id="L648"></a><span class="ln">   648</span>		if t.Kind() != Func {
+<a id="L649"></a><span class="ln">   649</span>			panic(&#34;reflect: NumOut of non-func type&#34;)
+<a id="L650"></a><span class="ln">   650</span>		}
+<a id="L651"></a><span class="ln">   651</span>		tt := (*funcType)(unsafe.Pointer(t))
+<a id="L652"></a><span class="ln">   652</span>		return len(tt.out)
+<a id="L653"></a><span class="ln">   653</span>	}
+<a id="L654"></a><span class="ln">   654</span>	
+<a id="L655"></a><span class="ln">   655</span>	func (t *commonType) Out(i int) Type {
+<a id="L656"></a><span class="ln">   656</span>		if t.Kind() != Func {
+<a id="L657"></a><span class="ln">   657</span>			panic(&#34;reflect: Out of non-func type&#34;)
+<a id="L658"></a><span class="ln">   658</span>		}
+<a id="L659"></a><span class="ln">   659</span>		tt := (*funcType)(unsafe.Pointer(t))
+<a id="L660"></a><span class="ln">   660</span>		return toType(tt.out[i])
+<a id="L661"></a><span class="ln">   661</span>	}
+<a id="L662"></a><span class="ln">   662</span>	
+<a id="L663"></a><span class="ln">   663</span>	func (d ChanDir) String() string {
+<a id="L664"></a><span class="ln">   664</span>		switch d {
+<a id="L665"></a><span class="ln">   665</span>		case SendDir:
+<a id="L666"></a><span class="ln">   666</span>			return &#34;chan&lt;-&#34;
+<a id="L667"></a><span class="ln">   667</span>		case RecvDir:
+<a id="L668"></a><span class="ln">   668</span>			return &#34;&lt;-chan&#34;
+<a id="L669"></a><span class="ln">   669</span>		case BothDir:
+<a id="L670"></a><span class="ln">   670</span>			return &#34;chan&#34;
+<a id="L671"></a><span class="ln">   671</span>		}
+<a id="L672"></a><span class="ln">   672</span>		return &#34;ChanDir&#34; + strconv.Itoa(int(d))
+<a id="L673"></a><span class="ln">   673</span>	}
+<a id="L674"></a><span class="ln">   674</span>	
+<a id="L675"></a><span class="ln">   675</span>	<span class="comment">// Method returns the i&#39;th method in the type&#39;s method set.</span>
+<a id="L676"></a><span class="ln">   676</span>	func (t *interfaceType) Method(i int) (m Method) {
+<a id="L677"></a><span class="ln">   677</span>		if i &lt; 0 || i &gt;= len(t.methods) {
+<a id="L678"></a><span class="ln">   678</span>			return
+<a id="L679"></a><span class="ln">   679</span>		}
+<a id="L680"></a><span class="ln">   680</span>		p := &amp;t.methods[i]
+<a id="L681"></a><span class="ln">   681</span>		m.Name = *p.name
+<a id="L682"></a><span class="ln">   682</span>		if p.pkgPath != nil {
+<a id="L683"></a><span class="ln">   683</span>			m.PkgPath = *p.pkgPath
+<a id="L684"></a><span class="ln">   684</span>		}
+<a id="L685"></a><span class="ln">   685</span>		m.Type = toType(p.typ)
+<a id="L686"></a><span class="ln">   686</span>		m.Index = i
+<a id="L687"></a><span class="ln">   687</span>		return
+<a id="L688"></a><span class="ln">   688</span>	}
+<a id="L689"></a><span class="ln">   689</span>	
+<a id="L690"></a><span class="ln">   690</span>	<span class="comment">// NumMethod returns the number of interface methods in the type&#39;s method set.</span>
+<a id="L691"></a><span class="ln">   691</span>	func (t *interfaceType) NumMethod() int { return len(t.methods) }
+<a id="L692"></a><span class="ln">   692</span>	
+<a id="L693"></a><span class="ln">   693</span>	<span class="comment">// MethodByName method with the given name in the type&#39;s method set.</span>
+<a id="L694"></a><span class="ln">   694</span>	func (t *interfaceType) MethodByName(name string) (m Method, ok bool) {
+<a id="L695"></a><span class="ln">   695</span>		if t == nil {
+<a id="L696"></a><span class="ln">   696</span>			return
+<a id="L697"></a><span class="ln">   697</span>		}
+<a id="L698"></a><span class="ln">   698</span>		var p *imethod
+<a id="L699"></a><span class="ln">   699</span>		for i := range t.methods {
+<a id="L700"></a><span class="ln">   700</span>			p = &amp;t.methods[i]
+<a id="L701"></a><span class="ln">   701</span>			if *p.name == name {
+<a id="L702"></a><span class="ln">   702</span>				return t.Method(i), true
+<a id="L703"></a><span class="ln">   703</span>			}
+<a id="L704"></a><span class="ln">   704</span>		}
+<a id="L705"></a><span class="ln">   705</span>		return
+<a id="L706"></a><span class="ln">   706</span>	}
+<a id="L707"></a><span class="ln">   707</span>	
+<a id="L708"></a><span class="ln">   708</span>	<span class="comment">// A StructField describes a single field in a struct.</span>
+<a id="L709"></a><span class="ln">   709</span>	type StructField struct {
+<a id="L710"></a><span class="ln">   710</span>		<span class="comment">// Name is the field name.</span>
+<a id="L711"></a><span class="ln">   711</span>		<span class="comment">// PkgPath is the package path that qualifies a lower case (unexported)</span>
+<a id="L712"></a><span class="ln">   712</span>		<span class="comment">// field name.  It is empty for upper case (exported) field names.</span>
+<a id="L713"></a><span class="ln">   713</span>		<span class="comment">// See http://golang.org/ref/spec#Uniqueness_of_identifiers</span>
+<a id="L714"></a><span class="ln">   714</span>		Name    string
+<a id="L715"></a><span class="ln">   715</span>		PkgPath string
+<a id="L716"></a><span class="ln">   716</span>	
+<a id="L717"></a><span class="ln">   717</span>		Type      Type      <span class="comment">// field type</span>
+<a id="L718"></a><span class="ln">   718</span>		Tag       StructTag <span class="comment">// field tag string</span>
+<a id="L719"></a><span class="ln">   719</span>		Offset    uintptr   <span class="comment">// offset within struct, in bytes</span>
+<a id="L720"></a><span class="ln">   720</span>		Index     []int     <span class="comment">// index sequence for Type.FieldByIndex</span>
+<a id="L721"></a><span class="ln">   721</span>		Anonymous bool      <span class="comment">// is an anonymous field</span>
+<a id="L722"></a><span class="ln">   722</span>	}
+<a id="L723"></a><span class="ln">   723</span>	
+<a id="L724"></a><span class="ln">   724</span>	<span class="comment">// A StructTag is the tag string in a struct field.</span>
+<a id="L725"></a><span class="ln">   725</span>	<span class="comment">//</span>
+<a id="L726"></a><span class="ln">   726</span>	<span class="comment">// By convention, tag strings are a concatenation of</span>
+<a id="L727"></a><span class="ln">   727</span>	<span class="comment">// optionally space-separated key:&#34;value&#34; pairs.</span>
+<a id="L728"></a><span class="ln">   728</span>	<span class="comment">// Each key is a non-empty string consisting of non-control</span>
+<a id="L729"></a><span class="ln">   729</span>	<span class="comment">// characters other than space (U+0020 &#39; &#39;), quote (U+0022 &#39;&#34;&#39;),</span>
+<a id="L730"></a><span class="ln">   730</span>	<span class="comment">// and colon (U+003A &#39;:&#39;).  Each value is quoted using U+0022 &#39;&#34;&#39;</span>
+<a id="L731"></a><span class="ln">   731</span>	<span class="comment">// characters and Go string literal syntax.</span>
+<a id="L732"></a><span class="ln">   732</span>	type StructTag string
+<a id="L733"></a><span class="ln">   733</span>	
+<a id="L734"></a><span class="ln">   734</span>	<span class="comment">// Get returns the value associated with key in the tag string.</span>
+<a id="L735"></a><span class="ln">   735</span>	<span class="comment">// If there is no such key in the tag, Get returns the empty string.</span>
+<a id="L736"></a><span class="ln">   736</span>	<span class="comment">// If the tag does not have the conventional format, the value</span>
+<a id="L737"></a><span class="ln">   737</span>	<span class="comment">// returned by Get is unspecified.</span>
+<a id="L738"></a><span class="ln">   738</span>	func (tag StructTag) Get(key string) string {
+<a id="L739"></a><span class="ln">   739</span>		for tag != &#34;&#34; {
+<a id="L740"></a><span class="ln">   740</span>			<span class="comment">// skip leading space</span>
+<a id="L741"></a><span class="ln">   741</span>			i := 0
+<a id="L742"></a><span class="ln">   742</span>			for i &lt; len(tag) &amp;&amp; tag[i] == &#39; &#39; {
+<a id="L743"></a><span class="ln">   743</span>				i++
+<a id="L744"></a><span class="ln">   744</span>			}
+<a id="L745"></a><span class="ln">   745</span>			tag = tag[i:]
+<a id="L746"></a><span class="ln">   746</span>			if tag == &#34;&#34; {
+<a id="L747"></a><span class="ln">   747</span>				break
+<a id="L748"></a><span class="ln">   748</span>			}
+<a id="L749"></a><span class="ln">   749</span>	
+<a id="L750"></a><span class="ln">   750</span>			<span class="comment">// scan to colon.</span>
+<a id="L751"></a><span class="ln">   751</span>			<span class="comment">// a space or a quote is a syntax error</span>
+<a id="L752"></a><span class="ln">   752</span>			i = 0
+<a id="L753"></a><span class="ln">   753</span>			for i &lt; len(tag) &amp;&amp; tag[i] != &#39; &#39; &amp;&amp; tag[i] != &#39;:&#39; &amp;&amp; tag[i] != &#39;&#34;&#39; {
+<a id="L754"></a><span class="ln">   754</span>				i++
+<a id="L755"></a><span class="ln">   755</span>			}
+<a id="L756"></a><span class="ln">   756</span>			if i+1 &gt;= len(tag) || tag[i] != &#39;:&#39; || tag[i+1] != &#39;&#34;&#39; {
+<a id="L757"></a><span class="ln">   757</span>				break
+<a id="L758"></a><span class="ln">   758</span>			}
+<a id="L759"></a><span class="ln">   759</span>			name := string(tag[:i])
+<a id="L760"></a><span class="ln">   760</span>			tag = tag[i+1:]
+<a id="L761"></a><span class="ln">   761</span>	
+<a id="L762"></a><span class="ln">   762</span>			<span class="comment">// scan quoted string to find value</span>
+<a id="L763"></a><span class="ln">   763</span>			i = 1
+<a id="L764"></a><span class="ln">   764</span>			for i &lt; len(tag) &amp;&amp; tag[i] != &#39;&#34;&#39; {
+<a id="L765"></a><span class="ln">   765</span>				if tag[i] == &#39;\\&#39; {
+<a id="L766"></a><span class="ln">   766</span>					i++
+<a id="L767"></a><span class="ln">   767</span>				}
+<a id="L768"></a><span class="ln">   768</span>				i++
+<a id="L769"></a><span class="ln">   769</span>			}
+<a id="L770"></a><span class="ln">   770</span>			if i &gt;= len(tag) {
+<a id="L771"></a><span class="ln">   771</span>				break
+<a id="L772"></a><span class="ln">   772</span>			}
+<a id="L773"></a><span class="ln">   773</span>			qvalue := string(tag[:i+1])
+<a id="L774"></a><span class="ln">   774</span>			tag = tag[i+1:]
+<a id="L775"></a><span class="ln">   775</span>	
+<a id="L776"></a><span class="ln">   776</span>			if key == name {
+<a id="L777"></a><span class="ln">   777</span>				value, _ := strconv.Unquote(qvalue)
+<a id="L778"></a><span class="ln">   778</span>				return value
+<a id="L779"></a><span class="ln">   779</span>			}
+<a id="L780"></a><span class="ln">   780</span>		}
+<a id="L781"></a><span class="ln">   781</span>		return &#34;&#34;
+<a id="L782"></a><span class="ln">   782</span>	}
+<a id="L783"></a><span class="ln">   783</span>	
+<a id="L784"></a><span class="ln">   784</span>	<span class="comment">// Field returns the i&#39;th struct field.</span>
+<a id="L785"></a><span class="ln">   785</span>	func (t *structType) Field(i int) (f StructField) {
+<a id="L786"></a><span class="ln">   786</span>		if i &lt; 0 || i &gt;= len(t.fields) {
+<a id="L787"></a><span class="ln">   787</span>			return
+<a id="L788"></a><span class="ln">   788</span>		}
+<a id="L789"></a><span class="ln">   789</span>		p := &amp;t.fields[i]
+<a id="L790"></a><span class="ln">   790</span>		f.Type = toType(p.typ)
+<a id="L791"></a><span class="ln">   791</span>		if p.name != nil {
+<a id="L792"></a><span class="ln">   792</span>			f.Name = *p.name
+<a id="L793"></a><span class="ln">   793</span>		} else {
+<a id="L794"></a><span class="ln">   794</span>			t := f.Type
+<a id="L795"></a><span class="ln">   795</span>			if t.Kind() == Ptr {
+<a id="L796"></a><span class="ln">   796</span>				t = t.Elem()
+<a id="L797"></a><span class="ln">   797</span>			}
+<a id="L798"></a><span class="ln">   798</span>			f.Name = t.Name()
+<a id="L799"></a><span class="ln">   799</span>			f.Anonymous = true
+<a id="L800"></a><span class="ln">   800</span>		}
+<a id="L801"></a><span class="ln">   801</span>		if p.pkgPath != nil {
+<a id="L802"></a><span class="ln">   802</span>			f.PkgPath = *p.pkgPath
+<a id="L803"></a><span class="ln">   803</span>		}
+<a id="L804"></a><span class="ln">   804</span>		if p.tag != nil {
+<a id="L805"></a><span class="ln">   805</span>			f.Tag = StructTag(*p.tag)
+<a id="L806"></a><span class="ln">   806</span>		}
+<a id="L807"></a><span class="ln">   807</span>		f.Offset = p.offset
+<a id="L808"></a><span class="ln">   808</span>	
+<a id="L809"></a><span class="ln">   809</span>		<span class="comment">// NOTE(rsc): This is the only allocation in the interface</span>
+<a id="L810"></a><span class="ln">   810</span>		<span class="comment">// presented by a reflect.Type.  It would be nice to avoid,</span>
+<a id="L811"></a><span class="ln">   811</span>		<span class="comment">// at least in the common cases, but we need to make sure</span>
+<a id="L812"></a><span class="ln">   812</span>		<span class="comment">// that misbehaving clients of reflect cannot affect other</span>
+<a id="L813"></a><span class="ln">   813</span>		<span class="comment">// uses of reflect.  One possibility is CL 5371098, but we</span>
+<a id="L814"></a><span class="ln">   814</span>		<span class="comment">// postponed that ugliness until there is a demonstrated</span>
+<a id="L815"></a><span class="ln">   815</span>		<span class="comment">// need for the performance.  This is issue 2320.</span>
+<a id="L816"></a><span class="ln">   816</span>		f.Index = []int{i}
+<a id="L817"></a><span class="ln">   817</span>		return
+<a id="L818"></a><span class="ln">   818</span>	}
+<a id="L819"></a><span class="ln">   819</span>	
+<a id="L820"></a><span class="ln">   820</span>	<span class="comment">// TODO(gri): Should there be an error/bool indicator if the index</span>
+<a id="L821"></a><span class="ln">   821</span>	<span class="comment">//            is wrong for FieldByIndex?</span>
+<a id="L822"></a><span class="ln">   822</span>	
+<a id="L823"></a><span class="ln">   823</span>	<span class="comment">// FieldByIndex returns the nested field corresponding to index.</span>
+<a id="L824"></a><span class="ln">   824</span>	func (t *structType) FieldByIndex(index []int) (f StructField) {
+<a id="L825"></a><span class="ln">   825</span>		f.Type = Type(t.toType())
+<a id="L826"></a><span class="ln">   826</span>		for i, x := range index {
+<a id="L827"></a><span class="ln">   827</span>			if i &gt; 0 {
+<a id="L828"></a><span class="ln">   828</span>				ft := f.Type
+<a id="L829"></a><span class="ln">   829</span>				if ft.Kind() == Ptr &amp;&amp; ft.Elem().Kind() == Struct {
+<a id="L830"></a><span class="ln">   830</span>					ft = ft.Elem()
+<a id="L831"></a><span class="ln">   831</span>				}
+<a id="L832"></a><span class="ln">   832</span>				f.Type = ft
+<a id="L833"></a><span class="ln">   833</span>			}
+<a id="L834"></a><span class="ln">   834</span>			f = f.Type.Field(x)
+<a id="L835"></a><span class="ln">   835</span>		}
+<a id="L836"></a><span class="ln">   836</span>		return
+<a id="L837"></a><span class="ln">   837</span>	}
+<a id="L838"></a><span class="ln">   838</span>	
+<a id="L839"></a><span class="ln">   839</span>	const inf = 1 &lt;&lt; 30 <span class="comment">// infinity - no struct has that many nesting levels</span>
+<a id="L840"></a><span class="ln">   840</span>	
+<a id="L841"></a><span class="ln">   841</span>	func (t *structType) fieldByNameFunc(match func(string) bool, mark map[*structType]bool, depth int) (ff StructField, fd int) {
+<a id="L842"></a><span class="ln">   842</span>		fd = inf <span class="comment">// field depth</span>
+<a id="L843"></a><span class="ln">   843</span>	
+<a id="L844"></a><span class="ln">   844</span>		if mark[t] {
+<a id="L845"></a><span class="ln">   845</span>			<span class="comment">// Struct already seen.</span>
+<a id="L846"></a><span class="ln">   846</span>			return
+<a id="L847"></a><span class="ln">   847</span>		}
+<a id="L848"></a><span class="ln">   848</span>		mark[t] = true
+<a id="L849"></a><span class="ln">   849</span>	
+<a id="L850"></a><span class="ln">   850</span>		var fi int <span class="comment">// field index</span>
+<a id="L851"></a><span class="ln">   851</span>		n := 0     <span class="comment">// number of matching fields at depth fd</span>
+<a id="L852"></a><span class="ln">   852</span>	L:
+<a id="L853"></a><span class="ln">   853</span>		for i := range t.fields {
+<a id="L854"></a><span class="ln">   854</span>			f := t.Field(i)
+<a id="L855"></a><span class="ln">   855</span>			d := inf
+<a id="L856"></a><span class="ln">   856</span>			switch {
+<a id="L857"></a><span class="ln">   857</span>			case match(f.Name):
+<a id="L858"></a><span class="ln">   858</span>				<span class="comment">// Matching top-level field.</span>
+<a id="L859"></a><span class="ln">   859</span>				d = depth
+<a id="L860"></a><span class="ln">   860</span>			case f.Anonymous:
+<a id="L861"></a><span class="ln">   861</span>				ft := f.Type
+<a id="L862"></a><span class="ln">   862</span>				if ft.Kind() == Ptr {
+<a id="L863"></a><span class="ln">   863</span>					ft = ft.Elem()
+<a id="L864"></a><span class="ln">   864</span>				}
+<a id="L865"></a><span class="ln">   865</span>				switch {
+<a id="L866"></a><span class="ln">   866</span>				case match(ft.Name()):
+<a id="L867"></a><span class="ln">   867</span>					<span class="comment">// Matching anonymous top-level field.</span>
+<a id="L868"></a><span class="ln">   868</span>					d = depth
+<a id="L869"></a><span class="ln">   869</span>				case fd &gt; depth:
+<a id="L870"></a><span class="ln">   870</span>					<span class="comment">// No top-level field yet; look inside nested structs.</span>
+<a id="L871"></a><span class="ln">   871</span>					if ft.Kind() == Struct {
+<a id="L872"></a><span class="ln">   872</span>						st := (*structType)(unsafe.Pointer(ft.(*commonType)))
+<a id="L873"></a><span class="ln">   873</span>						f, d = st.fieldByNameFunc(match, mark, depth+1)
+<a id="L874"></a><span class="ln">   874</span>					}
+<a id="L875"></a><span class="ln">   875</span>				}
+<a id="L876"></a><span class="ln">   876</span>			}
+<a id="L877"></a><span class="ln">   877</span>	
+<a id="L878"></a><span class="ln">   878</span>			switch {
+<a id="L879"></a><span class="ln">   879</span>			case d &lt; fd:
+<a id="L880"></a><span class="ln">   880</span>				<span class="comment">// Found field at shallower depth.</span>
+<a id="L881"></a><span class="ln">   881</span>				ff, fi, fd = f, i, d
+<a id="L882"></a><span class="ln">   882</span>				n = 1
+<a id="L883"></a><span class="ln">   883</span>			case d == fd:
+<a id="L884"></a><span class="ln">   884</span>				<span class="comment">// More than one matching field at the same depth (or d, fd == inf).</span>
+<a id="L885"></a><span class="ln">   885</span>				<span class="comment">// Same as no field found at this depth.</span>
+<a id="L886"></a><span class="ln">   886</span>				n++
+<a id="L887"></a><span class="ln">   887</span>				if d == depth {
+<a id="L888"></a><span class="ln">   888</span>					<span class="comment">// Impossible to find a field at lower depth.</span>
+<a id="L889"></a><span class="ln">   889</span>					break L
+<a id="L890"></a><span class="ln">   890</span>				}
+<a id="L891"></a><span class="ln">   891</span>			}
+<a id="L892"></a><span class="ln">   892</span>		}
+<a id="L893"></a><span class="ln">   893</span>	
+<a id="L894"></a><span class="ln">   894</span>		if n == 1 {
+<a id="L895"></a><span class="ln">   895</span>			<span class="comment">// Found matching field.</span>
+<a id="L896"></a><span class="ln">   896</span>			if depth &gt;= len(ff.Index) {
+<a id="L897"></a><span class="ln">   897</span>				ff.Index = make([]int, depth+1)
+<a id="L898"></a><span class="ln">   898</span>			}
+<a id="L899"></a><span class="ln">   899</span>			if len(ff.Index) &gt; 1 {
+<a id="L900"></a><span class="ln">   900</span>				ff.Index[depth] = fi
+<a id="L901"></a><span class="ln">   901</span>			}
+<a id="L902"></a><span class="ln">   902</span>		} else {
+<a id="L903"></a><span class="ln">   903</span>			<span class="comment">// None or more than one matching field found.</span>
+<a id="L904"></a><span class="ln">   904</span>			fd = inf
+<a id="L905"></a><span class="ln">   905</span>		}
+<a id="L906"></a><span class="ln">   906</span>	
+<a id="L907"></a><span class="ln">   907</span>		delete(mark, t)
+<a id="L908"></a><span class="ln">   908</span>		return
+<a id="L909"></a><span class="ln">   909</span>	}
+<a id="L910"></a><span class="ln">   910</span>	
+<a id="L911"></a><span class="ln">   911</span>	<span class="comment">// FieldByName returns the struct field with the given name</span>
+<a id="L912"></a><span class="ln">   912</span>	<span class="comment">// and a boolean to indicate if the field was found.</span>
+<a id="L913"></a><span class="ln">   913</span>	func (t *structType) FieldByName(name string) (f StructField, present bool) {
+<a id="L914"></a><span class="ln">   914</span>		return t.FieldByNameFunc(func(s string) bool { return s == name })
+<a id="L915"></a><span class="ln">   915</span>	}
+<a id="L916"></a><span class="ln">   916</span>	
+<a id="L917"></a><span class="ln">   917</span>	<span class="comment">// FieldByNameFunc returns the struct field with a name that satisfies the</span>
+<a id="L918"></a><span class="ln">   918</span>	<span class="comment">// match function and a boolean to indicate if the field was found.</span>
+<a id="L919"></a><span class="ln">   919</span>	func (t *structType) FieldByNameFunc(match func(string) bool) (f StructField, present bool) {
+<a id="L920"></a><span class="ln">   920</span>		if ff, fd := t.fieldByNameFunc(match, make(map[*structType]bool), 0); fd &lt; inf {
+<a id="L921"></a><span class="ln">   921</span>			ff.Index = ff.Index[0 : fd+1]
+<a id="L922"></a><span class="ln">   922</span>			f, present = ff, true
+<a id="L923"></a><span class="ln">   923</span>		}
+<a id="L924"></a><span class="ln">   924</span>		return
+<a id="L925"></a><span class="ln">   925</span>	}
+<a id="L926"></a><span class="ln">   926</span>	
+<a id="L927"></a><span class="ln">   927</span>	<span class="comment">// Convert runtime type to reflect type.</span>
+<a id="L928"></a><span class="ln">   928</span>	func toCommonType(p *runtimeType) *commonType {
+<a id="L929"></a><span class="ln">   929</span>		if p == nil {
+<a id="L930"></a><span class="ln">   930</span>			return nil
+<a id="L931"></a><span class="ln">   931</span>		}
+<a id="L932"></a><span class="ln">   932</span>		return (*p).(*commonType)
+<a id="L933"></a><span class="ln">   933</span>	}
+<a id="L934"></a><span class="ln">   934</span>	
+<a id="L935"></a><span class="ln">   935</span>	func toType(p *runtimeType) Type {
+<a id="L936"></a><span class="ln">   936</span>		if p == nil {
+<a id="L937"></a><span class="ln">   937</span>			return nil
+<a id="L938"></a><span class="ln">   938</span>		}
+<a id="L939"></a><span class="ln">   939</span>		return (*p).(*commonType)
+<a id="L940"></a><span class="ln">   940</span>	}
+<a id="L941"></a><span class="ln">   941</span>	
+<a id="L942"></a><span class="ln">   942</span>	<span class="comment">// TypeOf returns the reflection Type of the value in the interface{}.</span>
+<a id="L943"></a><span class="ln">   943</span>	<span class="comment">// TypeOf(nil) returns nil.</span>
+<a id="L944"></a><span class="ln">   944</span>	func TypeOf(i interface{}) Type {
+<a id="L945"></a><span class="ln">   945</span>		eface := *(*emptyInterface)(unsafe.Pointer(&amp;i))
+<a id="L946"></a><span class="ln">   946</span>		return toType(eface.typ)
+<a id="L947"></a><span class="ln">   947</span>	}
+<a id="L948"></a><span class="ln">   948</span>	
+<a id="L949"></a><span class="ln">   949</span>	<span class="comment">// ptrMap is the cache for PtrTo.</span>
+<a id="L950"></a><span class="ln">   950</span>	var ptrMap struct {
+<a id="L951"></a><span class="ln">   951</span>		sync.RWMutex
+<a id="L952"></a><span class="ln">   952</span>		m map[*commonType]*ptrType
+<a id="L953"></a><span class="ln">   953</span>	}
+<a id="L954"></a><span class="ln">   954</span>	
+<a id="L955"></a><span class="ln">   955</span>	func (t *commonType) runtimeType() *runtimeType {
+<a id="L956"></a><span class="ln">   956</span>		<span class="comment">// The runtimeType always precedes the commonType in memory.</span>
+<a id="L957"></a><span class="ln">   957</span>		<span class="comment">// Adjust pointer to find it.</span>
+<a id="L958"></a><span class="ln">   958</span>		var rt struct {
+<a id="L959"></a><span class="ln">   959</span>			i  runtimeType
+<a id="L960"></a><span class="ln">   960</span>			ct commonType
+<a id="L961"></a><span class="ln">   961</span>		}
+<a id="L962"></a><span class="ln">   962</span>		return (*runtimeType)(unsafe.Pointer(uintptr(unsafe.Pointer(t)) - unsafe.Offsetof(rt.ct)))
+<a id="L963"></a><span class="ln">   963</span>	}
+<a id="L964"></a><span class="ln">   964</span>	
+<a id="L965"></a><span class="ln">   965</span>	<span class="comment">// PtrTo returns the pointer type with element t.</span>
+<a id="L966"></a><span class="ln">   966</span>	<span class="comment">// For example, if t represents type Foo, PtrTo(t) represents *Foo.</span>
+<a id="L967"></a><span class="ln">   967</span>	func PtrTo(t Type) Type {
+<a id="L968"></a><span class="ln">   968</span>		return t.(*commonType).ptrTo()
+<a id="L969"></a><span class="ln">   969</span>	}
+<a id="L970"></a><span class="ln">   970</span>	
+<a id="L971"></a><span class="ln">   971</span>	func (ct *commonType) ptrTo() *commonType {
+<a id="L972"></a><span class="ln">   972</span>		if p := ct.ptrToThis; p != nil {
+<a id="L973"></a><span class="ln">   973</span>			return toCommonType(p)
+<a id="L974"></a><span class="ln">   974</span>		}
+<a id="L975"></a><span class="ln">   975</span>	
+<a id="L976"></a><span class="ln">   976</span>		<span class="comment">// Otherwise, synthesize one.</span>
+<a id="L977"></a><span class="ln">   977</span>		<span class="comment">// This only happens for pointers with no methods.</span>
+<a id="L978"></a><span class="ln">   978</span>		<span class="comment">// We keep the mapping in a map on the side, because</span>
+<a id="L979"></a><span class="ln">   979</span>		<span class="comment">// this operation is rare and a separate map lets us keep</span>
+<a id="L980"></a><span class="ln">   980</span>		<span class="comment">// the type structures in read-only memory.</span>
+<a id="L981"></a><span class="ln">   981</span>		ptrMap.RLock()
+<a id="L982"></a><span class="ln">   982</span>		if m := ptrMap.m; m != nil {
+<a id="L983"></a><span class="ln">   983</span>			if p := m[ct]; p != nil {
+<a id="L984"></a><span class="ln">   984</span>				ptrMap.RUnlock()
+<a id="L985"></a><span class="ln">   985</span>				return &amp;p.commonType
+<a id="L986"></a><span class="ln">   986</span>			}
+<a id="L987"></a><span class="ln">   987</span>		}
+<a id="L988"></a><span class="ln">   988</span>		ptrMap.RUnlock()
+<a id="L989"></a><span class="ln">   989</span>		ptrMap.Lock()
+<a id="L990"></a><span class="ln">   990</span>		if ptrMap.m == nil {
+<a id="L991"></a><span class="ln">   991</span>			ptrMap.m = make(map[*commonType]*ptrType)
+<a id="L992"></a><span class="ln">   992</span>		}
+<a id="L993"></a><span class="ln">   993</span>		p := ptrMap.m[ct]
+<a id="L994"></a><span class="ln">   994</span>		if p != nil {
+<a id="L995"></a><span class="ln">   995</span>			<span class="comment">// some other goroutine won the race and created it</span>
+<a id="L996"></a><span class="ln">   996</span>			ptrMap.Unlock()
+<a id="L997"></a><span class="ln">   997</span>			return &amp;p.commonType
+<a id="L998"></a><span class="ln">   998</span>		}
+<a id="L999"></a><span class="ln">   999</span>	
+<a id="L1000"></a><span class="ln">  1000</span>		var rt struct {
+<a id="L1001"></a><span class="ln">  1001</span>			i runtimeType
+<a id="L1002"></a><span class="ln">  1002</span>			ptrType
+<a id="L1003"></a><span class="ln">  1003</span>		}
+<a id="L1004"></a><span class="ln">  1004</span>		rt.i = &amp;rt.commonType
+<a id="L1005"></a><span class="ln">  1005</span>	
+<a id="L1006"></a><span class="ln">  1006</span>		<span class="comment">// initialize p using *byte&#39;s ptrType as a prototype.</span>
+<a id="L1007"></a><span class="ln">  1007</span>		p = &amp;rt.ptrType
+<a id="L1008"></a><span class="ln">  1008</span>		var ibyte interface{} = (*byte)(nil)
+<a id="L1009"></a><span class="ln">  1009</span>		bp := (*ptrType)(unsafe.Pointer((**(**runtimeType)(unsafe.Pointer(&amp;ibyte))).(*commonType)))
+<a id="L1010"></a><span class="ln">  1010</span>		*p = *bp
+<a id="L1011"></a><span class="ln">  1011</span>	
+<a id="L1012"></a><span class="ln">  1012</span>		s := &#34;*&#34; + *ct.string
+<a id="L1013"></a><span class="ln">  1013</span>		p.string = &amp;s
+<a id="L1014"></a><span class="ln">  1014</span>	
+<a id="L1015"></a><span class="ln">  1015</span>		<span class="comment">// For the type structures linked into the binary, the</span>
+<a id="L1016"></a><span class="ln">  1016</span>		<span class="comment">// compiler provides a good hash of the string.</span>
+<a id="L1017"></a><span class="ln">  1017</span>		<span class="comment">// Create a good hash for the new string by using</span>
+<a id="L1018"></a><span class="ln">  1018</span>		<span class="comment">// the FNV-1 hash&#39;s mixing function to combine the</span>
+<a id="L1019"></a><span class="ln">  1019</span>		<span class="comment">// old hash and the new &#34;*&#34;.</span>
+<a id="L1020"></a><span class="ln">  1020</span>		p.hash = ct.hash*16777619 ^ &#39;*&#39;
+<a id="L1021"></a><span class="ln">  1021</span>	
+<a id="L1022"></a><span class="ln">  1022</span>		p.uncommonType = nil
+<a id="L1023"></a><span class="ln">  1023</span>		p.ptrToThis = nil
+<a id="L1024"></a><span class="ln">  1024</span>		p.elem = (*runtimeType)(unsafe.Pointer(uintptr(unsafe.Pointer(ct)) - unsafe.Offsetof(rt.ptrType)))
+<a id="L1025"></a><span class="ln">  1025</span>	
+<a id="L1026"></a><span class="ln">  1026</span>		ptrMap.m[ct] = p
+<a id="L1027"></a><span class="ln">  1027</span>		ptrMap.Unlock()
+<a id="L1028"></a><span class="ln">  1028</span>		return &amp;p.commonType
+<a id="L1029"></a><span class="ln">  1029</span>	}
+<a id="L1030"></a><span class="ln">  1030</span>	
+<a id="L1031"></a><span class="ln">  1031</span>	func (t *commonType) Implements(u Type) bool {
+<a id="L1032"></a><span class="ln">  1032</span>		if u == nil {
+<a id="L1033"></a><span class="ln">  1033</span>			panic(&#34;reflect: nil type passed to Type.Implements&#34;)
+<a id="L1034"></a><span class="ln">  1034</span>		}
+<a id="L1035"></a><span class="ln">  1035</span>		if u.Kind() != Interface {
+<a id="L1036"></a><span class="ln">  1036</span>			panic(&#34;reflect: non-interface type passed to Type.Implements&#34;)
+<a id="L1037"></a><span class="ln">  1037</span>		}
+<a id="L1038"></a><span class="ln">  1038</span>		return implements(u.(*commonType), t)
+<a id="L1039"></a><span class="ln">  1039</span>	}
+<a id="L1040"></a><span class="ln">  1040</span>	
+<a id="L1041"></a><span class="ln">  1041</span>	func (t *commonType) AssignableTo(u Type) bool {
+<a id="L1042"></a><span class="ln">  1042</span>		if u == nil {
+<a id="L1043"></a><span class="ln">  1043</span>			panic(&#34;reflect: nil type passed to Type.AssignableTo&#34;)
+<a id="L1044"></a><span class="ln">  1044</span>		}
+<a id="L1045"></a><span class="ln">  1045</span>		uu := u.(*commonType)
+<a id="L1046"></a><span class="ln">  1046</span>		return directlyAssignable(uu, t) || implements(uu, t)
+<a id="L1047"></a><span class="ln">  1047</span>	}
+<a id="L1048"></a><span class="ln">  1048</span>	
+<a id="L1049"></a><span class="ln">  1049</span>	<span class="comment">// implements returns true if the type V implements the interface type T.</span>
+<a id="L1050"></a><span class="ln">  1050</span>	func implements(T, V *commonType) bool {
+<a id="L1051"></a><span class="ln">  1051</span>		if T.Kind() != Interface {
+<a id="L1052"></a><span class="ln">  1052</span>			return false
+<a id="L1053"></a><span class="ln">  1053</span>		}
+<a id="L1054"></a><span class="ln">  1054</span>		t := (*interfaceType)(unsafe.Pointer(T))
+<a id="L1055"></a><span class="ln">  1055</span>		if len(t.methods) == 0 {
+<a id="L1056"></a><span class="ln">  1056</span>			return true
+<a id="L1057"></a><span class="ln">  1057</span>		}
+<a id="L1058"></a><span class="ln">  1058</span>	
+<a id="L1059"></a><span class="ln">  1059</span>		<span class="comment">// The same algorithm applies in both cases, but the</span>
+<a id="L1060"></a><span class="ln">  1060</span>		<span class="comment">// method tables for an interface type and a concrete type</span>
+<a id="L1061"></a><span class="ln">  1061</span>		<span class="comment">// are different, so the code is duplicated.</span>
+<a id="L1062"></a><span class="ln">  1062</span>		<span class="comment">// In both cases the algorithm is a linear scan over the two</span>
+<a id="L1063"></a><span class="ln">  1063</span>		<span class="comment">// lists - T&#39;s methods and V&#39;s methods - simultaneously.</span>
+<a id="L1064"></a><span class="ln">  1064</span>		<span class="comment">// Since method tables are stored in a unique sorted order</span>
+<a id="L1065"></a><span class="ln">  1065</span>		<span class="comment">// (alphabetical, with no duplicate method names), the scan</span>
+<a id="L1066"></a><span class="ln">  1066</span>		<span class="comment">// through V&#39;s methods must hit a match for each of T&#39;s</span>
+<a id="L1067"></a><span class="ln">  1067</span>		<span class="comment">// methods along the way, or else V does not implement T.</span>
+<a id="L1068"></a><span class="ln">  1068</span>		<span class="comment">// This lets us run the scan in overall linear time instead of</span>
+<a id="L1069"></a><span class="ln">  1069</span>		<span class="comment">// the quadratic time  a naive search would require.</span>
+<a id="L1070"></a><span class="ln">  1070</span>		<span class="comment">// See also ../runtime/iface.c.</span>
+<a id="L1071"></a><span class="ln">  1071</span>		if V.Kind() == Interface {
+<a id="L1072"></a><span class="ln">  1072</span>			v := (*interfaceType)(unsafe.Pointer(V))
+<a id="L1073"></a><span class="ln">  1073</span>			i := 0
+<a id="L1074"></a><span class="ln">  1074</span>			for j := 0; j &lt; len(v.methods); j++ {
+<a id="L1075"></a><span class="ln">  1075</span>				tm := &amp;t.methods[i]
+<a id="L1076"></a><span class="ln">  1076</span>				vm := &amp;v.methods[j]
+<a id="L1077"></a><span class="ln">  1077</span>				if vm.name == tm.name &amp;&amp; vm.pkgPath == tm.pkgPath &amp;&amp; vm.typ == tm.typ {
+<a id="L1078"></a><span class="ln">  1078</span>					if i++; i &gt;= len(t.methods) {
+<a id="L1079"></a><span class="ln">  1079</span>						return true
+<a id="L1080"></a><span class="ln">  1080</span>					}
+<a id="L1081"></a><span class="ln">  1081</span>				}
+<a id="L1082"></a><span class="ln">  1082</span>			}
+<a id="L1083"></a><span class="ln">  1083</span>			return false
+<a id="L1084"></a><span class="ln">  1084</span>		}
+<a id="L1085"></a><span class="ln">  1085</span>	
+<a id="L1086"></a><span class="ln">  1086</span>		v := V.uncommon()
+<a id="L1087"></a><span class="ln">  1087</span>		if v == nil {
+<a id="L1088"></a><span class="ln">  1088</span>			return false
+<a id="L1089"></a><span class="ln">  1089</span>		}
+<a id="L1090"></a><span class="ln">  1090</span>		i := 0
+<a id="L1091"></a><span class="ln">  1091</span>		for j := 0; j &lt; len(v.methods); j++ {
+<a id="L1092"></a><span class="ln">  1092</span>			tm := &amp;t.methods[i]
+<a id="L1093"></a><span class="ln">  1093</span>			vm := &amp;v.methods[j]
+<a id="L1094"></a><span class="ln">  1094</span>			if vm.name == tm.name &amp;&amp; vm.pkgPath == tm.pkgPath &amp;&amp; vm.mtyp == tm.typ {
+<a id="L1095"></a><span class="ln">  1095</span>				if i++; i &gt;= len(t.methods) {
+<a id="L1096"></a><span class="ln">  1096</span>					return true
+<a id="L1097"></a><span class="ln">  1097</span>				}
+<a id="L1098"></a><span class="ln">  1098</span>			}
+<a id="L1099"></a><span class="ln">  1099</span>		}
+<a id="L1100"></a><span class="ln">  1100</span>		return false
+<a id="L1101"></a><span class="ln">  1101</span>	}
+<a id="L1102"></a><span class="ln">  1102</span>	
+<a id="L1103"></a><span class="ln">  1103</span>	<span class="comment">// directlyAssignable returns true if a value x of type V can be directly</span>
+<a id="L1104"></a><span class="ln">  1104</span>	<span class="comment">// assigned (using memmove) to a value of type T.</span>
+<a id="L1105"></a><span class="ln">  1105</span>	<span class="comment">// http://golang.org/doc/go_spec.html#Assignability</span>
+<a id="L1106"></a><span class="ln">  1106</span>	<span class="comment">// Ignoring the interface rules (implemented elsewhere)</span>
+<a id="L1107"></a><span class="ln">  1107</span>	<span class="comment">// and the ideal constant rules (no ideal constants at run time).</span>
+<a id="L1108"></a><span class="ln">  1108</span>	func directlyAssignable(T, V *commonType) bool {
+<a id="L1109"></a><span class="ln">  1109</span>		<span class="comment">// x&#39;s type V is identical to T?</span>
+<a id="L1110"></a><span class="ln">  1110</span>		if T == V {
+<a id="L1111"></a><span class="ln">  1111</span>			return true
+<a id="L1112"></a><span class="ln">  1112</span>		}
+<a id="L1113"></a><span class="ln">  1113</span>	
+<a id="L1114"></a><span class="ln">  1114</span>		<span class="comment">// Otherwise at least one of T and V must be unnamed</span>
+<a id="L1115"></a><span class="ln">  1115</span>		<span class="comment">// and they must have the same kind.</span>
+<a id="L1116"></a><span class="ln">  1116</span>		if T.Name() != &#34;&#34; &amp;&amp; V.Name() != &#34;&#34; || T.Kind() != V.Kind() {
+<a id="L1117"></a><span class="ln">  1117</span>			return false
+<a id="L1118"></a><span class="ln">  1118</span>		}
+<a id="L1119"></a><span class="ln">  1119</span>	
+<a id="L1120"></a><span class="ln">  1120</span>		<span class="comment">// x&#39;s type T and V have identical underlying types.</span>
+<a id="L1121"></a><span class="ln">  1121</span>		<span class="comment">// Since at least one is unnamed, only the composite types</span>
+<a id="L1122"></a><span class="ln">  1122</span>		<span class="comment">// need to be considered.</span>
+<a id="L1123"></a><span class="ln">  1123</span>		switch T.Kind() {
+<a id="L1124"></a><span class="ln">  1124</span>		case Array:
+<a id="L1125"></a><span class="ln">  1125</span>			return T.Elem() == V.Elem() &amp;&amp; T.Len() == V.Len()
+<a id="L1126"></a><span class="ln">  1126</span>	
+<a id="L1127"></a><span class="ln">  1127</span>		case Chan:
+<a id="L1128"></a><span class="ln">  1128</span>			<span class="comment">// Special case:</span>
+<a id="L1129"></a><span class="ln">  1129</span>			<span class="comment">// x is a bidirectional channel value, T is a channel type,</span>
+<a id="L1130"></a><span class="ln">  1130</span>			<span class="comment">// and x&#39;s type V and T have identical element types.</span>
+<a id="L1131"></a><span class="ln">  1131</span>			if V.ChanDir() == BothDir &amp;&amp; T.Elem() == V.Elem() {
+<a id="L1132"></a><span class="ln">  1132</span>				return true
+<a id="L1133"></a><span class="ln">  1133</span>			}
+<a id="L1134"></a><span class="ln">  1134</span>	
+<a id="L1135"></a><span class="ln">  1135</span>			<span class="comment">// Otherwise continue test for identical underlying type.</span>
+<a id="L1136"></a><span class="ln">  1136</span>			return V.ChanDir() == T.ChanDir() &amp;&amp; T.Elem() == V.Elem()
+<a id="L1137"></a><span class="ln">  1137</span>	
+<a id="L1138"></a><span class="ln">  1138</span>		case Func:
+<a id="L1139"></a><span class="ln">  1139</span>			t := (*funcType)(unsafe.Pointer(T))
+<a id="L1140"></a><span class="ln">  1140</span>			v := (*funcType)(unsafe.Pointer(V))
+<a id="L1141"></a><span class="ln">  1141</span>			if t.dotdotdot != v.dotdotdot || len(t.in) != len(v.in) || len(t.out) != len(v.out) {
+<a id="L1142"></a><span class="ln">  1142</span>				return false
+<a id="L1143"></a><span class="ln">  1143</span>			}
+<a id="L1144"></a><span class="ln">  1144</span>			for i, typ := range t.in {
+<a id="L1145"></a><span class="ln">  1145</span>				if typ != v.in[i] {
+<a id="L1146"></a><span class="ln">  1146</span>					return false
+<a id="L1147"></a><span class="ln">  1147</span>				}
+<a id="L1148"></a><span class="ln">  1148</span>			}
+<a id="L1149"></a><span class="ln">  1149</span>			for i, typ := range t.out {
+<a id="L1150"></a><span class="ln">  1150</span>				if typ != v.out[i] {
+<a id="L1151"></a><span class="ln">  1151</span>					return false
+<a id="L1152"></a><span class="ln">  1152</span>				}
+<a id="L1153"></a><span class="ln">  1153</span>			}
+<a id="L1154"></a><span class="ln">  1154</span>			return true
+<a id="L1155"></a><span class="ln">  1155</span>	
+<a id="L1156"></a><span class="ln">  1156</span>		case Interface:
+<a id="L1157"></a><span class="ln">  1157</span>			t := (*interfaceType)(unsafe.Pointer(T))
+<a id="L1158"></a><span class="ln">  1158</span>			v := (*interfaceType)(unsafe.Pointer(V))
+<a id="L1159"></a><span class="ln">  1159</span>			if len(t.methods) == 0 &amp;&amp; len(v.methods) == 0 {
+<a id="L1160"></a><span class="ln">  1160</span>				return true
+<a id="L1161"></a><span class="ln">  1161</span>			}
+<a id="L1162"></a><span class="ln">  1162</span>			<span class="comment">// Might have the same methods but still</span>
+<a id="L1163"></a><span class="ln">  1163</span>			<span class="comment">// need a run time conversion.</span>
+<a id="L1164"></a><span class="ln">  1164</span>			return false
+<a id="L1165"></a><span class="ln">  1165</span>	
+<a id="L1166"></a><span class="ln">  1166</span>		case Map:
+<a id="L1167"></a><span class="ln">  1167</span>			return T.Key() == V.Key() &amp;&amp; T.Elem() == V.Elem()
+<a id="L1168"></a><span class="ln">  1168</span>	
+<a id="L1169"></a><span class="ln">  1169</span>		case Ptr, Slice:
+<a id="L1170"></a><span class="ln">  1170</span>			return T.Elem() == V.Elem()
+<a id="L1171"></a><span class="ln">  1171</span>	
+<a id="L1172"></a><span class="ln">  1172</span>		case Struct:
+<a id="L1173"></a><span class="ln">  1173</span>			t := (*structType)(unsafe.Pointer(T))
+<a id="L1174"></a><span class="ln">  1174</span>			v := (*structType)(unsafe.Pointer(V))
+<a id="L1175"></a><span class="ln">  1175</span>			if len(t.fields) != len(v.fields) {
+<a id="L1176"></a><span class="ln">  1176</span>				return false
+<a id="L1177"></a><span class="ln">  1177</span>			}
+<a id="L1178"></a><span class="ln">  1178</span>			for i := range t.fields {
+<a id="L1179"></a><span class="ln">  1179</span>				tf := &amp;t.fields[i]
+<a id="L1180"></a><span class="ln">  1180</span>				vf := &amp;v.fields[i]
+<a id="L1181"></a><span class="ln">  1181</span>				if tf.name != vf.name || tf.pkgPath != vf.pkgPath ||
+<a id="L1182"></a><span class="ln">  1182</span>					tf.typ != vf.typ || tf.tag != vf.tag || tf.offset != vf.offset {
+<a id="L1183"></a><span class="ln">  1183</span>					return false
+<a id="L1184"></a><span class="ln">  1184</span>				}
+<a id="L1185"></a><span class="ln">  1185</span>			}
+<a id="L1186"></a><span class="ln">  1186</span>			return true
+<a id="L1187"></a><span class="ln">  1187</span>		}
+<a id="L1188"></a><span class="ln">  1188</span>	
+<a id="L1189"></a><span class="ln">  1189</span>		return false
+<a id="L1190"></a><span class="ln">  1190</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

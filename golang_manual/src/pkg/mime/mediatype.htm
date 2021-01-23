@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/mime/mediatype.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/mime/mediatype.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package mime
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bytes&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;errors&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;fmt&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;strings&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;unicode&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// FormatMediaType serializes mediatype t and the parameters</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// param as a media type conforming to RFC 2045 and RFC 2616.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// The type and parameter names are written in lower-case.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// When any of the arguments result in a standard violation then</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// FormatMediaType returns the empty string.</span>
+<a id="L20"></a><span class="ln">    20</span>	func FormatMediaType(t string, param map[string]string) string {
+<a id="L21"></a><span class="ln">    21</span>		slash := strings.Index(t, &#34;/&#34;)
+<a id="L22"></a><span class="ln">    22</span>		if slash == -1 {
+<a id="L23"></a><span class="ln">    23</span>			return &#34;&#34;
+<a id="L24"></a><span class="ln">    24</span>		}
+<a id="L25"></a><span class="ln">    25</span>		major, sub := t[:slash], t[slash+1:]
+<a id="L26"></a><span class="ln">    26</span>		if !isToken(major) || !isToken(sub) {
+<a id="L27"></a><span class="ln">    27</span>			return &#34;&#34;
+<a id="L28"></a><span class="ln">    28</span>		}
+<a id="L29"></a><span class="ln">    29</span>		var b bytes.Buffer
+<a id="L30"></a><span class="ln">    30</span>		b.WriteString(strings.ToLower(major))
+<a id="L31"></a><span class="ln">    31</span>		b.WriteByte(&#39;/&#39;)
+<a id="L32"></a><span class="ln">    32</span>		b.WriteString(strings.ToLower(sub))
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>		for attribute, value := range param {
+<a id="L35"></a><span class="ln">    35</span>			b.WriteByte(&#39;;&#39;)
+<a id="L36"></a><span class="ln">    36</span>			b.WriteByte(&#39; &#39;)
+<a id="L37"></a><span class="ln">    37</span>			if !isToken(attribute) {
+<a id="L38"></a><span class="ln">    38</span>				return &#34;&#34;
+<a id="L39"></a><span class="ln">    39</span>			}
+<a id="L40"></a><span class="ln">    40</span>			b.WriteString(strings.ToLower(attribute))
+<a id="L41"></a><span class="ln">    41</span>			b.WriteByte(&#39;=&#39;)
+<a id="L42"></a><span class="ln">    42</span>			if isToken(value) {
+<a id="L43"></a><span class="ln">    43</span>				b.WriteString(value)
+<a id="L44"></a><span class="ln">    44</span>				continue
+<a id="L45"></a><span class="ln">    45</span>			}
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>			b.WriteByte(&#39;&#34;&#39;)
+<a id="L48"></a><span class="ln">    48</span>			offset := 0
+<a id="L49"></a><span class="ln">    49</span>			for index, character := range value {
+<a id="L50"></a><span class="ln">    50</span>				if character == &#39;&#34;&#39; || character == &#39;\r&#39; {
+<a id="L51"></a><span class="ln">    51</span>					b.WriteString(value[offset:index])
+<a id="L52"></a><span class="ln">    52</span>					offset = index
+<a id="L53"></a><span class="ln">    53</span>					b.WriteByte(&#39;\\&#39;)
+<a id="L54"></a><span class="ln">    54</span>				}
+<a id="L55"></a><span class="ln">    55</span>				if character&amp;0x80 != 0 {
+<a id="L56"></a><span class="ln">    56</span>					return &#34;&#34;
+<a id="L57"></a><span class="ln">    57</span>				}
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>			b.WriteString(value[offset:])
+<a id="L60"></a><span class="ln">    60</span>			b.WriteByte(&#39;&#34;&#39;)
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		return b.String()
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	func checkMediaTypeDisposition(s string) error {
+<a id="L66"></a><span class="ln">    66</span>		typ, rest := consumeToken(s)
+<a id="L67"></a><span class="ln">    67</span>		if typ == &#34;&#34; {
+<a id="L68"></a><span class="ln">    68</span>			return errors.New(&#34;mime: no media type&#34;)
+<a id="L69"></a><span class="ln">    69</span>		}
+<a id="L70"></a><span class="ln">    70</span>		if rest == &#34;&#34; {
+<a id="L71"></a><span class="ln">    71</span>			return nil
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		if !strings.HasPrefix(rest, &#34;/&#34;) {
+<a id="L74"></a><span class="ln">    74</span>			return errors.New(&#34;mime: expected slash after first token&#34;)
+<a id="L75"></a><span class="ln">    75</span>		}
+<a id="L76"></a><span class="ln">    76</span>		subtype, rest := consumeToken(rest[1:])
+<a id="L77"></a><span class="ln">    77</span>		if subtype == &#34;&#34; {
+<a id="L78"></a><span class="ln">    78</span>			return errors.New(&#34;mime: expected token after slash&#34;)
+<a id="L79"></a><span class="ln">    79</span>		}
+<a id="L80"></a><span class="ln">    80</span>		if rest != &#34;&#34; {
+<a id="L81"></a><span class="ln">    81</span>			return errors.New(&#34;mime: unexpected content after media subtype&#34;)
+<a id="L82"></a><span class="ln">    82</span>		}
+<a id="L83"></a><span class="ln">    83</span>		return nil
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// ParseMediaType parses a media type value and any optional</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// parameters, per RFC 1521.  Media types are the values in</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// Content-Type and Content-Disposition headers (RFC 2183).</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// On success, ParseMediaType returns the media type converted</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// to lowercase and trimmed of white space and a non-nil map.</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// The returned map, params, maps from the lowercase</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// attribute to the attribute value with its case preserved.</span>
+<a id="L93"></a><span class="ln">    93</span>	func ParseMediaType(v string) (mediatype string, params map[string]string, err error) {
+<a id="L94"></a><span class="ln">    94</span>		i := strings.Index(v, &#34;;&#34;)
+<a id="L95"></a><span class="ln">    95</span>		if i == -1 {
+<a id="L96"></a><span class="ln">    96</span>			i = len(v)
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>		mediatype = strings.TrimSpace(strings.ToLower(v[0:i]))
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>		err = checkMediaTypeDisposition(mediatype)
+<a id="L101"></a><span class="ln">   101</span>		if err != nil {
+<a id="L102"></a><span class="ln">   102</span>			return &#34;&#34;, nil, err
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>		params = make(map[string]string)
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>		<span class="comment">// Map of base parameter name -&gt; parameter name -&gt; value</span>
+<a id="L108"></a><span class="ln">   108</span>		<span class="comment">// for parameters containing a &#39;*&#39; character.</span>
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// Lazily initialized.</span>
+<a id="L110"></a><span class="ln">   110</span>		var continuation map[string]map[string]string
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>		v = v[i:]
+<a id="L113"></a><span class="ln">   113</span>		for len(v) &gt; 0 {
+<a id="L114"></a><span class="ln">   114</span>			v = strings.TrimLeftFunc(v, unicode.IsSpace)
+<a id="L115"></a><span class="ln">   115</span>			if len(v) == 0 {
+<a id="L116"></a><span class="ln">   116</span>				break
+<a id="L117"></a><span class="ln">   117</span>			}
+<a id="L118"></a><span class="ln">   118</span>			key, value, rest := consumeMediaParam(v)
+<a id="L119"></a><span class="ln">   119</span>			if key == &#34;&#34; {
+<a id="L120"></a><span class="ln">   120</span>				if strings.TrimSpace(rest) == &#34;;&#34; {
+<a id="L121"></a><span class="ln">   121</span>					<span class="comment">// Ignore trailing semicolons.</span>
+<a id="L122"></a><span class="ln">   122</span>					<span class="comment">// Not an error.</span>
+<a id="L123"></a><span class="ln">   123</span>					return
+<a id="L124"></a><span class="ln">   124</span>				}
+<a id="L125"></a><span class="ln">   125</span>				<span class="comment">// Parse error.</span>
+<a id="L126"></a><span class="ln">   126</span>				return &#34;&#34;, nil, errors.New(&#34;mime: invalid media parameter&#34;)
+<a id="L127"></a><span class="ln">   127</span>			}
+<a id="L128"></a><span class="ln">   128</span>	
+<a id="L129"></a><span class="ln">   129</span>			pmap := params
+<a id="L130"></a><span class="ln">   130</span>			if idx := strings.Index(key, &#34;*&#34;); idx != -1 {
+<a id="L131"></a><span class="ln">   131</span>				baseName := key[:idx]
+<a id="L132"></a><span class="ln">   132</span>				if continuation == nil {
+<a id="L133"></a><span class="ln">   133</span>					continuation = make(map[string]map[string]string)
+<a id="L134"></a><span class="ln">   134</span>				}
+<a id="L135"></a><span class="ln">   135</span>				var ok bool
+<a id="L136"></a><span class="ln">   136</span>				if pmap, ok = continuation[baseName]; !ok {
+<a id="L137"></a><span class="ln">   137</span>					continuation[baseName] = make(map[string]string)
+<a id="L138"></a><span class="ln">   138</span>					pmap = continuation[baseName]
+<a id="L139"></a><span class="ln">   139</span>				}
+<a id="L140"></a><span class="ln">   140</span>			}
+<a id="L141"></a><span class="ln">   141</span>			if _, exists := pmap[key]; exists {
+<a id="L142"></a><span class="ln">   142</span>				<span class="comment">// Duplicate parameter name is bogus.</span>
+<a id="L143"></a><span class="ln">   143</span>				return &#34;&#34;, nil, errors.New(&#34;mime: duplicate parameter name&#34;)
+<a id="L144"></a><span class="ln">   144</span>			}
+<a id="L145"></a><span class="ln">   145</span>			pmap[key] = value
+<a id="L146"></a><span class="ln">   146</span>			v = rest
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>		<span class="comment">// Stitch together any continuations or things with stars</span>
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// (i.e. RFC 2231 things with stars: &#34;foo*0&#34; or &#34;foo*&#34;)</span>
+<a id="L151"></a><span class="ln">   151</span>		var buf bytes.Buffer
+<a id="L152"></a><span class="ln">   152</span>		for key, pieceMap := range continuation {
+<a id="L153"></a><span class="ln">   153</span>			singlePartKey := key + &#34;*&#34;
+<a id="L154"></a><span class="ln">   154</span>			if v, ok := pieceMap[singlePartKey]; ok {
+<a id="L155"></a><span class="ln">   155</span>				decv := decode2231Enc(v)
+<a id="L156"></a><span class="ln">   156</span>				params[key] = decv
+<a id="L157"></a><span class="ln">   157</span>				continue
+<a id="L158"></a><span class="ln">   158</span>			}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>			buf.Reset()
+<a id="L161"></a><span class="ln">   161</span>			valid := false
+<a id="L162"></a><span class="ln">   162</span>			for n := 0; ; n++ {
+<a id="L163"></a><span class="ln">   163</span>				simplePart := fmt.Sprintf(&#34;%s*%d&#34;, key, n)
+<a id="L164"></a><span class="ln">   164</span>				if v, ok := pieceMap[simplePart]; ok {
+<a id="L165"></a><span class="ln">   165</span>					valid = true
+<a id="L166"></a><span class="ln">   166</span>					buf.WriteString(v)
+<a id="L167"></a><span class="ln">   167</span>					continue
+<a id="L168"></a><span class="ln">   168</span>				}
+<a id="L169"></a><span class="ln">   169</span>				encodedPart := simplePart + &#34;*&#34;
+<a id="L170"></a><span class="ln">   170</span>				if v, ok := pieceMap[encodedPart]; ok {
+<a id="L171"></a><span class="ln">   171</span>					valid = true
+<a id="L172"></a><span class="ln">   172</span>					if n == 0 {
+<a id="L173"></a><span class="ln">   173</span>						buf.WriteString(decode2231Enc(v))
+<a id="L174"></a><span class="ln">   174</span>					} else {
+<a id="L175"></a><span class="ln">   175</span>						decv, _ := percentHexUnescape(v)
+<a id="L176"></a><span class="ln">   176</span>						buf.WriteString(decv)
+<a id="L177"></a><span class="ln">   177</span>					}
+<a id="L178"></a><span class="ln">   178</span>				} else {
+<a id="L179"></a><span class="ln">   179</span>					break
+<a id="L180"></a><span class="ln">   180</span>				}
+<a id="L181"></a><span class="ln">   181</span>			}
+<a id="L182"></a><span class="ln">   182</span>			if valid {
+<a id="L183"></a><span class="ln">   183</span>				params[key] = buf.String()
+<a id="L184"></a><span class="ln">   184</span>			}
+<a id="L185"></a><span class="ln">   185</span>		}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>		return
+<a id="L188"></a><span class="ln">   188</span>	}
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	func decode2231Enc(v string) string {
+<a id="L191"></a><span class="ln">   191</span>		sv := strings.SplitN(v, &#34;&#39;&#34;, 3)
+<a id="L192"></a><span class="ln">   192</span>		if len(sv) != 3 {
+<a id="L193"></a><span class="ln">   193</span>			return &#34;&#34;
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// TODO: ignoring lang in sv[1] for now. If anybody needs it we&#39;ll</span>
+<a id="L196"></a><span class="ln">   196</span>		<span class="comment">// need to decide how to expose it in the API. But I&#39;m not sure</span>
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// anybody uses it in practice.</span>
+<a id="L198"></a><span class="ln">   198</span>		charset := strings.ToLower(sv[0])
+<a id="L199"></a><span class="ln">   199</span>		if charset != &#34;us-ascii&#34; &amp;&amp; charset != &#34;utf-8&#34; {
+<a id="L200"></a><span class="ln">   200</span>			<span class="comment">// TODO: unsupported encoding</span>
+<a id="L201"></a><span class="ln">   201</span>			return &#34;&#34;
+<a id="L202"></a><span class="ln">   202</span>		}
+<a id="L203"></a><span class="ln">   203</span>		encv, _ := percentHexUnescape(sv[2])
+<a id="L204"></a><span class="ln">   204</span>		return encv
+<a id="L205"></a><span class="ln">   205</span>	}
+<a id="L206"></a><span class="ln">   206</span>	
+<a id="L207"></a><span class="ln">   207</span>	func isNotTokenChar(r rune) bool {
+<a id="L208"></a><span class="ln">   208</span>		return !isTokenChar(r)
+<a id="L209"></a><span class="ln">   209</span>	}
+<a id="L210"></a><span class="ln">   210</span>	
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// consumeToken consumes a token from the beginning of provided</span>
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// string, per RFC 2045 section 5.1 (referenced from 2183), and return</span>
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// the token consumed and the rest of the string.  Returns (&#34;&#34;, v) on</span>
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// failure to consume at least one character.</span>
+<a id="L215"></a><span class="ln">   215</span>	func consumeToken(v string) (token, rest string) {
+<a id="L216"></a><span class="ln">   216</span>		notPos := strings.IndexFunc(v, isNotTokenChar)
+<a id="L217"></a><span class="ln">   217</span>		if notPos == -1 {
+<a id="L218"></a><span class="ln">   218</span>			return v, &#34;&#34;
+<a id="L219"></a><span class="ln">   219</span>		}
+<a id="L220"></a><span class="ln">   220</span>		if notPos == 0 {
+<a id="L221"></a><span class="ln">   221</span>			return &#34;&#34;, v
+<a id="L222"></a><span class="ln">   222</span>		}
+<a id="L223"></a><span class="ln">   223</span>		return v[0:notPos], v[notPos:]
+<a id="L224"></a><span class="ln">   224</span>	}
+<a id="L225"></a><span class="ln">   225</span>	
+<a id="L226"></a><span class="ln">   226</span>	<span class="comment">// consumeValue consumes a &#34;value&#34; per RFC 2045, where a value is</span>
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">// either a &#39;token&#39; or a &#39;quoted-string&#39;.  On success, consumeValue</span>
+<a id="L228"></a><span class="ln">   228</span>	<span class="comment">// returns the value consumed (and de-quoted/escaped, if a</span>
+<a id="L229"></a><span class="ln">   229</span>	<span class="comment">// quoted-string) and the rest of the string.  On failure, returns</span>
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// (&#34;&#34;, v).</span>
+<a id="L231"></a><span class="ln">   231</span>	func consumeValue(v string) (value, rest string) {
+<a id="L232"></a><span class="ln">   232</span>		if !strings.HasPrefix(v, `&#34;`) &amp;&amp; !strings.HasPrefix(v, `&#39;`) {
+<a id="L233"></a><span class="ln">   233</span>			return consumeToken(v)
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>		leadQuote := rune(v[0])
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>		<span class="comment">// parse a quoted-string</span>
+<a id="L239"></a><span class="ln">   239</span>		rest = v[1:] <span class="comment">// consume the leading quote</span>
+<a id="L240"></a><span class="ln">   240</span>		buffer := new(bytes.Buffer)
+<a id="L241"></a><span class="ln">   241</span>		var idx int
+<a id="L242"></a><span class="ln">   242</span>		var r rune
+<a id="L243"></a><span class="ln">   243</span>		var nextIsLiteral bool
+<a id="L244"></a><span class="ln">   244</span>		for idx, r = range rest {
+<a id="L245"></a><span class="ln">   245</span>			switch {
+<a id="L246"></a><span class="ln">   246</span>			case nextIsLiteral:
+<a id="L247"></a><span class="ln">   247</span>				buffer.WriteRune(r)
+<a id="L248"></a><span class="ln">   248</span>				nextIsLiteral = false
+<a id="L249"></a><span class="ln">   249</span>			case r == leadQuote:
+<a id="L250"></a><span class="ln">   250</span>				return buffer.String(), rest[idx+1:]
+<a id="L251"></a><span class="ln">   251</span>			case r == &#39;\\&#39;:
+<a id="L252"></a><span class="ln">   252</span>				nextIsLiteral = true
+<a id="L253"></a><span class="ln">   253</span>			case r != &#39;\r&#39; &amp;&amp; r != &#39;\n&#39;:
+<a id="L254"></a><span class="ln">   254</span>				buffer.WriteRune(r)
+<a id="L255"></a><span class="ln">   255</span>			default:
+<a id="L256"></a><span class="ln">   256</span>				return &#34;&#34;, v
+<a id="L257"></a><span class="ln">   257</span>			}
+<a id="L258"></a><span class="ln">   258</span>		}
+<a id="L259"></a><span class="ln">   259</span>		return &#34;&#34;, v
+<a id="L260"></a><span class="ln">   260</span>	}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>	func consumeMediaParam(v string) (param, value, rest string) {
+<a id="L263"></a><span class="ln">   263</span>		rest = strings.TrimLeftFunc(v, unicode.IsSpace)
+<a id="L264"></a><span class="ln">   264</span>		if !strings.HasPrefix(rest, &#34;;&#34;) {
+<a id="L265"></a><span class="ln">   265</span>			return &#34;&#34;, &#34;&#34;, v
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>		rest = rest[1:] <span class="comment">// consume semicolon</span>
+<a id="L269"></a><span class="ln">   269</span>		rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+<a id="L270"></a><span class="ln">   270</span>		param, rest = consumeToken(rest)
+<a id="L271"></a><span class="ln">   271</span>		param = strings.ToLower(param)
+<a id="L272"></a><span class="ln">   272</span>		if param == &#34;&#34; {
+<a id="L273"></a><span class="ln">   273</span>			return &#34;&#34;, &#34;&#34;, v
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>	
+<a id="L276"></a><span class="ln">   276</span>		rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+<a id="L277"></a><span class="ln">   277</span>		if !strings.HasPrefix(rest, &#34;=&#34;) {
+<a id="L278"></a><span class="ln">   278</span>			return &#34;&#34;, &#34;&#34;, v
+<a id="L279"></a><span class="ln">   279</span>		}
+<a id="L280"></a><span class="ln">   280</span>		rest = rest[1:] <span class="comment">// consume equals sign</span>
+<a id="L281"></a><span class="ln">   281</span>		rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+<a id="L282"></a><span class="ln">   282</span>		value, rest = consumeValue(rest)
+<a id="L283"></a><span class="ln">   283</span>		if value == &#34;&#34; {
+<a id="L284"></a><span class="ln">   284</span>			return &#34;&#34;, &#34;&#34;, v
+<a id="L285"></a><span class="ln">   285</span>		}
+<a id="L286"></a><span class="ln">   286</span>		return param, value, rest
+<a id="L287"></a><span class="ln">   287</span>	}
+<a id="L288"></a><span class="ln">   288</span>	
+<a id="L289"></a><span class="ln">   289</span>	func percentHexUnescape(s string) (string, error) {
+<a id="L290"></a><span class="ln">   290</span>		<span class="comment">// Count %, check that they&#39;re well-formed.</span>
+<a id="L291"></a><span class="ln">   291</span>		percents := 0
+<a id="L292"></a><span class="ln">   292</span>		for i := 0; i &lt; len(s); {
+<a id="L293"></a><span class="ln">   293</span>			if s[i] != &#39;%&#39; {
+<a id="L294"></a><span class="ln">   294</span>				i++
+<a id="L295"></a><span class="ln">   295</span>				continue
+<a id="L296"></a><span class="ln">   296</span>			}
+<a id="L297"></a><span class="ln">   297</span>			percents++
+<a id="L298"></a><span class="ln">   298</span>			if i+2 &gt;= len(s) || !ishex(s[i+1]) || !ishex(s[i+2]) {
+<a id="L299"></a><span class="ln">   299</span>				s = s[i:]
+<a id="L300"></a><span class="ln">   300</span>				if len(s) &gt; 3 {
+<a id="L301"></a><span class="ln">   301</span>					s = s[0:3]
+<a id="L302"></a><span class="ln">   302</span>				}
+<a id="L303"></a><span class="ln">   303</span>				return &#34;&#34;, fmt.Errorf(&#34;mime: bogus characters after %%: %q&#34;, s)
+<a id="L304"></a><span class="ln">   304</span>			}
+<a id="L305"></a><span class="ln">   305</span>			i += 3
+<a id="L306"></a><span class="ln">   306</span>		}
+<a id="L307"></a><span class="ln">   307</span>		if percents == 0 {
+<a id="L308"></a><span class="ln">   308</span>			return s, nil
+<a id="L309"></a><span class="ln">   309</span>		}
+<a id="L310"></a><span class="ln">   310</span>	
+<a id="L311"></a><span class="ln">   311</span>		t := make([]byte, len(s)-2*percents)
+<a id="L312"></a><span class="ln">   312</span>		j := 0
+<a id="L313"></a><span class="ln">   313</span>		for i := 0; i &lt; len(s); {
+<a id="L314"></a><span class="ln">   314</span>			switch s[i] {
+<a id="L315"></a><span class="ln">   315</span>			case &#39;%&#39;:
+<a id="L316"></a><span class="ln">   316</span>				t[j] = unhex(s[i+1])&lt;&lt;4 | unhex(s[i+2])
+<a id="L317"></a><span class="ln">   317</span>				j++
+<a id="L318"></a><span class="ln">   318</span>				i += 3
+<a id="L319"></a><span class="ln">   319</span>			default:
+<a id="L320"></a><span class="ln">   320</span>				t[j] = s[i]
+<a id="L321"></a><span class="ln">   321</span>				j++
+<a id="L322"></a><span class="ln">   322</span>				i++
+<a id="L323"></a><span class="ln">   323</span>			}
+<a id="L324"></a><span class="ln">   324</span>		}
+<a id="L325"></a><span class="ln">   325</span>		return string(t), nil
+<a id="L326"></a><span class="ln">   326</span>	}
+<a id="L327"></a><span class="ln">   327</span>	
+<a id="L328"></a><span class="ln">   328</span>	func ishex(c byte) bool {
+<a id="L329"></a><span class="ln">   329</span>		switch {
+<a id="L330"></a><span class="ln">   330</span>		case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L331"></a><span class="ln">   331</span>			return true
+<a id="L332"></a><span class="ln">   332</span>		case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L333"></a><span class="ln">   333</span>			return true
+<a id="L334"></a><span class="ln">   334</span>		case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L335"></a><span class="ln">   335</span>			return true
+<a id="L336"></a><span class="ln">   336</span>		}
+<a id="L337"></a><span class="ln">   337</span>		return false
+<a id="L338"></a><span class="ln">   338</span>	}
+<a id="L339"></a><span class="ln">   339</span>	
+<a id="L340"></a><span class="ln">   340</span>	func unhex(c byte) byte {
+<a id="L341"></a><span class="ln">   341</span>		switch {
+<a id="L342"></a><span class="ln">   342</span>		case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L343"></a><span class="ln">   343</span>			return c - &#39;0&#39;
+<a id="L344"></a><span class="ln">   344</span>		case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L345"></a><span class="ln">   345</span>			return c - &#39;a&#39; + 10
+<a id="L346"></a><span class="ln">   346</span>		case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L347"></a><span class="ln">   347</span>			return c - &#39;A&#39; + 10
+<a id="L348"></a><span class="ln">   348</span>		}
+<a id="L349"></a><span class="ln">   349</span>		return 0
+<a id="L350"></a><span class="ln">   350</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

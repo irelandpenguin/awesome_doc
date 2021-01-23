@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/file.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/file.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package net
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;os&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;syscall&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	func newFileFD(f *os.File) (*netFD, error) {
+<a id="L15"></a><span class="ln">    15</span>		fd, err := syscall.Dup(int(f.Fd()))
+<a id="L16"></a><span class="ln">    16</span>		if err != nil {
+<a id="L17"></a><span class="ln">    17</span>			return nil, os.NewSyscallError(&#34;dup&#34;, err)
+<a id="L18"></a><span class="ln">    18</span>		}
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>		proto, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+<a id="L21"></a><span class="ln">    21</span>		if err != nil {
+<a id="L22"></a><span class="ln">    22</span>			return nil, os.NewSyscallError(&#34;getsockopt&#34;, err)
+<a id="L23"></a><span class="ln">    23</span>		}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>		family := syscall.AF_UNSPEC
+<a id="L26"></a><span class="ln">    26</span>		toAddr := sockaddrToTCP
+<a id="L27"></a><span class="ln">    27</span>		sa, _ := syscall.Getsockname(fd)
+<a id="L28"></a><span class="ln">    28</span>		switch sa.(type) {
+<a id="L29"></a><span class="ln">    29</span>		default:
+<a id="L30"></a><span class="ln">    30</span>			closesocket(fd)
+<a id="L31"></a><span class="ln">    31</span>			return nil, syscall.EINVAL
+<a id="L32"></a><span class="ln">    32</span>		case *syscall.SockaddrInet4:
+<a id="L33"></a><span class="ln">    33</span>			family = syscall.AF_INET
+<a id="L34"></a><span class="ln">    34</span>			if proto == syscall.SOCK_DGRAM {
+<a id="L35"></a><span class="ln">    35</span>				toAddr = sockaddrToUDP
+<a id="L36"></a><span class="ln">    36</span>			} else if proto == syscall.SOCK_RAW {
+<a id="L37"></a><span class="ln">    37</span>				toAddr = sockaddrToIP
+<a id="L38"></a><span class="ln">    38</span>			}
+<a id="L39"></a><span class="ln">    39</span>		case *syscall.SockaddrInet6:
+<a id="L40"></a><span class="ln">    40</span>			family = syscall.AF_INET6
+<a id="L41"></a><span class="ln">    41</span>			if proto == syscall.SOCK_DGRAM {
+<a id="L42"></a><span class="ln">    42</span>				toAddr = sockaddrToUDP
+<a id="L43"></a><span class="ln">    43</span>			} else if proto == syscall.SOCK_RAW {
+<a id="L44"></a><span class="ln">    44</span>				toAddr = sockaddrToIP
+<a id="L45"></a><span class="ln">    45</span>			}
+<a id="L46"></a><span class="ln">    46</span>		case *syscall.SockaddrUnix:
+<a id="L47"></a><span class="ln">    47</span>			family = syscall.AF_UNIX
+<a id="L48"></a><span class="ln">    48</span>			toAddr = sockaddrToUnix
+<a id="L49"></a><span class="ln">    49</span>			if proto == syscall.SOCK_DGRAM {
+<a id="L50"></a><span class="ln">    50</span>				toAddr = sockaddrToUnixgram
+<a id="L51"></a><span class="ln">    51</span>			} else if proto == syscall.SOCK_SEQPACKET {
+<a id="L52"></a><span class="ln">    52</span>				toAddr = sockaddrToUnixpacket
+<a id="L53"></a><span class="ln">    53</span>			}
+<a id="L54"></a><span class="ln">    54</span>		}
+<a id="L55"></a><span class="ln">    55</span>		laddr := toAddr(sa)
+<a id="L56"></a><span class="ln">    56</span>		sa, _ = syscall.Getpeername(fd)
+<a id="L57"></a><span class="ln">    57</span>		raddr := toAddr(sa)
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>		netfd, err := newFD(fd, family, proto, laddr.Network())
+<a id="L60"></a><span class="ln">    60</span>		if err != nil {
+<a id="L61"></a><span class="ln">    61</span>			return nil, err
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>		netfd.setAddr(laddr, raddr)
+<a id="L64"></a><span class="ln">    64</span>		return netfd, nil
+<a id="L65"></a><span class="ln">    65</span>	}
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// FileConn returns a copy of the network connection corresponding to</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// the open file f.  It is the caller&#39;s responsibility to close f when</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// finished.  Closing c does not affect f, and closing f does not</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// affect c.</span>
+<a id="L71"></a><span class="ln">    71</span>	func FileConn(f *os.File) (c Conn, err error) {
+<a id="L72"></a><span class="ln">    72</span>		fd, err := newFileFD(f)
+<a id="L73"></a><span class="ln">    73</span>		if err != nil {
+<a id="L74"></a><span class="ln">    74</span>			return nil, err
+<a id="L75"></a><span class="ln">    75</span>		}
+<a id="L76"></a><span class="ln">    76</span>		switch fd.laddr.(type) {
+<a id="L77"></a><span class="ln">    77</span>		case *TCPAddr:
+<a id="L78"></a><span class="ln">    78</span>			return newTCPConn(fd), nil
+<a id="L79"></a><span class="ln">    79</span>		case *UDPAddr:
+<a id="L80"></a><span class="ln">    80</span>			return newUDPConn(fd), nil
+<a id="L81"></a><span class="ln">    81</span>		case *UnixAddr:
+<a id="L82"></a><span class="ln">    82</span>			return newUnixConn(fd), nil
+<a id="L83"></a><span class="ln">    83</span>		case *IPAddr:
+<a id="L84"></a><span class="ln">    84</span>			return newIPConn(fd), nil
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>		fd.Close()
+<a id="L87"></a><span class="ln">    87</span>		return nil, syscall.EINVAL
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// FileListener returns a copy of the network listener corresponding</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// to the open file f.  It is the caller&#39;s responsibility to close l</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// when finished.  Closing c does not affect l, and closing l does not</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// affect c.</span>
+<a id="L94"></a><span class="ln">    94</span>	func FileListener(f *os.File) (l Listener, err error) {
+<a id="L95"></a><span class="ln">    95</span>		fd, err := newFileFD(f)
+<a id="L96"></a><span class="ln">    96</span>		if err != nil {
+<a id="L97"></a><span class="ln">    97</span>			return nil, err
+<a id="L98"></a><span class="ln">    98</span>		}
+<a id="L99"></a><span class="ln">    99</span>		switch laddr := fd.laddr.(type) {
+<a id="L100"></a><span class="ln">   100</span>		case *TCPAddr:
+<a id="L101"></a><span class="ln">   101</span>			return &amp;TCPListener{fd}, nil
+<a id="L102"></a><span class="ln">   102</span>		case *UnixAddr:
+<a id="L103"></a><span class="ln">   103</span>			return &amp;UnixListener{fd, laddr.Name}, nil
+<a id="L104"></a><span class="ln">   104</span>		}
+<a id="L105"></a><span class="ln">   105</span>		fd.Close()
+<a id="L106"></a><span class="ln">   106</span>		return nil, syscall.EINVAL
+<a id="L107"></a><span class="ln">   107</span>	}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// FilePacketConn returns a copy of the packet network connection</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// corresponding to the open file f.  It is the caller&#39;s</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// responsibility to close f when finished.  Closing c does not affect</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// f, and closing f does not affect c.</span>
+<a id="L113"></a><span class="ln">   113</span>	func FilePacketConn(f *os.File) (c PacketConn, err error) {
+<a id="L114"></a><span class="ln">   114</span>		fd, err := newFileFD(f)
+<a id="L115"></a><span class="ln">   115</span>		if err != nil {
+<a id="L116"></a><span class="ln">   116</span>			return nil, err
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>		switch fd.laddr.(type) {
+<a id="L119"></a><span class="ln">   119</span>		case *UDPAddr:
+<a id="L120"></a><span class="ln">   120</span>			return newUDPConn(fd), nil
+<a id="L121"></a><span class="ln">   121</span>		case *UnixAddr:
+<a id="L122"></a><span class="ln">   122</span>			return newUnixConn(fd), nil
+<a id="L123"></a><span class="ln">   123</span>		}
+<a id="L124"></a><span class="ln">   124</span>		fd.Close()
+<a id="L125"></a><span class="ln">   125</span>		return nil, syscall.EINVAL
+<a id="L126"></a><span class="ln">   126</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

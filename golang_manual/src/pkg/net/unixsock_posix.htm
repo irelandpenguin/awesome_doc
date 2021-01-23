@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/unixsock_posix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/unixsock_posix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd windows</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Unix domain sockets</span>
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	package net
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import (
+<a id="L12"></a><span class="ln">    12</span>		&#34;os&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;syscall&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;time&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	func unixSocket(net string, laddr, raddr *UnixAddr, mode string) (fd *netFD, err error) {
+<a id="L18"></a><span class="ln">    18</span>		var sotype int
+<a id="L19"></a><span class="ln">    19</span>		switch net {
+<a id="L20"></a><span class="ln">    20</span>		default:
+<a id="L21"></a><span class="ln">    21</span>			return nil, UnknownNetworkError(net)
+<a id="L22"></a><span class="ln">    22</span>		case &#34;unix&#34;:
+<a id="L23"></a><span class="ln">    23</span>			sotype = syscall.SOCK_STREAM
+<a id="L24"></a><span class="ln">    24</span>		case &#34;unixgram&#34;:
+<a id="L25"></a><span class="ln">    25</span>			sotype = syscall.SOCK_DGRAM
+<a id="L26"></a><span class="ln">    26</span>		case &#34;unixpacket&#34;:
+<a id="L27"></a><span class="ln">    27</span>			sotype = syscall.SOCK_SEQPACKET
+<a id="L28"></a><span class="ln">    28</span>		}
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>		var la, ra syscall.Sockaddr
+<a id="L31"></a><span class="ln">    31</span>		switch mode {
+<a id="L32"></a><span class="ln">    32</span>		default:
+<a id="L33"></a><span class="ln">    33</span>			panic(&#34;unixSocket mode &#34; + mode)
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>		case &#34;dial&#34;:
+<a id="L36"></a><span class="ln">    36</span>			if laddr != nil {
+<a id="L37"></a><span class="ln">    37</span>				la = &amp;syscall.SockaddrUnix{Name: laddr.Name}
+<a id="L38"></a><span class="ln">    38</span>			}
+<a id="L39"></a><span class="ln">    39</span>			if raddr != nil {
+<a id="L40"></a><span class="ln">    40</span>				ra = &amp;syscall.SockaddrUnix{Name: raddr.Name}
+<a id="L41"></a><span class="ln">    41</span>			} else if sotype != syscall.SOCK_DGRAM || laddr == nil {
+<a id="L42"></a><span class="ln">    42</span>				return nil, &amp;OpError{Op: mode, Net: net, Err: errMissingAddress}
+<a id="L43"></a><span class="ln">    43</span>			}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>		case &#34;listen&#34;:
+<a id="L46"></a><span class="ln">    46</span>			if laddr == nil {
+<a id="L47"></a><span class="ln">    47</span>				return nil, &amp;OpError{mode, net, nil, errMissingAddress}
+<a id="L48"></a><span class="ln">    48</span>			}
+<a id="L49"></a><span class="ln">    49</span>			la = &amp;syscall.SockaddrUnix{Name: laddr.Name}
+<a id="L50"></a><span class="ln">    50</span>			if raddr != nil {
+<a id="L51"></a><span class="ln">    51</span>				return nil, &amp;OpError{Op: mode, Net: net, Addr: raddr, Err: &amp;AddrError{Err: &#34;unexpected remote address&#34;, Addr: raddr.String()}}
+<a id="L52"></a><span class="ln">    52</span>			}
+<a id="L53"></a><span class="ln">    53</span>		}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>		f := sockaddrToUnix
+<a id="L56"></a><span class="ln">    56</span>		if sotype == syscall.SOCK_DGRAM {
+<a id="L57"></a><span class="ln">    57</span>			f = sockaddrToUnixgram
+<a id="L58"></a><span class="ln">    58</span>		} else if sotype == syscall.SOCK_SEQPACKET {
+<a id="L59"></a><span class="ln">    59</span>			f = sockaddrToUnixpacket
+<a id="L60"></a><span class="ln">    60</span>		}
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>		fd, err = socket(net, syscall.AF_UNIX, sotype, 0, false, la, ra, f)
+<a id="L63"></a><span class="ln">    63</span>		if err != nil {
+<a id="L64"></a><span class="ln">    64</span>			goto Error
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		return fd, nil
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	Error:
+<a id="L69"></a><span class="ln">    69</span>		addr := raddr
+<a id="L70"></a><span class="ln">    70</span>		if mode == &#34;listen&#34; {
+<a id="L71"></a><span class="ln">    71</span>			addr = laddr
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		return nil, &amp;OpError{Op: mode, Net: net, Addr: addr, Err: err}
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>	func sockaddrToUnix(sa syscall.Sockaddr) Addr {
+<a id="L77"></a><span class="ln">    77</span>		if s, ok := sa.(*syscall.SockaddrUnix); ok {
+<a id="L78"></a><span class="ln">    78</span>			return &amp;UnixAddr{s.Name, &#34;unix&#34;}
+<a id="L79"></a><span class="ln">    79</span>		}
+<a id="L80"></a><span class="ln">    80</span>		return nil
+<a id="L81"></a><span class="ln">    81</span>	}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	func sockaddrToUnixgram(sa syscall.Sockaddr) Addr {
+<a id="L84"></a><span class="ln">    84</span>		if s, ok := sa.(*syscall.SockaddrUnix); ok {
+<a id="L85"></a><span class="ln">    85</span>			return &amp;UnixAddr{s.Name, &#34;unixgram&#34;}
+<a id="L86"></a><span class="ln">    86</span>		}
+<a id="L87"></a><span class="ln">    87</span>		return nil
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	func sockaddrToUnixpacket(sa syscall.Sockaddr) Addr {
+<a id="L91"></a><span class="ln">    91</span>		if s, ok := sa.(*syscall.SockaddrUnix); ok {
+<a id="L92"></a><span class="ln">    92</span>			return &amp;UnixAddr{s.Name, &#34;unixpacket&#34;}
+<a id="L93"></a><span class="ln">    93</span>		}
+<a id="L94"></a><span class="ln">    94</span>		return nil
+<a id="L95"></a><span class="ln">    95</span>	}
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	func sotypeToNet(sotype int) string {
+<a id="L98"></a><span class="ln">    98</span>		switch sotype {
+<a id="L99"></a><span class="ln">    99</span>		case syscall.SOCK_STREAM:
+<a id="L100"></a><span class="ln">   100</span>			return &#34;unix&#34;
+<a id="L101"></a><span class="ln">   101</span>		case syscall.SOCK_SEQPACKET:
+<a id="L102"></a><span class="ln">   102</span>			return &#34;unixpacket&#34;
+<a id="L103"></a><span class="ln">   103</span>		case syscall.SOCK_DGRAM:
+<a id="L104"></a><span class="ln">   104</span>			return &#34;unixgram&#34;
+<a id="L105"></a><span class="ln">   105</span>		default:
+<a id="L106"></a><span class="ln">   106</span>			panic(&#34;sotypeToNet unknown socket type&#34;)
+<a id="L107"></a><span class="ln">   107</span>		}
+<a id="L108"></a><span class="ln">   108</span>		return &#34;&#34;
+<a id="L109"></a><span class="ln">   109</span>	}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// UnixConn is an implementation of the Conn interface</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// for connections to Unix domain sockets.</span>
+<a id="L113"></a><span class="ln">   113</span>	type UnixConn struct {
+<a id="L114"></a><span class="ln">   114</span>		fd *netFD
+<a id="L115"></a><span class="ln">   115</span>	}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	func newUnixConn(fd *netFD) *UnixConn { return &amp;UnixConn{fd} }
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	func (c *UnixConn) ok() bool { return c != nil &amp;&amp; c.fd != nil }
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// Implementation of the Conn interface - see Conn for documentation.</span>
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>	<span class="comment">// Read implements the Conn Read method.</span>
+<a id="L124"></a><span class="ln">   124</span>	func (c *UnixConn) Read(b []byte) (n int, err error) {
+<a id="L125"></a><span class="ln">   125</span>		if !c.ok() {
+<a id="L126"></a><span class="ln">   126</span>			return 0, syscall.EINVAL
+<a id="L127"></a><span class="ln">   127</span>		}
+<a id="L128"></a><span class="ln">   128</span>		return c.fd.Read(b)
+<a id="L129"></a><span class="ln">   129</span>	}
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>	<span class="comment">// Write implements the Conn Write method.</span>
+<a id="L132"></a><span class="ln">   132</span>	func (c *UnixConn) Write(b []byte) (n int, err error) {
+<a id="L133"></a><span class="ln">   133</span>		if !c.ok() {
+<a id="L134"></a><span class="ln">   134</span>			return 0, syscall.EINVAL
+<a id="L135"></a><span class="ln">   135</span>		}
+<a id="L136"></a><span class="ln">   136</span>		return c.fd.Write(b)
+<a id="L137"></a><span class="ln">   137</span>	}
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// Close closes the Unix domain connection.</span>
+<a id="L140"></a><span class="ln">   140</span>	func (c *UnixConn) Close() error {
+<a id="L141"></a><span class="ln">   141</span>		if !c.ok() {
+<a id="L142"></a><span class="ln">   142</span>			return syscall.EINVAL
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>		return c.fd.Close()
+<a id="L145"></a><span class="ln">   145</span>	}
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// LocalAddr returns the local network address, a *UnixAddr.</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// Unlike in other protocols, LocalAddr is usually nil for dialed connections.</span>
+<a id="L149"></a><span class="ln">   149</span>	func (c *UnixConn) LocalAddr() Addr {
+<a id="L150"></a><span class="ln">   150</span>		if !c.ok() {
+<a id="L151"></a><span class="ln">   151</span>			return nil
+<a id="L152"></a><span class="ln">   152</span>		}
+<a id="L153"></a><span class="ln">   153</span>		return c.fd.laddr
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// RemoteAddr returns the remote network address, a *UnixAddr.</span>
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// Unlike in other protocols, RemoteAddr is usually nil for connections</span>
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// accepted by a listener.</span>
+<a id="L159"></a><span class="ln">   159</span>	func (c *UnixConn) RemoteAddr() Addr {
+<a id="L160"></a><span class="ln">   160</span>		if !c.ok() {
+<a id="L161"></a><span class="ln">   161</span>			return nil
+<a id="L162"></a><span class="ln">   162</span>		}
+<a id="L163"></a><span class="ln">   163</span>		return c.fd.raddr
+<a id="L164"></a><span class="ln">   164</span>	}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// SetDeadline implements the Conn SetDeadline method.</span>
+<a id="L167"></a><span class="ln">   167</span>	func (c *UnixConn) SetDeadline(t time.Time) error {
+<a id="L168"></a><span class="ln">   168</span>		if !c.ok() {
+<a id="L169"></a><span class="ln">   169</span>			return syscall.EINVAL
+<a id="L170"></a><span class="ln">   170</span>		}
+<a id="L171"></a><span class="ln">   171</span>		return setDeadline(c.fd, t)
+<a id="L172"></a><span class="ln">   172</span>	}
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">// SetReadDeadline implements the Conn SetReadDeadline method.</span>
+<a id="L175"></a><span class="ln">   175</span>	func (c *UnixConn) SetReadDeadline(t time.Time) error {
+<a id="L176"></a><span class="ln">   176</span>		if !c.ok() {
+<a id="L177"></a><span class="ln">   177</span>			return syscall.EINVAL
+<a id="L178"></a><span class="ln">   178</span>		}
+<a id="L179"></a><span class="ln">   179</span>		return setReadDeadline(c.fd, t)
+<a id="L180"></a><span class="ln">   180</span>	}
+<a id="L181"></a><span class="ln">   181</span>	
+<a id="L182"></a><span class="ln">   182</span>	<span class="comment">// SetWriteDeadline implements the Conn SetWriteDeadline method.</span>
+<a id="L183"></a><span class="ln">   183</span>	func (c *UnixConn) SetWriteDeadline(t time.Time) error {
+<a id="L184"></a><span class="ln">   184</span>		if !c.ok() {
+<a id="L185"></a><span class="ln">   185</span>			return syscall.EINVAL
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		return setWriteDeadline(c.fd, t)
+<a id="L188"></a><span class="ln">   188</span>	}
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// SetReadBuffer sets the size of the operating system&#39;s</span>
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// receive buffer associated with the connection.</span>
+<a id="L192"></a><span class="ln">   192</span>	func (c *UnixConn) SetReadBuffer(bytes int) error {
+<a id="L193"></a><span class="ln">   193</span>		if !c.ok() {
+<a id="L194"></a><span class="ln">   194</span>			return syscall.EINVAL
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>		return setReadBuffer(c.fd, bytes)
+<a id="L197"></a><span class="ln">   197</span>	}
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// SetWriteBuffer sets the size of the operating system&#39;s</span>
+<a id="L200"></a><span class="ln">   200</span>	<span class="comment">// transmit buffer associated with the connection.</span>
+<a id="L201"></a><span class="ln">   201</span>	func (c *UnixConn) SetWriteBuffer(bytes int) error {
+<a id="L202"></a><span class="ln">   202</span>		if !c.ok() {
+<a id="L203"></a><span class="ln">   203</span>			return syscall.EINVAL
+<a id="L204"></a><span class="ln">   204</span>		}
+<a id="L205"></a><span class="ln">   205</span>		return setWriteBuffer(c.fd, bytes)
+<a id="L206"></a><span class="ln">   206</span>	}
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">// ReadFromUnix reads a packet from c, copying the payload into b.</span>
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">// It returns the number of bytes copied into b and the source address</span>
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// of the packet.</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">//</span>
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// ReadFromUnix can be made to time out and return</span>
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// an error with Timeout() == true after a fixed time limit;</span>
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// see SetDeadline and SetReadDeadline.</span>
+<a id="L215"></a><span class="ln">   215</span>	func (c *UnixConn) ReadFromUnix(b []byte) (n int, addr *UnixAddr, err error) {
+<a id="L216"></a><span class="ln">   216</span>		if !c.ok() {
+<a id="L217"></a><span class="ln">   217</span>			return 0, nil, syscall.EINVAL
+<a id="L218"></a><span class="ln">   218</span>		}
+<a id="L219"></a><span class="ln">   219</span>		n, sa, err := c.fd.ReadFrom(b)
+<a id="L220"></a><span class="ln">   220</span>		switch sa := sa.(type) {
+<a id="L221"></a><span class="ln">   221</span>		case *syscall.SockaddrUnix:
+<a id="L222"></a><span class="ln">   222</span>			addr = &amp;UnixAddr{sa.Name, sotypeToNet(c.fd.sotype)}
+<a id="L223"></a><span class="ln">   223</span>		}
+<a id="L224"></a><span class="ln">   224</span>		return
+<a id="L225"></a><span class="ln">   225</span>	}
+<a id="L226"></a><span class="ln">   226</span>	
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">// ReadFrom implements the PacketConn ReadFrom method.</span>
+<a id="L228"></a><span class="ln">   228</span>	func (c *UnixConn) ReadFrom(b []byte) (n int, addr Addr, err error) {
+<a id="L229"></a><span class="ln">   229</span>		if !c.ok() {
+<a id="L230"></a><span class="ln">   230</span>			return 0, nil, syscall.EINVAL
+<a id="L231"></a><span class="ln">   231</span>		}
+<a id="L232"></a><span class="ln">   232</span>		n, uaddr, err := c.ReadFromUnix(b)
+<a id="L233"></a><span class="ln">   233</span>		return n, uaddr.toAddr(), err
+<a id="L234"></a><span class="ln">   234</span>	}
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>	<span class="comment">// WriteToUnix writes a packet to addr via c, copying the payload from b.</span>
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">//</span>
+<a id="L238"></a><span class="ln">   238</span>	<span class="comment">// WriteToUnix can be made to time out and return</span>
+<a id="L239"></a><span class="ln">   239</span>	<span class="comment">// an error with Timeout() == true after a fixed time limit;</span>
+<a id="L240"></a><span class="ln">   240</span>	<span class="comment">// see SetDeadline and SetWriteDeadline.</span>
+<a id="L241"></a><span class="ln">   241</span>	<span class="comment">// On packet-oriented connections, write timeouts are rare.</span>
+<a id="L242"></a><span class="ln">   242</span>	func (c *UnixConn) WriteToUnix(b []byte, addr *UnixAddr) (n int, err error) {
+<a id="L243"></a><span class="ln">   243</span>		if !c.ok() {
+<a id="L244"></a><span class="ln">   244</span>			return 0, syscall.EINVAL
+<a id="L245"></a><span class="ln">   245</span>		}
+<a id="L246"></a><span class="ln">   246</span>		if addr.Net != sotypeToNet(c.fd.sotype) {
+<a id="L247"></a><span class="ln">   247</span>			return 0, syscall.EAFNOSUPPORT
+<a id="L248"></a><span class="ln">   248</span>		}
+<a id="L249"></a><span class="ln">   249</span>		sa := &amp;syscall.SockaddrUnix{Name: addr.Name}
+<a id="L250"></a><span class="ln">   250</span>		return c.fd.WriteTo(b, sa)
+<a id="L251"></a><span class="ln">   251</span>	}
+<a id="L252"></a><span class="ln">   252</span>	
+<a id="L253"></a><span class="ln">   253</span>	<span class="comment">// WriteTo implements the PacketConn WriteTo method.</span>
+<a id="L254"></a><span class="ln">   254</span>	func (c *UnixConn) WriteTo(b []byte, addr Addr) (n int, err error) {
+<a id="L255"></a><span class="ln">   255</span>		if !c.ok() {
+<a id="L256"></a><span class="ln">   256</span>			return 0, syscall.EINVAL
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>		a, ok := addr.(*UnixAddr)
+<a id="L259"></a><span class="ln">   259</span>		if !ok {
+<a id="L260"></a><span class="ln">   260</span>			return 0, &amp;OpError{&#34;write&#34;, c.fd.net, addr, syscall.EINVAL}
+<a id="L261"></a><span class="ln">   261</span>		}
+<a id="L262"></a><span class="ln">   262</span>		return c.WriteToUnix(b, a)
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// ReadMsgUnix reads a packet from c, copying the payload into b</span>
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// and the associated out-of-band data into oob.</span>
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// It returns the number of bytes copied into b, the number of</span>
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// bytes copied into oob, the flags that were set on the packet,</span>
+<a id="L269"></a><span class="ln">   269</span>	<span class="comment">// and the source address of the packet.</span>
+<a id="L270"></a><span class="ln">   270</span>	func (c *UnixConn) ReadMsgUnix(b, oob []byte) (n, oobn, flags int, addr *UnixAddr, err error) {
+<a id="L271"></a><span class="ln">   271</span>		if !c.ok() {
+<a id="L272"></a><span class="ln">   272</span>			return 0, 0, 0, nil, syscall.EINVAL
+<a id="L273"></a><span class="ln">   273</span>		}
+<a id="L274"></a><span class="ln">   274</span>		n, oobn, flags, sa, err := c.fd.ReadMsg(b, oob)
+<a id="L275"></a><span class="ln">   275</span>		switch sa := sa.(type) {
+<a id="L276"></a><span class="ln">   276</span>		case *syscall.SockaddrUnix:
+<a id="L277"></a><span class="ln">   277</span>			addr = &amp;UnixAddr{sa.Name, sotypeToNet(c.fd.sotype)}
+<a id="L278"></a><span class="ln">   278</span>		}
+<a id="L279"></a><span class="ln">   279</span>		return
+<a id="L280"></a><span class="ln">   280</span>	}
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// WriteMsgUnix writes a packet to addr via c, copying the payload from b</span>
+<a id="L283"></a><span class="ln">   283</span>	<span class="comment">// and the associated out-of-band data from oob.  It returns the number</span>
+<a id="L284"></a><span class="ln">   284</span>	<span class="comment">// of payload and out-of-band bytes written.</span>
+<a id="L285"></a><span class="ln">   285</span>	func (c *UnixConn) WriteMsgUnix(b, oob []byte, addr *UnixAddr) (n, oobn int, err error) {
+<a id="L286"></a><span class="ln">   286</span>		if !c.ok() {
+<a id="L287"></a><span class="ln">   287</span>			return 0, 0, syscall.EINVAL
+<a id="L288"></a><span class="ln">   288</span>		}
+<a id="L289"></a><span class="ln">   289</span>		if addr != nil {
+<a id="L290"></a><span class="ln">   290</span>			if addr.Net != sotypeToNet(c.fd.sotype) {
+<a id="L291"></a><span class="ln">   291</span>				return 0, 0, syscall.EAFNOSUPPORT
+<a id="L292"></a><span class="ln">   292</span>			}
+<a id="L293"></a><span class="ln">   293</span>			sa := &amp;syscall.SockaddrUnix{Name: addr.Name}
+<a id="L294"></a><span class="ln">   294</span>			return c.fd.WriteMsg(b, oob, sa)
+<a id="L295"></a><span class="ln">   295</span>		}
+<a id="L296"></a><span class="ln">   296</span>		return c.fd.WriteMsg(b, oob, nil)
+<a id="L297"></a><span class="ln">   297</span>	}
+<a id="L298"></a><span class="ln">   298</span>	
+<a id="L299"></a><span class="ln">   299</span>	<span class="comment">// File returns a copy of the underlying os.File, set to blocking mode.</span>
+<a id="L300"></a><span class="ln">   300</span>	<span class="comment">// It is the caller&#39;s responsibility to close f when finished.</span>
+<a id="L301"></a><span class="ln">   301</span>	<span class="comment">// Closing c does not affect f, and closing f does not affect c.</span>
+<a id="L302"></a><span class="ln">   302</span>	func (c *UnixConn) File() (f *os.File, err error) { return c.fd.dup() }
+<a id="L303"></a><span class="ln">   303</span>	
+<a id="L304"></a><span class="ln">   304</span>	<span class="comment">// DialUnix connects to the remote address raddr on the network net,</span>
+<a id="L305"></a><span class="ln">   305</span>	<span class="comment">// which must be &#34;unix&#34; or &#34;unixgram&#34;.  If laddr is not nil, it is used</span>
+<a id="L306"></a><span class="ln">   306</span>	<span class="comment">// as the local address for the connection.</span>
+<a id="L307"></a><span class="ln">   307</span>	func DialUnix(net string, laddr, raddr *UnixAddr) (*UnixConn, error) {
+<a id="L308"></a><span class="ln">   308</span>		fd, err := unixSocket(net, laddr, raddr, &#34;dial&#34;)
+<a id="L309"></a><span class="ln">   309</span>		if err != nil {
+<a id="L310"></a><span class="ln">   310</span>			return nil, err
+<a id="L311"></a><span class="ln">   311</span>		}
+<a id="L312"></a><span class="ln">   312</span>		return newUnixConn(fd), nil
+<a id="L313"></a><span class="ln">   313</span>	}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// UnixListener is a Unix domain socket listener.</span>
+<a id="L316"></a><span class="ln">   316</span>	<span class="comment">// Clients should typically use variables of type Listener</span>
+<a id="L317"></a><span class="ln">   317</span>	<span class="comment">// instead of assuming Unix domain sockets.</span>
+<a id="L318"></a><span class="ln">   318</span>	type UnixListener struct {
+<a id="L319"></a><span class="ln">   319</span>		fd   *netFD
+<a id="L320"></a><span class="ln">   320</span>		path string
+<a id="L321"></a><span class="ln">   321</span>	}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// ListenUnix announces on the Unix domain socket laddr and returns a Unix listener.</span>
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">// Net must be &#34;unix&#34; (stream sockets).</span>
+<a id="L325"></a><span class="ln">   325</span>	func ListenUnix(net string, laddr *UnixAddr) (*UnixListener, error) {
+<a id="L326"></a><span class="ln">   326</span>		if net != &#34;unix&#34; &amp;&amp; net != &#34;unixgram&#34; &amp;&amp; net != &#34;unixpacket&#34; {
+<a id="L327"></a><span class="ln">   327</span>			return nil, UnknownNetworkError(net)
+<a id="L328"></a><span class="ln">   328</span>		}
+<a id="L329"></a><span class="ln">   329</span>		if laddr != nil {
+<a id="L330"></a><span class="ln">   330</span>			laddr = &amp;UnixAddr{laddr.Name, net} <span class="comment">// make our own copy</span>
+<a id="L331"></a><span class="ln">   331</span>		}
+<a id="L332"></a><span class="ln">   332</span>		fd, err := unixSocket(net, laddr, nil, &#34;listen&#34;)
+<a id="L333"></a><span class="ln">   333</span>		if err != nil {
+<a id="L334"></a><span class="ln">   334</span>			return nil, err
+<a id="L335"></a><span class="ln">   335</span>		}
+<a id="L336"></a><span class="ln">   336</span>		err = syscall.Listen(fd.sysfd, listenerBacklog)
+<a id="L337"></a><span class="ln">   337</span>		if err != nil {
+<a id="L338"></a><span class="ln">   338</span>			closesocket(fd.sysfd)
+<a id="L339"></a><span class="ln">   339</span>			return nil, &amp;OpError{Op: &#34;listen&#34;, Net: net, Addr: laddr, Err: err}
+<a id="L340"></a><span class="ln">   340</span>		}
+<a id="L341"></a><span class="ln">   341</span>		return &amp;UnixListener{fd, laddr.Name}, nil
+<a id="L342"></a><span class="ln">   342</span>	}
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// AcceptUnix accepts the next incoming call and returns the new connection</span>
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// and the remote address.</span>
+<a id="L346"></a><span class="ln">   346</span>	func (l *UnixListener) AcceptUnix() (*UnixConn, error) {
+<a id="L347"></a><span class="ln">   347</span>		if l == nil || l.fd == nil {
+<a id="L348"></a><span class="ln">   348</span>			return nil, syscall.EINVAL
+<a id="L349"></a><span class="ln">   349</span>		}
+<a id="L350"></a><span class="ln">   350</span>		fd, err := l.fd.accept(sockaddrToUnix)
+<a id="L351"></a><span class="ln">   351</span>		if err != nil {
+<a id="L352"></a><span class="ln">   352</span>			return nil, err
+<a id="L353"></a><span class="ln">   353</span>		}
+<a id="L354"></a><span class="ln">   354</span>		c := newUnixConn(fd)
+<a id="L355"></a><span class="ln">   355</span>		return c, nil
+<a id="L356"></a><span class="ln">   356</span>	}
+<a id="L357"></a><span class="ln">   357</span>	
+<a id="L358"></a><span class="ln">   358</span>	<span class="comment">// Accept implements the Accept method in the Listener interface;</span>
+<a id="L359"></a><span class="ln">   359</span>	<span class="comment">// it waits for the next call and returns a generic Conn.</span>
+<a id="L360"></a><span class="ln">   360</span>	func (l *UnixListener) Accept() (c Conn, err error) {
+<a id="L361"></a><span class="ln">   361</span>		c1, err := l.AcceptUnix()
+<a id="L362"></a><span class="ln">   362</span>		if err != nil {
+<a id="L363"></a><span class="ln">   363</span>			return nil, err
+<a id="L364"></a><span class="ln">   364</span>		}
+<a id="L365"></a><span class="ln">   365</span>		return c1, nil
+<a id="L366"></a><span class="ln">   366</span>	}
+<a id="L367"></a><span class="ln">   367</span>	
+<a id="L368"></a><span class="ln">   368</span>	<span class="comment">// Close stops listening on the Unix address.</span>
+<a id="L369"></a><span class="ln">   369</span>	<span class="comment">// Already accepted connections are not closed.</span>
+<a id="L370"></a><span class="ln">   370</span>	func (l *UnixListener) Close() error {
+<a id="L371"></a><span class="ln">   371</span>		if l == nil || l.fd == nil {
+<a id="L372"></a><span class="ln">   372</span>			return syscall.EINVAL
+<a id="L373"></a><span class="ln">   373</span>		}
+<a id="L374"></a><span class="ln">   374</span>	
+<a id="L375"></a><span class="ln">   375</span>		<span class="comment">// The operating system doesn&#39;t clean up</span>
+<a id="L376"></a><span class="ln">   376</span>		<span class="comment">// the file that announcing created, so</span>
+<a id="L377"></a><span class="ln">   377</span>		<span class="comment">// we have to clean it up ourselves.</span>
+<a id="L378"></a><span class="ln">   378</span>		<span class="comment">// There&#39;s a race here--we can&#39;t know for</span>
+<a id="L379"></a><span class="ln">   379</span>		<span class="comment">// sure whether someone else has come along</span>
+<a id="L380"></a><span class="ln">   380</span>		<span class="comment">// and replaced our socket name already--</span>
+<a id="L381"></a><span class="ln">   381</span>		<span class="comment">// but this sequence (remove then close)</span>
+<a id="L382"></a><span class="ln">   382</span>		<span class="comment">// is at least compatible with the auto-remove</span>
+<a id="L383"></a><span class="ln">   383</span>		<span class="comment">// sequence in ListenUnix.  It&#39;s only non-Go</span>
+<a id="L384"></a><span class="ln">   384</span>		<span class="comment">// programs that can mess us up.</span>
+<a id="L385"></a><span class="ln">   385</span>		if l.path[0] != &#39;@&#39; {
+<a id="L386"></a><span class="ln">   386</span>			syscall.Unlink(l.path)
+<a id="L387"></a><span class="ln">   387</span>		}
+<a id="L388"></a><span class="ln">   388</span>		err := l.fd.Close()
+<a id="L389"></a><span class="ln">   389</span>		l.fd = nil
+<a id="L390"></a><span class="ln">   390</span>		return err
+<a id="L391"></a><span class="ln">   391</span>	}
+<a id="L392"></a><span class="ln">   392</span>	
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// Addr returns the listener&#39;s network address.</span>
+<a id="L394"></a><span class="ln">   394</span>	func (l *UnixListener) Addr() Addr { return l.fd.laddr }
+<a id="L395"></a><span class="ln">   395</span>	
+<a id="L396"></a><span class="ln">   396</span>	<span class="comment">// SetDeadline sets the deadline associated with the listener.</span>
+<a id="L397"></a><span class="ln">   397</span>	<span class="comment">// A zero time value disables the deadline.</span>
+<a id="L398"></a><span class="ln">   398</span>	func (l *UnixListener) SetDeadline(t time.Time) (err error) {
+<a id="L399"></a><span class="ln">   399</span>		if l == nil || l.fd == nil {
+<a id="L400"></a><span class="ln">   400</span>			return syscall.EINVAL
+<a id="L401"></a><span class="ln">   401</span>		}
+<a id="L402"></a><span class="ln">   402</span>		return setDeadline(l.fd, t)
+<a id="L403"></a><span class="ln">   403</span>	}
+<a id="L404"></a><span class="ln">   404</span>	
+<a id="L405"></a><span class="ln">   405</span>	<span class="comment">// File returns a copy of the underlying os.File, set to blocking mode.</span>
+<a id="L406"></a><span class="ln">   406</span>	<span class="comment">// It is the caller&#39;s responsibility to close f when finished.</span>
+<a id="L407"></a><span class="ln">   407</span>	<span class="comment">// Closing l does not affect f, and closing f does not affect l.</span>
+<a id="L408"></a><span class="ln">   408</span>	func (l *UnixListener) File() (f *os.File, err error) { return l.fd.dup() }
+<a id="L409"></a><span class="ln">   409</span>	
+<a id="L410"></a><span class="ln">   410</span>	<span class="comment">// ListenUnixgram listens for incoming Unix datagram packets addressed to the</span>
+<a id="L411"></a><span class="ln">   411</span>	<span class="comment">// local address laddr.  The returned connection c&#39;s ReadFrom</span>
+<a id="L412"></a><span class="ln">   412</span>	<span class="comment">// and WriteTo methods can be used to receive and send UDP</span>
+<a id="L413"></a><span class="ln">   413</span>	<span class="comment">// packets with per-packet addressing.  The network net must be &#34;unixgram&#34;.</span>
+<a id="L414"></a><span class="ln">   414</span>	func ListenUnixgram(net string, laddr *UnixAddr) (*UDPConn, error) {
+<a id="L415"></a><span class="ln">   415</span>		switch net {
+<a id="L416"></a><span class="ln">   416</span>		case &#34;unixgram&#34;:
+<a id="L417"></a><span class="ln">   417</span>		default:
+<a id="L418"></a><span class="ln">   418</span>			return nil, UnknownNetworkError(net)
+<a id="L419"></a><span class="ln">   419</span>		}
+<a id="L420"></a><span class="ln">   420</span>		if laddr == nil {
+<a id="L421"></a><span class="ln">   421</span>			return nil, &amp;OpError{&#34;listen&#34;, net, nil, errMissingAddress}
+<a id="L422"></a><span class="ln">   422</span>		}
+<a id="L423"></a><span class="ln">   423</span>		fd, err := unixSocket(net, laddr, nil, &#34;listen&#34;)
+<a id="L424"></a><span class="ln">   424</span>		if err != nil {
+<a id="L425"></a><span class="ln">   425</span>			return nil, err
+<a id="L426"></a><span class="ln">   426</span>		}
+<a id="L427"></a><span class="ln">   427</span>		return newUDPConn(fd), nil
+<a id="L428"></a><span class="ln">   428</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

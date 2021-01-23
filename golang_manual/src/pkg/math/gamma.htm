@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/gamma.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/gamma.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package math
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// The original C code, the long comment, and the constants</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// below are from http://netlib.sandia.gov/cephes/cprob/gamma.c.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// The go code is a simplified version of the original C.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">//</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//      tgamma.c</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">//      Gamma function</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">//</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// SYNOPSIS:</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">//</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// double x, y, tgamma();</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// extern int signgam;</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// y = tgamma( x );</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// DESCRIPTION:</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// Returns gamma function of the argument.  The result is</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// correctly signed, and the sign (+1 or -1) is also</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// returned in a global (extern) variable named signgam.</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// This variable is also filled in by the logarithmic gamma</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// function lgamma().</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// Arguments |x| &lt;= 34 are reduced by recurrence and the function</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// approximated by a rational function of degree 6/7 in the</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// interval (2,3).  Large arguments are handled by Stirling&#39;s</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// formula. Large negative arguments are made positive using</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// a reflection formula.</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// ACCURACY:</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//                      Relative error:</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// arithmetic   domain     # trials      peak         rms</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//    DEC      -34, 34      10000       1.3e-16     2.5e-17</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//    IEEE    -170,-33      20000       2.3e-15     3.3e-16</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//    IEEE     -33,  33     20000       9.4e-16     2.2e-16</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//    IEEE      33, 171.6   20000       2.3e-15     3.2e-16</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Error for arguments outside the test range will be larger</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// owing to error amplification by the exponential function.</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// Cephes Math Library Release 2.8:  June, 2000</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// Copyright 1984, 1987, 1989, 1992, 2000 by Stephen L. Moshier</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// The readme file at http://netlib.sandia.gov/cephes/ says:</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//    Some software in this archive may be from the book _Methods and</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// Programs for Mathematical Functions_ (Prentice-Hall or Simon &amp; Schuster</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// International, 1989) or from the Cephes Mathematical Library, a</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// commercial product. In either event, it is copyrighted by the author.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// What you see here may be used freely but it comes with no support or</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// guarantee.</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">//</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">//   The two known misprints in the book are repaired here in the</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// source listings for the gamma function and the incomplete beta</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// integral.</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">//</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">//   Stephen L. Moshier</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">//   moshier@na-net.ornl.gov</span>
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	var _gamP = [...]float64{
+<a id="L67"></a><span class="ln">    67</span>		1.60119522476751861407e-04,
+<a id="L68"></a><span class="ln">    68</span>		1.19135147006586384913e-03,
+<a id="L69"></a><span class="ln">    69</span>		1.04213797561761569935e-02,
+<a id="L70"></a><span class="ln">    70</span>		4.76367800457137231464e-02,
+<a id="L71"></a><span class="ln">    71</span>		2.07448227648435975150e-01,
+<a id="L72"></a><span class="ln">    72</span>		4.94214826801497100753e-01,
+<a id="L73"></a><span class="ln">    73</span>		9.99999999999999996796e-01,
+<a id="L74"></a><span class="ln">    74</span>	}
+<a id="L75"></a><span class="ln">    75</span>	var _gamQ = [...]float64{
+<a id="L76"></a><span class="ln">    76</span>		-2.31581873324120129819e-05,
+<a id="L77"></a><span class="ln">    77</span>		5.39605580493303397842e-04,
+<a id="L78"></a><span class="ln">    78</span>		-4.45641913851797240494e-03,
+<a id="L79"></a><span class="ln">    79</span>		1.18139785222060435552e-02,
+<a id="L80"></a><span class="ln">    80</span>		3.58236398605498653373e-02,
+<a id="L81"></a><span class="ln">    81</span>		-2.34591795718243348568e-01,
+<a id="L82"></a><span class="ln">    82</span>		7.14304917030273074085e-02,
+<a id="L83"></a><span class="ln">    83</span>		1.00000000000000000320e+00,
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	var _gamS = [...]float64{
+<a id="L86"></a><span class="ln">    86</span>		7.87311395793093628397e-04,
+<a id="L87"></a><span class="ln">    87</span>		-2.29549961613378126380e-04,
+<a id="L88"></a><span class="ln">    88</span>		-2.68132617805781232825e-03,
+<a id="L89"></a><span class="ln">    89</span>		3.47222221605458667310e-03,
+<a id="L90"></a><span class="ln">    90</span>		8.33333333333482257126e-02,
+<a id="L91"></a><span class="ln">    91</span>	}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// Gamma function computed by Stirling&#39;s formula.</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// The polynomial is valid for 33 &lt;= x &lt;= 172.</span>
+<a id="L95"></a><span class="ln">    95</span>	func stirling(x float64) float64 {
+<a id="L96"></a><span class="ln">    96</span>		const (
+<a id="L97"></a><span class="ln">    97</span>			SqrtTwoPi   = 2.506628274631000502417
+<a id="L98"></a><span class="ln">    98</span>			MaxStirling = 143.01608
+<a id="L99"></a><span class="ln">    99</span>		)
+<a id="L100"></a><span class="ln">   100</span>		w := 1 / x
+<a id="L101"></a><span class="ln">   101</span>		w = 1 + w*((((_gamS[0]*w+_gamS[1])*w+_gamS[2])*w+_gamS[3])*w+_gamS[4])
+<a id="L102"></a><span class="ln">   102</span>		y := Exp(x)
+<a id="L103"></a><span class="ln">   103</span>		if x &gt; MaxStirling { <span class="comment">// avoid Pow() overflow</span>
+<a id="L104"></a><span class="ln">   104</span>			v := Pow(x, 0.5*x-0.25)
+<a id="L105"></a><span class="ln">   105</span>			y = v * (v / y)
+<a id="L106"></a><span class="ln">   106</span>		} else {
+<a id="L107"></a><span class="ln">   107</span>			y = Pow(x, x-0.5) / y
+<a id="L108"></a><span class="ln">   108</span>		}
+<a id="L109"></a><span class="ln">   109</span>		y = SqrtTwoPi * y * w
+<a id="L110"></a><span class="ln">   110</span>		return y
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// Gamma(x) returns the Gamma function of x.</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">//</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// Special cases are:</span>
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">//	Gamma(±Inf) = ±Inf</span>
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">//	Gamma(NaN) = NaN</span>
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">// Large values overflow to +Inf.</span>
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// Zero and negative integer arguments return ±Inf.</span>
+<a id="L120"></a><span class="ln">   120</span>	func Gamma(x float64) float64 {
+<a id="L121"></a><span class="ln">   121</span>		const Euler = 0.57721566490153286060651209008240243104215933593992 <span class="comment">// A001620</span>
+<a id="L122"></a><span class="ln">   122</span>		<span class="comment">// special cases</span>
+<a id="L123"></a><span class="ln">   123</span>		switch {
+<a id="L124"></a><span class="ln">   124</span>		case IsInf(x, -1) || IsNaN(x):
+<a id="L125"></a><span class="ln">   125</span>			return x
+<a id="L126"></a><span class="ln">   126</span>		case x &lt; -170.5674972726612 || x &gt; 171.61447887182298:
+<a id="L127"></a><span class="ln">   127</span>			return Inf(1)
+<a id="L128"></a><span class="ln">   128</span>		}
+<a id="L129"></a><span class="ln">   129</span>		q := Abs(x)
+<a id="L130"></a><span class="ln">   130</span>		p := Floor(q)
+<a id="L131"></a><span class="ln">   131</span>		if q &gt; 33 {
+<a id="L132"></a><span class="ln">   132</span>			if x &gt;= 0 {
+<a id="L133"></a><span class="ln">   133</span>				return stirling(x)
+<a id="L134"></a><span class="ln">   134</span>			}
+<a id="L135"></a><span class="ln">   135</span>			signgam := 1
+<a id="L136"></a><span class="ln">   136</span>			if ip := int(p); ip&amp;1 == 0 {
+<a id="L137"></a><span class="ln">   137</span>				signgam = -1
+<a id="L138"></a><span class="ln">   138</span>			}
+<a id="L139"></a><span class="ln">   139</span>			z := q - p
+<a id="L140"></a><span class="ln">   140</span>			if z &gt; 0.5 {
+<a id="L141"></a><span class="ln">   141</span>				p = p + 1
+<a id="L142"></a><span class="ln">   142</span>				z = q - p
+<a id="L143"></a><span class="ln">   143</span>			}
+<a id="L144"></a><span class="ln">   144</span>			z = q * Sin(Pi*z)
+<a id="L145"></a><span class="ln">   145</span>			if z == 0 {
+<a id="L146"></a><span class="ln">   146</span>				return Inf(signgam)
+<a id="L147"></a><span class="ln">   147</span>			}
+<a id="L148"></a><span class="ln">   148</span>			z = Pi / (Abs(z) * stirling(q))
+<a id="L149"></a><span class="ln">   149</span>			return float64(signgam) * z
+<a id="L150"></a><span class="ln">   150</span>		}
+<a id="L151"></a><span class="ln">   151</span>	
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">// Reduce argument</span>
+<a id="L153"></a><span class="ln">   153</span>		z := 1.0
+<a id="L154"></a><span class="ln">   154</span>		for x &gt;= 3 {
+<a id="L155"></a><span class="ln">   155</span>			x = x - 1
+<a id="L156"></a><span class="ln">   156</span>			z = z * x
+<a id="L157"></a><span class="ln">   157</span>		}
+<a id="L158"></a><span class="ln">   158</span>		for x &lt; 0 {
+<a id="L159"></a><span class="ln">   159</span>			if x &gt; -1e-09 {
+<a id="L160"></a><span class="ln">   160</span>				goto small
+<a id="L161"></a><span class="ln">   161</span>			}
+<a id="L162"></a><span class="ln">   162</span>			z = z / x
+<a id="L163"></a><span class="ln">   163</span>			x = x + 1
+<a id="L164"></a><span class="ln">   164</span>		}
+<a id="L165"></a><span class="ln">   165</span>		for x &lt; 2 {
+<a id="L166"></a><span class="ln">   166</span>			if x &lt; 1e-09 {
+<a id="L167"></a><span class="ln">   167</span>				goto small
+<a id="L168"></a><span class="ln">   168</span>			}
+<a id="L169"></a><span class="ln">   169</span>			z = z / x
+<a id="L170"></a><span class="ln">   170</span>			x = x + 1
+<a id="L171"></a><span class="ln">   171</span>		}
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>		if x == 2 {
+<a id="L174"></a><span class="ln">   174</span>			return z
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>		x = x - 2
+<a id="L178"></a><span class="ln">   178</span>		p = (((((x*_gamP[0]+_gamP[1])*x+_gamP[2])*x+_gamP[3])*x+_gamP[4])*x+_gamP[5])*x + _gamP[6]
+<a id="L179"></a><span class="ln">   179</span>		q = ((((((x*_gamQ[0]+_gamQ[1])*x+_gamQ[2])*x+_gamQ[3])*x+_gamQ[4])*x+_gamQ[5])*x+_gamQ[6])*x + _gamQ[7]
+<a id="L180"></a><span class="ln">   180</span>		return z * p / q
+<a id="L181"></a><span class="ln">   181</span>	
+<a id="L182"></a><span class="ln">   182</span>	small:
+<a id="L183"></a><span class="ln">   183</span>		if x == 0 {
+<a id="L184"></a><span class="ln">   184</span>			return Inf(1)
+<a id="L185"></a><span class="ln">   185</span>		}
+<a id="L186"></a><span class="ln">   186</span>		return z / ((1 + Euler*x) * x)
+<a id="L187"></a><span class="ln">   187</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

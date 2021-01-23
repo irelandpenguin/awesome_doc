@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/text/template/funcs.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/text/template/funcs.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package template
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bytes&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;fmt&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;io&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;net/url&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;reflect&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strings&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;unicode&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;unicode/utf8&#34;
+<a id="L16"></a><span class="ln">    16</span>	)
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// FuncMap is the type of the map defining the mapping from names to functions.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Each function must have either a single return value, or two return values of</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// which the second has type error. In that case, if the second (error)</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// argument evaluates to non-nil during execution, execution terminates and</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// Execute returns that error.</span>
+<a id="L23"></a><span class="ln">    23</span>	type FuncMap map[string]interface{}
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	var builtins = FuncMap{
+<a id="L26"></a><span class="ln">    26</span>		&#34;and&#34;:      and,
+<a id="L27"></a><span class="ln">    27</span>		&#34;call&#34;:     call,
+<a id="L28"></a><span class="ln">    28</span>		&#34;html&#34;:     HTMLEscaper,
+<a id="L29"></a><span class="ln">    29</span>		&#34;index&#34;:    index,
+<a id="L30"></a><span class="ln">    30</span>		&#34;js&#34;:       JSEscaper,
+<a id="L31"></a><span class="ln">    31</span>		&#34;len&#34;:      length,
+<a id="L32"></a><span class="ln">    32</span>		&#34;not&#34;:      not,
+<a id="L33"></a><span class="ln">    33</span>		&#34;or&#34;:       or,
+<a id="L34"></a><span class="ln">    34</span>		&#34;print&#34;:    fmt.Sprint,
+<a id="L35"></a><span class="ln">    35</span>		&#34;printf&#34;:   fmt.Sprintf,
+<a id="L36"></a><span class="ln">    36</span>		&#34;println&#34;:  fmt.Sprintln,
+<a id="L37"></a><span class="ln">    37</span>		&#34;urlquery&#34;: URLQueryEscaper,
+<a id="L38"></a><span class="ln">    38</span>	}
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	var builtinFuncs = createValueFuncs(builtins)
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// createValueFuncs turns a FuncMap into a map[string]reflect.Value</span>
+<a id="L43"></a><span class="ln">    43</span>	func createValueFuncs(funcMap FuncMap) map[string]reflect.Value {
+<a id="L44"></a><span class="ln">    44</span>		m := make(map[string]reflect.Value)
+<a id="L45"></a><span class="ln">    45</span>		addValueFuncs(m, funcMap)
+<a id="L46"></a><span class="ln">    46</span>		return m
+<a id="L47"></a><span class="ln">    47</span>	}
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// addValueFuncs adds to values the functions in funcs, converting them to reflect.Values.</span>
+<a id="L50"></a><span class="ln">    50</span>	func addValueFuncs(out map[string]reflect.Value, in FuncMap) {
+<a id="L51"></a><span class="ln">    51</span>		for name, fn := range in {
+<a id="L52"></a><span class="ln">    52</span>			v := reflect.ValueOf(fn)
+<a id="L53"></a><span class="ln">    53</span>			if v.Kind() != reflect.Func {
+<a id="L54"></a><span class="ln">    54</span>				panic(&#34;value for &#34; + name + &#34; not a function&#34;)
+<a id="L55"></a><span class="ln">    55</span>			}
+<a id="L56"></a><span class="ln">    56</span>			if !goodFunc(v.Type()) {
+<a id="L57"></a><span class="ln">    57</span>				panic(fmt.Errorf(&#34;can&#39;t handle multiple results from method/function %q&#34;, name))
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>			out[name] = v
+<a id="L60"></a><span class="ln">    60</span>		}
+<a id="L61"></a><span class="ln">    61</span>	}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// addFuncs adds to values the functions in funcs. It does no checking of the input -</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// call addValueFuncs first.</span>
+<a id="L65"></a><span class="ln">    65</span>	func addFuncs(out, in FuncMap) {
+<a id="L66"></a><span class="ln">    66</span>		for name, fn := range in {
+<a id="L67"></a><span class="ln">    67</span>			out[name] = fn
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// goodFunc checks that the function or method has the right result signature.</span>
+<a id="L72"></a><span class="ln">    72</span>	func goodFunc(typ reflect.Type) bool {
+<a id="L73"></a><span class="ln">    73</span>		<span class="comment">// We allow functions with 1 result or 2 results where the second is an error.</span>
+<a id="L74"></a><span class="ln">    74</span>		switch {
+<a id="L75"></a><span class="ln">    75</span>		case typ.NumOut() == 1:
+<a id="L76"></a><span class="ln">    76</span>			return true
+<a id="L77"></a><span class="ln">    77</span>		case typ.NumOut() == 2 &amp;&amp; typ.Out(1) == errorType:
+<a id="L78"></a><span class="ln">    78</span>			return true
+<a id="L79"></a><span class="ln">    79</span>		}
+<a id="L80"></a><span class="ln">    80</span>		return false
+<a id="L81"></a><span class="ln">    81</span>	}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// findFunction looks for a function in the template, and global map.</span>
+<a id="L84"></a><span class="ln">    84</span>	func findFunction(name string, tmpl *Template) (reflect.Value, bool) {
+<a id="L85"></a><span class="ln">    85</span>		if tmpl != nil &amp;&amp; tmpl.common != nil {
+<a id="L86"></a><span class="ln">    86</span>			if fn := tmpl.execFuncs[name]; fn.IsValid() {
+<a id="L87"></a><span class="ln">    87</span>				return fn, true
+<a id="L88"></a><span class="ln">    88</span>			}
+<a id="L89"></a><span class="ln">    89</span>		}
+<a id="L90"></a><span class="ln">    90</span>		if fn := builtinFuncs[name]; fn.IsValid() {
+<a id="L91"></a><span class="ln">    91</span>			return fn, true
+<a id="L92"></a><span class="ln">    92</span>		}
+<a id="L93"></a><span class="ln">    93</span>		return reflect.Value{}, false
+<a id="L94"></a><span class="ln">    94</span>	}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">// Indexing.</span>
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// index returns the result of indexing its first argument by the following</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// arguments.  Thus &#34;index x 1 2 3&#34; is, in Go syntax, x[1][2][3]. Each</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// indexed item must be a map, slice, or array.</span>
+<a id="L101"></a><span class="ln">   101</span>	func index(item interface{}, indices ...interface{}) (interface{}, error) {
+<a id="L102"></a><span class="ln">   102</span>		v := reflect.ValueOf(item)
+<a id="L103"></a><span class="ln">   103</span>		for _, i := range indices {
+<a id="L104"></a><span class="ln">   104</span>			index := reflect.ValueOf(i)
+<a id="L105"></a><span class="ln">   105</span>			var isNil bool
+<a id="L106"></a><span class="ln">   106</span>			if v, isNil = indirect(v); isNil {
+<a id="L107"></a><span class="ln">   107</span>				return nil, fmt.Errorf(&#34;index of nil pointer&#34;)
+<a id="L108"></a><span class="ln">   108</span>			}
+<a id="L109"></a><span class="ln">   109</span>			switch v.Kind() {
+<a id="L110"></a><span class="ln">   110</span>			case reflect.Array, reflect.Slice:
+<a id="L111"></a><span class="ln">   111</span>				var x int64
+<a id="L112"></a><span class="ln">   112</span>				switch index.Kind() {
+<a id="L113"></a><span class="ln">   113</span>				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L114"></a><span class="ln">   114</span>					x = index.Int()
+<a id="L115"></a><span class="ln">   115</span>				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L116"></a><span class="ln">   116</span>					x = int64(index.Uint())
+<a id="L117"></a><span class="ln">   117</span>				default:
+<a id="L118"></a><span class="ln">   118</span>					return nil, fmt.Errorf(&#34;cannot index slice/array with type %s&#34;, index.Type())
+<a id="L119"></a><span class="ln">   119</span>				}
+<a id="L120"></a><span class="ln">   120</span>				if x &lt; 0 || x &gt;= int64(v.Len()) {
+<a id="L121"></a><span class="ln">   121</span>					return nil, fmt.Errorf(&#34;index out of range: %d&#34;, x)
+<a id="L122"></a><span class="ln">   122</span>				}
+<a id="L123"></a><span class="ln">   123</span>				v = v.Index(int(x))
+<a id="L124"></a><span class="ln">   124</span>			case reflect.Map:
+<a id="L125"></a><span class="ln">   125</span>				if !index.Type().AssignableTo(v.Type().Key()) {
+<a id="L126"></a><span class="ln">   126</span>					return nil, fmt.Errorf(&#34;%s is not index type for %s&#34;, index.Type(), v.Type())
+<a id="L127"></a><span class="ln">   127</span>				}
+<a id="L128"></a><span class="ln">   128</span>				if x := v.MapIndex(index); x.IsValid() {
+<a id="L129"></a><span class="ln">   129</span>					v = x
+<a id="L130"></a><span class="ln">   130</span>				} else {
+<a id="L131"></a><span class="ln">   131</span>					v = reflect.Zero(v.Type().Key())
+<a id="L132"></a><span class="ln">   132</span>				}
+<a id="L133"></a><span class="ln">   133</span>			default:
+<a id="L134"></a><span class="ln">   134</span>				return nil, fmt.Errorf(&#34;can&#39;t index item of type %s&#34;, index.Type())
+<a id="L135"></a><span class="ln">   135</span>			}
+<a id="L136"></a><span class="ln">   136</span>		}
+<a id="L137"></a><span class="ln">   137</span>		return v.Interface(), nil
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// Length</span>
+<a id="L141"></a><span class="ln">   141</span>	
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// length returns the length of the item, with an error if it has no defined length.</span>
+<a id="L143"></a><span class="ln">   143</span>	func length(item interface{}) (int, error) {
+<a id="L144"></a><span class="ln">   144</span>		v, isNil := indirect(reflect.ValueOf(item))
+<a id="L145"></a><span class="ln">   145</span>		if isNil {
+<a id="L146"></a><span class="ln">   146</span>			return 0, fmt.Errorf(&#34;len of nil pointer&#34;)
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		switch v.Kind() {
+<a id="L149"></a><span class="ln">   149</span>		case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice, reflect.String:
+<a id="L150"></a><span class="ln">   150</span>			return v.Len(), nil
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>		return 0, fmt.Errorf(&#34;len of type %s&#34;, v.Type())
+<a id="L153"></a><span class="ln">   153</span>	}
+<a id="L154"></a><span class="ln">   154</span>	
+<a id="L155"></a><span class="ln">   155</span>	<span class="comment">// Function invocation</span>
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// call returns the result of evaluating the the first argument as a function.</span>
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// The function must return 1 result, or 2 results, the second of which is an error.</span>
+<a id="L159"></a><span class="ln">   159</span>	func call(fn interface{}, args ...interface{}) (interface{}, error) {
+<a id="L160"></a><span class="ln">   160</span>		v := reflect.ValueOf(fn)
+<a id="L161"></a><span class="ln">   161</span>		typ := v.Type()
+<a id="L162"></a><span class="ln">   162</span>		if typ.Kind() != reflect.Func {
+<a id="L163"></a><span class="ln">   163</span>			return nil, fmt.Errorf(&#34;non-function of type %s&#34;, typ)
+<a id="L164"></a><span class="ln">   164</span>		}
+<a id="L165"></a><span class="ln">   165</span>		if !goodFunc(typ) {
+<a id="L166"></a><span class="ln">   166</span>			return nil, fmt.Errorf(&#34;function called with %d args; should be 1 or 2&#34;, typ.NumOut())
+<a id="L167"></a><span class="ln">   167</span>		}
+<a id="L168"></a><span class="ln">   168</span>		numIn := typ.NumIn()
+<a id="L169"></a><span class="ln">   169</span>		var dddType reflect.Type
+<a id="L170"></a><span class="ln">   170</span>		if typ.IsVariadic() {
+<a id="L171"></a><span class="ln">   171</span>			if len(args) &lt; numIn-1 {
+<a id="L172"></a><span class="ln">   172</span>				return nil, fmt.Errorf(&#34;wrong number of args: got %d want at least %d&#34;, len(args), numIn-1)
+<a id="L173"></a><span class="ln">   173</span>			}
+<a id="L174"></a><span class="ln">   174</span>			dddType = typ.In(numIn - 1).Elem()
+<a id="L175"></a><span class="ln">   175</span>		} else {
+<a id="L176"></a><span class="ln">   176</span>			if len(args) != numIn {
+<a id="L177"></a><span class="ln">   177</span>				return nil, fmt.Errorf(&#34;wrong number of args: got %d want %d&#34;, len(args), numIn)
+<a id="L178"></a><span class="ln">   178</span>			}
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>		argv := make([]reflect.Value, len(args))
+<a id="L181"></a><span class="ln">   181</span>		for i, arg := range args {
+<a id="L182"></a><span class="ln">   182</span>			value := reflect.ValueOf(arg)
+<a id="L183"></a><span class="ln">   183</span>			<span class="comment">// Compute the expected type. Clumsy because of variadics.</span>
+<a id="L184"></a><span class="ln">   184</span>			var argType reflect.Type
+<a id="L185"></a><span class="ln">   185</span>			if !typ.IsVariadic() || i &lt; numIn-1 {
+<a id="L186"></a><span class="ln">   186</span>				argType = typ.In(i)
+<a id="L187"></a><span class="ln">   187</span>			} else {
+<a id="L188"></a><span class="ln">   188</span>				argType = dddType
+<a id="L189"></a><span class="ln">   189</span>			}
+<a id="L190"></a><span class="ln">   190</span>			if !value.Type().AssignableTo(argType) {
+<a id="L191"></a><span class="ln">   191</span>				return nil, fmt.Errorf(&#34;arg %d has type %s; should be %s&#34;, i, value.Type(), argType)
+<a id="L192"></a><span class="ln">   192</span>			}
+<a id="L193"></a><span class="ln">   193</span>			argv[i] = reflect.ValueOf(arg)
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>		result := v.Call(argv)
+<a id="L196"></a><span class="ln">   196</span>		if len(result) == 2 {
+<a id="L197"></a><span class="ln">   197</span>			return result[0].Interface(), result[1].Interface().(error)
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>		return result[0].Interface(), nil
+<a id="L200"></a><span class="ln">   200</span>	}
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	<span class="comment">// Boolean logic.</span>
+<a id="L203"></a><span class="ln">   203</span>	
+<a id="L204"></a><span class="ln">   204</span>	func truth(a interface{}) bool {
+<a id="L205"></a><span class="ln">   205</span>		t, _ := isTrue(reflect.ValueOf(a))
+<a id="L206"></a><span class="ln">   206</span>		return t
+<a id="L207"></a><span class="ln">   207</span>	}
+<a id="L208"></a><span class="ln">   208</span>	
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">// and computes the Boolean AND of its arguments, returning</span>
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// the first false argument it encounters, or the last argument.</span>
+<a id="L211"></a><span class="ln">   211</span>	func and(arg0 interface{}, args ...interface{}) interface{} {
+<a id="L212"></a><span class="ln">   212</span>		if !truth(arg0) {
+<a id="L213"></a><span class="ln">   213</span>			return arg0
+<a id="L214"></a><span class="ln">   214</span>		}
+<a id="L215"></a><span class="ln">   215</span>		for i := range args {
+<a id="L216"></a><span class="ln">   216</span>			arg0 = args[i]
+<a id="L217"></a><span class="ln">   217</span>			if !truth(arg0) {
+<a id="L218"></a><span class="ln">   218</span>				break
+<a id="L219"></a><span class="ln">   219</span>			}
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>		return arg0
+<a id="L222"></a><span class="ln">   222</span>	}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// or computes the Boolean OR of its arguments, returning</span>
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">// the first true argument it encounters, or the last argument.</span>
+<a id="L226"></a><span class="ln">   226</span>	func or(arg0 interface{}, args ...interface{}) interface{} {
+<a id="L227"></a><span class="ln">   227</span>		if truth(arg0) {
+<a id="L228"></a><span class="ln">   228</span>			return arg0
+<a id="L229"></a><span class="ln">   229</span>		}
+<a id="L230"></a><span class="ln">   230</span>		for i := range args {
+<a id="L231"></a><span class="ln">   231</span>			arg0 = args[i]
+<a id="L232"></a><span class="ln">   232</span>			if truth(arg0) {
+<a id="L233"></a><span class="ln">   233</span>				break
+<a id="L234"></a><span class="ln">   234</span>			}
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>		return arg0
+<a id="L237"></a><span class="ln">   237</span>	}
+<a id="L238"></a><span class="ln">   238</span>	
+<a id="L239"></a><span class="ln">   239</span>	<span class="comment">// not returns the Boolean negation of its argument.</span>
+<a id="L240"></a><span class="ln">   240</span>	func not(arg interface{}) (truth bool) {
+<a id="L241"></a><span class="ln">   241</span>		truth, _ = isTrue(reflect.ValueOf(arg))
+<a id="L242"></a><span class="ln">   242</span>		return !truth
+<a id="L243"></a><span class="ln">   243</span>	}
+<a id="L244"></a><span class="ln">   244</span>	
+<a id="L245"></a><span class="ln">   245</span>	<span class="comment">// HTML escaping.</span>
+<a id="L246"></a><span class="ln">   246</span>	
+<a id="L247"></a><span class="ln">   247</span>	var (
+<a id="L248"></a><span class="ln">   248</span>		htmlQuot = []byte(&#34;&amp;#34;&#34;) <span class="comment">// shorter than &#34;&amp;quot;&#34;</span>
+<a id="L249"></a><span class="ln">   249</span>		htmlApos = []byte(&#34;&amp;#39;&#34;) <span class="comment">// shorter than &#34;&amp;apos;&#34; and apos was not in HTML until HTML5</span>
+<a id="L250"></a><span class="ln">   250</span>		htmlAmp  = []byte(&#34;&amp;amp;&#34;)
+<a id="L251"></a><span class="ln">   251</span>		htmlLt   = []byte(&#34;&amp;lt;&#34;)
+<a id="L252"></a><span class="ln">   252</span>		htmlGt   = []byte(&#34;&amp;gt;&#34;)
+<a id="L253"></a><span class="ln">   253</span>	)
+<a id="L254"></a><span class="ln">   254</span>	
+<a id="L255"></a><span class="ln">   255</span>	<span class="comment">// HTMLEscape writes to w the escaped HTML equivalent of the plain text data b.</span>
+<a id="L256"></a><span class="ln">   256</span>	func HTMLEscape(w io.Writer, b []byte) {
+<a id="L257"></a><span class="ln">   257</span>		last := 0
+<a id="L258"></a><span class="ln">   258</span>		for i, c := range b {
+<a id="L259"></a><span class="ln">   259</span>			var html []byte
+<a id="L260"></a><span class="ln">   260</span>			switch c {
+<a id="L261"></a><span class="ln">   261</span>			case &#39;&#34;&#39;:
+<a id="L262"></a><span class="ln">   262</span>				html = htmlQuot
+<a id="L263"></a><span class="ln">   263</span>			case &#39;\&#39;&#39;:
+<a id="L264"></a><span class="ln">   264</span>				html = htmlApos
+<a id="L265"></a><span class="ln">   265</span>			case &#39;&amp;&#39;:
+<a id="L266"></a><span class="ln">   266</span>				html = htmlAmp
+<a id="L267"></a><span class="ln">   267</span>			case &#39;&lt;&#39;:
+<a id="L268"></a><span class="ln">   268</span>				html = htmlLt
+<a id="L269"></a><span class="ln">   269</span>			case &#39;&gt;&#39;:
+<a id="L270"></a><span class="ln">   270</span>				html = htmlGt
+<a id="L271"></a><span class="ln">   271</span>			default:
+<a id="L272"></a><span class="ln">   272</span>				continue
+<a id="L273"></a><span class="ln">   273</span>			}
+<a id="L274"></a><span class="ln">   274</span>			w.Write(b[last:i])
+<a id="L275"></a><span class="ln">   275</span>			w.Write(html)
+<a id="L276"></a><span class="ln">   276</span>			last = i + 1
+<a id="L277"></a><span class="ln">   277</span>		}
+<a id="L278"></a><span class="ln">   278</span>		w.Write(b[last:])
+<a id="L279"></a><span class="ln">   279</span>	}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// HTMLEscapeString returns the escaped HTML equivalent of the plain text data s.</span>
+<a id="L282"></a><span class="ln">   282</span>	func HTMLEscapeString(s string) string {
+<a id="L283"></a><span class="ln">   283</span>		<span class="comment">// Avoid allocation if we can.</span>
+<a id="L284"></a><span class="ln">   284</span>		if strings.IndexAny(s, `&#39;&#34;&amp;&lt;&gt;`) &lt; 0 {
+<a id="L285"></a><span class="ln">   285</span>			return s
+<a id="L286"></a><span class="ln">   286</span>		}
+<a id="L287"></a><span class="ln">   287</span>		var b bytes.Buffer
+<a id="L288"></a><span class="ln">   288</span>		HTMLEscape(&amp;b, []byte(s))
+<a id="L289"></a><span class="ln">   289</span>		return b.String()
+<a id="L290"></a><span class="ln">   290</span>	}
+<a id="L291"></a><span class="ln">   291</span>	
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">// HTMLEscaper returns the escaped HTML equivalent of the textual</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// representation of its arguments.</span>
+<a id="L294"></a><span class="ln">   294</span>	func HTMLEscaper(args ...interface{}) string {
+<a id="L295"></a><span class="ln">   295</span>		ok := false
+<a id="L296"></a><span class="ln">   296</span>		var s string
+<a id="L297"></a><span class="ln">   297</span>		if len(args) == 1 {
+<a id="L298"></a><span class="ln">   298</span>			s, ok = args[0].(string)
+<a id="L299"></a><span class="ln">   299</span>		}
+<a id="L300"></a><span class="ln">   300</span>		if !ok {
+<a id="L301"></a><span class="ln">   301</span>			s = fmt.Sprint(args...)
+<a id="L302"></a><span class="ln">   302</span>		}
+<a id="L303"></a><span class="ln">   303</span>		return HTMLEscapeString(s)
+<a id="L304"></a><span class="ln">   304</span>	}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>	<span class="comment">// JavaScript escaping.</span>
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>	var (
+<a id="L309"></a><span class="ln">   309</span>		jsLowUni = []byte(`\u00`)
+<a id="L310"></a><span class="ln">   310</span>		hex      = []byte(&#34;0123456789ABCDEF&#34;)
+<a id="L311"></a><span class="ln">   311</span>	
+<a id="L312"></a><span class="ln">   312</span>		jsBackslash = []byte(`\\`)
+<a id="L313"></a><span class="ln">   313</span>		jsApos      = []byte(`\&#39;`)
+<a id="L314"></a><span class="ln">   314</span>		jsQuot      = []byte(`\&#34;`)
+<a id="L315"></a><span class="ln">   315</span>		jsLt        = []byte(`\x3C`)
+<a id="L316"></a><span class="ln">   316</span>		jsGt        = []byte(`\x3E`)
+<a id="L317"></a><span class="ln">   317</span>	)
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>	<span class="comment">// JSEscape writes to w the escaped JavaScript equivalent of the plain text data b.</span>
+<a id="L320"></a><span class="ln">   320</span>	func JSEscape(w io.Writer, b []byte) {
+<a id="L321"></a><span class="ln">   321</span>		last := 0
+<a id="L322"></a><span class="ln">   322</span>		for i := 0; i &lt; len(b); i++ {
+<a id="L323"></a><span class="ln">   323</span>			c := b[i]
+<a id="L324"></a><span class="ln">   324</span>	
+<a id="L325"></a><span class="ln">   325</span>			if !jsIsSpecial(rune(c)) {
+<a id="L326"></a><span class="ln">   326</span>				<span class="comment">// fast path: nothing to do</span>
+<a id="L327"></a><span class="ln">   327</span>				continue
+<a id="L328"></a><span class="ln">   328</span>			}
+<a id="L329"></a><span class="ln">   329</span>			w.Write(b[last:i])
+<a id="L330"></a><span class="ln">   330</span>	
+<a id="L331"></a><span class="ln">   331</span>			if c &lt; utf8.RuneSelf {
+<a id="L332"></a><span class="ln">   332</span>				<span class="comment">// Quotes, slashes and angle brackets get quoted.</span>
+<a id="L333"></a><span class="ln">   333</span>				<span class="comment">// Control characters get written as \u00XX.</span>
+<a id="L334"></a><span class="ln">   334</span>				switch c {
+<a id="L335"></a><span class="ln">   335</span>				case &#39;\\&#39;:
+<a id="L336"></a><span class="ln">   336</span>					w.Write(jsBackslash)
+<a id="L337"></a><span class="ln">   337</span>				case &#39;\&#39;&#39;:
+<a id="L338"></a><span class="ln">   338</span>					w.Write(jsApos)
+<a id="L339"></a><span class="ln">   339</span>				case &#39;&#34;&#39;:
+<a id="L340"></a><span class="ln">   340</span>					w.Write(jsQuot)
+<a id="L341"></a><span class="ln">   341</span>				case &#39;&lt;&#39;:
+<a id="L342"></a><span class="ln">   342</span>					w.Write(jsLt)
+<a id="L343"></a><span class="ln">   343</span>				case &#39;&gt;&#39;:
+<a id="L344"></a><span class="ln">   344</span>					w.Write(jsGt)
+<a id="L345"></a><span class="ln">   345</span>				default:
+<a id="L346"></a><span class="ln">   346</span>					w.Write(jsLowUni)
+<a id="L347"></a><span class="ln">   347</span>					t, b := c&gt;&gt;4, c&amp;0x0f
+<a id="L348"></a><span class="ln">   348</span>					w.Write(hex[t : t+1])
+<a id="L349"></a><span class="ln">   349</span>					w.Write(hex[b : b+1])
+<a id="L350"></a><span class="ln">   350</span>				}
+<a id="L351"></a><span class="ln">   351</span>			} else {
+<a id="L352"></a><span class="ln">   352</span>				<span class="comment">// Unicode rune.</span>
+<a id="L353"></a><span class="ln">   353</span>				r, size := utf8.DecodeRune(b[i:])
+<a id="L354"></a><span class="ln">   354</span>				if unicode.IsPrint(r) {
+<a id="L355"></a><span class="ln">   355</span>					w.Write(b[i : i+size])
+<a id="L356"></a><span class="ln">   356</span>				} else {
+<a id="L357"></a><span class="ln">   357</span>					fmt.Fprintf(w, &#34;\\u%04X&#34;, r)
+<a id="L358"></a><span class="ln">   358</span>				}
+<a id="L359"></a><span class="ln">   359</span>				i += size - 1
+<a id="L360"></a><span class="ln">   360</span>			}
+<a id="L361"></a><span class="ln">   361</span>			last = i + 1
+<a id="L362"></a><span class="ln">   362</span>		}
+<a id="L363"></a><span class="ln">   363</span>		w.Write(b[last:])
+<a id="L364"></a><span class="ln">   364</span>	}
+<a id="L365"></a><span class="ln">   365</span>	
+<a id="L366"></a><span class="ln">   366</span>	<span class="comment">// JSEscapeString returns the escaped JavaScript equivalent of the plain text data s.</span>
+<a id="L367"></a><span class="ln">   367</span>	func JSEscapeString(s string) string {
+<a id="L368"></a><span class="ln">   368</span>		<span class="comment">// Avoid allocation if we can.</span>
+<a id="L369"></a><span class="ln">   369</span>		if strings.IndexFunc(s, jsIsSpecial) &lt; 0 {
+<a id="L370"></a><span class="ln">   370</span>			return s
+<a id="L371"></a><span class="ln">   371</span>		}
+<a id="L372"></a><span class="ln">   372</span>		var b bytes.Buffer
+<a id="L373"></a><span class="ln">   373</span>		JSEscape(&amp;b, []byte(s))
+<a id="L374"></a><span class="ln">   374</span>		return b.String()
+<a id="L375"></a><span class="ln">   375</span>	}
+<a id="L376"></a><span class="ln">   376</span>	
+<a id="L377"></a><span class="ln">   377</span>	func jsIsSpecial(r rune) bool {
+<a id="L378"></a><span class="ln">   378</span>		switch r {
+<a id="L379"></a><span class="ln">   379</span>		case &#39;\\&#39;, &#39;\&#39;&#39;, &#39;&#34;&#39;, &#39;&lt;&#39;, &#39;&gt;&#39;:
+<a id="L380"></a><span class="ln">   380</span>			return true
+<a id="L381"></a><span class="ln">   381</span>		}
+<a id="L382"></a><span class="ln">   382</span>		return r &lt; &#39; &#39; || utf8.RuneSelf &lt;= r
+<a id="L383"></a><span class="ln">   383</span>	}
+<a id="L384"></a><span class="ln">   384</span>	
+<a id="L385"></a><span class="ln">   385</span>	<span class="comment">// JSEscaper returns the escaped JavaScript equivalent of the textual</span>
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// representation of its arguments.</span>
+<a id="L387"></a><span class="ln">   387</span>	func JSEscaper(args ...interface{}) string {
+<a id="L388"></a><span class="ln">   388</span>		ok := false
+<a id="L389"></a><span class="ln">   389</span>		var s string
+<a id="L390"></a><span class="ln">   390</span>		if len(args) == 1 {
+<a id="L391"></a><span class="ln">   391</span>			s, ok = args[0].(string)
+<a id="L392"></a><span class="ln">   392</span>		}
+<a id="L393"></a><span class="ln">   393</span>		if !ok {
+<a id="L394"></a><span class="ln">   394</span>			s = fmt.Sprint(args...)
+<a id="L395"></a><span class="ln">   395</span>		}
+<a id="L396"></a><span class="ln">   396</span>		return JSEscapeString(s)
+<a id="L397"></a><span class="ln">   397</span>	}
+<a id="L398"></a><span class="ln">   398</span>	
+<a id="L399"></a><span class="ln">   399</span>	<span class="comment">// URLQueryEscaper returns the escaped value of the textual representation of</span>
+<a id="L400"></a><span class="ln">   400</span>	<span class="comment">// its arguments in a form suitable for embedding in a URL query.</span>
+<a id="L401"></a><span class="ln">   401</span>	func URLQueryEscaper(args ...interface{}) string {
+<a id="L402"></a><span class="ln">   402</span>		s, ok := &#34;&#34;, false
+<a id="L403"></a><span class="ln">   403</span>		if len(args) == 1 {
+<a id="L404"></a><span class="ln">   404</span>			s, ok = args[0].(string)
+<a id="L405"></a><span class="ln">   405</span>		}
+<a id="L406"></a><span class="ln">   406</span>		if !ok {
+<a id="L407"></a><span class="ln">   407</span>			s = fmt.Sprint(args...)
+<a id="L408"></a><span class="ln">   408</span>		}
+<a id="L409"></a><span class="ln">   409</span>		return url.QueryEscape(s)
+<a id="L410"></a><span class="ln">   410</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

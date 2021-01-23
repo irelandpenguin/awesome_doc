@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/path/match.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/path/match.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package path
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;errors&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;strings&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;unicode/utf8&#34;
+<a id="L11"></a><span class="ln">    11</span>	)
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// ErrBadPattern indicates a globbing pattern was malformed.</span>
+<a id="L14"></a><span class="ln">    14</span>	var ErrBadPattern = errors.New(&#34;syntax error in pattern&#34;)
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// Match returns true if name matches the shell file name pattern.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// The pattern syntax is:</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//	pattern:</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//		{ term }</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//	term:</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//		&#39;*&#39;         matches any sequence of non-/ characters</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//		&#39;?&#39;         matches any single non-/ character</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">//		&#39;[&#39; [ &#39;^&#39; ] { character-range } &#39;]&#39;</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">//		            character class (must be non-empty)</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">//		c           matches character c (c != &#39;*&#39;, &#39;?&#39;, &#39;\\&#39;, &#39;[&#39;)</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">//		&#39;\\&#39; c      matches character c</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">//</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//	character-range:</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">//		c           matches character c (c != &#39;\\&#39;, &#39;-&#39;, &#39;]&#39;)</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">//		&#39;\\&#39; c      matches character c</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">//		lo &#39;-&#39; hi   matches character c for lo &lt;= c &lt;= hi</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// Match requires pattern to match all of name, not just a substring.</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// The only possible returned error is ErrBadPattern, when pattern</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// is malformed.</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//</span>
+<a id="L38"></a><span class="ln">    38</span>	func Match(pattern, name string) (matched bool, err error) {
+<a id="L39"></a><span class="ln">    39</span>	Pattern:
+<a id="L40"></a><span class="ln">    40</span>		for len(pattern) &gt; 0 {
+<a id="L41"></a><span class="ln">    41</span>			var star bool
+<a id="L42"></a><span class="ln">    42</span>			var chunk string
+<a id="L43"></a><span class="ln">    43</span>			star, chunk, pattern = scanChunk(pattern)
+<a id="L44"></a><span class="ln">    44</span>			if star &amp;&amp; chunk == &#34;&#34; {
+<a id="L45"></a><span class="ln">    45</span>				<span class="comment">// Trailing * matches rest of string unless it has a /.</span>
+<a id="L46"></a><span class="ln">    46</span>				return strings.Index(name, &#34;/&#34;) &lt; 0, nil
+<a id="L47"></a><span class="ln">    47</span>			}
+<a id="L48"></a><span class="ln">    48</span>			<span class="comment">// Look for match at current position.</span>
+<a id="L49"></a><span class="ln">    49</span>			t, ok, err := matchChunk(chunk, name)
+<a id="L50"></a><span class="ln">    50</span>			<span class="comment">// if we&#39;re the last chunk, make sure we&#39;ve exhausted the name</span>
+<a id="L51"></a><span class="ln">    51</span>			<span class="comment">// otherwise we&#39;ll give a false result even if we could still match</span>
+<a id="L52"></a><span class="ln">    52</span>			<span class="comment">// using the star</span>
+<a id="L53"></a><span class="ln">    53</span>			if ok &amp;&amp; (len(t) == 0 || len(pattern) &gt; 0) {
+<a id="L54"></a><span class="ln">    54</span>				name = t
+<a id="L55"></a><span class="ln">    55</span>				continue
+<a id="L56"></a><span class="ln">    56</span>			}
+<a id="L57"></a><span class="ln">    57</span>			if err != nil {
+<a id="L58"></a><span class="ln">    58</span>				return false, err
+<a id="L59"></a><span class="ln">    59</span>			}
+<a id="L60"></a><span class="ln">    60</span>			if star {
+<a id="L61"></a><span class="ln">    61</span>				<span class="comment">// Look for match skipping i+1 bytes.</span>
+<a id="L62"></a><span class="ln">    62</span>				<span class="comment">// Cannot skip /.</span>
+<a id="L63"></a><span class="ln">    63</span>				for i := 0; i &lt; len(name) &amp;&amp; name[i] != &#39;/&#39;; i++ {
+<a id="L64"></a><span class="ln">    64</span>					t, ok, err := matchChunk(chunk, name[i+1:])
+<a id="L65"></a><span class="ln">    65</span>					if ok {
+<a id="L66"></a><span class="ln">    66</span>						<span class="comment">// if we&#39;re the last chunk, make sure we exhausted the name</span>
+<a id="L67"></a><span class="ln">    67</span>						if len(pattern) == 0 &amp;&amp; len(t) &gt; 0 {
+<a id="L68"></a><span class="ln">    68</span>							continue
+<a id="L69"></a><span class="ln">    69</span>						}
+<a id="L70"></a><span class="ln">    70</span>						name = t
+<a id="L71"></a><span class="ln">    71</span>						continue Pattern
+<a id="L72"></a><span class="ln">    72</span>					}
+<a id="L73"></a><span class="ln">    73</span>					if err != nil {
+<a id="L74"></a><span class="ln">    74</span>						return false, err
+<a id="L75"></a><span class="ln">    75</span>					}
+<a id="L76"></a><span class="ln">    76</span>				}
+<a id="L77"></a><span class="ln">    77</span>			}
+<a id="L78"></a><span class="ln">    78</span>			return false, nil
+<a id="L79"></a><span class="ln">    79</span>		}
+<a id="L80"></a><span class="ln">    80</span>		return len(name) == 0, nil
+<a id="L81"></a><span class="ln">    81</span>	}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// scanChunk gets the next segment of pattern, which is a non-star string</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// possibly preceded by a star.</span>
+<a id="L85"></a><span class="ln">    85</span>	func scanChunk(pattern string) (star bool, chunk, rest string) {
+<a id="L86"></a><span class="ln">    86</span>		for len(pattern) &gt; 0 &amp;&amp; pattern[0] == &#39;*&#39; {
+<a id="L87"></a><span class="ln">    87</span>			pattern = pattern[1:]
+<a id="L88"></a><span class="ln">    88</span>			star = true
+<a id="L89"></a><span class="ln">    89</span>		}
+<a id="L90"></a><span class="ln">    90</span>		inrange := false
+<a id="L91"></a><span class="ln">    91</span>		var i int
+<a id="L92"></a><span class="ln">    92</span>	Scan:
+<a id="L93"></a><span class="ln">    93</span>		for i = 0; i &lt; len(pattern); i++ {
+<a id="L94"></a><span class="ln">    94</span>			switch pattern[i] {
+<a id="L95"></a><span class="ln">    95</span>			case &#39;\\&#39;:
+<a id="L96"></a><span class="ln">    96</span>				<span class="comment">// error check handled in matchChunk: bad pattern.</span>
+<a id="L97"></a><span class="ln">    97</span>				if i+1 &lt; len(pattern) {
+<a id="L98"></a><span class="ln">    98</span>					i++
+<a id="L99"></a><span class="ln">    99</span>				}
+<a id="L100"></a><span class="ln">   100</span>			case &#39;[&#39;:
+<a id="L101"></a><span class="ln">   101</span>				inrange = true
+<a id="L102"></a><span class="ln">   102</span>			case &#39;]&#39;:
+<a id="L103"></a><span class="ln">   103</span>				inrange = false
+<a id="L104"></a><span class="ln">   104</span>			case &#39;*&#39;:
+<a id="L105"></a><span class="ln">   105</span>				if !inrange {
+<a id="L106"></a><span class="ln">   106</span>					break Scan
+<a id="L107"></a><span class="ln">   107</span>				}
+<a id="L108"></a><span class="ln">   108</span>			}
+<a id="L109"></a><span class="ln">   109</span>		}
+<a id="L110"></a><span class="ln">   110</span>		return star, pattern[0:i], pattern[i:]
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// matchChunk checks whether chunk matches the beginning of s.</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// If so, it returns the remainder of s (after the match).</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// Chunk is all single-character operators: literals, char classes, and ?.</span>
+<a id="L116"></a><span class="ln">   116</span>	func matchChunk(chunk, s string) (rest string, ok bool, err error) {
+<a id="L117"></a><span class="ln">   117</span>		for len(chunk) &gt; 0 {
+<a id="L118"></a><span class="ln">   118</span>			if len(s) == 0 {
+<a id="L119"></a><span class="ln">   119</span>				return
+<a id="L120"></a><span class="ln">   120</span>			}
+<a id="L121"></a><span class="ln">   121</span>			switch chunk[0] {
+<a id="L122"></a><span class="ln">   122</span>			case &#39;[&#39;:
+<a id="L123"></a><span class="ln">   123</span>				<span class="comment">// character class</span>
+<a id="L124"></a><span class="ln">   124</span>				r, n := utf8.DecodeRuneInString(s)
+<a id="L125"></a><span class="ln">   125</span>				s = s[n:]
+<a id="L126"></a><span class="ln">   126</span>				chunk = chunk[1:]
+<a id="L127"></a><span class="ln">   127</span>				<span class="comment">// possibly negated</span>
+<a id="L128"></a><span class="ln">   128</span>				notNegated := true
+<a id="L129"></a><span class="ln">   129</span>				if len(chunk) &gt; 0 &amp;&amp; chunk[0] == &#39;^&#39; {
+<a id="L130"></a><span class="ln">   130</span>					notNegated = false
+<a id="L131"></a><span class="ln">   131</span>					chunk = chunk[1:]
+<a id="L132"></a><span class="ln">   132</span>				}
+<a id="L133"></a><span class="ln">   133</span>				<span class="comment">// parse all ranges</span>
+<a id="L134"></a><span class="ln">   134</span>				match := false
+<a id="L135"></a><span class="ln">   135</span>				nrange := 0
+<a id="L136"></a><span class="ln">   136</span>				for {
+<a id="L137"></a><span class="ln">   137</span>					if len(chunk) &gt; 0 &amp;&amp; chunk[0] == &#39;]&#39; &amp;&amp; nrange &gt; 0 {
+<a id="L138"></a><span class="ln">   138</span>						chunk = chunk[1:]
+<a id="L139"></a><span class="ln">   139</span>						break
+<a id="L140"></a><span class="ln">   140</span>					}
+<a id="L141"></a><span class="ln">   141</span>					var lo, hi rune
+<a id="L142"></a><span class="ln">   142</span>					if lo, chunk, err = getEsc(chunk); err != nil {
+<a id="L143"></a><span class="ln">   143</span>						return
+<a id="L144"></a><span class="ln">   144</span>					}
+<a id="L145"></a><span class="ln">   145</span>					hi = lo
+<a id="L146"></a><span class="ln">   146</span>					if chunk[0] == &#39;-&#39; {
+<a id="L147"></a><span class="ln">   147</span>						if hi, chunk, err = getEsc(chunk[1:]); err != nil {
+<a id="L148"></a><span class="ln">   148</span>							return
+<a id="L149"></a><span class="ln">   149</span>						}
+<a id="L150"></a><span class="ln">   150</span>					}
+<a id="L151"></a><span class="ln">   151</span>					if lo &lt;= r &amp;&amp; r &lt;= hi {
+<a id="L152"></a><span class="ln">   152</span>						match = true
+<a id="L153"></a><span class="ln">   153</span>					}
+<a id="L154"></a><span class="ln">   154</span>					nrange++
+<a id="L155"></a><span class="ln">   155</span>				}
+<a id="L156"></a><span class="ln">   156</span>				if match != notNegated {
+<a id="L157"></a><span class="ln">   157</span>					return
+<a id="L158"></a><span class="ln">   158</span>				}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>			case &#39;?&#39;:
+<a id="L161"></a><span class="ln">   161</span>				if s[0] == &#39;/&#39; {
+<a id="L162"></a><span class="ln">   162</span>					return
+<a id="L163"></a><span class="ln">   163</span>				}
+<a id="L164"></a><span class="ln">   164</span>				_, n := utf8.DecodeRuneInString(s)
+<a id="L165"></a><span class="ln">   165</span>				s = s[n:]
+<a id="L166"></a><span class="ln">   166</span>				chunk = chunk[1:]
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>			case &#39;\\&#39;:
+<a id="L169"></a><span class="ln">   169</span>				chunk = chunk[1:]
+<a id="L170"></a><span class="ln">   170</span>				if len(chunk) == 0 {
+<a id="L171"></a><span class="ln">   171</span>					err = ErrBadPattern
+<a id="L172"></a><span class="ln">   172</span>					return
+<a id="L173"></a><span class="ln">   173</span>				}
+<a id="L174"></a><span class="ln">   174</span>				fallthrough
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>			default:
+<a id="L177"></a><span class="ln">   177</span>				if chunk[0] != s[0] {
+<a id="L178"></a><span class="ln">   178</span>					return
+<a id="L179"></a><span class="ln">   179</span>				}
+<a id="L180"></a><span class="ln">   180</span>				s = s[1:]
+<a id="L181"></a><span class="ln">   181</span>				chunk = chunk[1:]
+<a id="L182"></a><span class="ln">   182</span>			}
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>		return s, true, nil
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// getEsc gets a possibly-escaped character from chunk, for a character class.</span>
+<a id="L188"></a><span class="ln">   188</span>	func getEsc(chunk string) (r rune, nchunk string, err error) {
+<a id="L189"></a><span class="ln">   189</span>		if len(chunk) == 0 || chunk[0] == &#39;-&#39; || chunk[0] == &#39;]&#39; {
+<a id="L190"></a><span class="ln">   190</span>			err = ErrBadPattern
+<a id="L191"></a><span class="ln">   191</span>			return
+<a id="L192"></a><span class="ln">   192</span>		}
+<a id="L193"></a><span class="ln">   193</span>		if chunk[0] == &#39;\\&#39; {
+<a id="L194"></a><span class="ln">   194</span>			chunk = chunk[1:]
+<a id="L195"></a><span class="ln">   195</span>			if len(chunk) == 0 {
+<a id="L196"></a><span class="ln">   196</span>				err = ErrBadPattern
+<a id="L197"></a><span class="ln">   197</span>				return
+<a id="L198"></a><span class="ln">   198</span>			}
+<a id="L199"></a><span class="ln">   199</span>		}
+<a id="L200"></a><span class="ln">   200</span>		r, n := utf8.DecodeRuneInString(chunk)
+<a id="L201"></a><span class="ln">   201</span>		if r == utf8.RuneError &amp;&amp; n == 1 {
+<a id="L202"></a><span class="ln">   202</span>			err = ErrBadPattern
+<a id="L203"></a><span class="ln">   203</span>		}
+<a id="L204"></a><span class="ln">   204</span>		nchunk = chunk[n:]
+<a id="L205"></a><span class="ln">   205</span>		if len(nchunk) == 0 {
+<a id="L206"></a><span class="ln">   206</span>			err = ErrBadPattern
+<a id="L207"></a><span class="ln">   207</span>		}
+<a id="L208"></a><span class="ln">   208</span>		return
+<a id="L209"></a><span class="ln">   209</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

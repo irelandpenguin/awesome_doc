@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/testing/testing.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/testing/testing.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package testing provides support for automated testing of Go packages.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// It is intended to be used in concert with the ``go test&#39;&#39; command, which automates</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// execution of any function of the form</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">//     func TestXxx(*testing.T)</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// where Xxx can be any alphanumeric string (but the first letter must not be in</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// [a-z]) and serves to identify the test routine.</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// These TestXxx routines should be declared within the package they are testing.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">//</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Functions of the form</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">//     func BenchmarkXxx(*testing.B)</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// are considered benchmarks, and are executed by the &#34;go test&#34; command when</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// the -test.bench flag is provided.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">//</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// A sample benchmark function looks like this:</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">//     func BenchmarkHello(b *testing.B) {</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//         for i := 0; i &lt; b.N; i++ {</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//             fmt.Sprintf(&#34;hello&#34;)</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//         }</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//     }</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">//</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// The benchmark package will vary b.N until the benchmark function lasts</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// long enough to be timed reliably.  The output</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">//     testing.BenchmarkHello    10000000    282 ns/op</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// means that the loop ran 10000000 times at a speed of 282 ns per loop.</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">//</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// If a benchmark needs some expensive setup before running, the timer</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// may be stopped:</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">//     func BenchmarkBigLen(b *testing.B) {</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//         b.StopTimer()</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//         big := NewBig()</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//         b.StartTimer()</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//         for i := 0; i &lt; b.N; i++ {</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//             big.Len()</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//         }</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//     }</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// The package also runs and verifies example code. Example functions may</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// include a concluding comment that begins with &#34;Output:&#34; and is compared with</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// the standard output of the function when the tests are run, as in these</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// examples of an example:</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//     func ExampleHello() {</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//             fmt.Println(&#34;hello&#34;)</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">//             // Output: hello</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//     }</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//     func ExampleSalutations() {</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//             fmt.Println(&#34;hello, and&#34;)</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//             fmt.Println(&#34;goodbye&#34;)</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">//             // Output:</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//             // hello, and</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//             // goodbye</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//     }</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">//</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// Example functions without output comments are compiled but not executed.</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">//</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// The naming convention to declare examples for a function F, a type T and</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// method M on type T are:</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">//</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">//     func ExampleF() { ... }</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">//     func ExampleT() { ... }</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">//     func ExampleT_M() { ... }</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">//</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// Multiple example functions for a type/function/method may be provided by</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// appending a distinct suffix to the name. The suffix must start with a</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// lower-case letter.</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">//</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//     func ExampleF_suffix() { ... }</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">//     func ExampleT_suffix() { ... }</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//     func ExampleT_M_suffix() { ... }</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">//</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// The entire test file is presented as the example when it contains a single</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// example function, at least one other function, type, variable, or constant</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// declaration, and no test or benchmark functions.</span>
+<a id="L79"></a><span class="ln">    79</span>	package testing
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	import (
+<a id="L82"></a><span class="ln">    82</span>		&#34;flag&#34;
+<a id="L83"></a><span class="ln">    83</span>		&#34;fmt&#34;
+<a id="L84"></a><span class="ln">    84</span>		&#34;os&#34;
+<a id="L85"></a><span class="ln">    85</span>		&#34;runtime&#34;
+<a id="L86"></a><span class="ln">    86</span>		&#34;runtime/pprof&#34;
+<a id="L87"></a><span class="ln">    87</span>		&#34;strconv&#34;
+<a id="L88"></a><span class="ln">    88</span>		&#34;strings&#34;
+<a id="L89"></a><span class="ln">    89</span>		&#34;time&#34;
+<a id="L90"></a><span class="ln">    90</span>	)
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>	var (
+<a id="L93"></a><span class="ln">    93</span>		<span class="comment">// The short flag requests that tests run more quickly, but its functionality</span>
+<a id="L94"></a><span class="ln">    94</span>		<span class="comment">// is provided by test writers themselves.  The testing package is just its</span>
+<a id="L95"></a><span class="ln">    95</span>		<span class="comment">// home.  The all.bash installation script sets it to make installation more</span>
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// efficient, but by default the flag is off so a plain &#34;go test&#34; will do a</span>
+<a id="L97"></a><span class="ln">    97</span>		<span class="comment">// full test of the package.</span>
+<a id="L98"></a><span class="ln">    98</span>		short = flag.Bool(&#34;test.short&#34;, false, &#34;run smaller test suite to save time&#34;)
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>		<span class="comment">// Report as tests are run; default is silent for success.</span>
+<a id="L101"></a><span class="ln">   101</span>		chatty         = flag.Bool(&#34;test.v&#34;, false, &#34;verbose: print additional output&#34;)
+<a id="L102"></a><span class="ln">   102</span>		match          = flag.String(&#34;test.run&#34;, &#34;&#34;, &#34;regular expression to select tests and examples to run&#34;)
+<a id="L103"></a><span class="ln">   103</span>		memProfile     = flag.String(&#34;test.memprofile&#34;, &#34;&#34;, &#34;write a memory profile to the named file after execution&#34;)
+<a id="L104"></a><span class="ln">   104</span>		memProfileRate = flag.Int(&#34;test.memprofilerate&#34;, 0, &#34;if &gt;=0, sets runtime.MemProfileRate&#34;)
+<a id="L105"></a><span class="ln">   105</span>		cpuProfile     = flag.String(&#34;test.cpuprofile&#34;, &#34;&#34;, &#34;write a cpu profile to the named file during execution&#34;)
+<a id="L106"></a><span class="ln">   106</span>		timeout        = flag.Duration(&#34;test.timeout&#34;, 0, &#34;if positive, sets an aggregate time limit for all tests&#34;)
+<a id="L107"></a><span class="ln">   107</span>		cpuListStr     = flag.String(&#34;test.cpu&#34;, &#34;&#34;, &#34;comma-separated list of number of CPUs to use for each test&#34;)
+<a id="L108"></a><span class="ln">   108</span>		parallel       = flag.Int(&#34;test.parallel&#34;, runtime.GOMAXPROCS(0), &#34;maximum test parallelism&#34;)
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>		haveExamples bool <span class="comment">// are there examples?</span>
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>		cpuList []int
+<a id="L113"></a><span class="ln">   113</span>	)
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// common holds the elements common between T and B and</span>
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// captures common methods such as Errorf.</span>
+<a id="L117"></a><span class="ln">   117</span>	type common struct {
+<a id="L118"></a><span class="ln">   118</span>		output   []byte    <span class="comment">// Output generated by test or benchmark.</span>
+<a id="L119"></a><span class="ln">   119</span>		failed   bool      <span class="comment">// Test or benchmark has failed.</span>
+<a id="L120"></a><span class="ln">   120</span>		start    time.Time <span class="comment">// Time test or benchmark started</span>
+<a id="L121"></a><span class="ln">   121</span>		duration time.Duration
+<a id="L122"></a><span class="ln">   122</span>		self     interface{}      <span class="comment">// To be sent on signal channel when done.</span>
+<a id="L123"></a><span class="ln">   123</span>		signal   chan interface{} <span class="comment">// Output for serial tests.</span>
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// Short reports whether the -test.short flag is set.</span>
+<a id="L127"></a><span class="ln">   127</span>	func Short() bool {
+<a id="L128"></a><span class="ln">   128</span>		return *short
+<a id="L129"></a><span class="ln">   129</span>	}
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>	<span class="comment">// decorate inserts the final newline if needed and indentation tabs for formatting.</span>
+<a id="L132"></a><span class="ln">   132</span>	<span class="comment">// If addFileLine is true, it also prefixes the string with the file and line of the call site.</span>
+<a id="L133"></a><span class="ln">   133</span>	func decorate(s string, addFileLine bool) string {
+<a id="L134"></a><span class="ln">   134</span>		if addFileLine {
+<a id="L135"></a><span class="ln">   135</span>			_, file, line, ok := runtime.Caller(3) <span class="comment">// decorate + log + public function.</span>
+<a id="L136"></a><span class="ln">   136</span>			if ok {
+<a id="L137"></a><span class="ln">   137</span>				<span class="comment">// Truncate file name at last file name separator.</span>
+<a id="L138"></a><span class="ln">   138</span>				if index := strings.LastIndex(file, &#34;/&#34;); index &gt;= 0 {
+<a id="L139"></a><span class="ln">   139</span>					file = file[index+1:]
+<a id="L140"></a><span class="ln">   140</span>				} else if index = strings.LastIndex(file, &#34;\\&#34;); index &gt;= 0 {
+<a id="L141"></a><span class="ln">   141</span>					file = file[index+1:]
+<a id="L142"></a><span class="ln">   142</span>				}
+<a id="L143"></a><span class="ln">   143</span>			} else {
+<a id="L144"></a><span class="ln">   144</span>				file = &#34;???&#34;
+<a id="L145"></a><span class="ln">   145</span>				line = 1
+<a id="L146"></a><span class="ln">   146</span>			}
+<a id="L147"></a><span class="ln">   147</span>			s = fmt.Sprintf(&#34;%s:%d: %s&#34;, file, line, s)
+<a id="L148"></a><span class="ln">   148</span>		}
+<a id="L149"></a><span class="ln">   149</span>		s = &#34;\t&#34; + s <span class="comment">// Every line is indented at least one tab.</span>
+<a id="L150"></a><span class="ln">   150</span>		n := len(s)
+<a id="L151"></a><span class="ln">   151</span>		if n &gt; 0 &amp;&amp; s[n-1] != &#39;\n&#39; {
+<a id="L152"></a><span class="ln">   152</span>			s += &#34;\n&#34;
+<a id="L153"></a><span class="ln">   153</span>			n++
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>		for i := 0; i &lt; n-1; i++ { <span class="comment">// -1 to avoid final newline</span>
+<a id="L156"></a><span class="ln">   156</span>			if s[i] == &#39;\n&#39; {
+<a id="L157"></a><span class="ln">   157</span>				<span class="comment">// Second and subsequent lines are indented an extra tab.</span>
+<a id="L158"></a><span class="ln">   158</span>				return s[0:i+1] + &#34;\t&#34; + decorate(s[i+1:n], false)
+<a id="L159"></a><span class="ln">   159</span>			}
+<a id="L160"></a><span class="ln">   160</span>		}
+<a id="L161"></a><span class="ln">   161</span>		return s
+<a id="L162"></a><span class="ln">   162</span>	}
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// T is a type passed to Test functions to manage test state and support formatted test logs.</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// Logs are accumulated during execution and dumped to standard error when done.</span>
+<a id="L166"></a><span class="ln">   166</span>	type T struct {
+<a id="L167"></a><span class="ln">   167</span>		common
+<a id="L168"></a><span class="ln">   168</span>		name          string    <span class="comment">// Name of test.</span>
+<a id="L169"></a><span class="ln">   169</span>		startParallel chan bool <span class="comment">// Parallel tests will wait on this.</span>
+<a id="L170"></a><span class="ln">   170</span>	}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// Fail marks the function as having failed but continues execution.</span>
+<a id="L173"></a><span class="ln">   173</span>	func (c *common) Fail() { c.failed = true }
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// Failed returns whether the function has failed.</span>
+<a id="L176"></a><span class="ln">   176</span>	func (c *common) Failed() bool { return c.failed }
+<a id="L177"></a><span class="ln">   177</span>	
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// FailNow marks the function as having failed and stops its execution.</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// Execution will continue at the next test or benchmark.</span>
+<a id="L180"></a><span class="ln">   180</span>	func (c *common) FailNow() {
+<a id="L181"></a><span class="ln">   181</span>		c.Fail()
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>		<span class="comment">// Calling runtime.Goexit will exit the goroutine, which</span>
+<a id="L184"></a><span class="ln">   184</span>		<span class="comment">// will run the deferred functions in this goroutine,</span>
+<a id="L185"></a><span class="ln">   185</span>		<span class="comment">// which will eventually run the deferred lines in tRunner,</span>
+<a id="L186"></a><span class="ln">   186</span>		<span class="comment">// which will signal to the test loop that this test is done.</span>
+<a id="L187"></a><span class="ln">   187</span>		<span class="comment">//</span>
+<a id="L188"></a><span class="ln">   188</span>		<span class="comment">// A previous version of this code said:</span>
+<a id="L189"></a><span class="ln">   189</span>		<span class="comment">//</span>
+<a id="L190"></a><span class="ln">   190</span>		<span class="comment">//	c.duration = ...</span>
+<a id="L191"></a><span class="ln">   191</span>		<span class="comment">//	c.signal &lt;- c.self</span>
+<a id="L192"></a><span class="ln">   192</span>		<span class="comment">//	runtime.Goexit()</span>
+<a id="L193"></a><span class="ln">   193</span>		<span class="comment">//</span>
+<a id="L194"></a><span class="ln">   194</span>		<span class="comment">// This previous version duplicated code (those lines are in</span>
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// tRunner no matter what), but worse the goroutine teardown</span>
+<a id="L196"></a><span class="ln">   196</span>		<span class="comment">// implicit in runtime.Goexit was not guaranteed to complete</span>
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// before the test exited.  If a test deferred an important cleanup</span>
+<a id="L198"></a><span class="ln">   198</span>		<span class="comment">// function (like removing temporary files), there was no guarantee</span>
+<a id="L199"></a><span class="ln">   199</span>		<span class="comment">// it would run on a test failure.  Because we send on c.signal during</span>
+<a id="L200"></a><span class="ln">   200</span>		<span class="comment">// a top-of-stack deferred function now, we know that the send</span>
+<a id="L201"></a><span class="ln">   201</span>		<span class="comment">// only happens after any other stacked defers have completed.</span>
+<a id="L202"></a><span class="ln">   202</span>		runtime.Goexit()
+<a id="L203"></a><span class="ln">   203</span>	}
+<a id="L204"></a><span class="ln">   204</span>	
+<a id="L205"></a><span class="ln">   205</span>	<span class="comment">// log generates the output. It&#39;s always at the same stack depth.</span>
+<a id="L206"></a><span class="ln">   206</span>	func (c *common) log(s string) {
+<a id="L207"></a><span class="ln">   207</span>		c.output = append(c.output, decorate(s, true)...)
+<a id="L208"></a><span class="ln">   208</span>	}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// Log formats its arguments using default formatting, analogous to Println(),</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// and records the text in the error log.</span>
+<a id="L212"></a><span class="ln">   212</span>	func (c *common) Log(args ...interface{}) { c.log(fmt.Sprintln(args...)) }
+<a id="L213"></a><span class="ln">   213</span>	
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// Logf formats its arguments according to the format, analogous to Printf(),</span>
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// and records the text in the error log.</span>
+<a id="L216"></a><span class="ln">   216</span>	func (c *common) Logf(format string, args ...interface{}) { c.log(fmt.Sprintf(format, args...)) }
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// Error is equivalent to Log() followed by Fail().</span>
+<a id="L219"></a><span class="ln">   219</span>	func (c *common) Error(args ...interface{}) {
+<a id="L220"></a><span class="ln">   220</span>		c.log(fmt.Sprintln(args...))
+<a id="L221"></a><span class="ln">   221</span>		c.Fail()
+<a id="L222"></a><span class="ln">   222</span>	}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// Errorf is equivalent to Logf() followed by Fail().</span>
+<a id="L225"></a><span class="ln">   225</span>	func (c *common) Errorf(format string, args ...interface{}) {
+<a id="L226"></a><span class="ln">   226</span>		c.log(fmt.Sprintf(format, args...))
+<a id="L227"></a><span class="ln">   227</span>		c.Fail()
+<a id="L228"></a><span class="ln">   228</span>	}
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// Fatal is equivalent to Log() followed by FailNow().</span>
+<a id="L231"></a><span class="ln">   231</span>	func (c *common) Fatal(args ...interface{}) {
+<a id="L232"></a><span class="ln">   232</span>		c.log(fmt.Sprintln(args...))
+<a id="L233"></a><span class="ln">   233</span>		c.FailNow()
+<a id="L234"></a><span class="ln">   234</span>	}
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>	<span class="comment">// Fatalf is equivalent to Logf() followed by FailNow().</span>
+<a id="L237"></a><span class="ln">   237</span>	func (c *common) Fatalf(format string, args ...interface{}) {
+<a id="L238"></a><span class="ln">   238</span>		c.log(fmt.Sprintf(format, args...))
+<a id="L239"></a><span class="ln">   239</span>		c.FailNow()
+<a id="L240"></a><span class="ln">   240</span>	}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>	<span class="comment">// Parallel signals that this test is to be run in parallel with (and only with) </span>
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// other parallel tests in this CPU group.</span>
+<a id="L244"></a><span class="ln">   244</span>	func (t *T) Parallel() {
+<a id="L245"></a><span class="ln">   245</span>		t.signal &lt;- (*T)(nil) <span class="comment">// Release main testing loop</span>
+<a id="L246"></a><span class="ln">   246</span>		&lt;-t.startParallel     <span class="comment">// Wait for serial tests to finish</span>
+<a id="L247"></a><span class="ln">   247</span>	}
+<a id="L248"></a><span class="ln">   248</span>	
+<a id="L249"></a><span class="ln">   249</span>	<span class="comment">// An internal type but exported because it is cross-package; part of the implementation</span>
+<a id="L250"></a><span class="ln">   250</span>	<span class="comment">// of the &#34;go test&#34; command.</span>
+<a id="L251"></a><span class="ln">   251</span>	type InternalTest struct {
+<a id="L252"></a><span class="ln">   252</span>		Name string
+<a id="L253"></a><span class="ln">   253</span>		F    func(*T)
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	func tRunner(t *T, test *InternalTest) {
+<a id="L257"></a><span class="ln">   257</span>		t.start = time.Now()
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>		<span class="comment">// When this goroutine is done, either because test.F(t)</span>
+<a id="L260"></a><span class="ln">   260</span>		<span class="comment">// returned normally or because a test failure triggered </span>
+<a id="L261"></a><span class="ln">   261</span>		<span class="comment">// a call to runtime.Goexit, record the duration and send</span>
+<a id="L262"></a><span class="ln">   262</span>		<span class="comment">// a signal saying that the test is done.</span>
+<a id="L263"></a><span class="ln">   263</span>		defer func() {
+<a id="L264"></a><span class="ln">   264</span>			t.duration = time.Now().Sub(t.start)
+<a id="L265"></a><span class="ln">   265</span>			<span class="comment">// If the test panicked, print any test output before dying.</span>
+<a id="L266"></a><span class="ln">   266</span>			if err := recover(); err != nil {
+<a id="L267"></a><span class="ln">   267</span>				t.report()
+<a id="L268"></a><span class="ln">   268</span>				panic(err)
+<a id="L269"></a><span class="ln">   269</span>			}
+<a id="L270"></a><span class="ln">   270</span>			t.signal &lt;- t
+<a id="L271"></a><span class="ln">   271</span>		}()
+<a id="L272"></a><span class="ln">   272</span>	
+<a id="L273"></a><span class="ln">   273</span>		test.F(t)
+<a id="L274"></a><span class="ln">   274</span>	}
+<a id="L275"></a><span class="ln">   275</span>	
+<a id="L276"></a><span class="ln">   276</span>	<span class="comment">// An internal function but exported because it is cross-package; part of the implementation</span>
+<a id="L277"></a><span class="ln">   277</span>	<span class="comment">// of the &#34;go test&#34; command.</span>
+<a id="L278"></a><span class="ln">   278</span>	func Main(matchString func(pat, str string) (bool, error), tests []InternalTest, benchmarks []InternalBenchmark, examples []InternalExample) {
+<a id="L279"></a><span class="ln">   279</span>		flag.Parse()
+<a id="L280"></a><span class="ln">   280</span>		parseCpuList()
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>		before()
+<a id="L283"></a><span class="ln">   283</span>		startAlarm()
+<a id="L284"></a><span class="ln">   284</span>		haveExamples = len(examples) &gt; 0
+<a id="L285"></a><span class="ln">   285</span>		testOk := RunTests(matchString, tests)
+<a id="L286"></a><span class="ln">   286</span>		exampleOk := RunExamples(matchString, examples)
+<a id="L287"></a><span class="ln">   287</span>		if !testOk || !exampleOk {
+<a id="L288"></a><span class="ln">   288</span>			fmt.Println(&#34;FAIL&#34;)
+<a id="L289"></a><span class="ln">   289</span>			os.Exit(1)
+<a id="L290"></a><span class="ln">   290</span>		}
+<a id="L291"></a><span class="ln">   291</span>		fmt.Println(&#34;PASS&#34;)
+<a id="L292"></a><span class="ln">   292</span>		stopAlarm()
+<a id="L293"></a><span class="ln">   293</span>		RunBenchmarks(matchString, benchmarks)
+<a id="L294"></a><span class="ln">   294</span>		after()
+<a id="L295"></a><span class="ln">   295</span>	}
+<a id="L296"></a><span class="ln">   296</span>	
+<a id="L297"></a><span class="ln">   297</span>	func (t *T) report() {
+<a id="L298"></a><span class="ln">   298</span>		tstr := fmt.Sprintf(&#34;(%.2f seconds)&#34;, t.duration.Seconds())
+<a id="L299"></a><span class="ln">   299</span>		format := &#34;--- %s: %s %s\n%s&#34;
+<a id="L300"></a><span class="ln">   300</span>		if t.failed {
+<a id="L301"></a><span class="ln">   301</span>			fmt.Printf(format, &#34;FAIL&#34;, t.name, tstr, t.output)
+<a id="L302"></a><span class="ln">   302</span>		} else if *chatty {
+<a id="L303"></a><span class="ln">   303</span>			fmt.Printf(format, &#34;PASS&#34;, t.name, tstr, t.output)
+<a id="L304"></a><span class="ln">   304</span>		}
+<a id="L305"></a><span class="ln">   305</span>	}
+<a id="L306"></a><span class="ln">   306</span>	
+<a id="L307"></a><span class="ln">   307</span>	func RunTests(matchString func(pat, str string) (bool, error), tests []InternalTest) (ok bool) {
+<a id="L308"></a><span class="ln">   308</span>		ok = true
+<a id="L309"></a><span class="ln">   309</span>		if len(tests) == 0 &amp;&amp; !haveExamples {
+<a id="L310"></a><span class="ln">   310</span>			fmt.Fprintln(os.Stderr, &#34;testing: warning: no tests to run&#34;)
+<a id="L311"></a><span class="ln">   311</span>			return
+<a id="L312"></a><span class="ln">   312</span>		}
+<a id="L313"></a><span class="ln">   313</span>		for _, procs := range cpuList {
+<a id="L314"></a><span class="ln">   314</span>			runtime.GOMAXPROCS(procs)
+<a id="L315"></a><span class="ln">   315</span>			<span class="comment">// We build a new channel tree for each run of the loop.</span>
+<a id="L316"></a><span class="ln">   316</span>			<span class="comment">// collector merges in one channel all the upstream signals from parallel tests.</span>
+<a id="L317"></a><span class="ln">   317</span>			<span class="comment">// If all tests pump to the same channel, a bug can occur where a test</span>
+<a id="L318"></a><span class="ln">   318</span>			<span class="comment">// kicks off a goroutine that Fails, yet the test still delivers a completion signal,</span>
+<a id="L319"></a><span class="ln">   319</span>			<span class="comment">// which skews the counting.</span>
+<a id="L320"></a><span class="ln">   320</span>			var collector = make(chan interface{})
+<a id="L321"></a><span class="ln">   321</span>	
+<a id="L322"></a><span class="ln">   322</span>			numParallel := 0
+<a id="L323"></a><span class="ln">   323</span>			startParallel := make(chan bool)
+<a id="L324"></a><span class="ln">   324</span>	
+<a id="L325"></a><span class="ln">   325</span>			for i := 0; i &lt; len(tests); i++ {
+<a id="L326"></a><span class="ln">   326</span>				matched, err := matchString(*match, tests[i].Name)
+<a id="L327"></a><span class="ln">   327</span>				if err != nil {
+<a id="L328"></a><span class="ln">   328</span>					fmt.Fprintf(os.Stderr, &#34;testing: invalid regexp for -test.run: %s\n&#34;, err)
+<a id="L329"></a><span class="ln">   329</span>					os.Exit(1)
+<a id="L330"></a><span class="ln">   330</span>				}
+<a id="L331"></a><span class="ln">   331</span>				if !matched {
+<a id="L332"></a><span class="ln">   332</span>					continue
+<a id="L333"></a><span class="ln">   333</span>				}
+<a id="L334"></a><span class="ln">   334</span>				testName := tests[i].Name
+<a id="L335"></a><span class="ln">   335</span>				if procs != 1 {
+<a id="L336"></a><span class="ln">   336</span>					testName = fmt.Sprintf(&#34;%s-%d&#34;, tests[i].Name, procs)
+<a id="L337"></a><span class="ln">   337</span>				}
+<a id="L338"></a><span class="ln">   338</span>				t := &amp;T{
+<a id="L339"></a><span class="ln">   339</span>					common: common{
+<a id="L340"></a><span class="ln">   340</span>						signal: make(chan interface{}),
+<a id="L341"></a><span class="ln">   341</span>					},
+<a id="L342"></a><span class="ln">   342</span>					name:          testName,
+<a id="L343"></a><span class="ln">   343</span>					startParallel: startParallel,
+<a id="L344"></a><span class="ln">   344</span>				}
+<a id="L345"></a><span class="ln">   345</span>				t.self = t
+<a id="L346"></a><span class="ln">   346</span>				if *chatty {
+<a id="L347"></a><span class="ln">   347</span>					fmt.Printf(&#34;=== RUN %s\n&#34;, t.name)
+<a id="L348"></a><span class="ln">   348</span>				}
+<a id="L349"></a><span class="ln">   349</span>				go tRunner(t, &amp;tests[i])
+<a id="L350"></a><span class="ln">   350</span>				out := (&lt;-t.signal).(*T)
+<a id="L351"></a><span class="ln">   351</span>				if out == nil { <span class="comment">// Parallel run.</span>
+<a id="L352"></a><span class="ln">   352</span>					go func() {
+<a id="L353"></a><span class="ln">   353</span>						collector &lt;- &lt;-t.signal
+<a id="L354"></a><span class="ln">   354</span>					}()
+<a id="L355"></a><span class="ln">   355</span>					numParallel++
+<a id="L356"></a><span class="ln">   356</span>					continue
+<a id="L357"></a><span class="ln">   357</span>				}
+<a id="L358"></a><span class="ln">   358</span>				t.report()
+<a id="L359"></a><span class="ln">   359</span>				ok = ok &amp;&amp; !out.failed
+<a id="L360"></a><span class="ln">   360</span>			}
+<a id="L361"></a><span class="ln">   361</span>	
+<a id="L362"></a><span class="ln">   362</span>			running := 0
+<a id="L363"></a><span class="ln">   363</span>			for numParallel+running &gt; 0 {
+<a id="L364"></a><span class="ln">   364</span>				if running &lt; *parallel &amp;&amp; numParallel &gt; 0 {
+<a id="L365"></a><span class="ln">   365</span>					startParallel &lt;- true
+<a id="L366"></a><span class="ln">   366</span>					running++
+<a id="L367"></a><span class="ln">   367</span>					numParallel--
+<a id="L368"></a><span class="ln">   368</span>					continue
+<a id="L369"></a><span class="ln">   369</span>				}
+<a id="L370"></a><span class="ln">   370</span>				t := (&lt;-collector).(*T)
+<a id="L371"></a><span class="ln">   371</span>				t.report()
+<a id="L372"></a><span class="ln">   372</span>				ok = ok &amp;&amp; !t.failed
+<a id="L373"></a><span class="ln">   373</span>				running--
+<a id="L374"></a><span class="ln">   374</span>			}
+<a id="L375"></a><span class="ln">   375</span>		}
+<a id="L376"></a><span class="ln">   376</span>		return
+<a id="L377"></a><span class="ln">   377</span>	}
+<a id="L378"></a><span class="ln">   378</span>	
+<a id="L379"></a><span class="ln">   379</span>	<span class="comment">// before runs before all testing.</span>
+<a id="L380"></a><span class="ln">   380</span>	func before() {
+<a id="L381"></a><span class="ln">   381</span>		if *memProfileRate &gt; 0 {
+<a id="L382"></a><span class="ln">   382</span>			runtime.MemProfileRate = *memProfileRate
+<a id="L383"></a><span class="ln">   383</span>		}
+<a id="L384"></a><span class="ln">   384</span>		if *cpuProfile != &#34;&#34; {
+<a id="L385"></a><span class="ln">   385</span>			f, err := os.Create(*cpuProfile)
+<a id="L386"></a><span class="ln">   386</span>			if err != nil {
+<a id="L387"></a><span class="ln">   387</span>				fmt.Fprintf(os.Stderr, &#34;testing: %s&#34;, err)
+<a id="L388"></a><span class="ln">   388</span>				return
+<a id="L389"></a><span class="ln">   389</span>			}
+<a id="L390"></a><span class="ln">   390</span>			if err := pprof.StartCPUProfile(f); err != nil {
+<a id="L391"></a><span class="ln">   391</span>				fmt.Fprintf(os.Stderr, &#34;testing: can&#39;t start cpu profile: %s&#34;, err)
+<a id="L392"></a><span class="ln">   392</span>				f.Close()
+<a id="L393"></a><span class="ln">   393</span>				return
+<a id="L394"></a><span class="ln">   394</span>			}
+<a id="L395"></a><span class="ln">   395</span>			<span class="comment">// Could save f so after can call f.Close; not worth the effort.</span>
+<a id="L396"></a><span class="ln">   396</span>		}
+<a id="L397"></a><span class="ln">   397</span>	
+<a id="L398"></a><span class="ln">   398</span>	}
+<a id="L399"></a><span class="ln">   399</span>	
+<a id="L400"></a><span class="ln">   400</span>	<span class="comment">// after runs after all testing.</span>
+<a id="L401"></a><span class="ln">   401</span>	func after() {
+<a id="L402"></a><span class="ln">   402</span>		if *cpuProfile != &#34;&#34; {
+<a id="L403"></a><span class="ln">   403</span>			pprof.StopCPUProfile() <span class="comment">// flushes profile to disk</span>
+<a id="L404"></a><span class="ln">   404</span>		}
+<a id="L405"></a><span class="ln">   405</span>		if *memProfile != &#34;&#34; {
+<a id="L406"></a><span class="ln">   406</span>			f, err := os.Create(*memProfile)
+<a id="L407"></a><span class="ln">   407</span>			if err != nil {
+<a id="L408"></a><span class="ln">   408</span>				fmt.Fprintf(os.Stderr, &#34;testing: %s&#34;, err)
+<a id="L409"></a><span class="ln">   409</span>				return
+<a id="L410"></a><span class="ln">   410</span>			}
+<a id="L411"></a><span class="ln">   411</span>			if err = pprof.WriteHeapProfile(f); err != nil {
+<a id="L412"></a><span class="ln">   412</span>				fmt.Fprintf(os.Stderr, &#34;testing: can&#39;t write %s: %s&#34;, *memProfile, err)
+<a id="L413"></a><span class="ln">   413</span>			}
+<a id="L414"></a><span class="ln">   414</span>			f.Close()
+<a id="L415"></a><span class="ln">   415</span>		}
+<a id="L416"></a><span class="ln">   416</span>	}
+<a id="L417"></a><span class="ln">   417</span>	
+<a id="L418"></a><span class="ln">   418</span>	var timer *time.Timer
+<a id="L419"></a><span class="ln">   419</span>	
+<a id="L420"></a><span class="ln">   420</span>	<span class="comment">// startAlarm starts an alarm if requested.</span>
+<a id="L421"></a><span class="ln">   421</span>	func startAlarm() {
+<a id="L422"></a><span class="ln">   422</span>		if *timeout &gt; 0 {
+<a id="L423"></a><span class="ln">   423</span>			timer = time.AfterFunc(*timeout, alarm)
+<a id="L424"></a><span class="ln">   424</span>		}
+<a id="L425"></a><span class="ln">   425</span>	}
+<a id="L426"></a><span class="ln">   426</span>	
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">// stopAlarm turns off the alarm.</span>
+<a id="L428"></a><span class="ln">   428</span>	func stopAlarm() {
+<a id="L429"></a><span class="ln">   429</span>		if *timeout &gt; 0 {
+<a id="L430"></a><span class="ln">   430</span>			timer.Stop()
+<a id="L431"></a><span class="ln">   431</span>		}
+<a id="L432"></a><span class="ln">   432</span>	}
+<a id="L433"></a><span class="ln">   433</span>	
+<a id="L434"></a><span class="ln">   434</span>	<span class="comment">// alarm is called if the timeout expires.</span>
+<a id="L435"></a><span class="ln">   435</span>	func alarm() {
+<a id="L436"></a><span class="ln">   436</span>		panic(&#34;test timed out&#34;)
+<a id="L437"></a><span class="ln">   437</span>	}
+<a id="L438"></a><span class="ln">   438</span>	
+<a id="L439"></a><span class="ln">   439</span>	func parseCpuList() {
+<a id="L440"></a><span class="ln">   440</span>		if len(*cpuListStr) == 0 {
+<a id="L441"></a><span class="ln">   441</span>			cpuList = append(cpuList, runtime.GOMAXPROCS(-1))
+<a id="L442"></a><span class="ln">   442</span>		} else {
+<a id="L443"></a><span class="ln">   443</span>			for _, val := range strings.Split(*cpuListStr, &#34;,&#34;) {
+<a id="L444"></a><span class="ln">   444</span>				cpu, err := strconv.Atoi(val)
+<a id="L445"></a><span class="ln">   445</span>				if err != nil || cpu &lt;= 0 {
+<a id="L446"></a><span class="ln">   446</span>					fmt.Fprintf(os.Stderr, &#34;testing: invalid value %q for -test.cpu&#34;, val)
+<a id="L447"></a><span class="ln">   447</span>					os.Exit(1)
+<a id="L448"></a><span class="ln">   448</span>				}
+<a id="L449"></a><span class="ln">   449</span>				cpuList = append(cpuList, cpu)
+<a id="L450"></a><span class="ln">   450</span>			}
+<a id="L451"></a><span class="ln">   451</span>		}
+<a id="L452"></a><span class="ln">   452</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

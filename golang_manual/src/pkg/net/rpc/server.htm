@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/rpc/server.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/rpc/server.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">/*
+</span><a id="L6"></a><span class="ln">     6</span>	<span class="comment">	Package rpc provides access to the exported methods of an object across a
+</span><a id="L7"></a><span class="ln">     7</span>	<span class="comment">	network or other I/O connection.  A server registers an object, making it visible
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">	as a service with the name of the type of the object.  After registration, exported
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">	methods of the object will be accessible remotely.  A server may register multiple
+</span><a id="L10"></a><span class="ln">    10</span>	<span class="comment">	objects (services) of different types but it is an error to register multiple
+</span><a id="L11"></a><span class="ln">    11</span>	<span class="comment">	objects of the same type.
+</span><a id="L12"></a><span class="ln">    12</span>	<span class="comment">
+</span><a id="L13"></a><span class="ln">    13</span>	<span class="comment">	Only methods that satisfy these criteria will be made available for remote access;
+</span><a id="L14"></a><span class="ln">    14</span>	<span class="comment">	other methods will be ignored:
+</span><a id="L15"></a><span class="ln">    15</span>	<span class="comment">
+</span><a id="L16"></a><span class="ln">    16</span>	<span class="comment">		- the method is exported.
+</span><a id="L17"></a><span class="ln">    17</span>	<span class="comment">		- the method has two arguments, both exported (or builtin) types.
+</span><a id="L18"></a><span class="ln">    18</span>	<span class="comment">		- the method&#39;s second argument is a pointer.
+</span><a id="L19"></a><span class="ln">    19</span>	<span class="comment">		- the method has return type error.
+</span><a id="L20"></a><span class="ln">    20</span>	<span class="comment">
+</span><a id="L21"></a><span class="ln">    21</span>	<span class="comment">	In effect, the method must look schematically like
+</span><a id="L22"></a><span class="ln">    22</span>	<span class="comment">
+</span><a id="L23"></a><span class="ln">    23</span>	<span class="comment">		func (t *T) MethodName(argType T1, replyType *T2) error
+</span><a id="L24"></a><span class="ln">    24</span>	<span class="comment">
+</span><a id="L25"></a><span class="ln">    25</span>	<span class="comment">	where T, T1 and T2 can be marshaled by encoding/gob.
+</span><a id="L26"></a><span class="ln">    26</span>	<span class="comment">	These requirements apply even if a different codec is used.
+</span><a id="L27"></a><span class="ln">    27</span>	<span class="comment">	(In future, these requirements may soften for custom codecs.)
+</span><a id="L28"></a><span class="ln">    28</span>	<span class="comment">
+</span><a id="L29"></a><span class="ln">    29</span>	<span class="comment">	The method&#39;s first argument represents the arguments provided by the caller; the
+</span><a id="L30"></a><span class="ln">    30</span>	<span class="comment">	second argument represents the result parameters to be returned to the caller.
+</span><a id="L31"></a><span class="ln">    31</span>	<span class="comment">	The method&#39;s return value, if non-nil, is passed back as a string that the client
+</span><a id="L32"></a><span class="ln">    32</span>	<span class="comment">	sees as if created by errors.New.
+</span><a id="L33"></a><span class="ln">    33</span>	<span class="comment">
+</span><a id="L34"></a><span class="ln">    34</span>	<span class="comment">	The server may handle requests on a single connection by calling ServeConn.  More
+</span><a id="L35"></a><span class="ln">    35</span>	<span class="comment">	typically it will create a network listener and call Accept or, for an HTTP
+</span><a id="L36"></a><span class="ln">    36</span>	<span class="comment">	listener, HandleHTTP and http.Serve.
+</span><a id="L37"></a><span class="ln">    37</span>	<span class="comment">
+</span><a id="L38"></a><span class="ln">    38</span>	<span class="comment">	A client wishing to use the service establishes a connection and then invokes
+</span><a id="L39"></a><span class="ln">    39</span>	<span class="comment">	NewClient on the connection.  The convenience function Dial (DialHTTP) performs
+</span><a id="L40"></a><span class="ln">    40</span>	<span class="comment">	both steps for a raw network connection (an HTTP connection).  The resulting
+</span><a id="L41"></a><span class="ln">    41</span>	<span class="comment">	Client object has two methods, Call and Go, that specify the service and method to
+</span><a id="L42"></a><span class="ln">    42</span>	<span class="comment">	call, a pointer containing the arguments, and a pointer to receive the result
+</span><a id="L43"></a><span class="ln">    43</span>	<span class="comment">	parameters.
+</span><a id="L44"></a><span class="ln">    44</span>	<span class="comment">
+</span><a id="L45"></a><span class="ln">    45</span>	<span class="comment">	The Call method waits for the remote call to complete while the Go method
+</span><a id="L46"></a><span class="ln">    46</span>	<span class="comment">	launches the call asynchronously and signals completion using the Call
+</span><a id="L47"></a><span class="ln">    47</span>	<span class="comment">	structure&#39;s Done channel.
+</span><a id="L48"></a><span class="ln">    48</span>	<span class="comment">
+</span><a id="L49"></a><span class="ln">    49</span>	<span class="comment">	Unless an explicit codec is set up, package encoding/gob is used to
+</span><a id="L50"></a><span class="ln">    50</span>	<span class="comment">	transport the data.
+</span><a id="L51"></a><span class="ln">    51</span>	<span class="comment">
+</span><a id="L52"></a><span class="ln">    52</span>	<span class="comment">	Here is a simple example.  A server wishes to export an object of type Arith:
+</span><a id="L53"></a><span class="ln">    53</span>	<span class="comment">
+</span><a id="L54"></a><span class="ln">    54</span>	<span class="comment">		package server
+</span><a id="L55"></a><span class="ln">    55</span>	<span class="comment">
+</span><a id="L56"></a><span class="ln">    56</span>	<span class="comment">		type Args struct {
+</span><a id="L57"></a><span class="ln">    57</span>	<span class="comment">			A, B int
+</span><a id="L58"></a><span class="ln">    58</span>	<span class="comment">		}
+</span><a id="L59"></a><span class="ln">    59</span>	<span class="comment">
+</span><a id="L60"></a><span class="ln">    60</span>	<span class="comment">		type Quotient struct {
+</span><a id="L61"></a><span class="ln">    61</span>	<span class="comment">			Quo, Rem int
+</span><a id="L62"></a><span class="ln">    62</span>	<span class="comment">		}
+</span><a id="L63"></a><span class="ln">    63</span>	<span class="comment">
+</span><a id="L64"></a><span class="ln">    64</span>	<span class="comment">		type Arith int
+</span><a id="L65"></a><span class="ln">    65</span>	<span class="comment">
+</span><a id="L66"></a><span class="ln">    66</span>	<span class="comment">		func (t *Arith) Multiply(args *Args, reply *int) error {
+</span><a id="L67"></a><span class="ln">    67</span>	<span class="comment">			*reply = args.A * args.B
+</span><a id="L68"></a><span class="ln">    68</span>	<span class="comment">			return nil
+</span><a id="L69"></a><span class="ln">    69</span>	<span class="comment">		}
+</span><a id="L70"></a><span class="ln">    70</span>	<span class="comment">
+</span><a id="L71"></a><span class="ln">    71</span>	<span class="comment">		func (t *Arith) Divide(args *Args, quo *Quotient) error {
+</span><a id="L72"></a><span class="ln">    72</span>	<span class="comment">			if args.B == 0 {
+</span><a id="L73"></a><span class="ln">    73</span>	<span class="comment">				return errors.New(&#34;divide by zero&#34;)
+</span><a id="L74"></a><span class="ln">    74</span>	<span class="comment">			}
+</span><a id="L75"></a><span class="ln">    75</span>	<span class="comment">			quo.Quo = args.A / args.B
+</span><a id="L76"></a><span class="ln">    76</span>	<span class="comment">			quo.Rem = args.A % args.B
+</span><a id="L77"></a><span class="ln">    77</span>	<span class="comment">			return nil
+</span><a id="L78"></a><span class="ln">    78</span>	<span class="comment">		}
+</span><a id="L79"></a><span class="ln">    79</span>	<span class="comment">
+</span><a id="L80"></a><span class="ln">    80</span>	<span class="comment">	The server calls (for HTTP service):
+</span><a id="L81"></a><span class="ln">    81</span>	<span class="comment">
+</span><a id="L82"></a><span class="ln">    82</span>	<span class="comment">		arith := new(Arith)
+</span><a id="L83"></a><span class="ln">    83</span>	<span class="comment">		rpc.Register(arith)
+</span><a id="L84"></a><span class="ln">    84</span>	<span class="comment">		rpc.HandleHTTP()
+</span><a id="L85"></a><span class="ln">    85</span>	<span class="comment">		l, e := net.Listen(&#34;tcp&#34;, &#34;:1234&#34;)
+</span><a id="L86"></a><span class="ln">    86</span>	<span class="comment">		if e != nil {
+</span><a id="L87"></a><span class="ln">    87</span>	<span class="comment">			log.Fatal(&#34;listen error:&#34;, e)
+</span><a id="L88"></a><span class="ln">    88</span>	<span class="comment">		}
+</span><a id="L89"></a><span class="ln">    89</span>	<span class="comment">		go http.Serve(l, nil)
+</span><a id="L90"></a><span class="ln">    90</span>	<span class="comment">
+</span><a id="L91"></a><span class="ln">    91</span>	<span class="comment">	At this point, clients can see a service &#34;Arith&#34; with methods &#34;Arith.Multiply&#34; and
+</span><a id="L92"></a><span class="ln">    92</span>	<span class="comment">	&#34;Arith.Divide&#34;.  To invoke one, a client first dials the server:
+</span><a id="L93"></a><span class="ln">    93</span>	<span class="comment">
+</span><a id="L94"></a><span class="ln">    94</span>	<span class="comment">		client, err := rpc.DialHTTP(&#34;tcp&#34;, serverAddress + &#34;:1234&#34;)
+</span><a id="L95"></a><span class="ln">    95</span>	<span class="comment">		if err != nil {
+</span><a id="L96"></a><span class="ln">    96</span>	<span class="comment">			log.Fatal(&#34;dialing:&#34;, err)
+</span><a id="L97"></a><span class="ln">    97</span>	<span class="comment">		}
+</span><a id="L98"></a><span class="ln">    98</span>	<span class="comment">
+</span><a id="L99"></a><span class="ln">    99</span>	<span class="comment">	Then it can make a remote call:
+</span><a id="L100"></a><span class="ln">   100</span>	<span class="comment">
+</span><a id="L101"></a><span class="ln">   101</span>	<span class="comment">		// Synchronous call
+</span><a id="L102"></a><span class="ln">   102</span>	<span class="comment">		args := &amp;server.Args{7,8}
+</span><a id="L103"></a><span class="ln">   103</span>	<span class="comment">		var reply int
+</span><a id="L104"></a><span class="ln">   104</span>	<span class="comment">		err = client.Call(&#34;Arith.Multiply&#34;, args, &amp;reply)
+</span><a id="L105"></a><span class="ln">   105</span>	<span class="comment">		if err != nil {
+</span><a id="L106"></a><span class="ln">   106</span>	<span class="comment">			log.Fatal(&#34;arith error:&#34;, err)
+</span><a id="L107"></a><span class="ln">   107</span>	<span class="comment">		}
+</span><a id="L108"></a><span class="ln">   108</span>	<span class="comment">		fmt.Printf(&#34;Arith: %d*%d=%d&#34;, args.A, args.B, reply)
+</span><a id="L109"></a><span class="ln">   109</span>	<span class="comment">
+</span><a id="L110"></a><span class="ln">   110</span>	<span class="comment">	or
+</span><a id="L111"></a><span class="ln">   111</span>	<span class="comment">
+</span><a id="L112"></a><span class="ln">   112</span>	<span class="comment">		// Asynchronous call
+</span><a id="L113"></a><span class="ln">   113</span>	<span class="comment">		quotient := new(Quotient)
+</span><a id="L114"></a><span class="ln">   114</span>	<span class="comment">		divCall := client.Go(&#34;Arith.Divide&#34;, args, &amp;quotient, nil)
+</span><a id="L115"></a><span class="ln">   115</span>	<span class="comment">		replyCall := &lt;-divCall.Done	// will be equal to divCall
+</span><a id="L116"></a><span class="ln">   116</span>	<span class="comment">		// check errors, print, etc.
+</span><a id="L117"></a><span class="ln">   117</span>	<span class="comment">
+</span><a id="L118"></a><span class="ln">   118</span>	<span class="comment">	A server implementation will often provide a simple, type-safe wrapper for the
+</span><a id="L119"></a><span class="ln">   119</span>	<span class="comment">	client.
+</span><a id="L120"></a><span class="ln">   120</span>	<span class="comment">*/</span>
+<a id="L121"></a><span class="ln">   121</span>	package rpc
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>	import (
+<a id="L124"></a><span class="ln">   124</span>		&#34;bufio&#34;
+<a id="L125"></a><span class="ln">   125</span>		&#34;encoding/gob&#34;
+<a id="L126"></a><span class="ln">   126</span>		&#34;errors&#34;
+<a id="L127"></a><span class="ln">   127</span>		&#34;io&#34;
+<a id="L128"></a><span class="ln">   128</span>		&#34;log&#34;
+<a id="L129"></a><span class="ln">   129</span>		&#34;net&#34;
+<a id="L130"></a><span class="ln">   130</span>		&#34;net/http&#34;
+<a id="L131"></a><span class="ln">   131</span>		&#34;reflect&#34;
+<a id="L132"></a><span class="ln">   132</span>		&#34;strings&#34;
+<a id="L133"></a><span class="ln">   133</span>		&#34;sync&#34;
+<a id="L134"></a><span class="ln">   134</span>		&#34;unicode&#34;
+<a id="L135"></a><span class="ln">   135</span>		&#34;unicode/utf8&#34;
+<a id="L136"></a><span class="ln">   136</span>	)
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>	const (
+<a id="L139"></a><span class="ln">   139</span>		<span class="comment">// Defaults used by HandleHTTP</span>
+<a id="L140"></a><span class="ln">   140</span>		DefaultRPCPath   = &#34;/_goRPC_&#34;
+<a id="L141"></a><span class="ln">   141</span>		DefaultDebugPath = &#34;/debug/rpc&#34;
+<a id="L142"></a><span class="ln">   142</span>	)
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// Precompute the reflect type for error.  Can&#39;t use error directly</span>
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// because Typeof takes an empty interface value.  This is annoying.</span>
+<a id="L146"></a><span class="ln">   146</span>	var typeOfError = reflect.TypeOf((*error)(nil)).Elem()
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	type methodType struct {
+<a id="L149"></a><span class="ln">   149</span>		sync.Mutex <span class="comment">// protects counters</span>
+<a id="L150"></a><span class="ln">   150</span>		method     reflect.Method
+<a id="L151"></a><span class="ln">   151</span>		ArgType    reflect.Type
+<a id="L152"></a><span class="ln">   152</span>		ReplyType  reflect.Type
+<a id="L153"></a><span class="ln">   153</span>		numCalls   uint
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	type service struct {
+<a id="L157"></a><span class="ln">   157</span>		name   string                 <span class="comment">// name of service</span>
+<a id="L158"></a><span class="ln">   158</span>		rcvr   reflect.Value          <span class="comment">// receiver of methods for the service</span>
+<a id="L159"></a><span class="ln">   159</span>		typ    reflect.Type           <span class="comment">// type of the receiver</span>
+<a id="L160"></a><span class="ln">   160</span>		method map[string]*methodType <span class="comment">// registered methods</span>
+<a id="L161"></a><span class="ln">   161</span>	}
+<a id="L162"></a><span class="ln">   162</span>	
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// Request is a header written before every RPC call.  It is used internally</span>
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// but documented here as an aid to debugging, such as when analyzing</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// network traffic.</span>
+<a id="L166"></a><span class="ln">   166</span>	type Request struct {
+<a id="L167"></a><span class="ln">   167</span>		ServiceMethod string   <span class="comment">// format: &#34;Service.Method&#34;</span>
+<a id="L168"></a><span class="ln">   168</span>		Seq           uint64   <span class="comment">// sequence number chosen by client</span>
+<a id="L169"></a><span class="ln">   169</span>		next          *Request <span class="comment">// for free list in Server</span>
+<a id="L170"></a><span class="ln">   170</span>	}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// Response is a header written before every RPC return.  It is used internally</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">// but documented here as an aid to debugging, such as when analyzing</span>
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">// network traffic.</span>
+<a id="L175"></a><span class="ln">   175</span>	type Response struct {
+<a id="L176"></a><span class="ln">   176</span>		ServiceMethod string    <span class="comment">// echoes that of the Request</span>
+<a id="L177"></a><span class="ln">   177</span>		Seq           uint64    <span class="comment">// echoes that of the request</span>
+<a id="L178"></a><span class="ln">   178</span>		Error         string    <span class="comment">// error, if any.</span>
+<a id="L179"></a><span class="ln">   179</span>		next          *Response <span class="comment">// for free list in Server</span>
+<a id="L180"></a><span class="ln">   180</span>	}
+<a id="L181"></a><span class="ln">   181</span>	
+<a id="L182"></a><span class="ln">   182</span>	<span class="comment">// Server represents an RPC Server.</span>
+<a id="L183"></a><span class="ln">   183</span>	type Server struct {
+<a id="L184"></a><span class="ln">   184</span>		mu         sync.Mutex <span class="comment">// protects the serviceMap</span>
+<a id="L185"></a><span class="ln">   185</span>		serviceMap map[string]*service
+<a id="L186"></a><span class="ln">   186</span>		reqLock    sync.Mutex <span class="comment">// protects freeReq</span>
+<a id="L187"></a><span class="ln">   187</span>		freeReq    *Request
+<a id="L188"></a><span class="ln">   188</span>		respLock   sync.Mutex <span class="comment">// protects freeResp</span>
+<a id="L189"></a><span class="ln">   189</span>		freeResp   *Response
+<a id="L190"></a><span class="ln">   190</span>	}
+<a id="L191"></a><span class="ln">   191</span>	
+<a id="L192"></a><span class="ln">   192</span>	<span class="comment">// NewServer returns a new Server.</span>
+<a id="L193"></a><span class="ln">   193</span>	func NewServer() *Server {
+<a id="L194"></a><span class="ln">   194</span>		return &amp;Server{serviceMap: make(map[string]*service)}
+<a id="L195"></a><span class="ln">   195</span>	}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>	<span class="comment">// DefaultServer is the default instance of *Server.</span>
+<a id="L198"></a><span class="ln">   198</span>	var DefaultServer = NewServer()
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>	<span class="comment">// Is this an exported - upper case - name?</span>
+<a id="L201"></a><span class="ln">   201</span>	func isExported(name string) bool {
+<a id="L202"></a><span class="ln">   202</span>		rune, _ := utf8.DecodeRuneInString(name)
+<a id="L203"></a><span class="ln">   203</span>		return unicode.IsUpper(rune)
+<a id="L204"></a><span class="ln">   204</span>	}
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>	<span class="comment">// Is this type exported or a builtin?</span>
+<a id="L207"></a><span class="ln">   207</span>	func isExportedOrBuiltinType(t reflect.Type) bool {
+<a id="L208"></a><span class="ln">   208</span>		for t.Kind() == reflect.Ptr {
+<a id="L209"></a><span class="ln">   209</span>			t = t.Elem()
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>		<span class="comment">// PkgPath will be non-empty even for an exported type,</span>
+<a id="L212"></a><span class="ln">   212</span>		<span class="comment">// so we need to check the type name as well.</span>
+<a id="L213"></a><span class="ln">   213</span>		return isExported(t.Name()) || t.PkgPath() == &#34;&#34;
+<a id="L214"></a><span class="ln">   214</span>	}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>	<span class="comment">// Register publishes in the server the set of methods of the</span>
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// receiver value that satisfy the following conditions:</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">//	- exported method</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">//	- two arguments, both pointers to exported structs</span>
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">//	- one return value, of type error</span>
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// It returns an error if the receiver is not an exported type or has no</span>
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// suitable methods.</span>
+<a id="L223"></a><span class="ln">   223</span>	<span class="comment">// The client accesses each method using a string of the form &#34;Type.Method&#34;,</span>
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// where Type is the receiver&#39;s concrete type.</span>
+<a id="L225"></a><span class="ln">   225</span>	func (server *Server) Register(rcvr interface{}) error {
+<a id="L226"></a><span class="ln">   226</span>		return server.register(rcvr, &#34;&#34;, false)
+<a id="L227"></a><span class="ln">   227</span>	}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>	<span class="comment">// RegisterName is like Register but uses the provided name for the type </span>
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// instead of the receiver&#39;s concrete type.</span>
+<a id="L231"></a><span class="ln">   231</span>	func (server *Server) RegisterName(name string, rcvr interface{}) error {
+<a id="L232"></a><span class="ln">   232</span>		return server.register(rcvr, name, true)
+<a id="L233"></a><span class="ln">   233</span>	}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>	func (server *Server) register(rcvr interface{}, name string, useName bool) error {
+<a id="L236"></a><span class="ln">   236</span>		server.mu.Lock()
+<a id="L237"></a><span class="ln">   237</span>		defer server.mu.Unlock()
+<a id="L238"></a><span class="ln">   238</span>		if server.serviceMap == nil {
+<a id="L239"></a><span class="ln">   239</span>			server.serviceMap = make(map[string]*service)
+<a id="L240"></a><span class="ln">   240</span>		}
+<a id="L241"></a><span class="ln">   241</span>		s := new(service)
+<a id="L242"></a><span class="ln">   242</span>		s.typ = reflect.TypeOf(rcvr)
+<a id="L243"></a><span class="ln">   243</span>		s.rcvr = reflect.ValueOf(rcvr)
+<a id="L244"></a><span class="ln">   244</span>		sname := reflect.Indirect(s.rcvr).Type().Name()
+<a id="L245"></a><span class="ln">   245</span>		if useName {
+<a id="L246"></a><span class="ln">   246</span>			sname = name
+<a id="L247"></a><span class="ln">   247</span>		}
+<a id="L248"></a><span class="ln">   248</span>		if sname == &#34;&#34; {
+<a id="L249"></a><span class="ln">   249</span>			log.Fatal(&#34;rpc: no service name for type&#34;, s.typ.String())
+<a id="L250"></a><span class="ln">   250</span>		}
+<a id="L251"></a><span class="ln">   251</span>		if !isExported(sname) &amp;&amp; !useName {
+<a id="L252"></a><span class="ln">   252</span>			s := &#34;rpc Register: type &#34; + sname + &#34; is not exported&#34;
+<a id="L253"></a><span class="ln">   253</span>			log.Print(s)
+<a id="L254"></a><span class="ln">   254</span>			return errors.New(s)
+<a id="L255"></a><span class="ln">   255</span>		}
+<a id="L256"></a><span class="ln">   256</span>		if _, present := server.serviceMap[sname]; present {
+<a id="L257"></a><span class="ln">   257</span>			return errors.New(&#34;rpc: service already defined: &#34; + sname)
+<a id="L258"></a><span class="ln">   258</span>		}
+<a id="L259"></a><span class="ln">   259</span>		s.name = sname
+<a id="L260"></a><span class="ln">   260</span>		s.method = make(map[string]*methodType)
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>		<span class="comment">// Install the methods</span>
+<a id="L263"></a><span class="ln">   263</span>		for m := 0; m &lt; s.typ.NumMethod(); m++ {
+<a id="L264"></a><span class="ln">   264</span>			method := s.typ.Method(m)
+<a id="L265"></a><span class="ln">   265</span>			mtype := method.Type
+<a id="L266"></a><span class="ln">   266</span>			mname := method.Name
+<a id="L267"></a><span class="ln">   267</span>			<span class="comment">// Method must be exported.</span>
+<a id="L268"></a><span class="ln">   268</span>			if method.PkgPath != &#34;&#34; {
+<a id="L269"></a><span class="ln">   269</span>				continue
+<a id="L270"></a><span class="ln">   270</span>			}
+<a id="L271"></a><span class="ln">   271</span>			<span class="comment">// Method needs three ins: receiver, *args, *reply.</span>
+<a id="L272"></a><span class="ln">   272</span>			if mtype.NumIn() != 3 {
+<a id="L273"></a><span class="ln">   273</span>				log.Println(&#34;method&#34;, mname, &#34;has wrong number of ins:&#34;, mtype.NumIn())
+<a id="L274"></a><span class="ln">   274</span>				continue
+<a id="L275"></a><span class="ln">   275</span>			}
+<a id="L276"></a><span class="ln">   276</span>			<span class="comment">// First arg need not be a pointer.</span>
+<a id="L277"></a><span class="ln">   277</span>			argType := mtype.In(1)
+<a id="L278"></a><span class="ln">   278</span>			if !isExportedOrBuiltinType(argType) {
+<a id="L279"></a><span class="ln">   279</span>				log.Println(mname, &#34;argument type not exported:&#34;, argType)
+<a id="L280"></a><span class="ln">   280</span>				continue
+<a id="L281"></a><span class="ln">   281</span>			}
+<a id="L282"></a><span class="ln">   282</span>			<span class="comment">// Second arg must be a pointer.</span>
+<a id="L283"></a><span class="ln">   283</span>			replyType := mtype.In(2)
+<a id="L284"></a><span class="ln">   284</span>			if replyType.Kind() != reflect.Ptr {
+<a id="L285"></a><span class="ln">   285</span>				log.Println(&#34;method&#34;, mname, &#34;reply type not a pointer:&#34;, replyType)
+<a id="L286"></a><span class="ln">   286</span>				continue
+<a id="L287"></a><span class="ln">   287</span>			}
+<a id="L288"></a><span class="ln">   288</span>			<span class="comment">// Reply type must be exported.</span>
+<a id="L289"></a><span class="ln">   289</span>			if !isExportedOrBuiltinType(replyType) {
+<a id="L290"></a><span class="ln">   290</span>				log.Println(&#34;method&#34;, mname, &#34;reply type not exported:&#34;, replyType)
+<a id="L291"></a><span class="ln">   291</span>				continue
+<a id="L292"></a><span class="ln">   292</span>			}
+<a id="L293"></a><span class="ln">   293</span>			<span class="comment">// Method needs one out.</span>
+<a id="L294"></a><span class="ln">   294</span>			if mtype.NumOut() != 1 {
+<a id="L295"></a><span class="ln">   295</span>				log.Println(&#34;method&#34;, mname, &#34;has wrong number of outs:&#34;, mtype.NumOut())
+<a id="L296"></a><span class="ln">   296</span>				continue
+<a id="L297"></a><span class="ln">   297</span>			}
+<a id="L298"></a><span class="ln">   298</span>			<span class="comment">// The return type of the method must be error.</span>
+<a id="L299"></a><span class="ln">   299</span>			if returnType := mtype.Out(0); returnType != typeOfError {
+<a id="L300"></a><span class="ln">   300</span>				log.Println(&#34;method&#34;, mname, &#34;returns&#34;, returnType.String(), &#34;not error&#34;)
+<a id="L301"></a><span class="ln">   301</span>				continue
+<a id="L302"></a><span class="ln">   302</span>			}
+<a id="L303"></a><span class="ln">   303</span>			s.method[mname] = &amp;methodType{method: method, ArgType: argType, ReplyType: replyType}
+<a id="L304"></a><span class="ln">   304</span>		}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>		if len(s.method) == 0 {
+<a id="L307"></a><span class="ln">   307</span>			s := &#34;rpc Register: type &#34; + sname + &#34; has no exported methods of suitable type&#34;
+<a id="L308"></a><span class="ln">   308</span>			log.Print(s)
+<a id="L309"></a><span class="ln">   309</span>			return errors.New(s)
+<a id="L310"></a><span class="ln">   310</span>		}
+<a id="L311"></a><span class="ln">   311</span>		server.serviceMap[s.name] = s
+<a id="L312"></a><span class="ln">   312</span>		return nil
+<a id="L313"></a><span class="ln">   313</span>	}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// A value sent as a placeholder for the server&#39;s response value when the server</span>
+<a id="L316"></a><span class="ln">   316</span>	<span class="comment">// receives an invalid request. It is never decoded by the client since the Response</span>
+<a id="L317"></a><span class="ln">   317</span>	<span class="comment">// contains an error when it is used.</span>
+<a id="L318"></a><span class="ln">   318</span>	var invalidRequest = struct{}{}
+<a id="L319"></a><span class="ln">   319</span>	
+<a id="L320"></a><span class="ln">   320</span>	func (server *Server) sendResponse(sending *sync.Mutex, req *Request, reply interface{}, codec ServerCodec, errmsg string) {
+<a id="L321"></a><span class="ln">   321</span>		resp := server.getResponse()
+<a id="L322"></a><span class="ln">   322</span>		<span class="comment">// Encode the response header</span>
+<a id="L323"></a><span class="ln">   323</span>		resp.ServiceMethod = req.ServiceMethod
+<a id="L324"></a><span class="ln">   324</span>		if errmsg != &#34;&#34; {
+<a id="L325"></a><span class="ln">   325</span>			resp.Error = errmsg
+<a id="L326"></a><span class="ln">   326</span>			reply = invalidRequest
+<a id="L327"></a><span class="ln">   327</span>		}
+<a id="L328"></a><span class="ln">   328</span>		resp.Seq = req.Seq
+<a id="L329"></a><span class="ln">   329</span>		sending.Lock()
+<a id="L330"></a><span class="ln">   330</span>		err := codec.WriteResponse(resp, reply)
+<a id="L331"></a><span class="ln">   331</span>		if err != nil {
+<a id="L332"></a><span class="ln">   332</span>			log.Println(&#34;rpc: writing response:&#34;, err)
+<a id="L333"></a><span class="ln">   333</span>		}
+<a id="L334"></a><span class="ln">   334</span>		sending.Unlock()
+<a id="L335"></a><span class="ln">   335</span>		server.freeResponse(resp)
+<a id="L336"></a><span class="ln">   336</span>	}
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>	func (m *methodType) NumCalls() (n uint) {
+<a id="L339"></a><span class="ln">   339</span>		m.Lock()
+<a id="L340"></a><span class="ln">   340</span>		n = m.numCalls
+<a id="L341"></a><span class="ln">   341</span>		m.Unlock()
+<a id="L342"></a><span class="ln">   342</span>		return n
+<a id="L343"></a><span class="ln">   343</span>	}
+<a id="L344"></a><span class="ln">   344</span>	
+<a id="L345"></a><span class="ln">   345</span>	func (s *service) call(server *Server, sending *sync.Mutex, mtype *methodType, req *Request, argv, replyv reflect.Value, codec ServerCodec) {
+<a id="L346"></a><span class="ln">   346</span>		mtype.Lock()
+<a id="L347"></a><span class="ln">   347</span>		mtype.numCalls++
+<a id="L348"></a><span class="ln">   348</span>		mtype.Unlock()
+<a id="L349"></a><span class="ln">   349</span>		function := mtype.method.Func
+<a id="L350"></a><span class="ln">   350</span>		<span class="comment">// Invoke the method, providing a new value for the reply.</span>
+<a id="L351"></a><span class="ln">   351</span>		returnValues := function.Call([]reflect.Value{s.rcvr, argv, replyv})
+<a id="L352"></a><span class="ln">   352</span>		<span class="comment">// The return value for the method is an error.</span>
+<a id="L353"></a><span class="ln">   353</span>		errInter := returnValues[0].Interface()
+<a id="L354"></a><span class="ln">   354</span>		errmsg := &#34;&#34;
+<a id="L355"></a><span class="ln">   355</span>		if errInter != nil {
+<a id="L356"></a><span class="ln">   356</span>			errmsg = errInter.(error).Error()
+<a id="L357"></a><span class="ln">   357</span>		}
+<a id="L358"></a><span class="ln">   358</span>		server.sendResponse(sending, req, replyv.Interface(), codec, errmsg)
+<a id="L359"></a><span class="ln">   359</span>		server.freeRequest(req)
+<a id="L360"></a><span class="ln">   360</span>	}
+<a id="L361"></a><span class="ln">   361</span>	
+<a id="L362"></a><span class="ln">   362</span>	type gobServerCodec struct {
+<a id="L363"></a><span class="ln">   363</span>		rwc    io.ReadWriteCloser
+<a id="L364"></a><span class="ln">   364</span>		dec    *gob.Decoder
+<a id="L365"></a><span class="ln">   365</span>		enc    *gob.Encoder
+<a id="L366"></a><span class="ln">   366</span>		encBuf *bufio.Writer
+<a id="L367"></a><span class="ln">   367</span>	}
+<a id="L368"></a><span class="ln">   368</span>	
+<a id="L369"></a><span class="ln">   369</span>	func (c *gobServerCodec) ReadRequestHeader(r *Request) error {
+<a id="L370"></a><span class="ln">   370</span>		return c.dec.Decode(r)
+<a id="L371"></a><span class="ln">   371</span>	}
+<a id="L372"></a><span class="ln">   372</span>	
+<a id="L373"></a><span class="ln">   373</span>	func (c *gobServerCodec) ReadRequestBody(body interface{}) error {
+<a id="L374"></a><span class="ln">   374</span>		return c.dec.Decode(body)
+<a id="L375"></a><span class="ln">   375</span>	}
+<a id="L376"></a><span class="ln">   376</span>	
+<a id="L377"></a><span class="ln">   377</span>	func (c *gobServerCodec) WriteResponse(r *Response, body interface{}) (err error) {
+<a id="L378"></a><span class="ln">   378</span>		if err = c.enc.Encode(r); err != nil {
+<a id="L379"></a><span class="ln">   379</span>			return
+<a id="L380"></a><span class="ln">   380</span>		}
+<a id="L381"></a><span class="ln">   381</span>		if err = c.enc.Encode(body); err != nil {
+<a id="L382"></a><span class="ln">   382</span>			return
+<a id="L383"></a><span class="ln">   383</span>		}
+<a id="L384"></a><span class="ln">   384</span>		return c.encBuf.Flush()
+<a id="L385"></a><span class="ln">   385</span>	}
+<a id="L386"></a><span class="ln">   386</span>	
+<a id="L387"></a><span class="ln">   387</span>	func (c *gobServerCodec) Close() error {
+<a id="L388"></a><span class="ln">   388</span>		return c.rwc.Close()
+<a id="L389"></a><span class="ln">   389</span>	}
+<a id="L390"></a><span class="ln">   390</span>	
+<a id="L391"></a><span class="ln">   391</span>	<span class="comment">// ServeConn runs the server on a single connection.</span>
+<a id="L392"></a><span class="ln">   392</span>	<span class="comment">// ServeConn blocks, serving the connection until the client hangs up.</span>
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// The caller typically invokes ServeConn in a go statement.</span>
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">// ServeConn uses the gob wire format (see package gob) on the</span>
+<a id="L395"></a><span class="ln">   395</span>	<span class="comment">// connection.  To use an alternate codec, use ServeCodec.</span>
+<a id="L396"></a><span class="ln">   396</span>	func (server *Server) ServeConn(conn io.ReadWriteCloser) {
+<a id="L397"></a><span class="ln">   397</span>		buf := bufio.NewWriter(conn)
+<a id="L398"></a><span class="ln">   398</span>		srv := &amp;gobServerCodec{conn, gob.NewDecoder(conn), gob.NewEncoder(buf), buf}
+<a id="L399"></a><span class="ln">   399</span>		server.ServeCodec(srv)
+<a id="L400"></a><span class="ln">   400</span>	}
+<a id="L401"></a><span class="ln">   401</span>	
+<a id="L402"></a><span class="ln">   402</span>	<span class="comment">// ServeCodec is like ServeConn but uses the specified codec to</span>
+<a id="L403"></a><span class="ln">   403</span>	<span class="comment">// decode requests and encode responses.</span>
+<a id="L404"></a><span class="ln">   404</span>	func (server *Server) ServeCodec(codec ServerCodec) {
+<a id="L405"></a><span class="ln">   405</span>		sending := new(sync.Mutex)
+<a id="L406"></a><span class="ln">   406</span>		for {
+<a id="L407"></a><span class="ln">   407</span>			service, mtype, req, argv, replyv, keepReading, err := server.readRequest(codec)
+<a id="L408"></a><span class="ln">   408</span>			if err != nil {
+<a id="L409"></a><span class="ln">   409</span>				if err != io.EOF {
+<a id="L410"></a><span class="ln">   410</span>					log.Println(&#34;rpc:&#34;, err)
+<a id="L411"></a><span class="ln">   411</span>				}
+<a id="L412"></a><span class="ln">   412</span>				if !keepReading {
+<a id="L413"></a><span class="ln">   413</span>					break
+<a id="L414"></a><span class="ln">   414</span>				}
+<a id="L415"></a><span class="ln">   415</span>				<span class="comment">// send a response if we actually managed to read a header.</span>
+<a id="L416"></a><span class="ln">   416</span>				if req != nil {
+<a id="L417"></a><span class="ln">   417</span>					server.sendResponse(sending, req, invalidRequest, codec, err.Error())
+<a id="L418"></a><span class="ln">   418</span>					server.freeRequest(req)
+<a id="L419"></a><span class="ln">   419</span>				}
+<a id="L420"></a><span class="ln">   420</span>				continue
+<a id="L421"></a><span class="ln">   421</span>			}
+<a id="L422"></a><span class="ln">   422</span>			go service.call(server, sending, mtype, req, argv, replyv, codec)
+<a id="L423"></a><span class="ln">   423</span>		}
+<a id="L424"></a><span class="ln">   424</span>		codec.Close()
+<a id="L425"></a><span class="ln">   425</span>	}
+<a id="L426"></a><span class="ln">   426</span>	
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">// ServeRequest is like ServeCodec but synchronously serves a single request.</span>
+<a id="L428"></a><span class="ln">   428</span>	<span class="comment">// It does not close the codec upon completion.</span>
+<a id="L429"></a><span class="ln">   429</span>	func (server *Server) ServeRequest(codec ServerCodec) error {
+<a id="L430"></a><span class="ln">   430</span>		sending := new(sync.Mutex)
+<a id="L431"></a><span class="ln">   431</span>		service, mtype, req, argv, replyv, keepReading, err := server.readRequest(codec)
+<a id="L432"></a><span class="ln">   432</span>		if err != nil {
+<a id="L433"></a><span class="ln">   433</span>			if !keepReading {
+<a id="L434"></a><span class="ln">   434</span>				return err
+<a id="L435"></a><span class="ln">   435</span>			}
+<a id="L436"></a><span class="ln">   436</span>			<span class="comment">// send a response if we actually managed to read a header.</span>
+<a id="L437"></a><span class="ln">   437</span>			if req != nil {
+<a id="L438"></a><span class="ln">   438</span>				server.sendResponse(sending, req, invalidRequest, codec, err.Error())
+<a id="L439"></a><span class="ln">   439</span>				server.freeRequest(req)
+<a id="L440"></a><span class="ln">   440</span>			}
+<a id="L441"></a><span class="ln">   441</span>			return err
+<a id="L442"></a><span class="ln">   442</span>		}
+<a id="L443"></a><span class="ln">   443</span>		service.call(server, sending, mtype, req, argv, replyv, codec)
+<a id="L444"></a><span class="ln">   444</span>		return nil
+<a id="L445"></a><span class="ln">   445</span>	}
+<a id="L446"></a><span class="ln">   446</span>	
+<a id="L447"></a><span class="ln">   447</span>	func (server *Server) getRequest() *Request {
+<a id="L448"></a><span class="ln">   448</span>		server.reqLock.Lock()
+<a id="L449"></a><span class="ln">   449</span>		req := server.freeReq
+<a id="L450"></a><span class="ln">   450</span>		if req == nil {
+<a id="L451"></a><span class="ln">   451</span>			req = new(Request)
+<a id="L452"></a><span class="ln">   452</span>		} else {
+<a id="L453"></a><span class="ln">   453</span>			server.freeReq = req.next
+<a id="L454"></a><span class="ln">   454</span>			*req = Request{}
+<a id="L455"></a><span class="ln">   455</span>		}
+<a id="L456"></a><span class="ln">   456</span>		server.reqLock.Unlock()
+<a id="L457"></a><span class="ln">   457</span>		return req
+<a id="L458"></a><span class="ln">   458</span>	}
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>	func (server *Server) freeRequest(req *Request) {
+<a id="L461"></a><span class="ln">   461</span>		server.reqLock.Lock()
+<a id="L462"></a><span class="ln">   462</span>		req.next = server.freeReq
+<a id="L463"></a><span class="ln">   463</span>		server.freeReq = req
+<a id="L464"></a><span class="ln">   464</span>		server.reqLock.Unlock()
+<a id="L465"></a><span class="ln">   465</span>	}
+<a id="L466"></a><span class="ln">   466</span>	
+<a id="L467"></a><span class="ln">   467</span>	func (server *Server) getResponse() *Response {
+<a id="L468"></a><span class="ln">   468</span>		server.respLock.Lock()
+<a id="L469"></a><span class="ln">   469</span>		resp := server.freeResp
+<a id="L470"></a><span class="ln">   470</span>		if resp == nil {
+<a id="L471"></a><span class="ln">   471</span>			resp = new(Response)
+<a id="L472"></a><span class="ln">   472</span>		} else {
+<a id="L473"></a><span class="ln">   473</span>			server.freeResp = resp.next
+<a id="L474"></a><span class="ln">   474</span>			*resp = Response{}
+<a id="L475"></a><span class="ln">   475</span>		}
+<a id="L476"></a><span class="ln">   476</span>		server.respLock.Unlock()
+<a id="L477"></a><span class="ln">   477</span>		return resp
+<a id="L478"></a><span class="ln">   478</span>	}
+<a id="L479"></a><span class="ln">   479</span>	
+<a id="L480"></a><span class="ln">   480</span>	func (server *Server) freeResponse(resp *Response) {
+<a id="L481"></a><span class="ln">   481</span>		server.respLock.Lock()
+<a id="L482"></a><span class="ln">   482</span>		resp.next = server.freeResp
+<a id="L483"></a><span class="ln">   483</span>		server.freeResp = resp
+<a id="L484"></a><span class="ln">   484</span>		server.respLock.Unlock()
+<a id="L485"></a><span class="ln">   485</span>	}
+<a id="L486"></a><span class="ln">   486</span>	
+<a id="L487"></a><span class="ln">   487</span>	func (server *Server) readRequest(codec ServerCodec) (service *service, mtype *methodType, req *Request, argv, replyv reflect.Value, keepReading bool, err error) {
+<a id="L488"></a><span class="ln">   488</span>		service, mtype, req, keepReading, err = server.readRequestHeader(codec)
+<a id="L489"></a><span class="ln">   489</span>		if err != nil {
+<a id="L490"></a><span class="ln">   490</span>			if !keepReading {
+<a id="L491"></a><span class="ln">   491</span>				return
+<a id="L492"></a><span class="ln">   492</span>			}
+<a id="L493"></a><span class="ln">   493</span>			<span class="comment">// discard body</span>
+<a id="L494"></a><span class="ln">   494</span>			codec.ReadRequestBody(nil)
+<a id="L495"></a><span class="ln">   495</span>			return
+<a id="L496"></a><span class="ln">   496</span>		}
+<a id="L497"></a><span class="ln">   497</span>	
+<a id="L498"></a><span class="ln">   498</span>		<span class="comment">// Decode the argument value.</span>
+<a id="L499"></a><span class="ln">   499</span>		argIsValue := false <span class="comment">// if true, need to indirect before calling.</span>
+<a id="L500"></a><span class="ln">   500</span>		if mtype.ArgType.Kind() == reflect.Ptr {
+<a id="L501"></a><span class="ln">   501</span>			argv = reflect.New(mtype.ArgType.Elem())
+<a id="L502"></a><span class="ln">   502</span>		} else {
+<a id="L503"></a><span class="ln">   503</span>			argv = reflect.New(mtype.ArgType)
+<a id="L504"></a><span class="ln">   504</span>			argIsValue = true
+<a id="L505"></a><span class="ln">   505</span>		}
+<a id="L506"></a><span class="ln">   506</span>		<span class="comment">// argv guaranteed to be a pointer now.</span>
+<a id="L507"></a><span class="ln">   507</span>		if err = codec.ReadRequestBody(argv.Interface()); err != nil {
+<a id="L508"></a><span class="ln">   508</span>			return
+<a id="L509"></a><span class="ln">   509</span>		}
+<a id="L510"></a><span class="ln">   510</span>		if argIsValue {
+<a id="L511"></a><span class="ln">   511</span>			argv = argv.Elem()
+<a id="L512"></a><span class="ln">   512</span>		}
+<a id="L513"></a><span class="ln">   513</span>	
+<a id="L514"></a><span class="ln">   514</span>		replyv = reflect.New(mtype.ReplyType.Elem())
+<a id="L515"></a><span class="ln">   515</span>		return
+<a id="L516"></a><span class="ln">   516</span>	}
+<a id="L517"></a><span class="ln">   517</span>	
+<a id="L518"></a><span class="ln">   518</span>	func (server *Server) readRequestHeader(codec ServerCodec) (service *service, mtype *methodType, req *Request, keepReading bool, err error) {
+<a id="L519"></a><span class="ln">   519</span>		<span class="comment">// Grab the request header.</span>
+<a id="L520"></a><span class="ln">   520</span>		req = server.getRequest()
+<a id="L521"></a><span class="ln">   521</span>		err = codec.ReadRequestHeader(req)
+<a id="L522"></a><span class="ln">   522</span>		if err != nil {
+<a id="L523"></a><span class="ln">   523</span>			req = nil
+<a id="L524"></a><span class="ln">   524</span>			if err == io.EOF || err == io.ErrUnexpectedEOF {
+<a id="L525"></a><span class="ln">   525</span>				return
+<a id="L526"></a><span class="ln">   526</span>			}
+<a id="L527"></a><span class="ln">   527</span>			err = errors.New(&#34;rpc: server cannot decode request: &#34; + err.Error())
+<a id="L528"></a><span class="ln">   528</span>			return
+<a id="L529"></a><span class="ln">   529</span>		}
+<a id="L530"></a><span class="ln">   530</span>	
+<a id="L531"></a><span class="ln">   531</span>		<span class="comment">// We read the header successfully.  If we see an error now,</span>
+<a id="L532"></a><span class="ln">   532</span>		<span class="comment">// we can still recover and move on to the next request.</span>
+<a id="L533"></a><span class="ln">   533</span>		keepReading = true
+<a id="L534"></a><span class="ln">   534</span>	
+<a id="L535"></a><span class="ln">   535</span>		serviceMethod := strings.Split(req.ServiceMethod, &#34;.&#34;)
+<a id="L536"></a><span class="ln">   536</span>		if len(serviceMethod) != 2 {
+<a id="L537"></a><span class="ln">   537</span>			err = errors.New(&#34;rpc: service/method request ill-formed: &#34; + req.ServiceMethod)
+<a id="L538"></a><span class="ln">   538</span>			return
+<a id="L539"></a><span class="ln">   539</span>		}
+<a id="L540"></a><span class="ln">   540</span>		<span class="comment">// Look up the request.</span>
+<a id="L541"></a><span class="ln">   541</span>		server.mu.Lock()
+<a id="L542"></a><span class="ln">   542</span>		service = server.serviceMap[serviceMethod[0]]
+<a id="L543"></a><span class="ln">   543</span>		server.mu.Unlock()
+<a id="L544"></a><span class="ln">   544</span>		if service == nil {
+<a id="L545"></a><span class="ln">   545</span>			err = errors.New(&#34;rpc: can&#39;t find service &#34; + req.ServiceMethod)
+<a id="L546"></a><span class="ln">   546</span>			return
+<a id="L547"></a><span class="ln">   547</span>		}
+<a id="L548"></a><span class="ln">   548</span>		mtype = service.method[serviceMethod[1]]
+<a id="L549"></a><span class="ln">   549</span>		if mtype == nil {
+<a id="L550"></a><span class="ln">   550</span>			err = errors.New(&#34;rpc: can&#39;t find method &#34; + req.ServiceMethod)
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>		return
+<a id="L553"></a><span class="ln">   553</span>	}
+<a id="L554"></a><span class="ln">   554</span>	
+<a id="L555"></a><span class="ln">   555</span>	<span class="comment">// Accept accepts connections on the listener and serves requests</span>
+<a id="L556"></a><span class="ln">   556</span>	<span class="comment">// for each incoming connection.  Accept blocks; the caller typically</span>
+<a id="L557"></a><span class="ln">   557</span>	<span class="comment">// invokes it in a go statement.</span>
+<a id="L558"></a><span class="ln">   558</span>	func (server *Server) Accept(lis net.Listener) {
+<a id="L559"></a><span class="ln">   559</span>		for {
+<a id="L560"></a><span class="ln">   560</span>			conn, err := lis.Accept()
+<a id="L561"></a><span class="ln">   561</span>			if err != nil {
+<a id="L562"></a><span class="ln">   562</span>				log.Fatal(&#34;rpc.Serve: accept:&#34;, err.Error()) <span class="comment">// TODO(r): exit?</span>
+<a id="L563"></a><span class="ln">   563</span>			}
+<a id="L564"></a><span class="ln">   564</span>			go server.ServeConn(conn)
+<a id="L565"></a><span class="ln">   565</span>		}
+<a id="L566"></a><span class="ln">   566</span>	}
+<a id="L567"></a><span class="ln">   567</span>	
+<a id="L568"></a><span class="ln">   568</span>	<span class="comment">// Register publishes the receiver&#39;s methods in the DefaultServer.</span>
+<a id="L569"></a><span class="ln">   569</span>	func Register(rcvr interface{}) error { return DefaultServer.Register(rcvr) }
+<a id="L570"></a><span class="ln">   570</span>	
+<a id="L571"></a><span class="ln">   571</span>	<span class="comment">// RegisterName is like Register but uses the provided name for the type </span>
+<a id="L572"></a><span class="ln">   572</span>	<span class="comment">// instead of the receiver&#39;s concrete type.</span>
+<a id="L573"></a><span class="ln">   573</span>	func RegisterName(name string, rcvr interface{}) error {
+<a id="L574"></a><span class="ln">   574</span>		return DefaultServer.RegisterName(name, rcvr)
+<a id="L575"></a><span class="ln">   575</span>	}
+<a id="L576"></a><span class="ln">   576</span>	
+<a id="L577"></a><span class="ln">   577</span>	<span class="comment">// A ServerCodec implements reading of RPC requests and writing of</span>
+<a id="L578"></a><span class="ln">   578</span>	<span class="comment">// RPC responses for the server side of an RPC session.</span>
+<a id="L579"></a><span class="ln">   579</span>	<span class="comment">// The server calls ReadRequestHeader and ReadRequestBody in pairs</span>
+<a id="L580"></a><span class="ln">   580</span>	<span class="comment">// to read requests from the connection, and it calls WriteResponse to</span>
+<a id="L581"></a><span class="ln">   581</span>	<span class="comment">// write a response back.  The server calls Close when finished with the</span>
+<a id="L582"></a><span class="ln">   582</span>	<span class="comment">// connection. ReadRequestBody may be called with a nil</span>
+<a id="L583"></a><span class="ln">   583</span>	<span class="comment">// argument to force the body of the request to be read and discarded.</span>
+<a id="L584"></a><span class="ln">   584</span>	type ServerCodec interface {
+<a id="L585"></a><span class="ln">   585</span>		ReadRequestHeader(*Request) error
+<a id="L586"></a><span class="ln">   586</span>		ReadRequestBody(interface{}) error
+<a id="L587"></a><span class="ln">   587</span>		WriteResponse(*Response, interface{}) error
+<a id="L588"></a><span class="ln">   588</span>	
+<a id="L589"></a><span class="ln">   589</span>		Close() error
+<a id="L590"></a><span class="ln">   590</span>	}
+<a id="L591"></a><span class="ln">   591</span>	
+<a id="L592"></a><span class="ln">   592</span>	<span class="comment">// ServeConn runs the DefaultServer on a single connection.</span>
+<a id="L593"></a><span class="ln">   593</span>	<span class="comment">// ServeConn blocks, serving the connection until the client hangs up.</span>
+<a id="L594"></a><span class="ln">   594</span>	<span class="comment">// The caller typically invokes ServeConn in a go statement.</span>
+<a id="L595"></a><span class="ln">   595</span>	<span class="comment">// ServeConn uses the gob wire format (see package gob) on the</span>
+<a id="L596"></a><span class="ln">   596</span>	<span class="comment">// connection.  To use an alternate codec, use ServeCodec.</span>
+<a id="L597"></a><span class="ln">   597</span>	func ServeConn(conn io.ReadWriteCloser) {
+<a id="L598"></a><span class="ln">   598</span>		DefaultServer.ServeConn(conn)
+<a id="L599"></a><span class="ln">   599</span>	}
+<a id="L600"></a><span class="ln">   600</span>	
+<a id="L601"></a><span class="ln">   601</span>	<span class="comment">// ServeCodec is like ServeConn but uses the specified codec to</span>
+<a id="L602"></a><span class="ln">   602</span>	<span class="comment">// decode requests and encode responses.</span>
+<a id="L603"></a><span class="ln">   603</span>	func ServeCodec(codec ServerCodec) {
+<a id="L604"></a><span class="ln">   604</span>		DefaultServer.ServeCodec(codec)
+<a id="L605"></a><span class="ln">   605</span>	}
+<a id="L606"></a><span class="ln">   606</span>	
+<a id="L607"></a><span class="ln">   607</span>	<span class="comment">// ServeRequest is like ServeCodec but synchronously serves a single request.</span>
+<a id="L608"></a><span class="ln">   608</span>	<span class="comment">// It does not close the codec upon completion.</span>
+<a id="L609"></a><span class="ln">   609</span>	func ServeRequest(codec ServerCodec) error {
+<a id="L610"></a><span class="ln">   610</span>		return DefaultServer.ServeRequest(codec)
+<a id="L611"></a><span class="ln">   611</span>	}
+<a id="L612"></a><span class="ln">   612</span>	
+<a id="L613"></a><span class="ln">   613</span>	<span class="comment">// Accept accepts connections on the listener and serves requests</span>
+<a id="L614"></a><span class="ln">   614</span>	<span class="comment">// to DefaultServer for each incoming connection.  </span>
+<a id="L615"></a><span class="ln">   615</span>	<span class="comment">// Accept blocks; the caller typically invokes it in a go statement.</span>
+<a id="L616"></a><span class="ln">   616</span>	func Accept(lis net.Listener) { DefaultServer.Accept(lis) }
+<a id="L617"></a><span class="ln">   617</span>	
+<a id="L618"></a><span class="ln">   618</span>	<span class="comment">// Can connect to RPC service using HTTP CONNECT to rpcPath.</span>
+<a id="L619"></a><span class="ln">   619</span>	var connected = &#34;200 Connected to Go RPC&#34;
+<a id="L620"></a><span class="ln">   620</span>	
+<a id="L621"></a><span class="ln">   621</span>	<span class="comment">// ServeHTTP implements an http.Handler that answers RPC requests.</span>
+<a id="L622"></a><span class="ln">   622</span>	func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+<a id="L623"></a><span class="ln">   623</span>		if req.Method != &#34;CONNECT&#34; {
+<a id="L624"></a><span class="ln">   624</span>			w.Header().Set(&#34;Content-Type&#34;, &#34;text/plain; charset=utf-8&#34;)
+<a id="L625"></a><span class="ln">   625</span>			w.WriteHeader(http.StatusMethodNotAllowed)
+<a id="L626"></a><span class="ln">   626</span>			io.WriteString(w, &#34;405 must CONNECT\n&#34;)
+<a id="L627"></a><span class="ln">   627</span>			return
+<a id="L628"></a><span class="ln">   628</span>		}
+<a id="L629"></a><span class="ln">   629</span>		conn, _, err := w.(http.Hijacker).Hijack()
+<a id="L630"></a><span class="ln">   630</span>		if err != nil {
+<a id="L631"></a><span class="ln">   631</span>			log.Print(&#34;rpc hijacking &#34;, req.RemoteAddr, &#34;: &#34;, err.Error())
+<a id="L632"></a><span class="ln">   632</span>			return
+<a id="L633"></a><span class="ln">   633</span>		}
+<a id="L634"></a><span class="ln">   634</span>		io.WriteString(conn, &#34;HTTP/1.0 &#34;+connected+&#34;\n\n&#34;)
+<a id="L635"></a><span class="ln">   635</span>		server.ServeConn(conn)
+<a id="L636"></a><span class="ln">   636</span>	}
+<a id="L637"></a><span class="ln">   637</span>	
+<a id="L638"></a><span class="ln">   638</span>	<span class="comment">// HandleHTTP registers an HTTP handler for RPC messages on rpcPath,</span>
+<a id="L639"></a><span class="ln">   639</span>	<span class="comment">// and a debugging handler on debugPath.</span>
+<a id="L640"></a><span class="ln">   640</span>	<span class="comment">// It is still necessary to invoke http.Serve(), typically in a go statement.</span>
+<a id="L641"></a><span class="ln">   641</span>	func (server *Server) HandleHTTP(rpcPath, debugPath string) {
+<a id="L642"></a><span class="ln">   642</span>		http.Handle(rpcPath, server)
+<a id="L643"></a><span class="ln">   643</span>		http.Handle(debugPath, debugHTTP{server})
+<a id="L644"></a><span class="ln">   644</span>	}
+<a id="L645"></a><span class="ln">   645</span>	
+<a id="L646"></a><span class="ln">   646</span>	<span class="comment">// HandleHTTP registers an HTTP handler for RPC messages to DefaultServer</span>
+<a id="L647"></a><span class="ln">   647</span>	<span class="comment">// on DefaultRPCPath and a debugging handler on DefaultDebugPath.</span>
+<a id="L648"></a><span class="ln">   648</span>	<span class="comment">// It is still necessary to invoke http.Serve(), typically in a go statement.</span>
+<a id="L649"></a><span class="ln">   649</span>	func HandleHTTP() {
+<a id="L650"></a><span class="ln">   650</span>		DefaultServer.HandleHTTP(DefaultRPCPath, DefaultDebugPath)
+<a id="L651"></a><span class="ln">   651</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

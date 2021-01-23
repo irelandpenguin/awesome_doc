@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/sha1/sha1.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/sha1/sha1.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package sha1 implements the SHA1 hash algorithm as defined in RFC 3174.</span>
+<a id="L6"></a><span class="ln">     6</span>	package sha1
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;crypto&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;hash&#34;
+<a id="L11"></a><span class="ln">    11</span>	)
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	func init() {
+<a id="L14"></a><span class="ln">    14</span>		crypto.RegisterHash(crypto.SHA1, New)
+<a id="L15"></a><span class="ln">    15</span>	}
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// The size of a SHA1 checksum in bytes.</span>
+<a id="L18"></a><span class="ln">    18</span>	const Size = 20
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// The blocksize of SHA1 in bytes.</span>
+<a id="L21"></a><span class="ln">    21</span>	const BlockSize = 64
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	const (
+<a id="L24"></a><span class="ln">    24</span>		_Chunk = 64
+<a id="L25"></a><span class="ln">    25</span>		_Init0 = 0x67452301
+<a id="L26"></a><span class="ln">    26</span>		_Init1 = 0xEFCDAB89
+<a id="L27"></a><span class="ln">    27</span>		_Init2 = 0x98BADCFE
+<a id="L28"></a><span class="ln">    28</span>		_Init3 = 0x10325476
+<a id="L29"></a><span class="ln">    29</span>		_Init4 = 0xC3D2E1F0
+<a id="L30"></a><span class="ln">    30</span>	)
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// digest represents the partial evaluation of a checksum.</span>
+<a id="L33"></a><span class="ln">    33</span>	type digest struct {
+<a id="L34"></a><span class="ln">    34</span>		h   [5]uint32
+<a id="L35"></a><span class="ln">    35</span>		x   [_Chunk]byte
+<a id="L36"></a><span class="ln">    36</span>		nx  int
+<a id="L37"></a><span class="ln">    37</span>		len uint64
+<a id="L38"></a><span class="ln">    38</span>	}
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	func (d *digest) Reset() {
+<a id="L41"></a><span class="ln">    41</span>		d.h[0] = _Init0
+<a id="L42"></a><span class="ln">    42</span>		d.h[1] = _Init1
+<a id="L43"></a><span class="ln">    43</span>		d.h[2] = _Init2
+<a id="L44"></a><span class="ln">    44</span>		d.h[3] = _Init3
+<a id="L45"></a><span class="ln">    45</span>		d.h[4] = _Init4
+<a id="L46"></a><span class="ln">    46</span>		d.nx = 0
+<a id="L47"></a><span class="ln">    47</span>		d.len = 0
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// New returns a new hash.Hash computing the SHA1 checksum.</span>
+<a id="L51"></a><span class="ln">    51</span>	func New() hash.Hash {
+<a id="L52"></a><span class="ln">    52</span>		d := new(digest)
+<a id="L53"></a><span class="ln">    53</span>		d.Reset()
+<a id="L54"></a><span class="ln">    54</span>		return d
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	func (d *digest) Size() int { return Size }
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>	func (d *digest) BlockSize() int { return BlockSize }
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	func (d *digest) Write(p []byte) (nn int, err error) {
+<a id="L62"></a><span class="ln">    62</span>		nn = len(p)
+<a id="L63"></a><span class="ln">    63</span>		d.len += uint64(nn)
+<a id="L64"></a><span class="ln">    64</span>		if d.nx &gt; 0 {
+<a id="L65"></a><span class="ln">    65</span>			n := len(p)
+<a id="L66"></a><span class="ln">    66</span>			if n &gt; _Chunk-d.nx {
+<a id="L67"></a><span class="ln">    67</span>				n = _Chunk - d.nx
+<a id="L68"></a><span class="ln">    68</span>			}
+<a id="L69"></a><span class="ln">    69</span>			for i := 0; i &lt; n; i++ {
+<a id="L70"></a><span class="ln">    70</span>				d.x[d.nx+i] = p[i]
+<a id="L71"></a><span class="ln">    71</span>			}
+<a id="L72"></a><span class="ln">    72</span>			d.nx += n
+<a id="L73"></a><span class="ln">    73</span>			if d.nx == _Chunk {
+<a id="L74"></a><span class="ln">    74</span>				_Block(d, d.x[0:])
+<a id="L75"></a><span class="ln">    75</span>				d.nx = 0
+<a id="L76"></a><span class="ln">    76</span>			}
+<a id="L77"></a><span class="ln">    77</span>			p = p[n:]
+<a id="L78"></a><span class="ln">    78</span>		}
+<a id="L79"></a><span class="ln">    79</span>		n := _Block(d, p)
+<a id="L80"></a><span class="ln">    80</span>		p = p[n:]
+<a id="L81"></a><span class="ln">    81</span>		if len(p) &gt; 0 {
+<a id="L82"></a><span class="ln">    82</span>			d.nx = copy(d.x[:], p)
+<a id="L83"></a><span class="ln">    83</span>		}
+<a id="L84"></a><span class="ln">    84</span>		return
+<a id="L85"></a><span class="ln">    85</span>	}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>	func (d0 *digest) Sum(in []byte) []byte {
+<a id="L88"></a><span class="ln">    88</span>		<span class="comment">// Make a copy of d0 so that caller can keep writing and summing.</span>
+<a id="L89"></a><span class="ln">    89</span>		d := *d0
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>		<span class="comment">// Padding.  Add a 1 bit and 0 bits until 56 bytes mod 64.</span>
+<a id="L92"></a><span class="ln">    92</span>		len := d.len
+<a id="L93"></a><span class="ln">    93</span>		var tmp [64]byte
+<a id="L94"></a><span class="ln">    94</span>		tmp[0] = 0x80
+<a id="L95"></a><span class="ln">    95</span>		if len%64 &lt; 56 {
+<a id="L96"></a><span class="ln">    96</span>			d.Write(tmp[0 : 56-len%64])
+<a id="L97"></a><span class="ln">    97</span>		} else {
+<a id="L98"></a><span class="ln">    98</span>			d.Write(tmp[0 : 64+56-len%64])
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>		<span class="comment">// Length in bits.</span>
+<a id="L102"></a><span class="ln">   102</span>		len &lt;&lt;= 3
+<a id="L103"></a><span class="ln">   103</span>		for i := uint(0); i &lt; 8; i++ {
+<a id="L104"></a><span class="ln">   104</span>			tmp[i] = byte(len &gt;&gt; (56 - 8*i))
+<a id="L105"></a><span class="ln">   105</span>		}
+<a id="L106"></a><span class="ln">   106</span>		d.Write(tmp[0:8])
+<a id="L107"></a><span class="ln">   107</span>	
+<a id="L108"></a><span class="ln">   108</span>		if d.nx != 0 {
+<a id="L109"></a><span class="ln">   109</span>			panic(&#34;d.nx != 0&#34;)
+<a id="L110"></a><span class="ln">   110</span>		}
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>		var digest [Size]byte
+<a id="L113"></a><span class="ln">   113</span>		for i, s := range d.h {
+<a id="L114"></a><span class="ln">   114</span>			digest[i*4] = byte(s &gt;&gt; 24)
+<a id="L115"></a><span class="ln">   115</span>			digest[i*4+1] = byte(s &gt;&gt; 16)
+<a id="L116"></a><span class="ln">   116</span>			digest[i*4+2] = byte(s &gt;&gt; 8)
+<a id="L117"></a><span class="ln">   117</span>			digest[i*4+3] = byte(s)
+<a id="L118"></a><span class="ln">   118</span>		}
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>		return append(in, digest[:]...)
+<a id="L121"></a><span class="ln">   121</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

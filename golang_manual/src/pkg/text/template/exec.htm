@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/text/template/exec.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/text/template/exec.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package template
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;fmt&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;io&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;reflect&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;runtime&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;sort&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strings&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;text/template/parse&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// state represents the state of an execution. It&#39;s not part of the</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// template so that multiple executions of the same template</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// can execute in parallel.</span>
+<a id="L20"></a><span class="ln">    20</span>	type state struct {
+<a id="L21"></a><span class="ln">    21</span>		tmpl *Template
+<a id="L22"></a><span class="ln">    22</span>		wr   io.Writer
+<a id="L23"></a><span class="ln">    23</span>		line int        <span class="comment">// line number for errors</span>
+<a id="L24"></a><span class="ln">    24</span>		vars []variable <span class="comment">// push-down stack of variable values.</span>
+<a id="L25"></a><span class="ln">    25</span>	}
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// variable holds the dynamic value of a variable such as $, $x etc.</span>
+<a id="L28"></a><span class="ln">    28</span>	type variable struct {
+<a id="L29"></a><span class="ln">    29</span>		name  string
+<a id="L30"></a><span class="ln">    30</span>		value reflect.Value
+<a id="L31"></a><span class="ln">    31</span>	}
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// push pushes a new variable on the stack.</span>
+<a id="L34"></a><span class="ln">    34</span>	func (s *state) push(name string, value reflect.Value) {
+<a id="L35"></a><span class="ln">    35</span>		s.vars = append(s.vars, variable{name, value})
+<a id="L36"></a><span class="ln">    36</span>	}
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// mark returns the length of the variable stack.</span>
+<a id="L39"></a><span class="ln">    39</span>	func (s *state) mark() int {
+<a id="L40"></a><span class="ln">    40</span>		return len(s.vars)
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// pop pops the variable stack up to the mark.</span>
+<a id="L44"></a><span class="ln">    44</span>	func (s *state) pop(mark int) {
+<a id="L45"></a><span class="ln">    45</span>		s.vars = s.vars[0:mark]
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// setVar overwrites the top-nth variable on the stack. Used by range iterations.</span>
+<a id="L49"></a><span class="ln">    49</span>	func (s *state) setVar(n int, value reflect.Value) {
+<a id="L50"></a><span class="ln">    50</span>		s.vars[len(s.vars)-n].value = value
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// varValue returns the value of the named variable.</span>
+<a id="L54"></a><span class="ln">    54</span>	func (s *state) varValue(name string) reflect.Value {
+<a id="L55"></a><span class="ln">    55</span>		for i := s.mark() - 1; i &gt;= 0; i-- {
+<a id="L56"></a><span class="ln">    56</span>			if s.vars[i].name == name {
+<a id="L57"></a><span class="ln">    57</span>				return s.vars[i].value
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		s.errorf(&#34;undefined variable: %s&#34;, name)
+<a id="L61"></a><span class="ln">    61</span>		return zero
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	var zero reflect.Value
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// errorf formats the error and terminates processing.</span>
+<a id="L67"></a><span class="ln">    67</span>	func (s *state) errorf(format string, args ...interface{}) {
+<a id="L68"></a><span class="ln">    68</span>		format = fmt.Sprintf(&#34;template: %s:%d: %s&#34;, s.tmpl.Name(), s.line, format)
+<a id="L69"></a><span class="ln">    69</span>		panic(fmt.Errorf(format, args...))
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// error terminates processing.</span>
+<a id="L73"></a><span class="ln">    73</span>	func (s *state) error(err error) {
+<a id="L74"></a><span class="ln">    74</span>		s.errorf(&#34;%s&#34;, err)
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// errRecover is the handler that turns panics into returns from the top</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// level of Parse.</span>
+<a id="L79"></a><span class="ln">    79</span>	func errRecover(errp *error) {
+<a id="L80"></a><span class="ln">    80</span>		e := recover()
+<a id="L81"></a><span class="ln">    81</span>		if e != nil {
+<a id="L82"></a><span class="ln">    82</span>			switch err := e.(type) {
+<a id="L83"></a><span class="ln">    83</span>			case runtime.Error:
+<a id="L84"></a><span class="ln">    84</span>				panic(e)
+<a id="L85"></a><span class="ln">    85</span>			case error:
+<a id="L86"></a><span class="ln">    86</span>				*errp = err
+<a id="L87"></a><span class="ln">    87</span>			default:
+<a id="L88"></a><span class="ln">    88</span>				panic(e)
+<a id="L89"></a><span class="ln">    89</span>			}
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>	}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// ExecuteTemplate applies the template associated with t that has the given name</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// to the specified data object and writes the output to wr.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (t *Template) ExecuteTemplate(wr io.Writer, name string, data interface{}) error {
+<a id="L96"></a><span class="ln">    96</span>		tmpl := t.tmpl[name]
+<a id="L97"></a><span class="ln">    97</span>		if tmpl == nil {
+<a id="L98"></a><span class="ln">    98</span>			return fmt.Errorf(&#34;template: no template %q associated with template %q&#34;, name, t.name)
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>		return tmpl.Execute(wr, data)
+<a id="L101"></a><span class="ln">   101</span>	}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// Execute applies a parsed template to the specified data object,</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// and writes the output to wr.</span>
+<a id="L105"></a><span class="ln">   105</span>	func (t *Template) Execute(wr io.Writer, data interface{}) (err error) {
+<a id="L106"></a><span class="ln">   106</span>		defer errRecover(&amp;err)
+<a id="L107"></a><span class="ln">   107</span>		value := reflect.ValueOf(data)
+<a id="L108"></a><span class="ln">   108</span>		state := &amp;state{
+<a id="L109"></a><span class="ln">   109</span>			tmpl: t,
+<a id="L110"></a><span class="ln">   110</span>			wr:   wr,
+<a id="L111"></a><span class="ln">   111</span>			line: 1,
+<a id="L112"></a><span class="ln">   112</span>			vars: []variable{{&#34;$&#34;, value}},
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>		if t.Tree == nil || t.Root == nil {
+<a id="L115"></a><span class="ln">   115</span>			state.errorf(&#34;%q is an incomplete or empty template&#34;, t.name)
+<a id="L116"></a><span class="ln">   116</span>		}
+<a id="L117"></a><span class="ln">   117</span>		state.walk(value, t.Root)
+<a id="L118"></a><span class="ln">   118</span>		return
+<a id="L119"></a><span class="ln">   119</span>	}
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// Walk functions step through the major pieces of the template structure,</span>
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// generating output as they go.</span>
+<a id="L123"></a><span class="ln">   123</span>	func (s *state) walk(dot reflect.Value, n parse.Node) {
+<a id="L124"></a><span class="ln">   124</span>		switch n := n.(type) {
+<a id="L125"></a><span class="ln">   125</span>		case *parse.ActionNode:
+<a id="L126"></a><span class="ln">   126</span>			s.line = n.Line
+<a id="L127"></a><span class="ln">   127</span>			<span class="comment">// Do not pop variables so they persist until next end.</span>
+<a id="L128"></a><span class="ln">   128</span>			<span class="comment">// Also, if the action declares variables, don&#39;t print the result.</span>
+<a id="L129"></a><span class="ln">   129</span>			val := s.evalPipeline(dot, n.Pipe)
+<a id="L130"></a><span class="ln">   130</span>			if len(n.Pipe.Decl) == 0 {
+<a id="L131"></a><span class="ln">   131</span>				s.printValue(n, val)
+<a id="L132"></a><span class="ln">   132</span>			}
+<a id="L133"></a><span class="ln">   133</span>		case *parse.IfNode:
+<a id="L134"></a><span class="ln">   134</span>			s.line = n.Line
+<a id="L135"></a><span class="ln">   135</span>			s.walkIfOrWith(parse.NodeIf, dot, n.Pipe, n.List, n.ElseList)
+<a id="L136"></a><span class="ln">   136</span>		case *parse.ListNode:
+<a id="L137"></a><span class="ln">   137</span>			for _, node := range n.Nodes {
+<a id="L138"></a><span class="ln">   138</span>				s.walk(dot, node)
+<a id="L139"></a><span class="ln">   139</span>			}
+<a id="L140"></a><span class="ln">   140</span>		case *parse.RangeNode:
+<a id="L141"></a><span class="ln">   141</span>			s.line = n.Line
+<a id="L142"></a><span class="ln">   142</span>			s.walkRange(dot, n)
+<a id="L143"></a><span class="ln">   143</span>		case *parse.TemplateNode:
+<a id="L144"></a><span class="ln">   144</span>			s.line = n.Line
+<a id="L145"></a><span class="ln">   145</span>			s.walkTemplate(dot, n)
+<a id="L146"></a><span class="ln">   146</span>		case *parse.TextNode:
+<a id="L147"></a><span class="ln">   147</span>			if _, err := s.wr.Write(n.Text); err != nil {
+<a id="L148"></a><span class="ln">   148</span>				s.error(err)
+<a id="L149"></a><span class="ln">   149</span>			}
+<a id="L150"></a><span class="ln">   150</span>		case *parse.WithNode:
+<a id="L151"></a><span class="ln">   151</span>			s.line = n.Line
+<a id="L152"></a><span class="ln">   152</span>			s.walkIfOrWith(parse.NodeWith, dot, n.Pipe, n.List, n.ElseList)
+<a id="L153"></a><span class="ln">   153</span>		default:
+<a id="L154"></a><span class="ln">   154</span>			s.errorf(&#34;unknown node: %s&#34;, n)
+<a id="L155"></a><span class="ln">   155</span>		}
+<a id="L156"></a><span class="ln">   156</span>	}
+<a id="L157"></a><span class="ln">   157</span>	
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// walkIfOrWith walks an &#39;if&#39; or &#39;with&#39; node. The two control structures</span>
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">// are identical in behavior except that &#39;with&#39; sets dot.</span>
+<a id="L160"></a><span class="ln">   160</span>	func (s *state) walkIfOrWith(typ parse.NodeType, dot reflect.Value, pipe *parse.PipeNode, list, elseList *parse.ListNode) {
+<a id="L161"></a><span class="ln">   161</span>		defer s.pop(s.mark())
+<a id="L162"></a><span class="ln">   162</span>		val := s.evalPipeline(dot, pipe)
+<a id="L163"></a><span class="ln">   163</span>		truth, ok := isTrue(val)
+<a id="L164"></a><span class="ln">   164</span>		if !ok {
+<a id="L165"></a><span class="ln">   165</span>			s.errorf(&#34;if/with can&#39;t use %v&#34;, val)
+<a id="L166"></a><span class="ln">   166</span>		}
+<a id="L167"></a><span class="ln">   167</span>		if truth {
+<a id="L168"></a><span class="ln">   168</span>			if typ == parse.NodeWith {
+<a id="L169"></a><span class="ln">   169</span>				s.walk(val, list)
+<a id="L170"></a><span class="ln">   170</span>			} else {
+<a id="L171"></a><span class="ln">   171</span>				s.walk(dot, list)
+<a id="L172"></a><span class="ln">   172</span>			}
+<a id="L173"></a><span class="ln">   173</span>		} else if elseList != nil {
+<a id="L174"></a><span class="ln">   174</span>			s.walk(dot, elseList)
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>	}
+<a id="L177"></a><span class="ln">   177</span>	
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// isTrue returns whether the value is &#39;true&#39;, in the sense of not the zero of its type,</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// and whether the value has a meaningful truth value.</span>
+<a id="L180"></a><span class="ln">   180</span>	func isTrue(val reflect.Value) (truth, ok bool) {
+<a id="L181"></a><span class="ln">   181</span>		if !val.IsValid() {
+<a id="L182"></a><span class="ln">   182</span>			<span class="comment">// Something like var x interface{}, never set. It&#39;s a form of nil.</span>
+<a id="L183"></a><span class="ln">   183</span>			return false, true
+<a id="L184"></a><span class="ln">   184</span>		}
+<a id="L185"></a><span class="ln">   185</span>		switch val.Kind() {
+<a id="L186"></a><span class="ln">   186</span>		case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+<a id="L187"></a><span class="ln">   187</span>			truth = val.Len() &gt; 0
+<a id="L188"></a><span class="ln">   188</span>		case reflect.Bool:
+<a id="L189"></a><span class="ln">   189</span>			truth = val.Bool()
+<a id="L190"></a><span class="ln">   190</span>		case reflect.Complex64, reflect.Complex128:
+<a id="L191"></a><span class="ln">   191</span>			truth = val.Complex() != 0
+<a id="L192"></a><span class="ln">   192</span>		case reflect.Chan, reflect.Func, reflect.Ptr, reflect.Interface:
+<a id="L193"></a><span class="ln">   193</span>			truth = !val.IsNil()
+<a id="L194"></a><span class="ln">   194</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L195"></a><span class="ln">   195</span>			truth = val.Int() != 0
+<a id="L196"></a><span class="ln">   196</span>		case reflect.Float32, reflect.Float64:
+<a id="L197"></a><span class="ln">   197</span>			truth = val.Float() != 0
+<a id="L198"></a><span class="ln">   198</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L199"></a><span class="ln">   199</span>			truth = val.Uint() != 0
+<a id="L200"></a><span class="ln">   200</span>		case reflect.Struct:
+<a id="L201"></a><span class="ln">   201</span>			truth = true <span class="comment">// Struct values are always true.</span>
+<a id="L202"></a><span class="ln">   202</span>		default:
+<a id="L203"></a><span class="ln">   203</span>			return
+<a id="L204"></a><span class="ln">   204</span>		}
+<a id="L205"></a><span class="ln">   205</span>		return truth, true
+<a id="L206"></a><span class="ln">   206</span>	}
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>	func (s *state) walkRange(dot reflect.Value, r *parse.RangeNode) {
+<a id="L209"></a><span class="ln">   209</span>		defer s.pop(s.mark())
+<a id="L210"></a><span class="ln">   210</span>		val, _ := indirect(s.evalPipeline(dot, r.Pipe))
+<a id="L211"></a><span class="ln">   211</span>		<span class="comment">// mark top of stack before any variables in the body are pushed.</span>
+<a id="L212"></a><span class="ln">   212</span>		mark := s.mark()
+<a id="L213"></a><span class="ln">   213</span>		oneIteration := func(index, elem reflect.Value) {
+<a id="L214"></a><span class="ln">   214</span>			<span class="comment">// Set top var (lexically the second if there are two) to the element.</span>
+<a id="L215"></a><span class="ln">   215</span>			if len(r.Pipe.Decl) &gt; 0 {
+<a id="L216"></a><span class="ln">   216</span>				s.setVar(1, elem)
+<a id="L217"></a><span class="ln">   217</span>			}
+<a id="L218"></a><span class="ln">   218</span>			<span class="comment">// Set next var (lexically the first if there are two) to the index.</span>
+<a id="L219"></a><span class="ln">   219</span>			if len(r.Pipe.Decl) &gt; 1 {
+<a id="L220"></a><span class="ln">   220</span>				s.setVar(2, index)
+<a id="L221"></a><span class="ln">   221</span>			}
+<a id="L222"></a><span class="ln">   222</span>			s.walk(elem, r.List)
+<a id="L223"></a><span class="ln">   223</span>			s.pop(mark)
+<a id="L224"></a><span class="ln">   224</span>		}
+<a id="L225"></a><span class="ln">   225</span>		switch val.Kind() {
+<a id="L226"></a><span class="ln">   226</span>		case reflect.Array, reflect.Slice:
+<a id="L227"></a><span class="ln">   227</span>			if val.Len() == 0 {
+<a id="L228"></a><span class="ln">   228</span>				break
+<a id="L229"></a><span class="ln">   229</span>			}
+<a id="L230"></a><span class="ln">   230</span>			for i := 0; i &lt; val.Len(); i++ {
+<a id="L231"></a><span class="ln">   231</span>				oneIteration(reflect.ValueOf(i), val.Index(i))
+<a id="L232"></a><span class="ln">   232</span>			}
+<a id="L233"></a><span class="ln">   233</span>			return
+<a id="L234"></a><span class="ln">   234</span>		case reflect.Map:
+<a id="L235"></a><span class="ln">   235</span>			if val.Len() == 0 {
+<a id="L236"></a><span class="ln">   236</span>				break
+<a id="L237"></a><span class="ln">   237</span>			}
+<a id="L238"></a><span class="ln">   238</span>			for _, key := range sortKeys(val.MapKeys()) {
+<a id="L239"></a><span class="ln">   239</span>				oneIteration(key, val.MapIndex(key))
+<a id="L240"></a><span class="ln">   240</span>			}
+<a id="L241"></a><span class="ln">   241</span>			return
+<a id="L242"></a><span class="ln">   242</span>		case reflect.Chan:
+<a id="L243"></a><span class="ln">   243</span>			if val.IsNil() {
+<a id="L244"></a><span class="ln">   244</span>				break
+<a id="L245"></a><span class="ln">   245</span>			}
+<a id="L246"></a><span class="ln">   246</span>			i := 0
+<a id="L247"></a><span class="ln">   247</span>			for ; ; i++ {
+<a id="L248"></a><span class="ln">   248</span>				elem, ok := val.Recv()
+<a id="L249"></a><span class="ln">   249</span>				if !ok {
+<a id="L250"></a><span class="ln">   250</span>					break
+<a id="L251"></a><span class="ln">   251</span>				}
+<a id="L252"></a><span class="ln">   252</span>				oneIteration(reflect.ValueOf(i), elem)
+<a id="L253"></a><span class="ln">   253</span>			}
+<a id="L254"></a><span class="ln">   254</span>			if i == 0 {
+<a id="L255"></a><span class="ln">   255</span>				break
+<a id="L256"></a><span class="ln">   256</span>			}
+<a id="L257"></a><span class="ln">   257</span>			return
+<a id="L258"></a><span class="ln">   258</span>		case reflect.Invalid:
+<a id="L259"></a><span class="ln">   259</span>			break <span class="comment">// An invalid value is likely a nil map, etc. and acts like an empty map.</span>
+<a id="L260"></a><span class="ln">   260</span>		default:
+<a id="L261"></a><span class="ln">   261</span>			s.errorf(&#34;range can&#39;t iterate over %v&#34;, val)
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>		if r.ElseList != nil {
+<a id="L264"></a><span class="ln">   264</span>			s.walk(dot, r.ElseList)
+<a id="L265"></a><span class="ln">   265</span>		}
+<a id="L266"></a><span class="ln">   266</span>	}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>	func (s *state) walkTemplate(dot reflect.Value, t *parse.TemplateNode) {
+<a id="L269"></a><span class="ln">   269</span>		tmpl := s.tmpl.tmpl[t.Name]
+<a id="L270"></a><span class="ln">   270</span>		if tmpl == nil {
+<a id="L271"></a><span class="ln">   271</span>			s.errorf(&#34;template %q not defined&#34;, t.Name)
+<a id="L272"></a><span class="ln">   272</span>		}
+<a id="L273"></a><span class="ln">   273</span>		<span class="comment">// Variables declared by the pipeline persist.</span>
+<a id="L274"></a><span class="ln">   274</span>		dot = s.evalPipeline(dot, t.Pipe)
+<a id="L275"></a><span class="ln">   275</span>		newState := *s
+<a id="L276"></a><span class="ln">   276</span>		newState.tmpl = tmpl
+<a id="L277"></a><span class="ln">   277</span>		<span class="comment">// No dynamic scoping: template invocations inherit no variables.</span>
+<a id="L278"></a><span class="ln">   278</span>		newState.vars = []variable{{&#34;$&#34;, dot}}
+<a id="L279"></a><span class="ln">   279</span>		newState.walk(dot, tmpl.Root)
+<a id="L280"></a><span class="ln">   280</span>	}
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// Eval functions evaluate pipelines, commands, and their elements and extract</span>
+<a id="L283"></a><span class="ln">   283</span>	<span class="comment">// values from the data structure by examining fields, calling methods, and so on.</span>
+<a id="L284"></a><span class="ln">   284</span>	<span class="comment">// The printing of those values happens only through walk functions.</span>
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>	<span class="comment">// evalPipeline returns the value acquired by evaluating a pipeline. If the</span>
+<a id="L287"></a><span class="ln">   287</span>	<span class="comment">// pipeline has a variable declaration, the variable will be pushed on the</span>
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// stack. Callers should therefore pop the stack after they are finished</span>
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// executing commands depending on the pipeline value.</span>
+<a id="L290"></a><span class="ln">   290</span>	func (s *state) evalPipeline(dot reflect.Value, pipe *parse.PipeNode) (value reflect.Value) {
+<a id="L291"></a><span class="ln">   291</span>		if pipe == nil {
+<a id="L292"></a><span class="ln">   292</span>			return
+<a id="L293"></a><span class="ln">   293</span>		}
+<a id="L294"></a><span class="ln">   294</span>		for _, cmd := range pipe.Cmds {
+<a id="L295"></a><span class="ln">   295</span>			value = s.evalCommand(dot, cmd, value) <span class="comment">// previous value is this one&#39;s final arg.</span>
+<a id="L296"></a><span class="ln">   296</span>			<span class="comment">// If the object has type interface{}, dig down one level to the thing inside.</span>
+<a id="L297"></a><span class="ln">   297</span>			if value.Kind() == reflect.Interface &amp;&amp; value.Type().NumMethod() == 0 {
+<a id="L298"></a><span class="ln">   298</span>				value = reflect.ValueOf(value.Interface()) <span class="comment">// lovely!</span>
+<a id="L299"></a><span class="ln">   299</span>			}
+<a id="L300"></a><span class="ln">   300</span>		}
+<a id="L301"></a><span class="ln">   301</span>		for _, variable := range pipe.Decl {
+<a id="L302"></a><span class="ln">   302</span>			s.push(variable.Ident[0], value)
+<a id="L303"></a><span class="ln">   303</span>		}
+<a id="L304"></a><span class="ln">   304</span>		return value
+<a id="L305"></a><span class="ln">   305</span>	}
+<a id="L306"></a><span class="ln">   306</span>	
+<a id="L307"></a><span class="ln">   307</span>	func (s *state) notAFunction(args []parse.Node, final reflect.Value) {
+<a id="L308"></a><span class="ln">   308</span>		if len(args) &gt; 1 || final.IsValid() {
+<a id="L309"></a><span class="ln">   309</span>			s.errorf(&#34;can&#39;t give argument to non-function %s&#34;, args[0])
+<a id="L310"></a><span class="ln">   310</span>		}
+<a id="L311"></a><span class="ln">   311</span>	}
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>	func (s *state) evalCommand(dot reflect.Value, cmd *parse.CommandNode, final reflect.Value) reflect.Value {
+<a id="L314"></a><span class="ln">   314</span>		firstWord := cmd.Args[0]
+<a id="L315"></a><span class="ln">   315</span>		switch n := firstWord.(type) {
+<a id="L316"></a><span class="ln">   316</span>		case *parse.FieldNode:
+<a id="L317"></a><span class="ln">   317</span>			return s.evalFieldNode(dot, n, cmd.Args, final)
+<a id="L318"></a><span class="ln">   318</span>		case *parse.IdentifierNode:
+<a id="L319"></a><span class="ln">   319</span>			<span class="comment">// Must be a function.</span>
+<a id="L320"></a><span class="ln">   320</span>			return s.evalFunction(dot, n.Ident, cmd.Args, final)
+<a id="L321"></a><span class="ln">   321</span>		case *parse.VariableNode:
+<a id="L322"></a><span class="ln">   322</span>			return s.evalVariableNode(dot, n, cmd.Args, final)
+<a id="L323"></a><span class="ln">   323</span>		}
+<a id="L324"></a><span class="ln">   324</span>		s.notAFunction(cmd.Args, final)
+<a id="L325"></a><span class="ln">   325</span>		switch word := firstWord.(type) {
+<a id="L326"></a><span class="ln">   326</span>		case *parse.BoolNode:
+<a id="L327"></a><span class="ln">   327</span>			return reflect.ValueOf(word.True)
+<a id="L328"></a><span class="ln">   328</span>		case *parse.DotNode:
+<a id="L329"></a><span class="ln">   329</span>			return dot
+<a id="L330"></a><span class="ln">   330</span>		case *parse.NumberNode:
+<a id="L331"></a><span class="ln">   331</span>			return s.idealConstant(word)
+<a id="L332"></a><span class="ln">   332</span>		case *parse.StringNode:
+<a id="L333"></a><span class="ln">   333</span>			return reflect.ValueOf(word.Text)
+<a id="L334"></a><span class="ln">   334</span>		}
+<a id="L335"></a><span class="ln">   335</span>		s.errorf(&#34;can&#39;t evaluate command %q&#34;, firstWord)
+<a id="L336"></a><span class="ln">   336</span>		panic(&#34;not reached&#34;)
+<a id="L337"></a><span class="ln">   337</span>	}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>	<span class="comment">// idealConstant is called to return the value of a number in a context where</span>
+<a id="L340"></a><span class="ln">   340</span>	<span class="comment">// we don&#39;t know the type. In that case, the syntax of the number tells us</span>
+<a id="L341"></a><span class="ln">   341</span>	<span class="comment">// its type, and we use Go rules to resolve.  Note there is no such thing as</span>
+<a id="L342"></a><span class="ln">   342</span>	<span class="comment">// a uint ideal constant in this situation - the value must be of int type.</span>
+<a id="L343"></a><span class="ln">   343</span>	func (s *state) idealConstant(constant *parse.NumberNode) reflect.Value {
+<a id="L344"></a><span class="ln">   344</span>		<span class="comment">// These are ideal constants but we don&#39;t know the type</span>
+<a id="L345"></a><span class="ln">   345</span>		<span class="comment">// and we have no context.  (If it was a method argument,</span>
+<a id="L346"></a><span class="ln">   346</span>		<span class="comment">// we&#39;d know what we need.) The syntax guides us to some extent.</span>
+<a id="L347"></a><span class="ln">   347</span>		switch {
+<a id="L348"></a><span class="ln">   348</span>		case constant.IsComplex:
+<a id="L349"></a><span class="ln">   349</span>			return reflect.ValueOf(constant.Complex128) <span class="comment">// incontrovertible.</span>
+<a id="L350"></a><span class="ln">   350</span>		case constant.IsFloat &amp;&amp; strings.IndexAny(constant.Text, &#34;.eE&#34;) &gt;= 0:
+<a id="L351"></a><span class="ln">   351</span>			return reflect.ValueOf(constant.Float64)
+<a id="L352"></a><span class="ln">   352</span>		case constant.IsInt:
+<a id="L353"></a><span class="ln">   353</span>			n := int(constant.Int64)
+<a id="L354"></a><span class="ln">   354</span>			if int64(n) != constant.Int64 {
+<a id="L355"></a><span class="ln">   355</span>				s.errorf(&#34;%s overflows int&#34;, constant.Text)
+<a id="L356"></a><span class="ln">   356</span>			}
+<a id="L357"></a><span class="ln">   357</span>			return reflect.ValueOf(n)
+<a id="L358"></a><span class="ln">   358</span>		case constant.IsUint:
+<a id="L359"></a><span class="ln">   359</span>			s.errorf(&#34;%s overflows int&#34;, constant.Text)
+<a id="L360"></a><span class="ln">   360</span>		}
+<a id="L361"></a><span class="ln">   361</span>		return zero
+<a id="L362"></a><span class="ln">   362</span>	}
+<a id="L363"></a><span class="ln">   363</span>	
+<a id="L364"></a><span class="ln">   364</span>	func (s *state) evalFieldNode(dot reflect.Value, field *parse.FieldNode, args []parse.Node, final reflect.Value) reflect.Value {
+<a id="L365"></a><span class="ln">   365</span>		return s.evalFieldChain(dot, dot, field.Ident, args, final)
+<a id="L366"></a><span class="ln">   366</span>	}
+<a id="L367"></a><span class="ln">   367</span>	
+<a id="L368"></a><span class="ln">   368</span>	func (s *state) evalVariableNode(dot reflect.Value, v *parse.VariableNode, args []parse.Node, final reflect.Value) reflect.Value {
+<a id="L369"></a><span class="ln">   369</span>		<span class="comment">// $x.Field has $x as the first ident, Field as the second. Eval the var, then the fields.</span>
+<a id="L370"></a><span class="ln">   370</span>		value := s.varValue(v.Ident[0])
+<a id="L371"></a><span class="ln">   371</span>		if len(v.Ident) == 1 {
+<a id="L372"></a><span class="ln">   372</span>			s.notAFunction(args, final)
+<a id="L373"></a><span class="ln">   373</span>			return value
+<a id="L374"></a><span class="ln">   374</span>		}
+<a id="L375"></a><span class="ln">   375</span>		return s.evalFieldChain(dot, value, v.Ident[1:], args, final)
+<a id="L376"></a><span class="ln">   376</span>	}
+<a id="L377"></a><span class="ln">   377</span>	
+<a id="L378"></a><span class="ln">   378</span>	<span class="comment">// evalFieldChain evaluates .X.Y.Z possibly followed by arguments.</span>
+<a id="L379"></a><span class="ln">   379</span>	<span class="comment">// dot is the environment in which to evaluate arguments, while</span>
+<a id="L380"></a><span class="ln">   380</span>	<span class="comment">// receiver is the value being walked along the chain.</span>
+<a id="L381"></a><span class="ln">   381</span>	func (s *state) evalFieldChain(dot, receiver reflect.Value, ident []string, args []parse.Node, final reflect.Value) reflect.Value {
+<a id="L382"></a><span class="ln">   382</span>		n := len(ident)
+<a id="L383"></a><span class="ln">   383</span>		for i := 0; i &lt; n-1; i++ {
+<a id="L384"></a><span class="ln">   384</span>			receiver = s.evalField(dot, ident[i], nil, zero, receiver)
+<a id="L385"></a><span class="ln">   385</span>		}
+<a id="L386"></a><span class="ln">   386</span>		<span class="comment">// Now if it&#39;s a method, it gets the arguments.</span>
+<a id="L387"></a><span class="ln">   387</span>		return s.evalField(dot, ident[n-1], args, final, receiver)
+<a id="L388"></a><span class="ln">   388</span>	}
+<a id="L389"></a><span class="ln">   389</span>	
+<a id="L390"></a><span class="ln">   390</span>	func (s *state) evalFunction(dot reflect.Value, name string, args []parse.Node, final reflect.Value) reflect.Value {
+<a id="L391"></a><span class="ln">   391</span>		function, ok := findFunction(name, s.tmpl)
+<a id="L392"></a><span class="ln">   392</span>		if !ok {
+<a id="L393"></a><span class="ln">   393</span>			s.errorf(&#34;%q is not a defined function&#34;, name)
+<a id="L394"></a><span class="ln">   394</span>		}
+<a id="L395"></a><span class="ln">   395</span>		return s.evalCall(dot, function, name, args, final)
+<a id="L396"></a><span class="ln">   396</span>	}
+<a id="L397"></a><span class="ln">   397</span>	
+<a id="L398"></a><span class="ln">   398</span>	<span class="comment">// evalField evaluates an expression like (.Field) or (.Field arg1 arg2).</span>
+<a id="L399"></a><span class="ln">   399</span>	<span class="comment">// The &#39;final&#39; argument represents the return value from the preceding</span>
+<a id="L400"></a><span class="ln">   400</span>	<span class="comment">// value of the pipeline, if any.</span>
+<a id="L401"></a><span class="ln">   401</span>	func (s *state) evalField(dot reflect.Value, fieldName string, args []parse.Node, final, receiver reflect.Value) reflect.Value {
+<a id="L402"></a><span class="ln">   402</span>		if !receiver.IsValid() {
+<a id="L403"></a><span class="ln">   403</span>			return zero
+<a id="L404"></a><span class="ln">   404</span>		}
+<a id="L405"></a><span class="ln">   405</span>		typ := receiver.Type()
+<a id="L406"></a><span class="ln">   406</span>		receiver, _ = indirect(receiver)
+<a id="L407"></a><span class="ln">   407</span>		<span class="comment">// Unless it&#39;s an interface, need to get to a value of type *T to guarantee</span>
+<a id="L408"></a><span class="ln">   408</span>		<span class="comment">// we see all methods of T and *T.</span>
+<a id="L409"></a><span class="ln">   409</span>		ptr := receiver
+<a id="L410"></a><span class="ln">   410</span>		if ptr.Kind() != reflect.Interface &amp;&amp; ptr.CanAddr() {
+<a id="L411"></a><span class="ln">   411</span>			ptr = ptr.Addr()
+<a id="L412"></a><span class="ln">   412</span>		}
+<a id="L413"></a><span class="ln">   413</span>		if method := ptr.MethodByName(fieldName); method.IsValid() {
+<a id="L414"></a><span class="ln">   414</span>			return s.evalCall(dot, method, fieldName, args, final)
+<a id="L415"></a><span class="ln">   415</span>		}
+<a id="L416"></a><span class="ln">   416</span>		hasArgs := len(args) &gt; 1 || final.IsValid()
+<a id="L417"></a><span class="ln">   417</span>		<span class="comment">// It&#39;s not a method; is it a field of a struct?</span>
+<a id="L418"></a><span class="ln">   418</span>		receiver, isNil := indirect(receiver)
+<a id="L419"></a><span class="ln">   419</span>		if receiver.Kind() == reflect.Struct {
+<a id="L420"></a><span class="ln">   420</span>			tField, ok := receiver.Type().FieldByName(fieldName)
+<a id="L421"></a><span class="ln">   421</span>			if ok {
+<a id="L422"></a><span class="ln">   422</span>				field := receiver.FieldByIndex(tField.Index)
+<a id="L423"></a><span class="ln">   423</span>				if tField.PkgPath == &#34;&#34; { <span class="comment">// field is exported</span>
+<a id="L424"></a><span class="ln">   424</span>					<span class="comment">// If it&#39;s a function, we must call it.</span>
+<a id="L425"></a><span class="ln">   425</span>					if hasArgs {
+<a id="L426"></a><span class="ln">   426</span>						s.errorf(&#34;%s has arguments but cannot be invoked as function&#34;, fieldName)
+<a id="L427"></a><span class="ln">   427</span>					}
+<a id="L428"></a><span class="ln">   428</span>					return field
+<a id="L429"></a><span class="ln">   429</span>				}
+<a id="L430"></a><span class="ln">   430</span>			}
+<a id="L431"></a><span class="ln">   431</span>		}
+<a id="L432"></a><span class="ln">   432</span>		<span class="comment">// If it&#39;s a map, attempt to use the field name as a key.</span>
+<a id="L433"></a><span class="ln">   433</span>		if receiver.Kind() == reflect.Map {
+<a id="L434"></a><span class="ln">   434</span>			nameVal := reflect.ValueOf(fieldName)
+<a id="L435"></a><span class="ln">   435</span>			if nameVal.Type().AssignableTo(receiver.Type().Key()) {
+<a id="L436"></a><span class="ln">   436</span>				if hasArgs {
+<a id="L437"></a><span class="ln">   437</span>					s.errorf(&#34;%s is not a method but has arguments&#34;, fieldName)
+<a id="L438"></a><span class="ln">   438</span>				}
+<a id="L439"></a><span class="ln">   439</span>				return receiver.MapIndex(nameVal)
+<a id="L440"></a><span class="ln">   440</span>			}
+<a id="L441"></a><span class="ln">   441</span>		}
+<a id="L442"></a><span class="ln">   442</span>		if isNil {
+<a id="L443"></a><span class="ln">   443</span>			s.errorf(&#34;nil pointer evaluating %s.%s&#34;, typ, fieldName)
+<a id="L444"></a><span class="ln">   444</span>		}
+<a id="L445"></a><span class="ln">   445</span>		s.errorf(&#34;can&#39;t evaluate field %s in type %s&#34;, fieldName, typ)
+<a id="L446"></a><span class="ln">   446</span>		panic(&#34;not reached&#34;)
+<a id="L447"></a><span class="ln">   447</span>	}
+<a id="L448"></a><span class="ln">   448</span>	
+<a id="L449"></a><span class="ln">   449</span>	var (
+<a id="L450"></a><span class="ln">   450</span>		errorType       = reflect.TypeOf((*error)(nil)).Elem()
+<a id="L451"></a><span class="ln">   451</span>		fmtStringerType = reflect.TypeOf((*fmt.Stringer)(nil)).Elem()
+<a id="L452"></a><span class="ln">   452</span>	)
+<a id="L453"></a><span class="ln">   453</span>	
+<a id="L454"></a><span class="ln">   454</span>	<span class="comment">// evalCall executes a function or method call. If it&#39;s a method, fun already has the receiver bound, so</span>
+<a id="L455"></a><span class="ln">   455</span>	<span class="comment">// it looks just like a function call.  The arg list, if non-nil, includes (in the manner of the shell), arg[0]</span>
+<a id="L456"></a><span class="ln">   456</span>	<span class="comment">// as the function itself.</span>
+<a id="L457"></a><span class="ln">   457</span>	func (s *state) evalCall(dot, fun reflect.Value, name string, args []parse.Node, final reflect.Value) reflect.Value {
+<a id="L458"></a><span class="ln">   458</span>		if args != nil {
+<a id="L459"></a><span class="ln">   459</span>			args = args[1:] <span class="comment">// Zeroth arg is function name/node; not passed to function.</span>
+<a id="L460"></a><span class="ln">   460</span>		}
+<a id="L461"></a><span class="ln">   461</span>		typ := fun.Type()
+<a id="L462"></a><span class="ln">   462</span>		numIn := len(args)
+<a id="L463"></a><span class="ln">   463</span>		if final.IsValid() {
+<a id="L464"></a><span class="ln">   464</span>			numIn++
+<a id="L465"></a><span class="ln">   465</span>		}
+<a id="L466"></a><span class="ln">   466</span>		numFixed := len(args)
+<a id="L467"></a><span class="ln">   467</span>		if typ.IsVariadic() {
+<a id="L468"></a><span class="ln">   468</span>			numFixed = typ.NumIn() - 1 <span class="comment">// last arg is the variadic one.</span>
+<a id="L469"></a><span class="ln">   469</span>			if numIn &lt; numFixed {
+<a id="L470"></a><span class="ln">   470</span>				s.errorf(&#34;wrong number of args for %s: want at least %d got %d&#34;, name, typ.NumIn()-1, len(args))
+<a id="L471"></a><span class="ln">   471</span>			}
+<a id="L472"></a><span class="ln">   472</span>		} else if numIn &lt; typ.NumIn()-1 || !typ.IsVariadic() &amp;&amp; numIn != typ.NumIn() {
+<a id="L473"></a><span class="ln">   473</span>			s.errorf(&#34;wrong number of args for %s: want %d got %d&#34;, name, typ.NumIn(), len(args))
+<a id="L474"></a><span class="ln">   474</span>		}
+<a id="L475"></a><span class="ln">   475</span>		if !goodFunc(typ) {
+<a id="L476"></a><span class="ln">   476</span>			s.errorf(&#34;can&#39;t handle multiple results from method/function %q&#34;, name)
+<a id="L477"></a><span class="ln">   477</span>		}
+<a id="L478"></a><span class="ln">   478</span>		<span class="comment">// Build the arg list.</span>
+<a id="L479"></a><span class="ln">   479</span>		argv := make([]reflect.Value, numIn)
+<a id="L480"></a><span class="ln">   480</span>		<span class="comment">// Args must be evaluated. Fixed args first.</span>
+<a id="L481"></a><span class="ln">   481</span>		i := 0
+<a id="L482"></a><span class="ln">   482</span>		for ; i &lt; numFixed; i++ {
+<a id="L483"></a><span class="ln">   483</span>			argv[i] = s.evalArg(dot, typ.In(i), args[i])
+<a id="L484"></a><span class="ln">   484</span>		}
+<a id="L485"></a><span class="ln">   485</span>		<span class="comment">// Now the ... args.</span>
+<a id="L486"></a><span class="ln">   486</span>		if typ.IsVariadic() {
+<a id="L487"></a><span class="ln">   487</span>			argType := typ.In(typ.NumIn() - 1).Elem() <span class="comment">// Argument is a slice.</span>
+<a id="L488"></a><span class="ln">   488</span>			for ; i &lt; len(args); i++ {
+<a id="L489"></a><span class="ln">   489</span>				argv[i] = s.evalArg(dot, argType, args[i])
+<a id="L490"></a><span class="ln">   490</span>			}
+<a id="L491"></a><span class="ln">   491</span>		}
+<a id="L492"></a><span class="ln">   492</span>		<span class="comment">// Add final value if necessary.</span>
+<a id="L493"></a><span class="ln">   493</span>		if final.IsValid() {
+<a id="L494"></a><span class="ln">   494</span>			t := typ.In(typ.NumIn() - 1)
+<a id="L495"></a><span class="ln">   495</span>			if typ.IsVariadic() {
+<a id="L496"></a><span class="ln">   496</span>				t = t.Elem()
+<a id="L497"></a><span class="ln">   497</span>			}
+<a id="L498"></a><span class="ln">   498</span>			argv[i] = s.validateType(final, t)
+<a id="L499"></a><span class="ln">   499</span>		}
+<a id="L500"></a><span class="ln">   500</span>		result := fun.Call(argv)
+<a id="L501"></a><span class="ln">   501</span>		<span class="comment">// If we have an error that is not nil, stop execution and return that error to the caller.</span>
+<a id="L502"></a><span class="ln">   502</span>		if len(result) == 2 &amp;&amp; !result[1].IsNil() {
+<a id="L503"></a><span class="ln">   503</span>			s.errorf(&#34;error calling %s: %s&#34;, name, result[1].Interface().(error))
+<a id="L504"></a><span class="ln">   504</span>		}
+<a id="L505"></a><span class="ln">   505</span>		return result[0]
+<a id="L506"></a><span class="ln">   506</span>	}
+<a id="L507"></a><span class="ln">   507</span>	
+<a id="L508"></a><span class="ln">   508</span>	<span class="comment">// validateType guarantees that the value is valid and assignable to the type.</span>
+<a id="L509"></a><span class="ln">   509</span>	func (s *state) validateType(value reflect.Value, typ reflect.Type) reflect.Value {
+<a id="L510"></a><span class="ln">   510</span>		if !value.IsValid() {
+<a id="L511"></a><span class="ln">   511</span>			switch typ.Kind() {
+<a id="L512"></a><span class="ln">   512</span>			case reflect.Interface, reflect.Ptr, reflect.Chan, reflect.Map, reflect.Slice, reflect.Func:
+<a id="L513"></a><span class="ln">   513</span>				<span class="comment">// An untyped nil interface{}. Accept as a proper nil value.</span>
+<a id="L514"></a><span class="ln">   514</span>				<span class="comment">// TODO: Can we delete the other types in this list? Should we?</span>
+<a id="L515"></a><span class="ln">   515</span>				value = reflect.Zero(typ)
+<a id="L516"></a><span class="ln">   516</span>			default:
+<a id="L517"></a><span class="ln">   517</span>				s.errorf(&#34;invalid value; expected %s&#34;, typ)
+<a id="L518"></a><span class="ln">   518</span>			}
+<a id="L519"></a><span class="ln">   519</span>		}
+<a id="L520"></a><span class="ln">   520</span>		if !value.Type().AssignableTo(typ) {
+<a id="L521"></a><span class="ln">   521</span>			<span class="comment">// Does one dereference or indirection work? We could do more, as we</span>
+<a id="L522"></a><span class="ln">   522</span>			<span class="comment">// do with method receivers, but that gets messy and method receivers</span>
+<a id="L523"></a><span class="ln">   523</span>			<span class="comment">// are much more constrained, so it makes more sense there than here.</span>
+<a id="L524"></a><span class="ln">   524</span>			<span class="comment">// Besides, one is almost always all you need.</span>
+<a id="L525"></a><span class="ln">   525</span>			switch {
+<a id="L526"></a><span class="ln">   526</span>			case value.Kind() == reflect.Ptr &amp;&amp; value.Type().Elem().AssignableTo(typ):
+<a id="L527"></a><span class="ln">   527</span>				value = value.Elem()
+<a id="L528"></a><span class="ln">   528</span>			case reflect.PtrTo(value.Type()).AssignableTo(typ) &amp;&amp; value.CanAddr():
+<a id="L529"></a><span class="ln">   529</span>				value = value.Addr()
+<a id="L530"></a><span class="ln">   530</span>			default:
+<a id="L531"></a><span class="ln">   531</span>				s.errorf(&#34;wrong type for value; expected %s; got %s&#34;, typ, value.Type())
+<a id="L532"></a><span class="ln">   532</span>			}
+<a id="L533"></a><span class="ln">   533</span>		}
+<a id="L534"></a><span class="ln">   534</span>		return value
+<a id="L535"></a><span class="ln">   535</span>	}
+<a id="L536"></a><span class="ln">   536</span>	
+<a id="L537"></a><span class="ln">   537</span>	func (s *state) evalArg(dot reflect.Value, typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L538"></a><span class="ln">   538</span>		switch arg := n.(type) {
+<a id="L539"></a><span class="ln">   539</span>		case *parse.DotNode:
+<a id="L540"></a><span class="ln">   540</span>			return s.validateType(dot, typ)
+<a id="L541"></a><span class="ln">   541</span>		case *parse.FieldNode:
+<a id="L542"></a><span class="ln">   542</span>			return s.validateType(s.evalFieldNode(dot, arg, []parse.Node{n}, zero), typ)
+<a id="L543"></a><span class="ln">   543</span>		case *parse.VariableNode:
+<a id="L544"></a><span class="ln">   544</span>			return s.validateType(s.evalVariableNode(dot, arg, nil, zero), typ)
+<a id="L545"></a><span class="ln">   545</span>		}
+<a id="L546"></a><span class="ln">   546</span>		switch typ.Kind() {
+<a id="L547"></a><span class="ln">   547</span>		case reflect.Bool:
+<a id="L548"></a><span class="ln">   548</span>			return s.evalBool(typ, n)
+<a id="L549"></a><span class="ln">   549</span>		case reflect.Complex64, reflect.Complex128:
+<a id="L550"></a><span class="ln">   550</span>			return s.evalComplex(typ, n)
+<a id="L551"></a><span class="ln">   551</span>		case reflect.Float32, reflect.Float64:
+<a id="L552"></a><span class="ln">   552</span>			return s.evalFloat(typ, n)
+<a id="L553"></a><span class="ln">   553</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L554"></a><span class="ln">   554</span>			return s.evalInteger(typ, n)
+<a id="L555"></a><span class="ln">   555</span>		case reflect.Interface:
+<a id="L556"></a><span class="ln">   556</span>			if typ.NumMethod() == 0 {
+<a id="L557"></a><span class="ln">   557</span>				return s.evalEmptyInterface(dot, n)
+<a id="L558"></a><span class="ln">   558</span>			}
+<a id="L559"></a><span class="ln">   559</span>		case reflect.String:
+<a id="L560"></a><span class="ln">   560</span>			return s.evalString(typ, n)
+<a id="L561"></a><span class="ln">   561</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L562"></a><span class="ln">   562</span>			return s.evalUnsignedInteger(typ, n)
+<a id="L563"></a><span class="ln">   563</span>		}
+<a id="L564"></a><span class="ln">   564</span>		s.errorf(&#34;can&#39;t handle %s for arg of type %s&#34;, n, typ)
+<a id="L565"></a><span class="ln">   565</span>		panic(&#34;not reached&#34;)
+<a id="L566"></a><span class="ln">   566</span>	}
+<a id="L567"></a><span class="ln">   567</span>	
+<a id="L568"></a><span class="ln">   568</span>	func (s *state) evalBool(typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L569"></a><span class="ln">   569</span>		if n, ok := n.(*parse.BoolNode); ok {
+<a id="L570"></a><span class="ln">   570</span>			value := reflect.New(typ).Elem()
+<a id="L571"></a><span class="ln">   571</span>			value.SetBool(n.True)
+<a id="L572"></a><span class="ln">   572</span>			return value
+<a id="L573"></a><span class="ln">   573</span>		}
+<a id="L574"></a><span class="ln">   574</span>		s.errorf(&#34;expected bool; found %s&#34;, n)
+<a id="L575"></a><span class="ln">   575</span>		panic(&#34;not reached&#34;)
+<a id="L576"></a><span class="ln">   576</span>	}
+<a id="L577"></a><span class="ln">   577</span>	
+<a id="L578"></a><span class="ln">   578</span>	func (s *state) evalString(typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L579"></a><span class="ln">   579</span>		if n, ok := n.(*parse.StringNode); ok {
+<a id="L580"></a><span class="ln">   580</span>			value := reflect.New(typ).Elem()
+<a id="L581"></a><span class="ln">   581</span>			value.SetString(n.Text)
+<a id="L582"></a><span class="ln">   582</span>			return value
+<a id="L583"></a><span class="ln">   583</span>		}
+<a id="L584"></a><span class="ln">   584</span>		s.errorf(&#34;expected string; found %s&#34;, n)
+<a id="L585"></a><span class="ln">   585</span>		panic(&#34;not reached&#34;)
+<a id="L586"></a><span class="ln">   586</span>	}
+<a id="L587"></a><span class="ln">   587</span>	
+<a id="L588"></a><span class="ln">   588</span>	func (s *state) evalInteger(typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L589"></a><span class="ln">   589</span>		if n, ok := n.(*parse.NumberNode); ok &amp;&amp; n.IsInt {
+<a id="L590"></a><span class="ln">   590</span>			value := reflect.New(typ).Elem()
+<a id="L591"></a><span class="ln">   591</span>			value.SetInt(n.Int64)
+<a id="L592"></a><span class="ln">   592</span>			return value
+<a id="L593"></a><span class="ln">   593</span>		}
+<a id="L594"></a><span class="ln">   594</span>		s.errorf(&#34;expected integer; found %s&#34;, n)
+<a id="L595"></a><span class="ln">   595</span>		panic(&#34;not reached&#34;)
+<a id="L596"></a><span class="ln">   596</span>	}
+<a id="L597"></a><span class="ln">   597</span>	
+<a id="L598"></a><span class="ln">   598</span>	func (s *state) evalUnsignedInteger(typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L599"></a><span class="ln">   599</span>		if n, ok := n.(*parse.NumberNode); ok &amp;&amp; n.IsUint {
+<a id="L600"></a><span class="ln">   600</span>			value := reflect.New(typ).Elem()
+<a id="L601"></a><span class="ln">   601</span>			value.SetUint(n.Uint64)
+<a id="L602"></a><span class="ln">   602</span>			return value
+<a id="L603"></a><span class="ln">   603</span>		}
+<a id="L604"></a><span class="ln">   604</span>		s.errorf(&#34;expected unsigned integer; found %s&#34;, n)
+<a id="L605"></a><span class="ln">   605</span>		panic(&#34;not reached&#34;)
+<a id="L606"></a><span class="ln">   606</span>	}
+<a id="L607"></a><span class="ln">   607</span>	
+<a id="L608"></a><span class="ln">   608</span>	func (s *state) evalFloat(typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L609"></a><span class="ln">   609</span>		if n, ok := n.(*parse.NumberNode); ok &amp;&amp; n.IsFloat {
+<a id="L610"></a><span class="ln">   610</span>			value := reflect.New(typ).Elem()
+<a id="L611"></a><span class="ln">   611</span>			value.SetFloat(n.Float64)
+<a id="L612"></a><span class="ln">   612</span>			return value
+<a id="L613"></a><span class="ln">   613</span>		}
+<a id="L614"></a><span class="ln">   614</span>		s.errorf(&#34;expected float; found %s&#34;, n)
+<a id="L615"></a><span class="ln">   615</span>		panic(&#34;not reached&#34;)
+<a id="L616"></a><span class="ln">   616</span>	}
+<a id="L617"></a><span class="ln">   617</span>	
+<a id="L618"></a><span class="ln">   618</span>	func (s *state) evalComplex(typ reflect.Type, n parse.Node) reflect.Value {
+<a id="L619"></a><span class="ln">   619</span>		if n, ok := n.(*parse.NumberNode); ok &amp;&amp; n.IsComplex {
+<a id="L620"></a><span class="ln">   620</span>			value := reflect.New(typ).Elem()
+<a id="L621"></a><span class="ln">   621</span>			value.SetComplex(n.Complex128)
+<a id="L622"></a><span class="ln">   622</span>			return value
+<a id="L623"></a><span class="ln">   623</span>		}
+<a id="L624"></a><span class="ln">   624</span>		s.errorf(&#34;expected complex; found %s&#34;, n)
+<a id="L625"></a><span class="ln">   625</span>		panic(&#34;not reached&#34;)
+<a id="L626"></a><span class="ln">   626</span>	}
+<a id="L627"></a><span class="ln">   627</span>	
+<a id="L628"></a><span class="ln">   628</span>	func (s *state) evalEmptyInterface(dot reflect.Value, n parse.Node) reflect.Value {
+<a id="L629"></a><span class="ln">   629</span>		switch n := n.(type) {
+<a id="L630"></a><span class="ln">   630</span>		case *parse.BoolNode:
+<a id="L631"></a><span class="ln">   631</span>			return reflect.ValueOf(n.True)
+<a id="L632"></a><span class="ln">   632</span>		case *parse.DotNode:
+<a id="L633"></a><span class="ln">   633</span>			return dot
+<a id="L634"></a><span class="ln">   634</span>		case *parse.FieldNode:
+<a id="L635"></a><span class="ln">   635</span>			return s.evalFieldNode(dot, n, nil, zero)
+<a id="L636"></a><span class="ln">   636</span>		case *parse.IdentifierNode:
+<a id="L637"></a><span class="ln">   637</span>			return s.evalFunction(dot, n.Ident, nil, zero)
+<a id="L638"></a><span class="ln">   638</span>		case *parse.NumberNode:
+<a id="L639"></a><span class="ln">   639</span>			return s.idealConstant(n)
+<a id="L640"></a><span class="ln">   640</span>		case *parse.StringNode:
+<a id="L641"></a><span class="ln">   641</span>			return reflect.ValueOf(n.Text)
+<a id="L642"></a><span class="ln">   642</span>		case *parse.VariableNode:
+<a id="L643"></a><span class="ln">   643</span>			return s.evalVariableNode(dot, n, nil, zero)
+<a id="L644"></a><span class="ln">   644</span>		}
+<a id="L645"></a><span class="ln">   645</span>		s.errorf(&#34;can&#39;t handle assignment of %s to empty interface argument&#34;, n)
+<a id="L646"></a><span class="ln">   646</span>		panic(&#34;not reached&#34;)
+<a id="L647"></a><span class="ln">   647</span>	}
+<a id="L648"></a><span class="ln">   648</span>	
+<a id="L649"></a><span class="ln">   649</span>	<span class="comment">// indirect returns the item at the end of indirection, and a bool to indicate if it&#39;s nil.</span>
+<a id="L650"></a><span class="ln">   650</span>	<span class="comment">// We indirect through pointers and empty interfaces (only) because</span>
+<a id="L651"></a><span class="ln">   651</span>	<span class="comment">// non-empty interfaces have methods we might need.</span>
+<a id="L652"></a><span class="ln">   652</span>	func indirect(v reflect.Value) (rv reflect.Value, isNil bool) {
+<a id="L653"></a><span class="ln">   653</span>		for ; v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface; v = v.Elem() {
+<a id="L654"></a><span class="ln">   654</span>			if v.IsNil() {
+<a id="L655"></a><span class="ln">   655</span>				return v, true
+<a id="L656"></a><span class="ln">   656</span>			}
+<a id="L657"></a><span class="ln">   657</span>			if v.Kind() == reflect.Interface &amp;&amp; v.NumMethod() &gt; 0 {
+<a id="L658"></a><span class="ln">   658</span>				break
+<a id="L659"></a><span class="ln">   659</span>			}
+<a id="L660"></a><span class="ln">   660</span>		}
+<a id="L661"></a><span class="ln">   661</span>		return v, false
+<a id="L662"></a><span class="ln">   662</span>	}
+<a id="L663"></a><span class="ln">   663</span>	
+<a id="L664"></a><span class="ln">   664</span>	<span class="comment">// printValue writes the textual representation of the value to the output of</span>
+<a id="L665"></a><span class="ln">   665</span>	<span class="comment">// the template.</span>
+<a id="L666"></a><span class="ln">   666</span>	func (s *state) printValue(n parse.Node, v reflect.Value) {
+<a id="L667"></a><span class="ln">   667</span>		if v.Kind() == reflect.Ptr {
+<a id="L668"></a><span class="ln">   668</span>			v, _ = indirect(v) <span class="comment">// fmt.Fprint handles nil.</span>
+<a id="L669"></a><span class="ln">   669</span>		}
+<a id="L670"></a><span class="ln">   670</span>		if !v.IsValid() {
+<a id="L671"></a><span class="ln">   671</span>			fmt.Fprint(s.wr, &#34;&lt;no value&gt;&#34;)
+<a id="L672"></a><span class="ln">   672</span>			return
+<a id="L673"></a><span class="ln">   673</span>		}
+<a id="L674"></a><span class="ln">   674</span>	
+<a id="L675"></a><span class="ln">   675</span>		if !v.Type().Implements(errorType) &amp;&amp; !v.Type().Implements(fmtStringerType) {
+<a id="L676"></a><span class="ln">   676</span>			if v.CanAddr() &amp;&amp; (reflect.PtrTo(v.Type()).Implements(errorType) || reflect.PtrTo(v.Type()).Implements(fmtStringerType)) {
+<a id="L677"></a><span class="ln">   677</span>				v = v.Addr()
+<a id="L678"></a><span class="ln">   678</span>			} else {
+<a id="L679"></a><span class="ln">   679</span>				switch v.Kind() {
+<a id="L680"></a><span class="ln">   680</span>				case reflect.Chan, reflect.Func:
+<a id="L681"></a><span class="ln">   681</span>					s.errorf(&#34;can&#39;t print %s of type %s&#34;, n, v.Type())
+<a id="L682"></a><span class="ln">   682</span>				}
+<a id="L683"></a><span class="ln">   683</span>			}
+<a id="L684"></a><span class="ln">   684</span>		}
+<a id="L685"></a><span class="ln">   685</span>		fmt.Fprint(s.wr, v.Interface())
+<a id="L686"></a><span class="ln">   686</span>	}
+<a id="L687"></a><span class="ln">   687</span>	
+<a id="L688"></a><span class="ln">   688</span>	<span class="comment">// Types to help sort the keys in a map for reproducible output.</span>
+<a id="L689"></a><span class="ln">   689</span>	
+<a id="L690"></a><span class="ln">   690</span>	type rvs []reflect.Value
+<a id="L691"></a><span class="ln">   691</span>	
+<a id="L692"></a><span class="ln">   692</span>	func (x rvs) Len() int      { return len(x) }
+<a id="L693"></a><span class="ln">   693</span>	func (x rvs) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
+<a id="L694"></a><span class="ln">   694</span>	
+<a id="L695"></a><span class="ln">   695</span>	type rvInts struct{ rvs }
+<a id="L696"></a><span class="ln">   696</span>	
+<a id="L697"></a><span class="ln">   697</span>	func (x rvInts) Less(i, j int) bool { return x.rvs[i].Int() &lt; x.rvs[j].Int() }
+<a id="L698"></a><span class="ln">   698</span>	
+<a id="L699"></a><span class="ln">   699</span>	type rvUints struct{ rvs }
+<a id="L700"></a><span class="ln">   700</span>	
+<a id="L701"></a><span class="ln">   701</span>	func (x rvUints) Less(i, j int) bool { return x.rvs[i].Uint() &lt; x.rvs[j].Uint() }
+<a id="L702"></a><span class="ln">   702</span>	
+<a id="L703"></a><span class="ln">   703</span>	type rvFloats struct{ rvs }
+<a id="L704"></a><span class="ln">   704</span>	
+<a id="L705"></a><span class="ln">   705</span>	func (x rvFloats) Less(i, j int) bool { return x.rvs[i].Float() &lt; x.rvs[j].Float() }
+<a id="L706"></a><span class="ln">   706</span>	
+<a id="L707"></a><span class="ln">   707</span>	type rvStrings struct{ rvs }
+<a id="L708"></a><span class="ln">   708</span>	
+<a id="L709"></a><span class="ln">   709</span>	func (x rvStrings) Less(i, j int) bool { return x.rvs[i].String() &lt; x.rvs[j].String() }
+<a id="L710"></a><span class="ln">   710</span>	
+<a id="L711"></a><span class="ln">   711</span>	<span class="comment">// sortKeys sorts (if it can) the slice of reflect.Values, which is a slice of map keys.</span>
+<a id="L712"></a><span class="ln">   712</span>	func sortKeys(v []reflect.Value) []reflect.Value {
+<a id="L713"></a><span class="ln">   713</span>		if len(v) &lt;= 1 {
+<a id="L714"></a><span class="ln">   714</span>			return v
+<a id="L715"></a><span class="ln">   715</span>		}
+<a id="L716"></a><span class="ln">   716</span>		switch v[0].Kind() {
+<a id="L717"></a><span class="ln">   717</span>		case reflect.Float32, reflect.Float64:
+<a id="L718"></a><span class="ln">   718</span>			sort.Sort(rvFloats{v})
+<a id="L719"></a><span class="ln">   719</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L720"></a><span class="ln">   720</span>			sort.Sort(rvInts{v})
+<a id="L721"></a><span class="ln">   721</span>		case reflect.String:
+<a id="L722"></a><span class="ln">   722</span>			sort.Sort(rvStrings{v})
+<a id="L723"></a><span class="ln">   723</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L724"></a><span class="ln">   724</span>			sort.Sort(rvUints{v})
+<a id="L725"></a><span class="ln">   725</span>		}
+<a id="L726"></a><span class="ln">   726</span>		return v
+<a id="L727"></a><span class="ln">   727</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

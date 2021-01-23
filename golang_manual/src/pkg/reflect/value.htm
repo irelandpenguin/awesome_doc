@@ -1,0 +1,1882 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/reflect/value.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/reflect/value.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package reflect
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;math&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;runtime&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;strconv&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unsafe&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	const bigEndian = false <span class="comment">// can be smarter if we find a big-endian machine</span>
+<a id="L15"></a><span class="ln">    15</span>	const ptrSize = unsafe.Sizeof((*byte)(nil))
+<a id="L16"></a><span class="ln">    16</span>	const cannotSet = &#34;cannot set value obtained from unexported struct field&#34;
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// TODO: This will have to go away when</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// the new gc goes in.</span>
+<a id="L20"></a><span class="ln">    20</span>	func memmove(adst, asrc unsafe.Pointer, n uintptr) {
+<a id="L21"></a><span class="ln">    21</span>		dst := uintptr(adst)
+<a id="L22"></a><span class="ln">    22</span>		src := uintptr(asrc)
+<a id="L23"></a><span class="ln">    23</span>		switch {
+<a id="L24"></a><span class="ln">    24</span>		case src &lt; dst &amp;&amp; src+n &gt; dst:
+<a id="L25"></a><span class="ln">    25</span>			<span class="comment">// byte copy backward</span>
+<a id="L26"></a><span class="ln">    26</span>			<span class="comment">// careful: i is unsigned</span>
+<a id="L27"></a><span class="ln">    27</span>			for i := n; i &gt; 0; {
+<a id="L28"></a><span class="ln">    28</span>				i--
+<a id="L29"></a><span class="ln">    29</span>				*(*byte)(unsafe.Pointer(dst + i)) = *(*byte)(unsafe.Pointer(src + i))
+<a id="L30"></a><span class="ln">    30</span>			}
+<a id="L31"></a><span class="ln">    31</span>		case (n|src|dst)&amp;(ptrSize-1) != 0:
+<a id="L32"></a><span class="ln">    32</span>			<span class="comment">// byte copy forward</span>
+<a id="L33"></a><span class="ln">    33</span>			for i := uintptr(0); i &lt; n; i++ {
+<a id="L34"></a><span class="ln">    34</span>				*(*byte)(unsafe.Pointer(dst + i)) = *(*byte)(unsafe.Pointer(src + i))
+<a id="L35"></a><span class="ln">    35</span>			}
+<a id="L36"></a><span class="ln">    36</span>		default:
+<a id="L37"></a><span class="ln">    37</span>			<span class="comment">// word copy forward</span>
+<a id="L38"></a><span class="ln">    38</span>			for i := uintptr(0); i &lt; n; i += ptrSize {
+<a id="L39"></a><span class="ln">    39</span>				*(*uintptr)(unsafe.Pointer(dst + i)) = *(*uintptr)(unsafe.Pointer(src + i))
+<a id="L40"></a><span class="ln">    40</span>			}
+<a id="L41"></a><span class="ln">    41</span>		}
+<a id="L42"></a><span class="ln">    42</span>	}
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// Value is the reflection interface to a Go value.</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// Not all methods apply to all kinds of values.  Restrictions,</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// if any, are noted in the documentation for each method.</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// Use the Kind method to find out the kind of value before</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// calling kind-specific methods.  Calling a method</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// inappropriate to the kind of type causes a run time panic.</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// The zero Value represents no value.</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// Its IsValid method returns false, its Kind method returns Invalid,</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// its String method returns &#34;&lt;invalid Value&gt;&#34;, and all other methods panic.</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// Most functions and methods never return an invalid value.</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// If one does, its documentation states the conditions explicitly.</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// A Value can be used concurrently by multiple goroutines provided that</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// the underlying Go value can be used concurrently for the equivalent</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// direct operations.</span>
+<a id="L61"></a><span class="ln">    61</span>	type Value struct {
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// typ holds the type of the value represented by a Value.</span>
+<a id="L63"></a><span class="ln">    63</span>		typ *commonType
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// val holds the 1-word representation of the value.</span>
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">// If flag&#39;s flagIndir bit is set, then val is a pointer to the data.</span>
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// Otherwise val is a word holding the actual data.</span>
+<a id="L68"></a><span class="ln">    68</span>		<span class="comment">// When the data is smaller than a word, it begins at</span>
+<a id="L69"></a><span class="ln">    69</span>		<span class="comment">// the first byte (in the memory address sense) of val.</span>
+<a id="L70"></a><span class="ln">    70</span>		<span class="comment">// We use unsafe.Pointer so that the garbage collector</span>
+<a id="L71"></a><span class="ln">    71</span>		<span class="comment">// knows that val could be a pointer.</span>
+<a id="L72"></a><span class="ln">    72</span>		val unsafe.Pointer
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>		<span class="comment">// flag holds metadata about the value.</span>
+<a id="L75"></a><span class="ln">    75</span>		<span class="comment">// The lowest bits are flag bits:</span>
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">//	- flagRO: obtained via unexported field, so read-only</span>
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">//	- flagIndir: val holds a pointer to the data</span>
+<a id="L78"></a><span class="ln">    78</span>		<span class="comment">//	- flagAddr: v.CanAddr is true (implies flagIndir)</span>
+<a id="L79"></a><span class="ln">    79</span>		<span class="comment">//	- flagMethod: v is a method value.</span>
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// The next five bits give the Kind of the value.</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// This repeats typ.Kind() except for method values.</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">// The remaining 23+ bits give a method number for method values.</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">// If flag.kind() != Func, code can assume that flagMethod is unset.</span>
+<a id="L84"></a><span class="ln">    84</span>		<span class="comment">// If typ.size &gt; ptrSize, code can assume that flagIndir is set.</span>
+<a id="L85"></a><span class="ln">    85</span>		flag
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>		<span class="comment">// A method value represents a curried method invocation</span>
+<a id="L88"></a><span class="ln">    88</span>		<span class="comment">// like r.Read for some receiver r.  The typ+val+flag bits describe</span>
+<a id="L89"></a><span class="ln">    89</span>		<span class="comment">// the receiver r, but the flag&#39;s Kind bits say Func (methods are</span>
+<a id="L90"></a><span class="ln">    90</span>		<span class="comment">// functions), and the top bits of the flag give the method number</span>
+<a id="L91"></a><span class="ln">    91</span>		<span class="comment">// in r&#39;s type&#39;s method table.</span>
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	type flag uintptr
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	const (
+<a id="L97"></a><span class="ln">    97</span>		flagRO flag = 1 &lt;&lt; iota
+<a id="L98"></a><span class="ln">    98</span>		flagIndir
+<a id="L99"></a><span class="ln">    99</span>		flagAddr
+<a id="L100"></a><span class="ln">   100</span>		flagMethod
+<a id="L101"></a><span class="ln">   101</span>		flagKindShift        = iota
+<a id="L102"></a><span class="ln">   102</span>		flagKindWidth        = 5 <span class="comment">// there are 27 kinds</span>
+<a id="L103"></a><span class="ln">   103</span>		flagKindMask    flag = 1&lt;&lt;flagKindWidth - 1
+<a id="L104"></a><span class="ln">   104</span>		flagMethodShift      = flagKindShift + flagKindWidth
+<a id="L105"></a><span class="ln">   105</span>	)
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	func (f flag) kind() Kind {
+<a id="L108"></a><span class="ln">   108</span>		return Kind((f &gt;&gt; flagKindShift) &amp; flagKindMask)
+<a id="L109"></a><span class="ln">   109</span>	}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// A ValueError occurs when a Value method is invoked on</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// a Value that does not support it.  Such cases are documented</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// in the description of each method.</span>
+<a id="L114"></a><span class="ln">   114</span>	type ValueError struct {
+<a id="L115"></a><span class="ln">   115</span>		Method string
+<a id="L116"></a><span class="ln">   116</span>		Kind   Kind
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	func (e *ValueError) Error() string {
+<a id="L120"></a><span class="ln">   120</span>		if e.Kind == 0 {
+<a id="L121"></a><span class="ln">   121</span>			return &#34;reflect: call of &#34; + e.Method + &#34; on zero Value&#34;
+<a id="L122"></a><span class="ln">   122</span>		}
+<a id="L123"></a><span class="ln">   123</span>		return &#34;reflect: call of &#34; + e.Method + &#34; on &#34; + e.Kind.String() + &#34; Value&#34;
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// methodName returns the name of the calling method,</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// assumed to be two stack frames above.</span>
+<a id="L128"></a><span class="ln">   128</span>	func methodName() string {
+<a id="L129"></a><span class="ln">   129</span>		pc, _, _, _ := runtime.Caller(2)
+<a id="L130"></a><span class="ln">   130</span>		f := runtime.FuncForPC(pc)
+<a id="L131"></a><span class="ln">   131</span>		if f == nil {
+<a id="L132"></a><span class="ln">   132</span>			return &#34;unknown method&#34;
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>		return f.Name()
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// An iword is the word that would be stored in an</span>
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// interface to represent a given value v.  Specifically, if v is</span>
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// bigger than a pointer, its word is a pointer to v&#39;s data.</span>
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// Otherwise, its word holds the data stored</span>
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// in its leading bytes (so is not a pointer).</span>
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// Because the value sometimes holds a pointer, we use</span>
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">// unsafe.Pointer to represent it, so that if iword appears</span>
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// in a struct, the garbage collector knows that might be</span>
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// a pointer.</span>
+<a id="L146"></a><span class="ln">   146</span>	type iword unsafe.Pointer
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	func (v Value) iword() iword {
+<a id="L149"></a><span class="ln">   149</span>		if v.flag&amp;flagIndir != 0 &amp;&amp; v.typ.size &lt;= ptrSize {
+<a id="L150"></a><span class="ln">   150</span>			<span class="comment">// Have indirect but want direct word.</span>
+<a id="L151"></a><span class="ln">   151</span>			return loadIword(v.val, v.typ.size)
+<a id="L152"></a><span class="ln">   152</span>		}
+<a id="L153"></a><span class="ln">   153</span>		return iword(v.val)
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// loadIword loads n bytes at p from memory into an iword.</span>
+<a id="L157"></a><span class="ln">   157</span>	func loadIword(p unsafe.Pointer, n uintptr) iword {
+<a id="L158"></a><span class="ln">   158</span>		<span class="comment">// Run the copy ourselves instead of calling memmove</span>
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// to avoid moving w to the heap.</span>
+<a id="L160"></a><span class="ln">   160</span>		var w iword
+<a id="L161"></a><span class="ln">   161</span>		switch n {
+<a id="L162"></a><span class="ln">   162</span>		default:
+<a id="L163"></a><span class="ln">   163</span>			panic(&#34;reflect: internal error: loadIword of &#34; + strconv.Itoa(int(n)) + &#34;-byte value&#34;)
+<a id="L164"></a><span class="ln">   164</span>		case 0:
+<a id="L165"></a><span class="ln">   165</span>		case 1:
+<a id="L166"></a><span class="ln">   166</span>			*(*uint8)(unsafe.Pointer(&amp;w)) = *(*uint8)(p)
+<a id="L167"></a><span class="ln">   167</span>		case 2:
+<a id="L168"></a><span class="ln">   168</span>			*(*uint16)(unsafe.Pointer(&amp;w)) = *(*uint16)(p)
+<a id="L169"></a><span class="ln">   169</span>		case 3:
+<a id="L170"></a><span class="ln">   170</span>			*(*[3]byte)(unsafe.Pointer(&amp;w)) = *(*[3]byte)(p)
+<a id="L171"></a><span class="ln">   171</span>		case 4:
+<a id="L172"></a><span class="ln">   172</span>			*(*uint32)(unsafe.Pointer(&amp;w)) = *(*uint32)(p)
+<a id="L173"></a><span class="ln">   173</span>		case 5:
+<a id="L174"></a><span class="ln">   174</span>			*(*[5]byte)(unsafe.Pointer(&amp;w)) = *(*[5]byte)(p)
+<a id="L175"></a><span class="ln">   175</span>		case 6:
+<a id="L176"></a><span class="ln">   176</span>			*(*[6]byte)(unsafe.Pointer(&amp;w)) = *(*[6]byte)(p)
+<a id="L177"></a><span class="ln">   177</span>		case 7:
+<a id="L178"></a><span class="ln">   178</span>			*(*[7]byte)(unsafe.Pointer(&amp;w)) = *(*[7]byte)(p)
+<a id="L179"></a><span class="ln">   179</span>		case 8:
+<a id="L180"></a><span class="ln">   180</span>			*(*uint64)(unsafe.Pointer(&amp;w)) = *(*uint64)(p)
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>		return w
+<a id="L183"></a><span class="ln">   183</span>	}
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>	<span class="comment">// storeIword stores n bytes from w into p.</span>
+<a id="L186"></a><span class="ln">   186</span>	func storeIword(p unsafe.Pointer, w iword, n uintptr) {
+<a id="L187"></a><span class="ln">   187</span>		<span class="comment">// Run the copy ourselves instead of calling memmove</span>
+<a id="L188"></a><span class="ln">   188</span>		<span class="comment">// to avoid moving w to the heap.</span>
+<a id="L189"></a><span class="ln">   189</span>		switch n {
+<a id="L190"></a><span class="ln">   190</span>		default:
+<a id="L191"></a><span class="ln">   191</span>			panic(&#34;reflect: internal error: storeIword of &#34; + strconv.Itoa(int(n)) + &#34;-byte value&#34;)
+<a id="L192"></a><span class="ln">   192</span>		case 0:
+<a id="L193"></a><span class="ln">   193</span>		case 1:
+<a id="L194"></a><span class="ln">   194</span>			*(*uint8)(p) = *(*uint8)(unsafe.Pointer(&amp;w))
+<a id="L195"></a><span class="ln">   195</span>		case 2:
+<a id="L196"></a><span class="ln">   196</span>			*(*uint16)(p) = *(*uint16)(unsafe.Pointer(&amp;w))
+<a id="L197"></a><span class="ln">   197</span>		case 3:
+<a id="L198"></a><span class="ln">   198</span>			*(*[3]byte)(p) = *(*[3]byte)(unsafe.Pointer(&amp;w))
+<a id="L199"></a><span class="ln">   199</span>		case 4:
+<a id="L200"></a><span class="ln">   200</span>			*(*uint32)(p) = *(*uint32)(unsafe.Pointer(&amp;w))
+<a id="L201"></a><span class="ln">   201</span>		case 5:
+<a id="L202"></a><span class="ln">   202</span>			*(*[5]byte)(p) = *(*[5]byte)(unsafe.Pointer(&amp;w))
+<a id="L203"></a><span class="ln">   203</span>		case 6:
+<a id="L204"></a><span class="ln">   204</span>			*(*[6]byte)(p) = *(*[6]byte)(unsafe.Pointer(&amp;w))
+<a id="L205"></a><span class="ln">   205</span>		case 7:
+<a id="L206"></a><span class="ln">   206</span>			*(*[7]byte)(p) = *(*[7]byte)(unsafe.Pointer(&amp;w))
+<a id="L207"></a><span class="ln">   207</span>		case 8:
+<a id="L208"></a><span class="ln">   208</span>			*(*uint64)(p) = *(*uint64)(unsafe.Pointer(&amp;w))
+<a id="L209"></a><span class="ln">   209</span>		}
+<a id="L210"></a><span class="ln">   210</span>	}
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// emptyInterface is the header for an interface{} value.</span>
+<a id="L213"></a><span class="ln">   213</span>	type emptyInterface struct {
+<a id="L214"></a><span class="ln">   214</span>		typ  *runtimeType
+<a id="L215"></a><span class="ln">   215</span>		word iword
+<a id="L216"></a><span class="ln">   216</span>	}
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// nonEmptyInterface is the header for a interface value with methods.</span>
+<a id="L219"></a><span class="ln">   219</span>	type nonEmptyInterface struct {
+<a id="L220"></a><span class="ln">   220</span>		<span class="comment">// see ../runtime/iface.c:/Itab</span>
+<a id="L221"></a><span class="ln">   221</span>		itab *struct {
+<a id="L222"></a><span class="ln">   222</span>			ityp   *runtimeType <span class="comment">// static interface type</span>
+<a id="L223"></a><span class="ln">   223</span>			typ    *runtimeType <span class="comment">// dynamic concrete type</span>
+<a id="L224"></a><span class="ln">   224</span>			link   unsafe.Pointer
+<a id="L225"></a><span class="ln">   225</span>			bad    int32
+<a id="L226"></a><span class="ln">   226</span>			unused int32
+<a id="L227"></a><span class="ln">   227</span>			fun    [100000]unsafe.Pointer <span class="comment">// method table</span>
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>		word iword
+<a id="L230"></a><span class="ln">   230</span>	}
+<a id="L231"></a><span class="ln">   231</span>	
+<a id="L232"></a><span class="ln">   232</span>	<span class="comment">// mustBe panics if f&#39;s kind is not expected.</span>
+<a id="L233"></a><span class="ln">   233</span>	<span class="comment">// Making this a method on flag instead of on Value</span>
+<a id="L234"></a><span class="ln">   234</span>	<span class="comment">// (and embedding flag in Value) means that we can write</span>
+<a id="L235"></a><span class="ln">   235</span>	<span class="comment">// the very clear v.mustBe(Bool) and have it compile into</span>
+<a id="L236"></a><span class="ln">   236</span>	<span class="comment">// v.flag.mustBe(Bool), which will only bother to copy the</span>
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">// single important word for the receiver.</span>
+<a id="L238"></a><span class="ln">   238</span>	func (f flag) mustBe(expected Kind) {
+<a id="L239"></a><span class="ln">   239</span>		k := f.kind()
+<a id="L240"></a><span class="ln">   240</span>		if k != expected {
+<a id="L241"></a><span class="ln">   241</span>			panic(&amp;ValueError{methodName(), k})
+<a id="L242"></a><span class="ln">   242</span>		}
+<a id="L243"></a><span class="ln">   243</span>	}
+<a id="L244"></a><span class="ln">   244</span>	
+<a id="L245"></a><span class="ln">   245</span>	<span class="comment">// mustBeExported panics if f records that the value was obtained using</span>
+<a id="L246"></a><span class="ln">   246</span>	<span class="comment">// an unexported field.</span>
+<a id="L247"></a><span class="ln">   247</span>	func (f flag) mustBeExported() {
+<a id="L248"></a><span class="ln">   248</span>		if f == 0 {
+<a id="L249"></a><span class="ln">   249</span>			panic(&amp;ValueError{methodName(), 0})
+<a id="L250"></a><span class="ln">   250</span>		}
+<a id="L251"></a><span class="ln">   251</span>		if f&amp;flagRO != 0 {
+<a id="L252"></a><span class="ln">   252</span>			panic(methodName() + &#34; using value obtained using unexported field&#34;)
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	<span class="comment">// mustBeAssignable panics if f records that the value is not assignable,</span>
+<a id="L257"></a><span class="ln">   257</span>	<span class="comment">// which is to say that either it was obtained using an unexported field</span>
+<a id="L258"></a><span class="ln">   258</span>	<span class="comment">// or it is not addressable.</span>
+<a id="L259"></a><span class="ln">   259</span>	func (f flag) mustBeAssignable() {
+<a id="L260"></a><span class="ln">   260</span>		if f == 0 {
+<a id="L261"></a><span class="ln">   261</span>			panic(&amp;ValueError{methodName(), Invalid})
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>		<span class="comment">// Assignable if addressable and not read-only.</span>
+<a id="L264"></a><span class="ln">   264</span>		if f&amp;flagRO != 0 {
+<a id="L265"></a><span class="ln">   265</span>			panic(methodName() + &#34; using value obtained using unexported field&#34;)
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>		if f&amp;flagAddr == 0 {
+<a id="L268"></a><span class="ln">   268</span>			panic(methodName() + &#34; using unaddressable value&#34;)
+<a id="L269"></a><span class="ln">   269</span>		}
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// Addr returns a pointer value representing the address of v.</span>
+<a id="L273"></a><span class="ln">   273</span>	<span class="comment">// It panics if CanAddr() returns false.</span>
+<a id="L274"></a><span class="ln">   274</span>	<span class="comment">// Addr is typically used to obtain a pointer to a struct field</span>
+<a id="L275"></a><span class="ln">   275</span>	<span class="comment">// or slice element in order to call a method that requires a</span>
+<a id="L276"></a><span class="ln">   276</span>	<span class="comment">// pointer receiver.</span>
+<a id="L277"></a><span class="ln">   277</span>	func (v Value) Addr() Value {
+<a id="L278"></a><span class="ln">   278</span>		if v.flag&amp;flagAddr == 0 {
+<a id="L279"></a><span class="ln">   279</span>			panic(&#34;reflect.Value.Addr of unaddressable value&#34;)
+<a id="L280"></a><span class="ln">   280</span>		}
+<a id="L281"></a><span class="ln">   281</span>		return Value{v.typ.ptrTo(), v.val, (v.flag &amp; flagRO) | flag(Ptr)&lt;&lt;flagKindShift}
+<a id="L282"></a><span class="ln">   282</span>	}
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>	<span class="comment">// Bool returns v&#39;s underlying value.</span>
+<a id="L285"></a><span class="ln">   285</span>	<span class="comment">// It panics if v&#39;s kind is not Bool.</span>
+<a id="L286"></a><span class="ln">   286</span>	func (v Value) Bool() bool {
+<a id="L287"></a><span class="ln">   287</span>		v.mustBe(Bool)
+<a id="L288"></a><span class="ln">   288</span>		if v.flag&amp;flagIndir != 0 {
+<a id="L289"></a><span class="ln">   289</span>			return *(*bool)(v.val)
+<a id="L290"></a><span class="ln">   290</span>		}
+<a id="L291"></a><span class="ln">   291</span>		return *(*bool)(unsafe.Pointer(&amp;v.val))
+<a id="L292"></a><span class="ln">   292</span>	}
+<a id="L293"></a><span class="ln">   293</span>	
+<a id="L294"></a><span class="ln">   294</span>	<span class="comment">// Bytes returns v&#39;s underlying value.</span>
+<a id="L295"></a><span class="ln">   295</span>	<span class="comment">// It panics if v&#39;s underlying value is not a slice of bytes.</span>
+<a id="L296"></a><span class="ln">   296</span>	func (v Value) Bytes() []byte {
+<a id="L297"></a><span class="ln">   297</span>		v.mustBe(Slice)
+<a id="L298"></a><span class="ln">   298</span>		if v.typ.Elem().Kind() != Uint8 {
+<a id="L299"></a><span class="ln">   299</span>			panic(&#34;reflect.Value.Bytes of non-byte slice&#34;)
+<a id="L300"></a><span class="ln">   300</span>		}
+<a id="L301"></a><span class="ln">   301</span>		<span class="comment">// Slice is always bigger than a word; assume flagIndir.</span>
+<a id="L302"></a><span class="ln">   302</span>		return *(*[]byte)(v.val)
+<a id="L303"></a><span class="ln">   303</span>	}
+<a id="L304"></a><span class="ln">   304</span>	
+<a id="L305"></a><span class="ln">   305</span>	<span class="comment">// CanAddr returns true if the value&#39;s address can be obtained with Addr.</span>
+<a id="L306"></a><span class="ln">   306</span>	<span class="comment">// Such values are called addressable.  A value is addressable if it is</span>
+<a id="L307"></a><span class="ln">   307</span>	<span class="comment">// an element of a slice, an element of an addressable array,</span>
+<a id="L308"></a><span class="ln">   308</span>	<span class="comment">// a field of an addressable struct, or the result of dereferencing a pointer.</span>
+<a id="L309"></a><span class="ln">   309</span>	<span class="comment">// If CanAddr returns false, calling Addr will panic.</span>
+<a id="L310"></a><span class="ln">   310</span>	func (v Value) CanAddr() bool {
+<a id="L311"></a><span class="ln">   311</span>		return v.flag&amp;flagAddr != 0
+<a id="L312"></a><span class="ln">   312</span>	}
+<a id="L313"></a><span class="ln">   313</span>	
+<a id="L314"></a><span class="ln">   314</span>	<span class="comment">// CanSet returns true if the value of v can be changed.</span>
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// A Value can be changed only if it is addressable and was not</span>
+<a id="L316"></a><span class="ln">   316</span>	<span class="comment">// obtained by the use of unexported struct fields.</span>
+<a id="L317"></a><span class="ln">   317</span>	<span class="comment">// If CanSet returns false, calling Set or any type-specific</span>
+<a id="L318"></a><span class="ln">   318</span>	<span class="comment">// setter (e.g., SetBool, SetInt64) will panic.</span>
+<a id="L319"></a><span class="ln">   319</span>	func (v Value) CanSet() bool {
+<a id="L320"></a><span class="ln">   320</span>		return v.flag&amp;(flagAddr|flagRO) == flagAddr
+<a id="L321"></a><span class="ln">   321</span>	}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// Call calls the function v with the input arguments in.</span>
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">// For example, if len(in) == 3, v.Call(in) represents the Go call v(in[0], in[1], in[2]).</span>
+<a id="L325"></a><span class="ln">   325</span>	<span class="comment">// Call panics if v&#39;s Kind is not Func.</span>
+<a id="L326"></a><span class="ln">   326</span>	<span class="comment">// It returns the output results as Values.</span>
+<a id="L327"></a><span class="ln">   327</span>	<span class="comment">// As in Go, each input argument must be assignable to the</span>
+<a id="L328"></a><span class="ln">   328</span>	<span class="comment">// type of the function&#39;s corresponding input parameter.</span>
+<a id="L329"></a><span class="ln">   329</span>	<span class="comment">// If v is a variadic function, Call creates the variadic slice parameter</span>
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">// itself, copying in the corresponding values.</span>
+<a id="L331"></a><span class="ln">   331</span>	func (v Value) Call(in []Value) []Value {
+<a id="L332"></a><span class="ln">   332</span>		v.mustBe(Func)
+<a id="L333"></a><span class="ln">   333</span>		v.mustBeExported()
+<a id="L334"></a><span class="ln">   334</span>		return v.call(&#34;Call&#34;, in)
+<a id="L335"></a><span class="ln">   335</span>	}
+<a id="L336"></a><span class="ln">   336</span>	
+<a id="L337"></a><span class="ln">   337</span>	<span class="comment">// CallSlice calls the variadic function v with the input arguments in,</span>
+<a id="L338"></a><span class="ln">   338</span>	<span class="comment">// assigning the slice in[len(in)-1] to v&#39;s final variadic argument.  </span>
+<a id="L339"></a><span class="ln">   339</span>	<span class="comment">// For example, if len(in) == 3, v.Call(in) represents the Go call v(in[0], in[1], in[2]...).</span>
+<a id="L340"></a><span class="ln">   340</span>	<span class="comment">// Call panics if v&#39;s Kind is not Func or if v is not variadic.</span>
+<a id="L341"></a><span class="ln">   341</span>	<span class="comment">// It returns the output results as Values.</span>
+<a id="L342"></a><span class="ln">   342</span>	<span class="comment">// As in Go, each input argument must be assignable to the</span>
+<a id="L343"></a><span class="ln">   343</span>	<span class="comment">// type of the function&#39;s corresponding input parameter.</span>
+<a id="L344"></a><span class="ln">   344</span>	func (v Value) CallSlice(in []Value) []Value {
+<a id="L345"></a><span class="ln">   345</span>		v.mustBe(Func)
+<a id="L346"></a><span class="ln">   346</span>		v.mustBeExported()
+<a id="L347"></a><span class="ln">   347</span>		return v.call(&#34;CallSlice&#34;, in)
+<a id="L348"></a><span class="ln">   348</span>	}
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>	func (v Value) call(method string, in []Value) []Value {
+<a id="L351"></a><span class="ln">   351</span>		<span class="comment">// Get function pointer, type.</span>
+<a id="L352"></a><span class="ln">   352</span>		t := v.typ
+<a id="L353"></a><span class="ln">   353</span>		var (
+<a id="L354"></a><span class="ln">   354</span>			fn   unsafe.Pointer
+<a id="L355"></a><span class="ln">   355</span>			rcvr iword
+<a id="L356"></a><span class="ln">   356</span>		)
+<a id="L357"></a><span class="ln">   357</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L358"></a><span class="ln">   358</span>			i := int(v.flag) &gt;&gt; flagMethodShift
+<a id="L359"></a><span class="ln">   359</span>			if v.typ.Kind() == Interface {
+<a id="L360"></a><span class="ln">   360</span>				tt := (*interfaceType)(unsafe.Pointer(v.typ))
+<a id="L361"></a><span class="ln">   361</span>				if i &lt; 0 || i &gt;= len(tt.methods) {
+<a id="L362"></a><span class="ln">   362</span>					panic(&#34;reflect: broken Value&#34;)
+<a id="L363"></a><span class="ln">   363</span>				}
+<a id="L364"></a><span class="ln">   364</span>				m := &amp;tt.methods[i]
+<a id="L365"></a><span class="ln">   365</span>				if m.pkgPath != nil {
+<a id="L366"></a><span class="ln">   366</span>					panic(method + &#34; of unexported method&#34;)
+<a id="L367"></a><span class="ln">   367</span>				}
+<a id="L368"></a><span class="ln">   368</span>				t = toCommonType(m.typ)
+<a id="L369"></a><span class="ln">   369</span>				iface := (*nonEmptyInterface)(v.val)
+<a id="L370"></a><span class="ln">   370</span>				if iface.itab == nil {
+<a id="L371"></a><span class="ln">   371</span>					panic(method + &#34; of method on nil interface value&#34;)
+<a id="L372"></a><span class="ln">   372</span>				}
+<a id="L373"></a><span class="ln">   373</span>				fn = iface.itab.fun[i]
+<a id="L374"></a><span class="ln">   374</span>				rcvr = iface.word
+<a id="L375"></a><span class="ln">   375</span>			} else {
+<a id="L376"></a><span class="ln">   376</span>				ut := v.typ.uncommon()
+<a id="L377"></a><span class="ln">   377</span>				if ut == nil || i &lt; 0 || i &gt;= len(ut.methods) {
+<a id="L378"></a><span class="ln">   378</span>					panic(&#34;reflect: broken Value&#34;)
+<a id="L379"></a><span class="ln">   379</span>				}
+<a id="L380"></a><span class="ln">   380</span>				m := &amp;ut.methods[i]
+<a id="L381"></a><span class="ln">   381</span>				if m.pkgPath != nil {
+<a id="L382"></a><span class="ln">   382</span>					panic(method + &#34; of unexported method&#34;)
+<a id="L383"></a><span class="ln">   383</span>				}
+<a id="L384"></a><span class="ln">   384</span>				fn = m.ifn
+<a id="L385"></a><span class="ln">   385</span>				t = toCommonType(m.mtyp)
+<a id="L386"></a><span class="ln">   386</span>				rcvr = v.iword()
+<a id="L387"></a><span class="ln">   387</span>			}
+<a id="L388"></a><span class="ln">   388</span>		} else if v.flag&amp;flagIndir != 0 {
+<a id="L389"></a><span class="ln">   389</span>			fn = *(*unsafe.Pointer)(v.val)
+<a id="L390"></a><span class="ln">   390</span>		} else {
+<a id="L391"></a><span class="ln">   391</span>			fn = v.val
+<a id="L392"></a><span class="ln">   392</span>		}
+<a id="L393"></a><span class="ln">   393</span>	
+<a id="L394"></a><span class="ln">   394</span>		if fn == nil {
+<a id="L395"></a><span class="ln">   395</span>			panic(&#34;reflect.Value.Call: call of nil function&#34;)
+<a id="L396"></a><span class="ln">   396</span>		}
+<a id="L397"></a><span class="ln">   397</span>	
+<a id="L398"></a><span class="ln">   398</span>		isSlice := method == &#34;CallSlice&#34;
+<a id="L399"></a><span class="ln">   399</span>		n := t.NumIn()
+<a id="L400"></a><span class="ln">   400</span>		if isSlice {
+<a id="L401"></a><span class="ln">   401</span>			if !t.IsVariadic() {
+<a id="L402"></a><span class="ln">   402</span>				panic(&#34;reflect: CallSlice of non-variadic function&#34;)
+<a id="L403"></a><span class="ln">   403</span>			}
+<a id="L404"></a><span class="ln">   404</span>			if len(in) &lt; n {
+<a id="L405"></a><span class="ln">   405</span>				panic(&#34;reflect: CallSlice with too few input arguments&#34;)
+<a id="L406"></a><span class="ln">   406</span>			}
+<a id="L407"></a><span class="ln">   407</span>			if len(in) &gt; n {
+<a id="L408"></a><span class="ln">   408</span>				panic(&#34;reflect: CallSlice with too many input arguments&#34;)
+<a id="L409"></a><span class="ln">   409</span>			}
+<a id="L410"></a><span class="ln">   410</span>		} else {
+<a id="L411"></a><span class="ln">   411</span>			if t.IsVariadic() {
+<a id="L412"></a><span class="ln">   412</span>				n--
+<a id="L413"></a><span class="ln">   413</span>			}
+<a id="L414"></a><span class="ln">   414</span>			if len(in) &lt; n {
+<a id="L415"></a><span class="ln">   415</span>				panic(&#34;reflect: Call with too few input arguments&#34;)
+<a id="L416"></a><span class="ln">   416</span>			}
+<a id="L417"></a><span class="ln">   417</span>			if !t.IsVariadic() &amp;&amp; len(in) &gt; n {
+<a id="L418"></a><span class="ln">   418</span>				panic(&#34;reflect: Call with too many input arguments&#34;)
+<a id="L419"></a><span class="ln">   419</span>			}
+<a id="L420"></a><span class="ln">   420</span>		}
+<a id="L421"></a><span class="ln">   421</span>		for _, x := range in {
+<a id="L422"></a><span class="ln">   422</span>			if x.Kind() == Invalid {
+<a id="L423"></a><span class="ln">   423</span>				panic(&#34;reflect: &#34; + method + &#34; using zero Value argument&#34;)
+<a id="L424"></a><span class="ln">   424</span>			}
+<a id="L425"></a><span class="ln">   425</span>		}
+<a id="L426"></a><span class="ln">   426</span>		for i := 0; i &lt; n; i++ {
+<a id="L427"></a><span class="ln">   427</span>			if xt, targ := in[i].Type(), t.In(i); !xt.AssignableTo(targ) {
+<a id="L428"></a><span class="ln">   428</span>				panic(&#34;reflect: &#34; + method + &#34; using &#34; + xt.String() + &#34; as type &#34; + targ.String())
+<a id="L429"></a><span class="ln">   429</span>			}
+<a id="L430"></a><span class="ln">   430</span>		}
+<a id="L431"></a><span class="ln">   431</span>		if !isSlice &amp;&amp; t.IsVariadic() {
+<a id="L432"></a><span class="ln">   432</span>			<span class="comment">// prepare slice for remaining values</span>
+<a id="L433"></a><span class="ln">   433</span>			m := len(in) - n
+<a id="L434"></a><span class="ln">   434</span>			slice := MakeSlice(t.In(n), m, m)
+<a id="L435"></a><span class="ln">   435</span>			elem := t.In(n).Elem()
+<a id="L436"></a><span class="ln">   436</span>			for i := 0; i &lt; m; i++ {
+<a id="L437"></a><span class="ln">   437</span>				x := in[n+i]
+<a id="L438"></a><span class="ln">   438</span>				if xt := x.Type(); !xt.AssignableTo(elem) {
+<a id="L439"></a><span class="ln">   439</span>					panic(&#34;reflect: cannot use &#34; + xt.String() + &#34; as type &#34; + elem.String() + &#34; in &#34; + method)
+<a id="L440"></a><span class="ln">   440</span>				}
+<a id="L441"></a><span class="ln">   441</span>				slice.Index(i).Set(x)
+<a id="L442"></a><span class="ln">   442</span>			}
+<a id="L443"></a><span class="ln">   443</span>			origIn := in
+<a id="L444"></a><span class="ln">   444</span>			in = make([]Value, n+1)
+<a id="L445"></a><span class="ln">   445</span>			copy(in[:n], origIn)
+<a id="L446"></a><span class="ln">   446</span>			in[n] = slice
+<a id="L447"></a><span class="ln">   447</span>		}
+<a id="L448"></a><span class="ln">   448</span>	
+<a id="L449"></a><span class="ln">   449</span>		nin := len(in)
+<a id="L450"></a><span class="ln">   450</span>		if nin != t.NumIn() {
+<a id="L451"></a><span class="ln">   451</span>			panic(&#34;reflect.Value.Call: wrong argument count&#34;)
+<a id="L452"></a><span class="ln">   452</span>		}
+<a id="L453"></a><span class="ln">   453</span>		nout := t.NumOut()
+<a id="L454"></a><span class="ln">   454</span>	
+<a id="L455"></a><span class="ln">   455</span>		<span class="comment">// Compute arg size &amp; allocate.</span>
+<a id="L456"></a><span class="ln">   456</span>		<span class="comment">// This computation is 5g/6g/8g-dependent</span>
+<a id="L457"></a><span class="ln">   457</span>		<span class="comment">// and probably wrong for gccgo, but so</span>
+<a id="L458"></a><span class="ln">   458</span>		<span class="comment">// is most of this function.</span>
+<a id="L459"></a><span class="ln">   459</span>		size := uintptr(0)
+<a id="L460"></a><span class="ln">   460</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L461"></a><span class="ln">   461</span>			<span class="comment">// extra word for receiver interface word</span>
+<a id="L462"></a><span class="ln">   462</span>			size += ptrSize
+<a id="L463"></a><span class="ln">   463</span>		}
+<a id="L464"></a><span class="ln">   464</span>		for i := 0; i &lt; nin; i++ {
+<a id="L465"></a><span class="ln">   465</span>			tv := t.In(i)
+<a id="L466"></a><span class="ln">   466</span>			a := uintptr(tv.Align())
+<a id="L467"></a><span class="ln">   467</span>			size = (size + a - 1) &amp;^ (a - 1)
+<a id="L468"></a><span class="ln">   468</span>			size += tv.Size()
+<a id="L469"></a><span class="ln">   469</span>		}
+<a id="L470"></a><span class="ln">   470</span>		size = (size + ptrSize - 1) &amp;^ (ptrSize - 1)
+<a id="L471"></a><span class="ln">   471</span>		for i := 0; i &lt; nout; i++ {
+<a id="L472"></a><span class="ln">   472</span>			tv := t.Out(i)
+<a id="L473"></a><span class="ln">   473</span>			a := uintptr(tv.Align())
+<a id="L474"></a><span class="ln">   474</span>			size = (size + a - 1) &amp;^ (a - 1)
+<a id="L475"></a><span class="ln">   475</span>			size += tv.Size()
+<a id="L476"></a><span class="ln">   476</span>		}
+<a id="L477"></a><span class="ln">   477</span>	
+<a id="L478"></a><span class="ln">   478</span>		<span class="comment">// size must be &gt; 0 in order for &amp;args[0] to be valid.</span>
+<a id="L479"></a><span class="ln">   479</span>		<span class="comment">// the argument copying is going to round it up to</span>
+<a id="L480"></a><span class="ln">   480</span>		<span class="comment">// a multiple of ptrSize anyway, so make it ptrSize to begin with.</span>
+<a id="L481"></a><span class="ln">   481</span>		if size &lt; ptrSize {
+<a id="L482"></a><span class="ln">   482</span>			size = ptrSize
+<a id="L483"></a><span class="ln">   483</span>		}
+<a id="L484"></a><span class="ln">   484</span>	
+<a id="L485"></a><span class="ln">   485</span>		<span class="comment">// round to pointer size</span>
+<a id="L486"></a><span class="ln">   486</span>		size = (size + ptrSize - 1) &amp;^ (ptrSize - 1)
+<a id="L487"></a><span class="ln">   487</span>	
+<a id="L488"></a><span class="ln">   488</span>		<span class="comment">// Copy into args.</span>
+<a id="L489"></a><span class="ln">   489</span>		<span class="comment">//</span>
+<a id="L490"></a><span class="ln">   490</span>		<span class="comment">// TODO(rsc): revisit when reference counting happens.</span>
+<a id="L491"></a><span class="ln">   491</span>		<span class="comment">// The values are holding up the in references for us,</span>
+<a id="L492"></a><span class="ln">   492</span>		<span class="comment">// but something must be done for the out references.</span>
+<a id="L493"></a><span class="ln">   493</span>		<span class="comment">// For now make everything look like a pointer by pretending</span>
+<a id="L494"></a><span class="ln">   494</span>		<span class="comment">// to allocate a []*int.</span>
+<a id="L495"></a><span class="ln">   495</span>		args := make([]*int, size/ptrSize)
+<a id="L496"></a><span class="ln">   496</span>		ptr := uintptr(unsafe.Pointer(&amp;args[0]))
+<a id="L497"></a><span class="ln">   497</span>		off := uintptr(0)
+<a id="L498"></a><span class="ln">   498</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L499"></a><span class="ln">   499</span>			<span class="comment">// Hard-wired first argument.</span>
+<a id="L500"></a><span class="ln">   500</span>			*(*iword)(unsafe.Pointer(ptr)) = rcvr
+<a id="L501"></a><span class="ln">   501</span>			off = ptrSize
+<a id="L502"></a><span class="ln">   502</span>		}
+<a id="L503"></a><span class="ln">   503</span>		for i, v := range in {
+<a id="L504"></a><span class="ln">   504</span>			v.mustBeExported()
+<a id="L505"></a><span class="ln">   505</span>			targ := t.In(i).(*commonType)
+<a id="L506"></a><span class="ln">   506</span>			a := uintptr(targ.align)
+<a id="L507"></a><span class="ln">   507</span>			off = (off + a - 1) &amp;^ (a - 1)
+<a id="L508"></a><span class="ln">   508</span>			n := targ.size
+<a id="L509"></a><span class="ln">   509</span>			addr := unsafe.Pointer(ptr + off)
+<a id="L510"></a><span class="ln">   510</span>			v = v.assignTo(&#34;reflect.Value.Call&#34;, targ, (*interface{})(addr))
+<a id="L511"></a><span class="ln">   511</span>			if v.flag&amp;flagIndir == 0 {
+<a id="L512"></a><span class="ln">   512</span>				storeIword(addr, iword(v.val), n)
+<a id="L513"></a><span class="ln">   513</span>			} else {
+<a id="L514"></a><span class="ln">   514</span>				memmove(addr, v.val, n)
+<a id="L515"></a><span class="ln">   515</span>			}
+<a id="L516"></a><span class="ln">   516</span>			off += n
+<a id="L517"></a><span class="ln">   517</span>		}
+<a id="L518"></a><span class="ln">   518</span>		off = (off + ptrSize - 1) &amp;^ (ptrSize - 1)
+<a id="L519"></a><span class="ln">   519</span>	
+<a id="L520"></a><span class="ln">   520</span>		<span class="comment">// Call.</span>
+<a id="L521"></a><span class="ln">   521</span>		call(fn, unsafe.Pointer(ptr), uint32(size))
+<a id="L522"></a><span class="ln">   522</span>	
+<a id="L523"></a><span class="ln">   523</span>		<span class="comment">// Copy return values out of args.</span>
+<a id="L524"></a><span class="ln">   524</span>		<span class="comment">//</span>
+<a id="L525"></a><span class="ln">   525</span>		<span class="comment">// TODO(rsc): revisit like above.</span>
+<a id="L526"></a><span class="ln">   526</span>		ret := make([]Value, nout)
+<a id="L527"></a><span class="ln">   527</span>		for i := 0; i &lt; nout; i++ {
+<a id="L528"></a><span class="ln">   528</span>			tv := t.Out(i)
+<a id="L529"></a><span class="ln">   529</span>			a := uintptr(tv.Align())
+<a id="L530"></a><span class="ln">   530</span>			off = (off + a - 1) &amp;^ (a - 1)
+<a id="L531"></a><span class="ln">   531</span>			fl := flagIndir | flag(tv.Kind())&lt;&lt;flagKindShift
+<a id="L532"></a><span class="ln">   532</span>			ret[i] = Value{tv.common(), unsafe.Pointer(ptr + off), fl}
+<a id="L533"></a><span class="ln">   533</span>			off += tv.Size()
+<a id="L534"></a><span class="ln">   534</span>		}
+<a id="L535"></a><span class="ln">   535</span>	
+<a id="L536"></a><span class="ln">   536</span>		return ret
+<a id="L537"></a><span class="ln">   537</span>	}
+<a id="L538"></a><span class="ln">   538</span>	
+<a id="L539"></a><span class="ln">   539</span>	<span class="comment">// Cap returns v&#39;s capacity.</span>
+<a id="L540"></a><span class="ln">   540</span>	<span class="comment">// It panics if v&#39;s Kind is not Array, Chan, or Slice.</span>
+<a id="L541"></a><span class="ln">   541</span>	func (v Value) Cap() int {
+<a id="L542"></a><span class="ln">   542</span>		k := v.kind()
+<a id="L543"></a><span class="ln">   543</span>		switch k {
+<a id="L544"></a><span class="ln">   544</span>		case Array:
+<a id="L545"></a><span class="ln">   545</span>			return v.typ.Len()
+<a id="L546"></a><span class="ln">   546</span>		case Chan:
+<a id="L547"></a><span class="ln">   547</span>			return int(chancap(v.iword()))
+<a id="L548"></a><span class="ln">   548</span>		case Slice:
+<a id="L549"></a><span class="ln">   549</span>			<span class="comment">// Slice is always bigger than a word; assume flagIndir.</span>
+<a id="L550"></a><span class="ln">   550</span>			return (*SliceHeader)(v.val).Cap
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>		panic(&amp;ValueError{&#34;reflect.Value.Cap&#34;, k})
+<a id="L553"></a><span class="ln">   553</span>	}
+<a id="L554"></a><span class="ln">   554</span>	
+<a id="L555"></a><span class="ln">   555</span>	<span class="comment">// Close closes the channel v.</span>
+<a id="L556"></a><span class="ln">   556</span>	<span class="comment">// It panics if v&#39;s Kind is not Chan.</span>
+<a id="L557"></a><span class="ln">   557</span>	func (v Value) Close() {
+<a id="L558"></a><span class="ln">   558</span>		v.mustBe(Chan)
+<a id="L559"></a><span class="ln">   559</span>		v.mustBeExported()
+<a id="L560"></a><span class="ln">   560</span>		chanclose(v.iword())
+<a id="L561"></a><span class="ln">   561</span>	}
+<a id="L562"></a><span class="ln">   562</span>	
+<a id="L563"></a><span class="ln">   563</span>	<span class="comment">// Complex returns v&#39;s underlying value, as a complex128.</span>
+<a id="L564"></a><span class="ln">   564</span>	<span class="comment">// It panics if v&#39;s Kind is not Complex64 or Complex128</span>
+<a id="L565"></a><span class="ln">   565</span>	func (v Value) Complex() complex128 {
+<a id="L566"></a><span class="ln">   566</span>		k := v.kind()
+<a id="L567"></a><span class="ln">   567</span>		switch k {
+<a id="L568"></a><span class="ln">   568</span>		case Complex64:
+<a id="L569"></a><span class="ln">   569</span>			if v.flag&amp;flagIndir != 0 {
+<a id="L570"></a><span class="ln">   570</span>				return complex128(*(*complex64)(v.val))
+<a id="L571"></a><span class="ln">   571</span>			}
+<a id="L572"></a><span class="ln">   572</span>			return complex128(*(*complex64)(unsafe.Pointer(&amp;v.val)))
+<a id="L573"></a><span class="ln">   573</span>		case Complex128:
+<a id="L574"></a><span class="ln">   574</span>			<span class="comment">// complex128 is always bigger than a word; assume flagIndir.</span>
+<a id="L575"></a><span class="ln">   575</span>			return *(*complex128)(v.val)
+<a id="L576"></a><span class="ln">   576</span>		}
+<a id="L577"></a><span class="ln">   577</span>		panic(&amp;ValueError{&#34;reflect.Value.Complex&#34;, k})
+<a id="L578"></a><span class="ln">   578</span>	}
+<a id="L579"></a><span class="ln">   579</span>	
+<a id="L580"></a><span class="ln">   580</span>	<span class="comment">// Elem returns the value that the interface v contains</span>
+<a id="L581"></a><span class="ln">   581</span>	<span class="comment">// or that the pointer v points to.</span>
+<a id="L582"></a><span class="ln">   582</span>	<span class="comment">// It panics if v&#39;s Kind is not Interface or Ptr.</span>
+<a id="L583"></a><span class="ln">   583</span>	<span class="comment">// It returns the zero Value if v is nil.</span>
+<a id="L584"></a><span class="ln">   584</span>	func (v Value) Elem() Value {
+<a id="L585"></a><span class="ln">   585</span>		k := v.kind()
+<a id="L586"></a><span class="ln">   586</span>		switch k {
+<a id="L587"></a><span class="ln">   587</span>		case Interface:
+<a id="L588"></a><span class="ln">   588</span>			var (
+<a id="L589"></a><span class="ln">   589</span>				typ *commonType
+<a id="L590"></a><span class="ln">   590</span>				val unsafe.Pointer
+<a id="L591"></a><span class="ln">   591</span>			)
+<a id="L592"></a><span class="ln">   592</span>			if v.typ.NumMethod() == 0 {
+<a id="L593"></a><span class="ln">   593</span>				eface := (*emptyInterface)(v.val)
+<a id="L594"></a><span class="ln">   594</span>				if eface.typ == nil {
+<a id="L595"></a><span class="ln">   595</span>					<span class="comment">// nil interface value</span>
+<a id="L596"></a><span class="ln">   596</span>					return Value{}
+<a id="L597"></a><span class="ln">   597</span>				}
+<a id="L598"></a><span class="ln">   598</span>				typ = toCommonType(eface.typ)
+<a id="L599"></a><span class="ln">   599</span>				val = unsafe.Pointer(eface.word)
+<a id="L600"></a><span class="ln">   600</span>			} else {
+<a id="L601"></a><span class="ln">   601</span>				iface := (*nonEmptyInterface)(v.val)
+<a id="L602"></a><span class="ln">   602</span>				if iface.itab == nil {
+<a id="L603"></a><span class="ln">   603</span>					<span class="comment">// nil interface value</span>
+<a id="L604"></a><span class="ln">   604</span>					return Value{}
+<a id="L605"></a><span class="ln">   605</span>				}
+<a id="L606"></a><span class="ln">   606</span>				typ = toCommonType(iface.itab.typ)
+<a id="L607"></a><span class="ln">   607</span>				val = unsafe.Pointer(iface.word)
+<a id="L608"></a><span class="ln">   608</span>			}
+<a id="L609"></a><span class="ln">   609</span>			fl := v.flag &amp; flagRO
+<a id="L610"></a><span class="ln">   610</span>			fl |= flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L611"></a><span class="ln">   611</span>			if typ.size &gt; ptrSize {
+<a id="L612"></a><span class="ln">   612</span>				fl |= flagIndir
+<a id="L613"></a><span class="ln">   613</span>			}
+<a id="L614"></a><span class="ln">   614</span>			return Value{typ, val, fl}
+<a id="L615"></a><span class="ln">   615</span>	
+<a id="L616"></a><span class="ln">   616</span>		case Ptr:
+<a id="L617"></a><span class="ln">   617</span>			val := v.val
+<a id="L618"></a><span class="ln">   618</span>			if v.flag&amp;flagIndir != 0 {
+<a id="L619"></a><span class="ln">   619</span>				val = *(*unsafe.Pointer)(val)
+<a id="L620"></a><span class="ln">   620</span>			}
+<a id="L621"></a><span class="ln">   621</span>			<span class="comment">// The returned value&#39;s address is v&#39;s value.</span>
+<a id="L622"></a><span class="ln">   622</span>			if val == nil {
+<a id="L623"></a><span class="ln">   623</span>				return Value{}
+<a id="L624"></a><span class="ln">   624</span>			}
+<a id="L625"></a><span class="ln">   625</span>			tt := (*ptrType)(unsafe.Pointer(v.typ))
+<a id="L626"></a><span class="ln">   626</span>			typ := toCommonType(tt.elem)
+<a id="L627"></a><span class="ln">   627</span>			fl := v.flag&amp;flagRO | flagIndir | flagAddr
+<a id="L628"></a><span class="ln">   628</span>			fl |= flag(typ.Kind() &lt;&lt; flagKindShift)
+<a id="L629"></a><span class="ln">   629</span>			return Value{typ, val, fl}
+<a id="L630"></a><span class="ln">   630</span>		}
+<a id="L631"></a><span class="ln">   631</span>		panic(&amp;ValueError{&#34;reflect.Value.Elem&#34;, k})
+<a id="L632"></a><span class="ln">   632</span>	}
+<a id="L633"></a><span class="ln">   633</span>	
+<a id="L634"></a><span class="ln">   634</span>	<span class="comment">// Field returns the i&#39;th field of the struct v.</span>
+<a id="L635"></a><span class="ln">   635</span>	<span class="comment">// It panics if v&#39;s Kind is not Struct or i is out of range.</span>
+<a id="L636"></a><span class="ln">   636</span>	func (v Value) Field(i int) Value {
+<a id="L637"></a><span class="ln">   637</span>		v.mustBe(Struct)
+<a id="L638"></a><span class="ln">   638</span>		tt := (*structType)(unsafe.Pointer(v.typ))
+<a id="L639"></a><span class="ln">   639</span>		if i &lt; 0 || i &gt;= len(tt.fields) {
+<a id="L640"></a><span class="ln">   640</span>			panic(&#34;reflect: Field index out of range&#34;)
+<a id="L641"></a><span class="ln">   641</span>		}
+<a id="L642"></a><span class="ln">   642</span>		field := &amp;tt.fields[i]
+<a id="L643"></a><span class="ln">   643</span>		typ := toCommonType(field.typ)
+<a id="L644"></a><span class="ln">   644</span>	
+<a id="L645"></a><span class="ln">   645</span>		<span class="comment">// Inherit permission bits from v.</span>
+<a id="L646"></a><span class="ln">   646</span>		fl := v.flag &amp; (flagRO | flagIndir | flagAddr)
+<a id="L647"></a><span class="ln">   647</span>		<span class="comment">// Using an unexported field forces flagRO.</span>
+<a id="L648"></a><span class="ln">   648</span>		if field.pkgPath != nil {
+<a id="L649"></a><span class="ln">   649</span>			fl |= flagRO
+<a id="L650"></a><span class="ln">   650</span>		}
+<a id="L651"></a><span class="ln">   651</span>		fl |= flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L652"></a><span class="ln">   652</span>	
+<a id="L653"></a><span class="ln">   653</span>		var val unsafe.Pointer
+<a id="L654"></a><span class="ln">   654</span>		switch {
+<a id="L655"></a><span class="ln">   655</span>		case fl&amp;flagIndir != 0:
+<a id="L656"></a><span class="ln">   656</span>			<span class="comment">// Indirect.  Just bump pointer.</span>
+<a id="L657"></a><span class="ln">   657</span>			val = unsafe.Pointer(uintptr(v.val) + field.offset)
+<a id="L658"></a><span class="ln">   658</span>		case bigEndian:
+<a id="L659"></a><span class="ln">   659</span>			<span class="comment">// Direct.  Discard leading bytes.</span>
+<a id="L660"></a><span class="ln">   660</span>			val = unsafe.Pointer(uintptr(v.val) &lt;&lt; (field.offset * 8))
+<a id="L661"></a><span class="ln">   661</span>		default:
+<a id="L662"></a><span class="ln">   662</span>			<span class="comment">// Direct.  Discard leading bytes.</span>
+<a id="L663"></a><span class="ln">   663</span>			val = unsafe.Pointer(uintptr(v.val) &gt;&gt; (field.offset * 8))
+<a id="L664"></a><span class="ln">   664</span>		}
+<a id="L665"></a><span class="ln">   665</span>	
+<a id="L666"></a><span class="ln">   666</span>		return Value{typ, val, fl}
+<a id="L667"></a><span class="ln">   667</span>	}
+<a id="L668"></a><span class="ln">   668</span>	
+<a id="L669"></a><span class="ln">   669</span>	<span class="comment">// FieldByIndex returns the nested field corresponding to index.</span>
+<a id="L670"></a><span class="ln">   670</span>	<span class="comment">// It panics if v&#39;s Kind is not struct.</span>
+<a id="L671"></a><span class="ln">   671</span>	func (v Value) FieldByIndex(index []int) Value {
+<a id="L672"></a><span class="ln">   672</span>		v.mustBe(Struct)
+<a id="L673"></a><span class="ln">   673</span>		for i, x := range index {
+<a id="L674"></a><span class="ln">   674</span>			if i &gt; 0 {
+<a id="L675"></a><span class="ln">   675</span>				if v.Kind() == Ptr &amp;&amp; v.Elem().Kind() == Struct {
+<a id="L676"></a><span class="ln">   676</span>					v = v.Elem()
+<a id="L677"></a><span class="ln">   677</span>				}
+<a id="L678"></a><span class="ln">   678</span>			}
+<a id="L679"></a><span class="ln">   679</span>			v = v.Field(x)
+<a id="L680"></a><span class="ln">   680</span>		}
+<a id="L681"></a><span class="ln">   681</span>		return v
+<a id="L682"></a><span class="ln">   682</span>	}
+<a id="L683"></a><span class="ln">   683</span>	
+<a id="L684"></a><span class="ln">   684</span>	<span class="comment">// FieldByName returns the struct field with the given name.</span>
+<a id="L685"></a><span class="ln">   685</span>	<span class="comment">// It returns the zero Value if no field was found.</span>
+<a id="L686"></a><span class="ln">   686</span>	<span class="comment">// It panics if v&#39;s Kind is not struct.</span>
+<a id="L687"></a><span class="ln">   687</span>	func (v Value) FieldByName(name string) Value {
+<a id="L688"></a><span class="ln">   688</span>		v.mustBe(Struct)
+<a id="L689"></a><span class="ln">   689</span>		if f, ok := v.typ.FieldByName(name); ok {
+<a id="L690"></a><span class="ln">   690</span>			return v.FieldByIndex(f.Index)
+<a id="L691"></a><span class="ln">   691</span>		}
+<a id="L692"></a><span class="ln">   692</span>		return Value{}
+<a id="L693"></a><span class="ln">   693</span>	}
+<a id="L694"></a><span class="ln">   694</span>	
+<a id="L695"></a><span class="ln">   695</span>	<span class="comment">// FieldByNameFunc returns the struct field with a name</span>
+<a id="L696"></a><span class="ln">   696</span>	<span class="comment">// that satisfies the match function.</span>
+<a id="L697"></a><span class="ln">   697</span>	<span class="comment">// It panics if v&#39;s Kind is not struct.</span>
+<a id="L698"></a><span class="ln">   698</span>	<span class="comment">// It returns the zero Value if no field was found.</span>
+<a id="L699"></a><span class="ln">   699</span>	func (v Value) FieldByNameFunc(match func(string) bool) Value {
+<a id="L700"></a><span class="ln">   700</span>		v.mustBe(Struct)
+<a id="L701"></a><span class="ln">   701</span>		if f, ok := v.typ.FieldByNameFunc(match); ok {
+<a id="L702"></a><span class="ln">   702</span>			return v.FieldByIndex(f.Index)
+<a id="L703"></a><span class="ln">   703</span>		}
+<a id="L704"></a><span class="ln">   704</span>		return Value{}
+<a id="L705"></a><span class="ln">   705</span>	}
+<a id="L706"></a><span class="ln">   706</span>	
+<a id="L707"></a><span class="ln">   707</span>	<span class="comment">// Float returns v&#39;s underlying value, as a float64.</span>
+<a id="L708"></a><span class="ln">   708</span>	<span class="comment">// It panics if v&#39;s Kind is not Float32 or Float64</span>
+<a id="L709"></a><span class="ln">   709</span>	func (v Value) Float() float64 {
+<a id="L710"></a><span class="ln">   710</span>		k := v.kind()
+<a id="L711"></a><span class="ln">   711</span>		switch k {
+<a id="L712"></a><span class="ln">   712</span>		case Float32:
+<a id="L713"></a><span class="ln">   713</span>			if v.flag&amp;flagIndir != 0 {
+<a id="L714"></a><span class="ln">   714</span>				return float64(*(*float32)(v.val))
+<a id="L715"></a><span class="ln">   715</span>			}
+<a id="L716"></a><span class="ln">   716</span>			return float64(*(*float32)(unsafe.Pointer(&amp;v.val)))
+<a id="L717"></a><span class="ln">   717</span>		case Float64:
+<a id="L718"></a><span class="ln">   718</span>			if v.flag&amp;flagIndir != 0 {
+<a id="L719"></a><span class="ln">   719</span>				return *(*float64)(v.val)
+<a id="L720"></a><span class="ln">   720</span>			}
+<a id="L721"></a><span class="ln">   721</span>			return *(*float64)(unsafe.Pointer(&amp;v.val))
+<a id="L722"></a><span class="ln">   722</span>		}
+<a id="L723"></a><span class="ln">   723</span>		panic(&amp;ValueError{&#34;reflect.Value.Float&#34;, k})
+<a id="L724"></a><span class="ln">   724</span>	}
+<a id="L725"></a><span class="ln">   725</span>	
+<a id="L726"></a><span class="ln">   726</span>	<span class="comment">// Index returns v&#39;s i&#39;th element.</span>
+<a id="L727"></a><span class="ln">   727</span>	<span class="comment">// It panics if v&#39;s Kind is not Array or Slice or i is out of range.</span>
+<a id="L728"></a><span class="ln">   728</span>	func (v Value) Index(i int) Value {
+<a id="L729"></a><span class="ln">   729</span>		k := v.kind()
+<a id="L730"></a><span class="ln">   730</span>		switch k {
+<a id="L731"></a><span class="ln">   731</span>		case Array:
+<a id="L732"></a><span class="ln">   732</span>			tt := (*arrayType)(unsafe.Pointer(v.typ))
+<a id="L733"></a><span class="ln">   733</span>			if i &lt; 0 || i &gt; int(tt.len) {
+<a id="L734"></a><span class="ln">   734</span>				panic(&#34;reflect: array index out of range&#34;)
+<a id="L735"></a><span class="ln">   735</span>			}
+<a id="L736"></a><span class="ln">   736</span>			typ := toCommonType(tt.elem)
+<a id="L737"></a><span class="ln">   737</span>			fl := v.flag &amp; (flagRO | flagIndir | flagAddr) <span class="comment">// bits same as overall array</span>
+<a id="L738"></a><span class="ln">   738</span>			fl |= flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L739"></a><span class="ln">   739</span>			offset := uintptr(i) * typ.size
+<a id="L740"></a><span class="ln">   740</span>	
+<a id="L741"></a><span class="ln">   741</span>			var val unsafe.Pointer
+<a id="L742"></a><span class="ln">   742</span>			switch {
+<a id="L743"></a><span class="ln">   743</span>			case fl&amp;flagIndir != 0:
+<a id="L744"></a><span class="ln">   744</span>				<span class="comment">// Indirect.  Just bump pointer.</span>
+<a id="L745"></a><span class="ln">   745</span>				val = unsafe.Pointer(uintptr(v.val) + offset)
+<a id="L746"></a><span class="ln">   746</span>			case bigEndian:
+<a id="L747"></a><span class="ln">   747</span>				<span class="comment">// Direct.  Discard leading bytes.</span>
+<a id="L748"></a><span class="ln">   748</span>				val = unsafe.Pointer(uintptr(v.val) &lt;&lt; (offset * 8))
+<a id="L749"></a><span class="ln">   749</span>			default:
+<a id="L750"></a><span class="ln">   750</span>				<span class="comment">// Direct.  Discard leading bytes.</span>
+<a id="L751"></a><span class="ln">   751</span>				val = unsafe.Pointer(uintptr(v.val) &gt;&gt; (offset * 8))
+<a id="L752"></a><span class="ln">   752</span>			}
+<a id="L753"></a><span class="ln">   753</span>			return Value{typ, val, fl}
+<a id="L754"></a><span class="ln">   754</span>	
+<a id="L755"></a><span class="ln">   755</span>		case Slice:
+<a id="L756"></a><span class="ln">   756</span>			<span class="comment">// Element flag same as Elem of Ptr.</span>
+<a id="L757"></a><span class="ln">   757</span>			<span class="comment">// Addressable, indirect, possibly read-only.</span>
+<a id="L758"></a><span class="ln">   758</span>			fl := flagAddr | flagIndir | v.flag&amp;flagRO
+<a id="L759"></a><span class="ln">   759</span>			s := (*SliceHeader)(v.val)
+<a id="L760"></a><span class="ln">   760</span>			if i &lt; 0 || i &gt;= s.Len {
+<a id="L761"></a><span class="ln">   761</span>				panic(&#34;reflect: slice index out of range&#34;)
+<a id="L762"></a><span class="ln">   762</span>			}
+<a id="L763"></a><span class="ln">   763</span>			tt := (*sliceType)(unsafe.Pointer(v.typ))
+<a id="L764"></a><span class="ln">   764</span>			typ := toCommonType(tt.elem)
+<a id="L765"></a><span class="ln">   765</span>			fl |= flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L766"></a><span class="ln">   766</span>			val := unsafe.Pointer(s.Data + uintptr(i)*typ.size)
+<a id="L767"></a><span class="ln">   767</span>			return Value{typ, val, fl}
+<a id="L768"></a><span class="ln">   768</span>		}
+<a id="L769"></a><span class="ln">   769</span>		panic(&amp;ValueError{&#34;reflect.Value.Index&#34;, k})
+<a id="L770"></a><span class="ln">   770</span>	}
+<a id="L771"></a><span class="ln">   771</span>	
+<a id="L772"></a><span class="ln">   772</span>	<span class="comment">// Int returns v&#39;s underlying value, as an int64.</span>
+<a id="L773"></a><span class="ln">   773</span>	<span class="comment">// It panics if v&#39;s Kind is not Int, Int8, Int16, Int32, or Int64.</span>
+<a id="L774"></a><span class="ln">   774</span>	func (v Value) Int() int64 {
+<a id="L775"></a><span class="ln">   775</span>		k := v.kind()
+<a id="L776"></a><span class="ln">   776</span>		var p unsafe.Pointer
+<a id="L777"></a><span class="ln">   777</span>		if v.flag&amp;flagIndir != 0 {
+<a id="L778"></a><span class="ln">   778</span>			p = v.val
+<a id="L779"></a><span class="ln">   779</span>		} else {
+<a id="L780"></a><span class="ln">   780</span>			<span class="comment">// The escape analysis is good enough that &amp;v.val</span>
+<a id="L781"></a><span class="ln">   781</span>			<span class="comment">// does not trigger a heap allocation.</span>
+<a id="L782"></a><span class="ln">   782</span>			p = unsafe.Pointer(&amp;v.val)
+<a id="L783"></a><span class="ln">   783</span>		}
+<a id="L784"></a><span class="ln">   784</span>		switch k {
+<a id="L785"></a><span class="ln">   785</span>		case Int:
+<a id="L786"></a><span class="ln">   786</span>			return int64(*(*int)(p))
+<a id="L787"></a><span class="ln">   787</span>		case Int8:
+<a id="L788"></a><span class="ln">   788</span>			return int64(*(*int8)(p))
+<a id="L789"></a><span class="ln">   789</span>		case Int16:
+<a id="L790"></a><span class="ln">   790</span>			return int64(*(*int16)(p))
+<a id="L791"></a><span class="ln">   791</span>		case Int32:
+<a id="L792"></a><span class="ln">   792</span>			return int64(*(*int32)(p))
+<a id="L793"></a><span class="ln">   793</span>		case Int64:
+<a id="L794"></a><span class="ln">   794</span>			return int64(*(*int64)(p))
+<a id="L795"></a><span class="ln">   795</span>		}
+<a id="L796"></a><span class="ln">   796</span>		panic(&amp;ValueError{&#34;reflect.Value.Int&#34;, k})
+<a id="L797"></a><span class="ln">   797</span>	}
+<a id="L798"></a><span class="ln">   798</span>	
+<a id="L799"></a><span class="ln">   799</span>	<span class="comment">// CanInterface returns true if Interface can be used without panicking.</span>
+<a id="L800"></a><span class="ln">   800</span>	func (v Value) CanInterface() bool {
+<a id="L801"></a><span class="ln">   801</span>		if v.flag == 0 {
+<a id="L802"></a><span class="ln">   802</span>			panic(&amp;ValueError{&#34;reflect.Value.CanInterface&#34;, Invalid})
+<a id="L803"></a><span class="ln">   803</span>		}
+<a id="L804"></a><span class="ln">   804</span>		return v.flag&amp;(flagMethod|flagRO) == 0
+<a id="L805"></a><span class="ln">   805</span>	}
+<a id="L806"></a><span class="ln">   806</span>	
+<a id="L807"></a><span class="ln">   807</span>	<span class="comment">// Interface returns v&#39;s current value as an interface{}.</span>
+<a id="L808"></a><span class="ln">   808</span>	<span class="comment">// It is equivalent to:</span>
+<a id="L809"></a><span class="ln">   809</span>	<span class="comment">//	var i interface{} = (v&#39;s underlying value)</span>
+<a id="L810"></a><span class="ln">   810</span>	<span class="comment">// If v is a method obtained by invoking Value.Method</span>
+<a id="L811"></a><span class="ln">   811</span>	<span class="comment">// (as opposed to Type.Method), Interface cannot return an</span>
+<a id="L812"></a><span class="ln">   812</span>	<span class="comment">// interface value, so it panics.</span>
+<a id="L813"></a><span class="ln">   813</span>	<span class="comment">// It also panics if the Value was obtained by accessing</span>
+<a id="L814"></a><span class="ln">   814</span>	<span class="comment">// unexported struct fields.</span>
+<a id="L815"></a><span class="ln">   815</span>	func (v Value) Interface() (i interface{}) {
+<a id="L816"></a><span class="ln">   816</span>		return valueInterface(v, true)
+<a id="L817"></a><span class="ln">   817</span>	}
+<a id="L818"></a><span class="ln">   818</span>	
+<a id="L819"></a><span class="ln">   819</span>	func valueInterface(v Value, safe bool) interface{} {
+<a id="L820"></a><span class="ln">   820</span>		if v.flag == 0 {
+<a id="L821"></a><span class="ln">   821</span>			panic(&amp;ValueError{&#34;reflect.Value.Interface&#34;, 0})
+<a id="L822"></a><span class="ln">   822</span>		}
+<a id="L823"></a><span class="ln">   823</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L824"></a><span class="ln">   824</span>			panic(&#34;reflect.Value.Interface: cannot create interface value for method with bound receiver&#34;)
+<a id="L825"></a><span class="ln">   825</span>		}
+<a id="L826"></a><span class="ln">   826</span>	
+<a id="L827"></a><span class="ln">   827</span>		if safe &amp;&amp; v.flag&amp;flagRO != 0 {
+<a id="L828"></a><span class="ln">   828</span>			<span class="comment">// Do not allow access to unexported values via Interface,</span>
+<a id="L829"></a><span class="ln">   829</span>			<span class="comment">// because they might be pointers that should not be </span>
+<a id="L830"></a><span class="ln">   830</span>			<span class="comment">// writable or methods or function that should not be callable.</span>
+<a id="L831"></a><span class="ln">   831</span>			panic(&#34;reflect.Value.Interface: cannot return value obtained from unexported field or method&#34;)
+<a id="L832"></a><span class="ln">   832</span>		}
+<a id="L833"></a><span class="ln">   833</span>	
+<a id="L834"></a><span class="ln">   834</span>		k := v.kind()
+<a id="L835"></a><span class="ln">   835</span>		if k == Interface {
+<a id="L836"></a><span class="ln">   836</span>			<span class="comment">// Special case: return the element inside the interface.</span>
+<a id="L837"></a><span class="ln">   837</span>			<span class="comment">// Empty interface has one layout, all interfaces with</span>
+<a id="L838"></a><span class="ln">   838</span>			<span class="comment">// methods have a second layout.</span>
+<a id="L839"></a><span class="ln">   839</span>			if v.NumMethod() == 0 {
+<a id="L840"></a><span class="ln">   840</span>				return *(*interface{})(v.val)
+<a id="L841"></a><span class="ln">   841</span>			}
+<a id="L842"></a><span class="ln">   842</span>			return *(*interface {
+<a id="L843"></a><span class="ln">   843</span>				M()
+<a id="L844"></a><span class="ln">   844</span>			})(v.val)
+<a id="L845"></a><span class="ln">   845</span>		}
+<a id="L846"></a><span class="ln">   846</span>	
+<a id="L847"></a><span class="ln">   847</span>		<span class="comment">// Non-interface value.</span>
+<a id="L848"></a><span class="ln">   848</span>		var eface emptyInterface
+<a id="L849"></a><span class="ln">   849</span>		eface.typ = v.typ.runtimeType()
+<a id="L850"></a><span class="ln">   850</span>		eface.word = v.iword()
+<a id="L851"></a><span class="ln">   851</span>	
+<a id="L852"></a><span class="ln">   852</span>		if v.flag&amp;flagIndir != 0 &amp;&amp; v.typ.size &gt; ptrSize {
+<a id="L853"></a><span class="ln">   853</span>			<span class="comment">// eface.word is a pointer to the actual data,</span>
+<a id="L854"></a><span class="ln">   854</span>			<span class="comment">// which might be changed.  We need to return</span>
+<a id="L855"></a><span class="ln">   855</span>			<span class="comment">// a pointer to unchanging data, so make a copy.</span>
+<a id="L856"></a><span class="ln">   856</span>			ptr := unsafe_New(v.typ)
+<a id="L857"></a><span class="ln">   857</span>			memmove(ptr, unsafe.Pointer(eface.word), v.typ.size)
+<a id="L858"></a><span class="ln">   858</span>			eface.word = iword(ptr)
+<a id="L859"></a><span class="ln">   859</span>		}
+<a id="L860"></a><span class="ln">   860</span>	
+<a id="L861"></a><span class="ln">   861</span>		return *(*interface{})(unsafe.Pointer(&amp;eface))
+<a id="L862"></a><span class="ln">   862</span>	}
+<a id="L863"></a><span class="ln">   863</span>	
+<a id="L864"></a><span class="ln">   864</span>	<span class="comment">// InterfaceData returns the interface v&#39;s value as a uintptr pair.</span>
+<a id="L865"></a><span class="ln">   865</span>	<span class="comment">// It panics if v&#39;s Kind is not Interface.</span>
+<a id="L866"></a><span class="ln">   866</span>	func (v Value) InterfaceData() [2]uintptr {
+<a id="L867"></a><span class="ln">   867</span>		v.mustBe(Interface)
+<a id="L868"></a><span class="ln">   868</span>		<span class="comment">// We treat this as a read operation, so we allow</span>
+<a id="L869"></a><span class="ln">   869</span>		<span class="comment">// it even for unexported data, because the caller</span>
+<a id="L870"></a><span class="ln">   870</span>		<span class="comment">// has to import &#34;unsafe&#34; to turn it into something</span>
+<a id="L871"></a><span class="ln">   871</span>		<span class="comment">// that can be abused.</span>
+<a id="L872"></a><span class="ln">   872</span>		<span class="comment">// Interface value is always bigger than a word; assume flagIndir.</span>
+<a id="L873"></a><span class="ln">   873</span>		return *(*[2]uintptr)(v.val)
+<a id="L874"></a><span class="ln">   874</span>	}
+<a id="L875"></a><span class="ln">   875</span>	
+<a id="L876"></a><span class="ln">   876</span>	<span class="comment">// IsNil returns true if v is a nil value.</span>
+<a id="L877"></a><span class="ln">   877</span>	<span class="comment">// It panics if v&#39;s Kind is not Chan, Func, Interface, Map, Ptr, or Slice.</span>
+<a id="L878"></a><span class="ln">   878</span>	func (v Value) IsNil() bool {
+<a id="L879"></a><span class="ln">   879</span>		k := v.kind()
+<a id="L880"></a><span class="ln">   880</span>		switch k {
+<a id="L881"></a><span class="ln">   881</span>		case Chan, Func, Map, Ptr:
+<a id="L882"></a><span class="ln">   882</span>			if v.flag&amp;flagMethod != 0 {
+<a id="L883"></a><span class="ln">   883</span>				panic(&#34;reflect: IsNil of method Value&#34;)
+<a id="L884"></a><span class="ln">   884</span>			}
+<a id="L885"></a><span class="ln">   885</span>			ptr := v.val
+<a id="L886"></a><span class="ln">   886</span>			if v.flag&amp;flagIndir != 0 {
+<a id="L887"></a><span class="ln">   887</span>				ptr = *(*unsafe.Pointer)(ptr)
+<a id="L888"></a><span class="ln">   888</span>			}
+<a id="L889"></a><span class="ln">   889</span>			return ptr == nil
+<a id="L890"></a><span class="ln">   890</span>		case Interface, Slice:
+<a id="L891"></a><span class="ln">   891</span>			<span class="comment">// Both interface and slice are nil if first word is 0.</span>
+<a id="L892"></a><span class="ln">   892</span>			<span class="comment">// Both are always bigger than a word; assume flagIndir.</span>
+<a id="L893"></a><span class="ln">   893</span>			return *(*unsafe.Pointer)(v.val) == nil
+<a id="L894"></a><span class="ln">   894</span>		}
+<a id="L895"></a><span class="ln">   895</span>		panic(&amp;ValueError{&#34;reflect.Value.IsNil&#34;, k})
+<a id="L896"></a><span class="ln">   896</span>	}
+<a id="L897"></a><span class="ln">   897</span>	
+<a id="L898"></a><span class="ln">   898</span>	<span class="comment">// IsValid returns true if v represents a value.</span>
+<a id="L899"></a><span class="ln">   899</span>	<span class="comment">// It returns false if v is the zero Value.</span>
+<a id="L900"></a><span class="ln">   900</span>	<span class="comment">// If IsValid returns false, all other methods except String panic.</span>
+<a id="L901"></a><span class="ln">   901</span>	<span class="comment">// Most functions and methods never return an invalid value.</span>
+<a id="L902"></a><span class="ln">   902</span>	<span class="comment">// If one does, its documentation states the conditions explicitly.</span>
+<a id="L903"></a><span class="ln">   903</span>	func (v Value) IsValid() bool {
+<a id="L904"></a><span class="ln">   904</span>		return v.flag != 0
+<a id="L905"></a><span class="ln">   905</span>	}
+<a id="L906"></a><span class="ln">   906</span>	
+<a id="L907"></a><span class="ln">   907</span>	<span class="comment">// Kind returns v&#39;s Kind.</span>
+<a id="L908"></a><span class="ln">   908</span>	<span class="comment">// If v is the zero Value (IsValid returns false), Kind returns Invalid.</span>
+<a id="L909"></a><span class="ln">   909</span>	func (v Value) Kind() Kind {
+<a id="L910"></a><span class="ln">   910</span>		return v.kind()
+<a id="L911"></a><span class="ln">   911</span>	}
+<a id="L912"></a><span class="ln">   912</span>	
+<a id="L913"></a><span class="ln">   913</span>	<span class="comment">// Len returns v&#39;s length.</span>
+<a id="L914"></a><span class="ln">   914</span>	<span class="comment">// It panics if v&#39;s Kind is not Array, Chan, Map, Slice, or String.</span>
+<a id="L915"></a><span class="ln">   915</span>	func (v Value) Len() int {
+<a id="L916"></a><span class="ln">   916</span>		k := v.kind()
+<a id="L917"></a><span class="ln">   917</span>		switch k {
+<a id="L918"></a><span class="ln">   918</span>		case Array:
+<a id="L919"></a><span class="ln">   919</span>			tt := (*arrayType)(unsafe.Pointer(v.typ))
+<a id="L920"></a><span class="ln">   920</span>			return int(tt.len)
+<a id="L921"></a><span class="ln">   921</span>		case Chan:
+<a id="L922"></a><span class="ln">   922</span>			return int(chanlen(v.iword()))
+<a id="L923"></a><span class="ln">   923</span>		case Map:
+<a id="L924"></a><span class="ln">   924</span>			return int(maplen(v.iword()))
+<a id="L925"></a><span class="ln">   925</span>		case Slice:
+<a id="L926"></a><span class="ln">   926</span>			<span class="comment">// Slice is bigger than a word; assume flagIndir.</span>
+<a id="L927"></a><span class="ln">   927</span>			return (*SliceHeader)(v.val).Len
+<a id="L928"></a><span class="ln">   928</span>		case String:
+<a id="L929"></a><span class="ln">   929</span>			<span class="comment">// String is bigger than a word; assume flagIndir.</span>
+<a id="L930"></a><span class="ln">   930</span>			return (*StringHeader)(v.val).Len
+<a id="L931"></a><span class="ln">   931</span>		}
+<a id="L932"></a><span class="ln">   932</span>		panic(&amp;ValueError{&#34;reflect.Value.Len&#34;, k})
+<a id="L933"></a><span class="ln">   933</span>	}
+<a id="L934"></a><span class="ln">   934</span>	
+<a id="L935"></a><span class="ln">   935</span>	<span class="comment">// MapIndex returns the value associated with key in the map v.</span>
+<a id="L936"></a><span class="ln">   936</span>	<span class="comment">// It panics if v&#39;s Kind is not Map.</span>
+<a id="L937"></a><span class="ln">   937</span>	<span class="comment">// It returns the zero Value if key is not found in the map or if v represents a nil map.</span>
+<a id="L938"></a><span class="ln">   938</span>	<span class="comment">// As in Go, the key&#39;s value must be assignable to the map&#39;s key type.</span>
+<a id="L939"></a><span class="ln">   939</span>	func (v Value) MapIndex(key Value) Value {
+<a id="L940"></a><span class="ln">   940</span>		v.mustBe(Map)
+<a id="L941"></a><span class="ln">   941</span>		tt := (*mapType)(unsafe.Pointer(v.typ))
+<a id="L942"></a><span class="ln">   942</span>	
+<a id="L943"></a><span class="ln">   943</span>		<span class="comment">// Do not require key to be exported, so that DeepEqual</span>
+<a id="L944"></a><span class="ln">   944</span>		<span class="comment">// and other programs can use all the keys returned by</span>
+<a id="L945"></a><span class="ln">   945</span>		<span class="comment">// MapKeys as arguments to MapIndex.  If either the map</span>
+<a id="L946"></a><span class="ln">   946</span>		<span class="comment">// or the key is unexported, though, the result will be</span>
+<a id="L947"></a><span class="ln">   947</span>		<span class="comment">// considered unexported.  This is consistent with the</span>
+<a id="L948"></a><span class="ln">   948</span>		<span class="comment">// behavior for structs, which allow read but not write</span>
+<a id="L949"></a><span class="ln">   949</span>		<span class="comment">// of unexported fields.</span>
+<a id="L950"></a><span class="ln">   950</span>		key = key.assignTo(&#34;reflect.Value.MapIndex&#34;, toCommonType(tt.key), nil)
+<a id="L951"></a><span class="ln">   951</span>	
+<a id="L952"></a><span class="ln">   952</span>		word, ok := mapaccess(v.typ.runtimeType(), v.iword(), key.iword())
+<a id="L953"></a><span class="ln">   953</span>		if !ok {
+<a id="L954"></a><span class="ln">   954</span>			return Value{}
+<a id="L955"></a><span class="ln">   955</span>		}
+<a id="L956"></a><span class="ln">   956</span>		typ := toCommonType(tt.elem)
+<a id="L957"></a><span class="ln">   957</span>		fl := (v.flag | key.flag) &amp; flagRO
+<a id="L958"></a><span class="ln">   958</span>		if typ.size &gt; ptrSize {
+<a id="L959"></a><span class="ln">   959</span>			fl |= flagIndir
+<a id="L960"></a><span class="ln">   960</span>		}
+<a id="L961"></a><span class="ln">   961</span>		fl |= flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L962"></a><span class="ln">   962</span>		return Value{typ, unsafe.Pointer(word), fl}
+<a id="L963"></a><span class="ln">   963</span>	}
+<a id="L964"></a><span class="ln">   964</span>	
+<a id="L965"></a><span class="ln">   965</span>	<span class="comment">// MapKeys returns a slice containing all the keys present in the map,</span>
+<a id="L966"></a><span class="ln">   966</span>	<span class="comment">// in unspecified order.</span>
+<a id="L967"></a><span class="ln">   967</span>	<span class="comment">// It panics if v&#39;s Kind is not Map.</span>
+<a id="L968"></a><span class="ln">   968</span>	<span class="comment">// It returns an empty slice if v represents a nil map.</span>
+<a id="L969"></a><span class="ln">   969</span>	func (v Value) MapKeys() []Value {
+<a id="L970"></a><span class="ln">   970</span>		v.mustBe(Map)
+<a id="L971"></a><span class="ln">   971</span>		tt := (*mapType)(unsafe.Pointer(v.typ))
+<a id="L972"></a><span class="ln">   972</span>		keyType := toCommonType(tt.key)
+<a id="L973"></a><span class="ln">   973</span>	
+<a id="L974"></a><span class="ln">   974</span>		fl := v.flag &amp; flagRO
+<a id="L975"></a><span class="ln">   975</span>		fl |= flag(keyType.Kind()) &lt;&lt; flagKindShift
+<a id="L976"></a><span class="ln">   976</span>		if keyType.size &gt; ptrSize {
+<a id="L977"></a><span class="ln">   977</span>			fl |= flagIndir
+<a id="L978"></a><span class="ln">   978</span>		}
+<a id="L979"></a><span class="ln">   979</span>	
+<a id="L980"></a><span class="ln">   980</span>		m := v.iword()
+<a id="L981"></a><span class="ln">   981</span>		mlen := int32(0)
+<a id="L982"></a><span class="ln">   982</span>		if m != nil {
+<a id="L983"></a><span class="ln">   983</span>			mlen = maplen(m)
+<a id="L984"></a><span class="ln">   984</span>		}
+<a id="L985"></a><span class="ln">   985</span>		it := mapiterinit(v.typ.runtimeType(), m)
+<a id="L986"></a><span class="ln">   986</span>		a := make([]Value, mlen)
+<a id="L987"></a><span class="ln">   987</span>		var i int
+<a id="L988"></a><span class="ln">   988</span>		for i = 0; i &lt; len(a); i++ {
+<a id="L989"></a><span class="ln">   989</span>			keyWord, ok := mapiterkey(it)
+<a id="L990"></a><span class="ln">   990</span>			if !ok {
+<a id="L991"></a><span class="ln">   991</span>				break
+<a id="L992"></a><span class="ln">   992</span>			}
+<a id="L993"></a><span class="ln">   993</span>			a[i] = Value{keyType, unsafe.Pointer(keyWord), fl}
+<a id="L994"></a><span class="ln">   994</span>			mapiternext(it)
+<a id="L995"></a><span class="ln">   995</span>		}
+<a id="L996"></a><span class="ln">   996</span>		return a[:i]
+<a id="L997"></a><span class="ln">   997</span>	}
+<a id="L998"></a><span class="ln">   998</span>	
+<a id="L999"></a><span class="ln">   999</span>	<span class="comment">// Method returns a function value corresponding to v&#39;s i&#39;th method.</span>
+<a id="L1000"></a><span class="ln">  1000</span>	<span class="comment">// The arguments to a Call on the returned function should not include</span>
+<a id="L1001"></a><span class="ln">  1001</span>	<span class="comment">// a receiver; the returned function will always use v as the receiver.</span>
+<a id="L1002"></a><span class="ln">  1002</span>	<span class="comment">// Method panics if i is out of range.</span>
+<a id="L1003"></a><span class="ln">  1003</span>	func (v Value) Method(i int) Value {
+<a id="L1004"></a><span class="ln">  1004</span>		if v.typ == nil {
+<a id="L1005"></a><span class="ln">  1005</span>			panic(&amp;ValueError{&#34;reflect.Value.Method&#34;, Invalid})
+<a id="L1006"></a><span class="ln">  1006</span>		}
+<a id="L1007"></a><span class="ln">  1007</span>		if v.flag&amp;flagMethod != 0 || i &lt; 0 || i &gt;= v.typ.NumMethod() {
+<a id="L1008"></a><span class="ln">  1008</span>			panic(&#34;reflect: Method index out of range&#34;)
+<a id="L1009"></a><span class="ln">  1009</span>		}
+<a id="L1010"></a><span class="ln">  1010</span>		fl := v.flag &amp; (flagRO | flagAddr | flagIndir)
+<a id="L1011"></a><span class="ln">  1011</span>		fl |= flag(Func) &lt;&lt; flagKindShift
+<a id="L1012"></a><span class="ln">  1012</span>		fl |= flag(i)&lt;&lt;flagMethodShift | flagMethod
+<a id="L1013"></a><span class="ln">  1013</span>		return Value{v.typ, v.val, fl}
+<a id="L1014"></a><span class="ln">  1014</span>	}
+<a id="L1015"></a><span class="ln">  1015</span>	
+<a id="L1016"></a><span class="ln">  1016</span>	<span class="comment">// NumMethod returns the number of methods in the value&#39;s method set.</span>
+<a id="L1017"></a><span class="ln">  1017</span>	func (v Value) NumMethod() int {
+<a id="L1018"></a><span class="ln">  1018</span>		if v.typ == nil {
+<a id="L1019"></a><span class="ln">  1019</span>			panic(&amp;ValueError{&#34;reflect.Value.NumMethod&#34;, Invalid})
+<a id="L1020"></a><span class="ln">  1020</span>		}
+<a id="L1021"></a><span class="ln">  1021</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L1022"></a><span class="ln">  1022</span>			return 0
+<a id="L1023"></a><span class="ln">  1023</span>		}
+<a id="L1024"></a><span class="ln">  1024</span>		return v.typ.NumMethod()
+<a id="L1025"></a><span class="ln">  1025</span>	}
+<a id="L1026"></a><span class="ln">  1026</span>	
+<a id="L1027"></a><span class="ln">  1027</span>	<span class="comment">// MethodByName returns a function value corresponding to the method</span>
+<a id="L1028"></a><span class="ln">  1028</span>	<span class="comment">// of v with the given name.</span>
+<a id="L1029"></a><span class="ln">  1029</span>	<span class="comment">// The arguments to a Call on the returned function should not include</span>
+<a id="L1030"></a><span class="ln">  1030</span>	<span class="comment">// a receiver; the returned function will always use v as the receiver.</span>
+<a id="L1031"></a><span class="ln">  1031</span>	<span class="comment">// It returns the zero Value if no method was found.</span>
+<a id="L1032"></a><span class="ln">  1032</span>	func (v Value) MethodByName(name string) Value {
+<a id="L1033"></a><span class="ln">  1033</span>		if v.typ == nil {
+<a id="L1034"></a><span class="ln">  1034</span>			panic(&amp;ValueError{&#34;reflect.Value.MethodByName&#34;, Invalid})
+<a id="L1035"></a><span class="ln">  1035</span>		}
+<a id="L1036"></a><span class="ln">  1036</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L1037"></a><span class="ln">  1037</span>			return Value{}
+<a id="L1038"></a><span class="ln">  1038</span>		}
+<a id="L1039"></a><span class="ln">  1039</span>		m, ok := v.typ.MethodByName(name)
+<a id="L1040"></a><span class="ln">  1040</span>		if !ok {
+<a id="L1041"></a><span class="ln">  1041</span>			return Value{}
+<a id="L1042"></a><span class="ln">  1042</span>		}
+<a id="L1043"></a><span class="ln">  1043</span>		return v.Method(m.Index)
+<a id="L1044"></a><span class="ln">  1044</span>	}
+<a id="L1045"></a><span class="ln">  1045</span>	
+<a id="L1046"></a><span class="ln">  1046</span>	<span class="comment">// NumField returns the number of fields in the struct v.</span>
+<a id="L1047"></a><span class="ln">  1047</span>	<span class="comment">// It panics if v&#39;s Kind is not Struct.</span>
+<a id="L1048"></a><span class="ln">  1048</span>	func (v Value) NumField() int {
+<a id="L1049"></a><span class="ln">  1049</span>		v.mustBe(Struct)
+<a id="L1050"></a><span class="ln">  1050</span>		tt := (*structType)(unsafe.Pointer(v.typ))
+<a id="L1051"></a><span class="ln">  1051</span>		return len(tt.fields)
+<a id="L1052"></a><span class="ln">  1052</span>	}
+<a id="L1053"></a><span class="ln">  1053</span>	
+<a id="L1054"></a><span class="ln">  1054</span>	<span class="comment">// OverflowComplex returns true if the complex128 x cannot be represented by v&#39;s type.</span>
+<a id="L1055"></a><span class="ln">  1055</span>	<span class="comment">// It panics if v&#39;s Kind is not Complex64 or Complex128.</span>
+<a id="L1056"></a><span class="ln">  1056</span>	func (v Value) OverflowComplex(x complex128) bool {
+<a id="L1057"></a><span class="ln">  1057</span>		k := v.kind()
+<a id="L1058"></a><span class="ln">  1058</span>		switch k {
+<a id="L1059"></a><span class="ln">  1059</span>		case Complex64:
+<a id="L1060"></a><span class="ln">  1060</span>			return overflowFloat32(real(x)) || overflowFloat32(imag(x))
+<a id="L1061"></a><span class="ln">  1061</span>		case Complex128:
+<a id="L1062"></a><span class="ln">  1062</span>			return false
+<a id="L1063"></a><span class="ln">  1063</span>		}
+<a id="L1064"></a><span class="ln">  1064</span>		panic(&amp;ValueError{&#34;reflect.Value.OverflowComplex&#34;, k})
+<a id="L1065"></a><span class="ln">  1065</span>	}
+<a id="L1066"></a><span class="ln">  1066</span>	
+<a id="L1067"></a><span class="ln">  1067</span>	<span class="comment">// OverflowFloat returns true if the float64 x cannot be represented by v&#39;s type.</span>
+<a id="L1068"></a><span class="ln">  1068</span>	<span class="comment">// It panics if v&#39;s Kind is not Float32 or Float64.</span>
+<a id="L1069"></a><span class="ln">  1069</span>	func (v Value) OverflowFloat(x float64) bool {
+<a id="L1070"></a><span class="ln">  1070</span>		k := v.kind()
+<a id="L1071"></a><span class="ln">  1071</span>		switch k {
+<a id="L1072"></a><span class="ln">  1072</span>		case Float32:
+<a id="L1073"></a><span class="ln">  1073</span>			return overflowFloat32(x)
+<a id="L1074"></a><span class="ln">  1074</span>		case Float64:
+<a id="L1075"></a><span class="ln">  1075</span>			return false
+<a id="L1076"></a><span class="ln">  1076</span>		}
+<a id="L1077"></a><span class="ln">  1077</span>		panic(&amp;ValueError{&#34;reflect.Value.OverflowFloat&#34;, k})
+<a id="L1078"></a><span class="ln">  1078</span>	}
+<a id="L1079"></a><span class="ln">  1079</span>	
+<a id="L1080"></a><span class="ln">  1080</span>	func overflowFloat32(x float64) bool {
+<a id="L1081"></a><span class="ln">  1081</span>		if x &lt; 0 {
+<a id="L1082"></a><span class="ln">  1082</span>			x = -x
+<a id="L1083"></a><span class="ln">  1083</span>		}
+<a id="L1084"></a><span class="ln">  1084</span>		return math.MaxFloat32 &lt;= x &amp;&amp; x &lt;= math.MaxFloat64
+<a id="L1085"></a><span class="ln">  1085</span>	}
+<a id="L1086"></a><span class="ln">  1086</span>	
+<a id="L1087"></a><span class="ln">  1087</span>	<span class="comment">// OverflowInt returns true if the int64 x cannot be represented by v&#39;s type.</span>
+<a id="L1088"></a><span class="ln">  1088</span>	<span class="comment">// It panics if v&#39;s Kind is not Int, Int8, int16, Int32, or Int64.</span>
+<a id="L1089"></a><span class="ln">  1089</span>	func (v Value) OverflowInt(x int64) bool {
+<a id="L1090"></a><span class="ln">  1090</span>		k := v.kind()
+<a id="L1091"></a><span class="ln">  1091</span>		switch k {
+<a id="L1092"></a><span class="ln">  1092</span>		case Int, Int8, Int16, Int32, Int64:
+<a id="L1093"></a><span class="ln">  1093</span>			bitSize := v.typ.size * 8
+<a id="L1094"></a><span class="ln">  1094</span>			trunc := (x &lt;&lt; (64 - bitSize)) &gt;&gt; (64 - bitSize)
+<a id="L1095"></a><span class="ln">  1095</span>			return x != trunc
+<a id="L1096"></a><span class="ln">  1096</span>		}
+<a id="L1097"></a><span class="ln">  1097</span>		panic(&amp;ValueError{&#34;reflect.Value.OverflowInt&#34;, k})
+<a id="L1098"></a><span class="ln">  1098</span>	}
+<a id="L1099"></a><span class="ln">  1099</span>	
+<a id="L1100"></a><span class="ln">  1100</span>	<span class="comment">// OverflowUint returns true if the uint64 x cannot be represented by v&#39;s type.</span>
+<a id="L1101"></a><span class="ln">  1101</span>	<span class="comment">// It panics if v&#39;s Kind is not Uint, Uintptr, Uint8, Uint16, Uint32, or Uint64.</span>
+<a id="L1102"></a><span class="ln">  1102</span>	func (v Value) OverflowUint(x uint64) bool {
+<a id="L1103"></a><span class="ln">  1103</span>		k := v.kind()
+<a id="L1104"></a><span class="ln">  1104</span>		switch k {
+<a id="L1105"></a><span class="ln">  1105</span>		case Uint, Uintptr, Uint8, Uint16, Uint32, Uint64:
+<a id="L1106"></a><span class="ln">  1106</span>			bitSize := v.typ.size * 8
+<a id="L1107"></a><span class="ln">  1107</span>			trunc := (x &lt;&lt; (64 - bitSize)) &gt;&gt; (64 - bitSize)
+<a id="L1108"></a><span class="ln">  1108</span>			return x != trunc
+<a id="L1109"></a><span class="ln">  1109</span>		}
+<a id="L1110"></a><span class="ln">  1110</span>		panic(&amp;ValueError{&#34;reflect.Value.OverflowUint&#34;, k})
+<a id="L1111"></a><span class="ln">  1111</span>	}
+<a id="L1112"></a><span class="ln">  1112</span>	
+<a id="L1113"></a><span class="ln">  1113</span>	<span class="comment">// Pointer returns v&#39;s value as a uintptr.</span>
+<a id="L1114"></a><span class="ln">  1114</span>	<span class="comment">// It returns uintptr instead of unsafe.Pointer so that</span>
+<a id="L1115"></a><span class="ln">  1115</span>	<span class="comment">// code using reflect cannot obtain unsafe.Pointers</span>
+<a id="L1116"></a><span class="ln">  1116</span>	<span class="comment">// without importing the unsafe package explicitly.</span>
+<a id="L1117"></a><span class="ln">  1117</span>	<span class="comment">// It panics if v&#39;s Kind is not Chan, Func, Map, Ptr, Slice, or UnsafePointer.</span>
+<a id="L1118"></a><span class="ln">  1118</span>	func (v Value) Pointer() uintptr {
+<a id="L1119"></a><span class="ln">  1119</span>		k := v.kind()
+<a id="L1120"></a><span class="ln">  1120</span>		switch k {
+<a id="L1121"></a><span class="ln">  1121</span>		case Chan, Func, Map, Ptr, UnsafePointer:
+<a id="L1122"></a><span class="ln">  1122</span>			if k == Func &amp;&amp; v.flag&amp;flagMethod != 0 {
+<a id="L1123"></a><span class="ln">  1123</span>				panic(&#34;reflect.Value.Pointer of method Value&#34;)
+<a id="L1124"></a><span class="ln">  1124</span>			}
+<a id="L1125"></a><span class="ln">  1125</span>			p := v.val
+<a id="L1126"></a><span class="ln">  1126</span>			if v.flag&amp;flagIndir != 0 {
+<a id="L1127"></a><span class="ln">  1127</span>				p = *(*unsafe.Pointer)(p)
+<a id="L1128"></a><span class="ln">  1128</span>			}
+<a id="L1129"></a><span class="ln">  1129</span>			return uintptr(p)
+<a id="L1130"></a><span class="ln">  1130</span>		case Slice:
+<a id="L1131"></a><span class="ln">  1131</span>			return (*SliceHeader)(v.val).Data
+<a id="L1132"></a><span class="ln">  1132</span>		}
+<a id="L1133"></a><span class="ln">  1133</span>		panic(&amp;ValueError{&#34;reflect.Value.Pointer&#34;, k})
+<a id="L1134"></a><span class="ln">  1134</span>	}
+<a id="L1135"></a><span class="ln">  1135</span>	
+<a id="L1136"></a><span class="ln">  1136</span>	<span class="comment">// Recv receives and returns a value from the channel v.</span>
+<a id="L1137"></a><span class="ln">  1137</span>	<span class="comment">// It panics if v&#39;s Kind is not Chan.</span>
+<a id="L1138"></a><span class="ln">  1138</span>	<span class="comment">// The receive blocks until a value is ready.</span>
+<a id="L1139"></a><span class="ln">  1139</span>	<span class="comment">// The boolean value ok is true if the value x corresponds to a send</span>
+<a id="L1140"></a><span class="ln">  1140</span>	<span class="comment">// on the channel, false if it is a zero value received because the channel is closed.</span>
+<a id="L1141"></a><span class="ln">  1141</span>	func (v Value) Recv() (x Value, ok bool) {
+<a id="L1142"></a><span class="ln">  1142</span>		v.mustBe(Chan)
+<a id="L1143"></a><span class="ln">  1143</span>		v.mustBeExported()
+<a id="L1144"></a><span class="ln">  1144</span>		return v.recv(false)
+<a id="L1145"></a><span class="ln">  1145</span>	}
+<a id="L1146"></a><span class="ln">  1146</span>	
+<a id="L1147"></a><span class="ln">  1147</span>	<span class="comment">// internal recv, possibly non-blocking (nb).</span>
+<a id="L1148"></a><span class="ln">  1148</span>	<span class="comment">// v is known to be a channel.</span>
+<a id="L1149"></a><span class="ln">  1149</span>	func (v Value) recv(nb bool) (val Value, ok bool) {
+<a id="L1150"></a><span class="ln">  1150</span>		tt := (*chanType)(unsafe.Pointer(v.typ))
+<a id="L1151"></a><span class="ln">  1151</span>		if ChanDir(tt.dir)&amp;RecvDir == 0 {
+<a id="L1152"></a><span class="ln">  1152</span>			panic(&#34;recv on send-only channel&#34;)
+<a id="L1153"></a><span class="ln">  1153</span>		}
+<a id="L1154"></a><span class="ln">  1154</span>		word, selected, ok := chanrecv(v.typ.runtimeType(), v.iword(), nb)
+<a id="L1155"></a><span class="ln">  1155</span>		if selected {
+<a id="L1156"></a><span class="ln">  1156</span>			typ := toCommonType(tt.elem)
+<a id="L1157"></a><span class="ln">  1157</span>			fl := flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L1158"></a><span class="ln">  1158</span>			if typ.size &gt; ptrSize {
+<a id="L1159"></a><span class="ln">  1159</span>				fl |= flagIndir
+<a id="L1160"></a><span class="ln">  1160</span>			}
+<a id="L1161"></a><span class="ln">  1161</span>			val = Value{typ, unsafe.Pointer(word), fl}
+<a id="L1162"></a><span class="ln">  1162</span>		}
+<a id="L1163"></a><span class="ln">  1163</span>		return
+<a id="L1164"></a><span class="ln">  1164</span>	}
+<a id="L1165"></a><span class="ln">  1165</span>	
+<a id="L1166"></a><span class="ln">  1166</span>	<span class="comment">// Send sends x on the channel v.</span>
+<a id="L1167"></a><span class="ln">  1167</span>	<span class="comment">// It panics if v&#39;s kind is not Chan or if x&#39;s type is not the same type as v&#39;s element type.</span>
+<a id="L1168"></a><span class="ln">  1168</span>	<span class="comment">// As in Go, x&#39;s value must be assignable to the channel&#39;s element type.</span>
+<a id="L1169"></a><span class="ln">  1169</span>	func (v Value) Send(x Value) {
+<a id="L1170"></a><span class="ln">  1170</span>		v.mustBe(Chan)
+<a id="L1171"></a><span class="ln">  1171</span>		v.mustBeExported()
+<a id="L1172"></a><span class="ln">  1172</span>		v.send(x, false)
+<a id="L1173"></a><span class="ln">  1173</span>	}
+<a id="L1174"></a><span class="ln">  1174</span>	
+<a id="L1175"></a><span class="ln">  1175</span>	<span class="comment">// internal send, possibly non-blocking.</span>
+<a id="L1176"></a><span class="ln">  1176</span>	<span class="comment">// v is known to be a channel.</span>
+<a id="L1177"></a><span class="ln">  1177</span>	func (v Value) send(x Value, nb bool) (selected bool) {
+<a id="L1178"></a><span class="ln">  1178</span>		tt := (*chanType)(unsafe.Pointer(v.typ))
+<a id="L1179"></a><span class="ln">  1179</span>		if ChanDir(tt.dir)&amp;SendDir == 0 {
+<a id="L1180"></a><span class="ln">  1180</span>			panic(&#34;send on recv-only channel&#34;)
+<a id="L1181"></a><span class="ln">  1181</span>		}
+<a id="L1182"></a><span class="ln">  1182</span>		x.mustBeExported()
+<a id="L1183"></a><span class="ln">  1183</span>		x = x.assignTo(&#34;reflect.Value.Send&#34;, toCommonType(tt.elem), nil)
+<a id="L1184"></a><span class="ln">  1184</span>		return chansend(v.typ.runtimeType(), v.iword(), x.iword(), nb)
+<a id="L1185"></a><span class="ln">  1185</span>	}
+<a id="L1186"></a><span class="ln">  1186</span>	
+<a id="L1187"></a><span class="ln">  1187</span>	<span class="comment">// Set assigns x to the value v.</span>
+<a id="L1188"></a><span class="ln">  1188</span>	<span class="comment">// It panics if CanSet returns false.</span>
+<a id="L1189"></a><span class="ln">  1189</span>	<span class="comment">// As in Go, x&#39;s value must be assignable to v&#39;s type.</span>
+<a id="L1190"></a><span class="ln">  1190</span>	func (v Value) Set(x Value) {
+<a id="L1191"></a><span class="ln">  1191</span>		v.mustBeAssignable()
+<a id="L1192"></a><span class="ln">  1192</span>		x.mustBeExported() <span class="comment">// do not let unexported x leak</span>
+<a id="L1193"></a><span class="ln">  1193</span>		var target *interface{}
+<a id="L1194"></a><span class="ln">  1194</span>		if v.kind() == Interface {
+<a id="L1195"></a><span class="ln">  1195</span>			target = (*interface{})(v.val)
+<a id="L1196"></a><span class="ln">  1196</span>		}
+<a id="L1197"></a><span class="ln">  1197</span>		x = x.assignTo(&#34;reflect.Set&#34;, v.typ, target)
+<a id="L1198"></a><span class="ln">  1198</span>		if x.flag&amp;flagIndir != 0 {
+<a id="L1199"></a><span class="ln">  1199</span>			memmove(v.val, x.val, v.typ.size)
+<a id="L1200"></a><span class="ln">  1200</span>		} else {
+<a id="L1201"></a><span class="ln">  1201</span>			storeIword(v.val, iword(x.val), v.typ.size)
+<a id="L1202"></a><span class="ln">  1202</span>		}
+<a id="L1203"></a><span class="ln">  1203</span>	}
+<a id="L1204"></a><span class="ln">  1204</span>	
+<a id="L1205"></a><span class="ln">  1205</span>	<span class="comment">// SetBool sets v&#39;s underlying value.</span>
+<a id="L1206"></a><span class="ln">  1206</span>	<span class="comment">// It panics if v&#39;s Kind is not Bool or if CanSet() is false.</span>
+<a id="L1207"></a><span class="ln">  1207</span>	func (v Value) SetBool(x bool) {
+<a id="L1208"></a><span class="ln">  1208</span>		v.mustBeAssignable()
+<a id="L1209"></a><span class="ln">  1209</span>		v.mustBe(Bool)
+<a id="L1210"></a><span class="ln">  1210</span>		*(*bool)(v.val) = x
+<a id="L1211"></a><span class="ln">  1211</span>	}
+<a id="L1212"></a><span class="ln">  1212</span>	
+<a id="L1213"></a><span class="ln">  1213</span>	<span class="comment">// SetBytes sets v&#39;s underlying value.</span>
+<a id="L1214"></a><span class="ln">  1214</span>	<span class="comment">// It panics if v&#39;s underlying value is not a slice of bytes.</span>
+<a id="L1215"></a><span class="ln">  1215</span>	func (v Value) SetBytes(x []byte) {
+<a id="L1216"></a><span class="ln">  1216</span>		v.mustBeAssignable()
+<a id="L1217"></a><span class="ln">  1217</span>		v.mustBe(Slice)
+<a id="L1218"></a><span class="ln">  1218</span>		if v.typ.Elem().Kind() != Uint8 {
+<a id="L1219"></a><span class="ln">  1219</span>			panic(&#34;reflect.Value.SetBytes of non-byte slice&#34;)
+<a id="L1220"></a><span class="ln">  1220</span>		}
+<a id="L1221"></a><span class="ln">  1221</span>		*(*[]byte)(v.val) = x
+<a id="L1222"></a><span class="ln">  1222</span>	}
+<a id="L1223"></a><span class="ln">  1223</span>	
+<a id="L1224"></a><span class="ln">  1224</span>	<span class="comment">// SetComplex sets v&#39;s underlying value to x.</span>
+<a id="L1225"></a><span class="ln">  1225</span>	<span class="comment">// It panics if v&#39;s Kind is not Complex64 or Complex128, or if CanSet() is false.</span>
+<a id="L1226"></a><span class="ln">  1226</span>	func (v Value) SetComplex(x complex128) {
+<a id="L1227"></a><span class="ln">  1227</span>		v.mustBeAssignable()
+<a id="L1228"></a><span class="ln">  1228</span>		switch k := v.kind(); k {
+<a id="L1229"></a><span class="ln">  1229</span>		default:
+<a id="L1230"></a><span class="ln">  1230</span>			panic(&amp;ValueError{&#34;reflect.Value.SetComplex&#34;, k})
+<a id="L1231"></a><span class="ln">  1231</span>		case Complex64:
+<a id="L1232"></a><span class="ln">  1232</span>			*(*complex64)(v.val) = complex64(x)
+<a id="L1233"></a><span class="ln">  1233</span>		case Complex128:
+<a id="L1234"></a><span class="ln">  1234</span>			*(*complex128)(v.val) = x
+<a id="L1235"></a><span class="ln">  1235</span>		}
+<a id="L1236"></a><span class="ln">  1236</span>	}
+<a id="L1237"></a><span class="ln">  1237</span>	
+<a id="L1238"></a><span class="ln">  1238</span>	<span class="comment">// SetFloat sets v&#39;s underlying value to x.</span>
+<a id="L1239"></a><span class="ln">  1239</span>	<span class="comment">// It panics if v&#39;s Kind is not Float32 or Float64, or if CanSet() is false.</span>
+<a id="L1240"></a><span class="ln">  1240</span>	func (v Value) SetFloat(x float64) {
+<a id="L1241"></a><span class="ln">  1241</span>		v.mustBeAssignable()
+<a id="L1242"></a><span class="ln">  1242</span>		switch k := v.kind(); k {
+<a id="L1243"></a><span class="ln">  1243</span>		default:
+<a id="L1244"></a><span class="ln">  1244</span>			panic(&amp;ValueError{&#34;reflect.Value.SetFloat&#34;, k})
+<a id="L1245"></a><span class="ln">  1245</span>		case Float32:
+<a id="L1246"></a><span class="ln">  1246</span>			*(*float32)(v.val) = float32(x)
+<a id="L1247"></a><span class="ln">  1247</span>		case Float64:
+<a id="L1248"></a><span class="ln">  1248</span>			*(*float64)(v.val) = x
+<a id="L1249"></a><span class="ln">  1249</span>		}
+<a id="L1250"></a><span class="ln">  1250</span>	}
+<a id="L1251"></a><span class="ln">  1251</span>	
+<a id="L1252"></a><span class="ln">  1252</span>	<span class="comment">// SetInt sets v&#39;s underlying value to x.</span>
+<a id="L1253"></a><span class="ln">  1253</span>	<span class="comment">// It panics if v&#39;s Kind is not Int, Int8, Int16, Int32, or Int64, or if CanSet() is false.</span>
+<a id="L1254"></a><span class="ln">  1254</span>	func (v Value) SetInt(x int64) {
+<a id="L1255"></a><span class="ln">  1255</span>		v.mustBeAssignable()
+<a id="L1256"></a><span class="ln">  1256</span>		switch k := v.kind(); k {
+<a id="L1257"></a><span class="ln">  1257</span>		default:
+<a id="L1258"></a><span class="ln">  1258</span>			panic(&amp;ValueError{&#34;reflect.Value.SetInt&#34;, k})
+<a id="L1259"></a><span class="ln">  1259</span>		case Int:
+<a id="L1260"></a><span class="ln">  1260</span>			*(*int)(v.val) = int(x)
+<a id="L1261"></a><span class="ln">  1261</span>		case Int8:
+<a id="L1262"></a><span class="ln">  1262</span>			*(*int8)(v.val) = int8(x)
+<a id="L1263"></a><span class="ln">  1263</span>		case Int16:
+<a id="L1264"></a><span class="ln">  1264</span>			*(*int16)(v.val) = int16(x)
+<a id="L1265"></a><span class="ln">  1265</span>		case Int32:
+<a id="L1266"></a><span class="ln">  1266</span>			*(*int32)(v.val) = int32(x)
+<a id="L1267"></a><span class="ln">  1267</span>		case Int64:
+<a id="L1268"></a><span class="ln">  1268</span>			*(*int64)(v.val) = x
+<a id="L1269"></a><span class="ln">  1269</span>		}
+<a id="L1270"></a><span class="ln">  1270</span>	}
+<a id="L1271"></a><span class="ln">  1271</span>	
+<a id="L1272"></a><span class="ln">  1272</span>	<span class="comment">// SetLen sets v&#39;s length to n.</span>
+<a id="L1273"></a><span class="ln">  1273</span>	<span class="comment">// It panics if v&#39;s Kind is not Slice or if n is negative or</span>
+<a id="L1274"></a><span class="ln">  1274</span>	<span class="comment">// greater than the capacity of the slice.</span>
+<a id="L1275"></a><span class="ln">  1275</span>	func (v Value) SetLen(n int) {
+<a id="L1276"></a><span class="ln">  1276</span>		v.mustBeAssignable()
+<a id="L1277"></a><span class="ln">  1277</span>		v.mustBe(Slice)
+<a id="L1278"></a><span class="ln">  1278</span>		s := (*SliceHeader)(v.val)
+<a id="L1279"></a><span class="ln">  1279</span>		if n &lt; 0 || n &gt; int(s.Cap) {
+<a id="L1280"></a><span class="ln">  1280</span>			panic(&#34;reflect: slice length out of range in SetLen&#34;)
+<a id="L1281"></a><span class="ln">  1281</span>		}
+<a id="L1282"></a><span class="ln">  1282</span>		s.Len = n
+<a id="L1283"></a><span class="ln">  1283</span>	}
+<a id="L1284"></a><span class="ln">  1284</span>	
+<a id="L1285"></a><span class="ln">  1285</span>	<span class="comment">// SetMapIndex sets the value associated with key in the map v to val.</span>
+<a id="L1286"></a><span class="ln">  1286</span>	<span class="comment">// It panics if v&#39;s Kind is not Map.</span>
+<a id="L1287"></a><span class="ln">  1287</span>	<span class="comment">// If val is the zero Value, SetMapIndex deletes the key from the map.</span>
+<a id="L1288"></a><span class="ln">  1288</span>	<span class="comment">// As in Go, key&#39;s value must be assignable to the map&#39;s key type,</span>
+<a id="L1289"></a><span class="ln">  1289</span>	<span class="comment">// and val&#39;s value must be assignable to the map&#39;s value type.</span>
+<a id="L1290"></a><span class="ln">  1290</span>	func (v Value) SetMapIndex(key, val Value) {
+<a id="L1291"></a><span class="ln">  1291</span>		v.mustBe(Map)
+<a id="L1292"></a><span class="ln">  1292</span>		v.mustBeExported()
+<a id="L1293"></a><span class="ln">  1293</span>		key.mustBeExported()
+<a id="L1294"></a><span class="ln">  1294</span>		tt := (*mapType)(unsafe.Pointer(v.typ))
+<a id="L1295"></a><span class="ln">  1295</span>		key = key.assignTo(&#34;reflect.Value.SetMapIndex&#34;, toCommonType(tt.key), nil)
+<a id="L1296"></a><span class="ln">  1296</span>		if val.typ != nil {
+<a id="L1297"></a><span class="ln">  1297</span>			val.mustBeExported()
+<a id="L1298"></a><span class="ln">  1298</span>			val = val.assignTo(&#34;reflect.Value.SetMapIndex&#34;, toCommonType(tt.elem), nil)
+<a id="L1299"></a><span class="ln">  1299</span>		}
+<a id="L1300"></a><span class="ln">  1300</span>		mapassign(v.typ.runtimeType(), v.iword(), key.iword(), val.iword(), val.typ != nil)
+<a id="L1301"></a><span class="ln">  1301</span>	}
+<a id="L1302"></a><span class="ln">  1302</span>	
+<a id="L1303"></a><span class="ln">  1303</span>	<span class="comment">// SetUint sets v&#39;s underlying value to x.</span>
+<a id="L1304"></a><span class="ln">  1304</span>	<span class="comment">// It panics if v&#39;s Kind is not Uint, Uintptr, Uint8, Uint16, Uint32, or Uint64, or if CanSet() is false.</span>
+<a id="L1305"></a><span class="ln">  1305</span>	func (v Value) SetUint(x uint64) {
+<a id="L1306"></a><span class="ln">  1306</span>		v.mustBeAssignable()
+<a id="L1307"></a><span class="ln">  1307</span>		switch k := v.kind(); k {
+<a id="L1308"></a><span class="ln">  1308</span>		default:
+<a id="L1309"></a><span class="ln">  1309</span>			panic(&amp;ValueError{&#34;reflect.Value.SetUint&#34;, k})
+<a id="L1310"></a><span class="ln">  1310</span>		case Uint:
+<a id="L1311"></a><span class="ln">  1311</span>			*(*uint)(v.val) = uint(x)
+<a id="L1312"></a><span class="ln">  1312</span>		case Uint8:
+<a id="L1313"></a><span class="ln">  1313</span>			*(*uint8)(v.val) = uint8(x)
+<a id="L1314"></a><span class="ln">  1314</span>		case Uint16:
+<a id="L1315"></a><span class="ln">  1315</span>			*(*uint16)(v.val) = uint16(x)
+<a id="L1316"></a><span class="ln">  1316</span>		case Uint32:
+<a id="L1317"></a><span class="ln">  1317</span>			*(*uint32)(v.val) = uint32(x)
+<a id="L1318"></a><span class="ln">  1318</span>		case Uint64:
+<a id="L1319"></a><span class="ln">  1319</span>			*(*uint64)(v.val) = x
+<a id="L1320"></a><span class="ln">  1320</span>		case Uintptr:
+<a id="L1321"></a><span class="ln">  1321</span>			*(*uintptr)(v.val) = uintptr(x)
+<a id="L1322"></a><span class="ln">  1322</span>		}
+<a id="L1323"></a><span class="ln">  1323</span>	}
+<a id="L1324"></a><span class="ln">  1324</span>	
+<a id="L1325"></a><span class="ln">  1325</span>	<span class="comment">// SetPointer sets the unsafe.Pointer value v to x.</span>
+<a id="L1326"></a><span class="ln">  1326</span>	<span class="comment">// It panics if v&#39;s Kind is not UnsafePointer.</span>
+<a id="L1327"></a><span class="ln">  1327</span>	func (v Value) SetPointer(x unsafe.Pointer) {
+<a id="L1328"></a><span class="ln">  1328</span>		v.mustBeAssignable()
+<a id="L1329"></a><span class="ln">  1329</span>		v.mustBe(UnsafePointer)
+<a id="L1330"></a><span class="ln">  1330</span>		*(*unsafe.Pointer)(v.val) = x
+<a id="L1331"></a><span class="ln">  1331</span>	}
+<a id="L1332"></a><span class="ln">  1332</span>	
+<a id="L1333"></a><span class="ln">  1333</span>	<span class="comment">// SetString sets v&#39;s underlying value to x.</span>
+<a id="L1334"></a><span class="ln">  1334</span>	<span class="comment">// It panics if v&#39;s Kind is not String or if CanSet() is false.</span>
+<a id="L1335"></a><span class="ln">  1335</span>	func (v Value) SetString(x string) {
+<a id="L1336"></a><span class="ln">  1336</span>		v.mustBeAssignable()
+<a id="L1337"></a><span class="ln">  1337</span>		v.mustBe(String)
+<a id="L1338"></a><span class="ln">  1338</span>		*(*string)(v.val) = x
+<a id="L1339"></a><span class="ln">  1339</span>	}
+<a id="L1340"></a><span class="ln">  1340</span>	
+<a id="L1341"></a><span class="ln">  1341</span>	<span class="comment">// Slice returns a slice of v.</span>
+<a id="L1342"></a><span class="ln">  1342</span>	<span class="comment">// It panics if v&#39;s Kind is not Array or Slice.</span>
+<a id="L1343"></a><span class="ln">  1343</span>	func (v Value) Slice(beg, end int) Value {
+<a id="L1344"></a><span class="ln">  1344</span>		var (
+<a id="L1345"></a><span class="ln">  1345</span>			cap  int
+<a id="L1346"></a><span class="ln">  1346</span>			typ  *sliceType
+<a id="L1347"></a><span class="ln">  1347</span>			base unsafe.Pointer
+<a id="L1348"></a><span class="ln">  1348</span>		)
+<a id="L1349"></a><span class="ln">  1349</span>		switch k := v.kind(); k {
+<a id="L1350"></a><span class="ln">  1350</span>		default:
+<a id="L1351"></a><span class="ln">  1351</span>			panic(&amp;ValueError{&#34;reflect.Value.Slice&#34;, k})
+<a id="L1352"></a><span class="ln">  1352</span>		case Array:
+<a id="L1353"></a><span class="ln">  1353</span>			if v.flag&amp;flagAddr == 0 {
+<a id="L1354"></a><span class="ln">  1354</span>				panic(&#34;reflect.Value.Slice: slice of unaddressable array&#34;)
+<a id="L1355"></a><span class="ln">  1355</span>			}
+<a id="L1356"></a><span class="ln">  1356</span>			tt := (*arrayType)(unsafe.Pointer(v.typ))
+<a id="L1357"></a><span class="ln">  1357</span>			cap = int(tt.len)
+<a id="L1358"></a><span class="ln">  1358</span>			typ = (*sliceType)(unsafe.Pointer(toCommonType(tt.slice)))
+<a id="L1359"></a><span class="ln">  1359</span>			base = v.val
+<a id="L1360"></a><span class="ln">  1360</span>		case Slice:
+<a id="L1361"></a><span class="ln">  1361</span>			typ = (*sliceType)(unsafe.Pointer(v.typ))
+<a id="L1362"></a><span class="ln">  1362</span>			s := (*SliceHeader)(v.val)
+<a id="L1363"></a><span class="ln">  1363</span>			base = unsafe.Pointer(s.Data)
+<a id="L1364"></a><span class="ln">  1364</span>			cap = s.Cap
+<a id="L1365"></a><span class="ln">  1365</span>	
+<a id="L1366"></a><span class="ln">  1366</span>		}
+<a id="L1367"></a><span class="ln">  1367</span>		if beg &lt; 0 || end &lt; beg || end &gt; cap {
+<a id="L1368"></a><span class="ln">  1368</span>			panic(&#34;reflect.Value.Slice: slice index out of bounds&#34;)
+<a id="L1369"></a><span class="ln">  1369</span>		}
+<a id="L1370"></a><span class="ln">  1370</span>	
+<a id="L1371"></a><span class="ln">  1371</span>		<span class="comment">// Declare slice so that gc can see the base pointer in it.</span>
+<a id="L1372"></a><span class="ln">  1372</span>		var x []byte
+<a id="L1373"></a><span class="ln">  1373</span>	
+<a id="L1374"></a><span class="ln">  1374</span>		<span class="comment">// Reinterpret as *SliceHeader to edit.</span>
+<a id="L1375"></a><span class="ln">  1375</span>		s := (*SliceHeader)(unsafe.Pointer(&amp;x))
+<a id="L1376"></a><span class="ln">  1376</span>		s.Data = uintptr(base) + uintptr(beg)*toCommonType(typ.elem).Size()
+<a id="L1377"></a><span class="ln">  1377</span>		s.Len = end - beg
+<a id="L1378"></a><span class="ln">  1378</span>		s.Cap = cap - beg
+<a id="L1379"></a><span class="ln">  1379</span>	
+<a id="L1380"></a><span class="ln">  1380</span>		fl := v.flag&amp;flagRO | flagIndir | flag(Slice)&lt;&lt;flagKindShift
+<a id="L1381"></a><span class="ln">  1381</span>		return Value{typ.common(), unsafe.Pointer(&amp;x), fl}
+<a id="L1382"></a><span class="ln">  1382</span>	}
+<a id="L1383"></a><span class="ln">  1383</span>	
+<a id="L1384"></a><span class="ln">  1384</span>	<span class="comment">// String returns the string v&#39;s underlying value, as a string.</span>
+<a id="L1385"></a><span class="ln">  1385</span>	<span class="comment">// String is a special case because of Go&#39;s String method convention.</span>
+<a id="L1386"></a><span class="ln">  1386</span>	<span class="comment">// Unlike the other getters, it does not panic if v&#39;s Kind is not String.</span>
+<a id="L1387"></a><span class="ln">  1387</span>	<span class="comment">// Instead, it returns a string of the form &#34;&lt;T value&gt;&#34; where T is v&#39;s type.</span>
+<a id="L1388"></a><span class="ln">  1388</span>	func (v Value) String() string {
+<a id="L1389"></a><span class="ln">  1389</span>		switch k := v.kind(); k {
+<a id="L1390"></a><span class="ln">  1390</span>		case Invalid:
+<a id="L1391"></a><span class="ln">  1391</span>			return &#34;&lt;invalid Value&gt;&#34;
+<a id="L1392"></a><span class="ln">  1392</span>		case String:
+<a id="L1393"></a><span class="ln">  1393</span>			return *(*string)(v.val)
+<a id="L1394"></a><span class="ln">  1394</span>		}
+<a id="L1395"></a><span class="ln">  1395</span>		<span class="comment">// If you call String on a reflect.Value of other type, it&#39;s better to</span>
+<a id="L1396"></a><span class="ln">  1396</span>		<span class="comment">// print something than to panic. Useful in debugging.</span>
+<a id="L1397"></a><span class="ln">  1397</span>		return &#34;&lt;&#34; + v.typ.String() + &#34; Value&gt;&#34;
+<a id="L1398"></a><span class="ln">  1398</span>	}
+<a id="L1399"></a><span class="ln">  1399</span>	
+<a id="L1400"></a><span class="ln">  1400</span>	<span class="comment">// TryRecv attempts to receive a value from the channel v but will not block.</span>
+<a id="L1401"></a><span class="ln">  1401</span>	<span class="comment">// It panics if v&#39;s Kind is not Chan.</span>
+<a id="L1402"></a><span class="ln">  1402</span>	<span class="comment">// If the receive cannot finish without blocking, x is the zero Value.</span>
+<a id="L1403"></a><span class="ln">  1403</span>	<span class="comment">// The boolean ok is true if the value x corresponds to a send</span>
+<a id="L1404"></a><span class="ln">  1404</span>	<span class="comment">// on the channel, false if it is a zero value received because the channel is closed.</span>
+<a id="L1405"></a><span class="ln">  1405</span>	func (v Value) TryRecv() (x Value, ok bool) {
+<a id="L1406"></a><span class="ln">  1406</span>		v.mustBe(Chan)
+<a id="L1407"></a><span class="ln">  1407</span>		v.mustBeExported()
+<a id="L1408"></a><span class="ln">  1408</span>		return v.recv(true)
+<a id="L1409"></a><span class="ln">  1409</span>	}
+<a id="L1410"></a><span class="ln">  1410</span>	
+<a id="L1411"></a><span class="ln">  1411</span>	<span class="comment">// TrySend attempts to send x on the channel v but will not block.</span>
+<a id="L1412"></a><span class="ln">  1412</span>	<span class="comment">// It panics if v&#39;s Kind is not Chan.</span>
+<a id="L1413"></a><span class="ln">  1413</span>	<span class="comment">// It returns true if the value was sent, false otherwise.</span>
+<a id="L1414"></a><span class="ln">  1414</span>	<span class="comment">// As in Go, x&#39;s value must be assignable to the channel&#39;s element type.</span>
+<a id="L1415"></a><span class="ln">  1415</span>	func (v Value) TrySend(x Value) bool {
+<a id="L1416"></a><span class="ln">  1416</span>		v.mustBe(Chan)
+<a id="L1417"></a><span class="ln">  1417</span>		v.mustBeExported()
+<a id="L1418"></a><span class="ln">  1418</span>		return v.send(x, true)
+<a id="L1419"></a><span class="ln">  1419</span>	}
+<a id="L1420"></a><span class="ln">  1420</span>	
+<a id="L1421"></a><span class="ln">  1421</span>	<span class="comment">// Type returns v&#39;s type.</span>
+<a id="L1422"></a><span class="ln">  1422</span>	func (v Value) Type() Type {
+<a id="L1423"></a><span class="ln">  1423</span>		f := v.flag
+<a id="L1424"></a><span class="ln">  1424</span>		if f == 0 {
+<a id="L1425"></a><span class="ln">  1425</span>			panic(&amp;ValueError{&#34;reflect.Value.Type&#34;, Invalid})
+<a id="L1426"></a><span class="ln">  1426</span>		}
+<a id="L1427"></a><span class="ln">  1427</span>		if f&amp;flagMethod == 0 {
+<a id="L1428"></a><span class="ln">  1428</span>			<span class="comment">// Easy case</span>
+<a id="L1429"></a><span class="ln">  1429</span>			return v.typ
+<a id="L1430"></a><span class="ln">  1430</span>		}
+<a id="L1431"></a><span class="ln">  1431</span>	
+<a id="L1432"></a><span class="ln">  1432</span>		<span class="comment">// Method value.</span>
+<a id="L1433"></a><span class="ln">  1433</span>		<span class="comment">// v.typ describes the receiver, not the method type.</span>
+<a id="L1434"></a><span class="ln">  1434</span>		i := int(v.flag) &gt;&gt; flagMethodShift
+<a id="L1435"></a><span class="ln">  1435</span>		if v.typ.Kind() == Interface {
+<a id="L1436"></a><span class="ln">  1436</span>			<span class="comment">// Method on interface.</span>
+<a id="L1437"></a><span class="ln">  1437</span>			tt := (*interfaceType)(unsafe.Pointer(v.typ))
+<a id="L1438"></a><span class="ln">  1438</span>			if i &lt; 0 || i &gt;= len(tt.methods) {
+<a id="L1439"></a><span class="ln">  1439</span>				panic(&#34;reflect: broken Value&#34;)
+<a id="L1440"></a><span class="ln">  1440</span>			}
+<a id="L1441"></a><span class="ln">  1441</span>			m := &amp;tt.methods[i]
+<a id="L1442"></a><span class="ln">  1442</span>			return toCommonType(m.typ)
+<a id="L1443"></a><span class="ln">  1443</span>		}
+<a id="L1444"></a><span class="ln">  1444</span>		<span class="comment">// Method on concrete type.</span>
+<a id="L1445"></a><span class="ln">  1445</span>		ut := v.typ.uncommon()
+<a id="L1446"></a><span class="ln">  1446</span>		if ut == nil || i &lt; 0 || i &gt;= len(ut.methods) {
+<a id="L1447"></a><span class="ln">  1447</span>			panic(&#34;reflect: broken Value&#34;)
+<a id="L1448"></a><span class="ln">  1448</span>		}
+<a id="L1449"></a><span class="ln">  1449</span>		m := &amp;ut.methods[i]
+<a id="L1450"></a><span class="ln">  1450</span>		return toCommonType(m.mtyp)
+<a id="L1451"></a><span class="ln">  1451</span>	}
+<a id="L1452"></a><span class="ln">  1452</span>	
+<a id="L1453"></a><span class="ln">  1453</span>	<span class="comment">// Uint returns v&#39;s underlying value, as a uint64.</span>
+<a id="L1454"></a><span class="ln">  1454</span>	<span class="comment">// It panics if v&#39;s Kind is not Uint, Uintptr, Uint8, Uint16, Uint32, or Uint64.</span>
+<a id="L1455"></a><span class="ln">  1455</span>	func (v Value) Uint() uint64 {
+<a id="L1456"></a><span class="ln">  1456</span>		k := v.kind()
+<a id="L1457"></a><span class="ln">  1457</span>		var p unsafe.Pointer
+<a id="L1458"></a><span class="ln">  1458</span>		if v.flag&amp;flagIndir != 0 {
+<a id="L1459"></a><span class="ln">  1459</span>			p = v.val
+<a id="L1460"></a><span class="ln">  1460</span>		} else {
+<a id="L1461"></a><span class="ln">  1461</span>			<span class="comment">// The escape analysis is good enough that &amp;v.val</span>
+<a id="L1462"></a><span class="ln">  1462</span>			<span class="comment">// does not trigger a heap allocation.</span>
+<a id="L1463"></a><span class="ln">  1463</span>			p = unsafe.Pointer(&amp;v.val)
+<a id="L1464"></a><span class="ln">  1464</span>		}
+<a id="L1465"></a><span class="ln">  1465</span>		switch k {
+<a id="L1466"></a><span class="ln">  1466</span>		case Uint:
+<a id="L1467"></a><span class="ln">  1467</span>			return uint64(*(*uint)(p))
+<a id="L1468"></a><span class="ln">  1468</span>		case Uint8:
+<a id="L1469"></a><span class="ln">  1469</span>			return uint64(*(*uint8)(p))
+<a id="L1470"></a><span class="ln">  1470</span>		case Uint16:
+<a id="L1471"></a><span class="ln">  1471</span>			return uint64(*(*uint16)(p))
+<a id="L1472"></a><span class="ln">  1472</span>		case Uint32:
+<a id="L1473"></a><span class="ln">  1473</span>			return uint64(*(*uint32)(p))
+<a id="L1474"></a><span class="ln">  1474</span>		case Uint64:
+<a id="L1475"></a><span class="ln">  1475</span>			return uint64(*(*uint64)(p))
+<a id="L1476"></a><span class="ln">  1476</span>		case Uintptr:
+<a id="L1477"></a><span class="ln">  1477</span>			return uint64(*(*uintptr)(p))
+<a id="L1478"></a><span class="ln">  1478</span>		}
+<a id="L1479"></a><span class="ln">  1479</span>		panic(&amp;ValueError{&#34;reflect.Value.Uint&#34;, k})
+<a id="L1480"></a><span class="ln">  1480</span>	}
+<a id="L1481"></a><span class="ln">  1481</span>	
+<a id="L1482"></a><span class="ln">  1482</span>	<span class="comment">// UnsafeAddr returns a pointer to v&#39;s data.</span>
+<a id="L1483"></a><span class="ln">  1483</span>	<span class="comment">// It is for advanced clients that also import the &#34;unsafe&#34; package.</span>
+<a id="L1484"></a><span class="ln">  1484</span>	<span class="comment">// It panics if v is not addressable.</span>
+<a id="L1485"></a><span class="ln">  1485</span>	func (v Value) UnsafeAddr() uintptr {
+<a id="L1486"></a><span class="ln">  1486</span>		if v.typ == nil {
+<a id="L1487"></a><span class="ln">  1487</span>			panic(&amp;ValueError{&#34;reflect.Value.UnsafeAddr&#34;, Invalid})
+<a id="L1488"></a><span class="ln">  1488</span>		}
+<a id="L1489"></a><span class="ln">  1489</span>		if v.flag&amp;flagAddr == 0 {
+<a id="L1490"></a><span class="ln">  1490</span>			panic(&#34;reflect.Value.UnsafeAddr of unaddressable value&#34;)
+<a id="L1491"></a><span class="ln">  1491</span>		}
+<a id="L1492"></a><span class="ln">  1492</span>		return uintptr(v.val)
+<a id="L1493"></a><span class="ln">  1493</span>	}
+<a id="L1494"></a><span class="ln">  1494</span>	
+<a id="L1495"></a><span class="ln">  1495</span>	<span class="comment">// StringHeader is the runtime representation of a string.</span>
+<a id="L1496"></a><span class="ln">  1496</span>	<span class="comment">// It cannot be used safely or portably.</span>
+<a id="L1497"></a><span class="ln">  1497</span>	type StringHeader struct {
+<a id="L1498"></a><span class="ln">  1498</span>		Data uintptr
+<a id="L1499"></a><span class="ln">  1499</span>		Len  int
+<a id="L1500"></a><span class="ln">  1500</span>	}
+<a id="L1501"></a><span class="ln">  1501</span>	
+<a id="L1502"></a><span class="ln">  1502</span>	<span class="comment">// SliceHeader is the runtime representation of a slice.</span>
+<a id="L1503"></a><span class="ln">  1503</span>	<span class="comment">// It cannot be used safely or portably.</span>
+<a id="L1504"></a><span class="ln">  1504</span>	type SliceHeader struct {
+<a id="L1505"></a><span class="ln">  1505</span>		Data uintptr
+<a id="L1506"></a><span class="ln">  1506</span>		Len  int
+<a id="L1507"></a><span class="ln">  1507</span>		Cap  int
+<a id="L1508"></a><span class="ln">  1508</span>	}
+<a id="L1509"></a><span class="ln">  1509</span>	
+<a id="L1510"></a><span class="ln">  1510</span>	func typesMustMatch(what string, t1, t2 Type) {
+<a id="L1511"></a><span class="ln">  1511</span>		if t1 != t2 {
+<a id="L1512"></a><span class="ln">  1512</span>			panic(what + &#34;: &#34; + t1.String() + &#34; != &#34; + t2.String())
+<a id="L1513"></a><span class="ln">  1513</span>		}
+<a id="L1514"></a><span class="ln">  1514</span>	}
+<a id="L1515"></a><span class="ln">  1515</span>	
+<a id="L1516"></a><span class="ln">  1516</span>	<span class="comment">// grow grows the slice s so that it can hold extra more values, allocating</span>
+<a id="L1517"></a><span class="ln">  1517</span>	<span class="comment">// more capacity if needed. It also returns the old and new slice lengths.</span>
+<a id="L1518"></a><span class="ln">  1518</span>	func grow(s Value, extra int) (Value, int, int) {
+<a id="L1519"></a><span class="ln">  1519</span>		i0 := s.Len()
+<a id="L1520"></a><span class="ln">  1520</span>		i1 := i0 + extra
+<a id="L1521"></a><span class="ln">  1521</span>		if i1 &lt; i0 {
+<a id="L1522"></a><span class="ln">  1522</span>			panic(&#34;reflect.Append: slice overflow&#34;)
+<a id="L1523"></a><span class="ln">  1523</span>		}
+<a id="L1524"></a><span class="ln">  1524</span>		m := s.Cap()
+<a id="L1525"></a><span class="ln">  1525</span>		if i1 &lt;= m {
+<a id="L1526"></a><span class="ln">  1526</span>			return s.Slice(0, i1), i0, i1
+<a id="L1527"></a><span class="ln">  1527</span>		}
+<a id="L1528"></a><span class="ln">  1528</span>		if m == 0 {
+<a id="L1529"></a><span class="ln">  1529</span>			m = extra
+<a id="L1530"></a><span class="ln">  1530</span>		} else {
+<a id="L1531"></a><span class="ln">  1531</span>			for m &lt; i1 {
+<a id="L1532"></a><span class="ln">  1532</span>				if i0 &lt; 1024 {
+<a id="L1533"></a><span class="ln">  1533</span>					m += m
+<a id="L1534"></a><span class="ln">  1534</span>				} else {
+<a id="L1535"></a><span class="ln">  1535</span>					m += m / 4
+<a id="L1536"></a><span class="ln">  1536</span>				}
+<a id="L1537"></a><span class="ln">  1537</span>			}
+<a id="L1538"></a><span class="ln">  1538</span>		}
+<a id="L1539"></a><span class="ln">  1539</span>		t := MakeSlice(s.Type(), i1, m)
+<a id="L1540"></a><span class="ln">  1540</span>		Copy(t, s)
+<a id="L1541"></a><span class="ln">  1541</span>		return t, i0, i1
+<a id="L1542"></a><span class="ln">  1542</span>	}
+<a id="L1543"></a><span class="ln">  1543</span>	
+<a id="L1544"></a><span class="ln">  1544</span>	<span class="comment">// Append appends the values x to a slice s and returns the resulting slice.</span>
+<a id="L1545"></a><span class="ln">  1545</span>	<span class="comment">// As in Go, each x&#39;s value must be assignable to the slice&#39;s element type.</span>
+<a id="L1546"></a><span class="ln">  1546</span>	func Append(s Value, x ...Value) Value {
+<a id="L1547"></a><span class="ln">  1547</span>		s.mustBe(Slice)
+<a id="L1548"></a><span class="ln">  1548</span>		s, i0, i1 := grow(s, len(x))
+<a id="L1549"></a><span class="ln">  1549</span>		for i, j := i0, 0; i &lt; i1; i, j = i+1, j+1 {
+<a id="L1550"></a><span class="ln">  1550</span>			s.Index(i).Set(x[j])
+<a id="L1551"></a><span class="ln">  1551</span>		}
+<a id="L1552"></a><span class="ln">  1552</span>		return s
+<a id="L1553"></a><span class="ln">  1553</span>	}
+<a id="L1554"></a><span class="ln">  1554</span>	
+<a id="L1555"></a><span class="ln">  1555</span>	<span class="comment">// AppendSlice appends a slice t to a slice s and returns the resulting slice.</span>
+<a id="L1556"></a><span class="ln">  1556</span>	<span class="comment">// The slices s and t must have the same element type.</span>
+<a id="L1557"></a><span class="ln">  1557</span>	func AppendSlice(s, t Value) Value {
+<a id="L1558"></a><span class="ln">  1558</span>		s.mustBe(Slice)
+<a id="L1559"></a><span class="ln">  1559</span>		t.mustBe(Slice)
+<a id="L1560"></a><span class="ln">  1560</span>		typesMustMatch(&#34;reflect.AppendSlice&#34;, s.Type().Elem(), t.Type().Elem())
+<a id="L1561"></a><span class="ln">  1561</span>		s, i0, i1 := grow(s, t.Len())
+<a id="L1562"></a><span class="ln">  1562</span>		Copy(s.Slice(i0, i1), t)
+<a id="L1563"></a><span class="ln">  1563</span>		return s
+<a id="L1564"></a><span class="ln">  1564</span>	}
+<a id="L1565"></a><span class="ln">  1565</span>	
+<a id="L1566"></a><span class="ln">  1566</span>	<span class="comment">// Copy copies the contents of src into dst until either</span>
+<a id="L1567"></a><span class="ln">  1567</span>	<span class="comment">// dst has been filled or src has been exhausted.</span>
+<a id="L1568"></a><span class="ln">  1568</span>	<span class="comment">// It returns the number of elements copied.</span>
+<a id="L1569"></a><span class="ln">  1569</span>	<span class="comment">// Dst and src each must have kind Slice or Array, and</span>
+<a id="L1570"></a><span class="ln">  1570</span>	<span class="comment">// dst and src must have the same element type.</span>
+<a id="L1571"></a><span class="ln">  1571</span>	func Copy(dst, src Value) int {
+<a id="L1572"></a><span class="ln">  1572</span>		dk := dst.kind()
+<a id="L1573"></a><span class="ln">  1573</span>		if dk != Array &amp;&amp; dk != Slice {
+<a id="L1574"></a><span class="ln">  1574</span>			panic(&amp;ValueError{&#34;reflect.Copy&#34;, dk})
+<a id="L1575"></a><span class="ln">  1575</span>		}
+<a id="L1576"></a><span class="ln">  1576</span>		if dk == Array {
+<a id="L1577"></a><span class="ln">  1577</span>			dst.mustBeAssignable()
+<a id="L1578"></a><span class="ln">  1578</span>		}
+<a id="L1579"></a><span class="ln">  1579</span>		dst.mustBeExported()
+<a id="L1580"></a><span class="ln">  1580</span>	
+<a id="L1581"></a><span class="ln">  1581</span>		sk := src.kind()
+<a id="L1582"></a><span class="ln">  1582</span>		if sk != Array &amp;&amp; sk != Slice {
+<a id="L1583"></a><span class="ln">  1583</span>			panic(&amp;ValueError{&#34;reflect.Copy&#34;, sk})
+<a id="L1584"></a><span class="ln">  1584</span>		}
+<a id="L1585"></a><span class="ln">  1585</span>		src.mustBeExported()
+<a id="L1586"></a><span class="ln">  1586</span>	
+<a id="L1587"></a><span class="ln">  1587</span>		de := dst.typ.Elem()
+<a id="L1588"></a><span class="ln">  1588</span>		se := src.typ.Elem()
+<a id="L1589"></a><span class="ln">  1589</span>		typesMustMatch(&#34;reflect.Copy&#34;, de, se)
+<a id="L1590"></a><span class="ln">  1590</span>	
+<a id="L1591"></a><span class="ln">  1591</span>		n := dst.Len()
+<a id="L1592"></a><span class="ln">  1592</span>		if sn := src.Len(); n &gt; sn {
+<a id="L1593"></a><span class="ln">  1593</span>			n = sn
+<a id="L1594"></a><span class="ln">  1594</span>		}
+<a id="L1595"></a><span class="ln">  1595</span>	
+<a id="L1596"></a><span class="ln">  1596</span>		<span class="comment">// If sk is an in-line array, cannot take its address.</span>
+<a id="L1597"></a><span class="ln">  1597</span>		<span class="comment">// Instead, copy element by element.</span>
+<a id="L1598"></a><span class="ln">  1598</span>		if src.flag&amp;flagIndir == 0 {
+<a id="L1599"></a><span class="ln">  1599</span>			for i := 0; i &lt; n; i++ {
+<a id="L1600"></a><span class="ln">  1600</span>				dst.Index(i).Set(src.Index(i))
+<a id="L1601"></a><span class="ln">  1601</span>			}
+<a id="L1602"></a><span class="ln">  1602</span>			return n
+<a id="L1603"></a><span class="ln">  1603</span>		}
+<a id="L1604"></a><span class="ln">  1604</span>	
+<a id="L1605"></a><span class="ln">  1605</span>		<span class="comment">// Copy via memmove.</span>
+<a id="L1606"></a><span class="ln">  1606</span>		var da, sa unsafe.Pointer
+<a id="L1607"></a><span class="ln">  1607</span>		if dk == Array {
+<a id="L1608"></a><span class="ln">  1608</span>			da = dst.val
+<a id="L1609"></a><span class="ln">  1609</span>		} else {
+<a id="L1610"></a><span class="ln">  1610</span>			da = unsafe.Pointer((*SliceHeader)(dst.val).Data)
+<a id="L1611"></a><span class="ln">  1611</span>		}
+<a id="L1612"></a><span class="ln">  1612</span>		if sk == Array {
+<a id="L1613"></a><span class="ln">  1613</span>			sa = src.val
+<a id="L1614"></a><span class="ln">  1614</span>		} else {
+<a id="L1615"></a><span class="ln">  1615</span>			sa = unsafe.Pointer((*SliceHeader)(src.val).Data)
+<a id="L1616"></a><span class="ln">  1616</span>		}
+<a id="L1617"></a><span class="ln">  1617</span>		memmove(da, sa, uintptr(n)*de.Size())
+<a id="L1618"></a><span class="ln">  1618</span>		return n
+<a id="L1619"></a><span class="ln">  1619</span>	}
+<a id="L1620"></a><span class="ln">  1620</span>	
+<a id="L1621"></a><span class="ln">  1621</span>	<span class="comment">/*
+</span><a id="L1622"></a><span class="ln">  1622</span>	<span class="comment"> * constructors
+</span><a id="L1623"></a><span class="ln">  1623</span>	<span class="comment"> */</span>
+<a id="L1624"></a><span class="ln">  1624</span>	
+<a id="L1625"></a><span class="ln">  1625</span>	<span class="comment">// implemented in package runtime</span>
+<a id="L1626"></a><span class="ln">  1626</span>	func unsafe_New(Type) unsafe.Pointer
+<a id="L1627"></a><span class="ln">  1627</span>	func unsafe_NewArray(Type, int) unsafe.Pointer
+<a id="L1628"></a><span class="ln">  1628</span>	
+<a id="L1629"></a><span class="ln">  1629</span>	<span class="comment">// MakeSlice creates a new zero-initialized slice value</span>
+<a id="L1630"></a><span class="ln">  1630</span>	<span class="comment">// for the specified slice type, length, and capacity.</span>
+<a id="L1631"></a><span class="ln">  1631</span>	func MakeSlice(typ Type, len, cap int) Value {
+<a id="L1632"></a><span class="ln">  1632</span>		if typ.Kind() != Slice {
+<a id="L1633"></a><span class="ln">  1633</span>			panic(&#34;reflect.MakeSlice of non-slice type&#34;)
+<a id="L1634"></a><span class="ln">  1634</span>		}
+<a id="L1635"></a><span class="ln">  1635</span>		if len &lt; 0 {
+<a id="L1636"></a><span class="ln">  1636</span>			panic(&#34;reflect.MakeSlice: negative len&#34;)
+<a id="L1637"></a><span class="ln">  1637</span>		}
+<a id="L1638"></a><span class="ln">  1638</span>		if cap &lt; 0 {
+<a id="L1639"></a><span class="ln">  1639</span>			panic(&#34;reflect.MakeSlice: negative cap&#34;)
+<a id="L1640"></a><span class="ln">  1640</span>		}
+<a id="L1641"></a><span class="ln">  1641</span>		if len &gt; cap {
+<a id="L1642"></a><span class="ln">  1642</span>			panic(&#34;reflect.MakeSlice: len &gt; cap&#34;)
+<a id="L1643"></a><span class="ln">  1643</span>		}
+<a id="L1644"></a><span class="ln">  1644</span>	
+<a id="L1645"></a><span class="ln">  1645</span>		<span class="comment">// Declare slice so that gc can see the base pointer in it.</span>
+<a id="L1646"></a><span class="ln">  1646</span>		var x []byte
+<a id="L1647"></a><span class="ln">  1647</span>	
+<a id="L1648"></a><span class="ln">  1648</span>		<span class="comment">// Reinterpret as *SliceHeader to edit.</span>
+<a id="L1649"></a><span class="ln">  1649</span>		s := (*SliceHeader)(unsafe.Pointer(&amp;x))
+<a id="L1650"></a><span class="ln">  1650</span>		s.Data = uintptr(unsafe_NewArray(typ.Elem(), cap))
+<a id="L1651"></a><span class="ln">  1651</span>		s.Len = len
+<a id="L1652"></a><span class="ln">  1652</span>		s.Cap = cap
+<a id="L1653"></a><span class="ln">  1653</span>	
+<a id="L1654"></a><span class="ln">  1654</span>		return Value{typ.common(), unsafe.Pointer(&amp;x), flagIndir | flag(Slice)&lt;&lt;flagKindShift}
+<a id="L1655"></a><span class="ln">  1655</span>	}
+<a id="L1656"></a><span class="ln">  1656</span>	
+<a id="L1657"></a><span class="ln">  1657</span>	<span class="comment">// MakeChan creates a new channel with the specified type and buffer size.</span>
+<a id="L1658"></a><span class="ln">  1658</span>	func MakeChan(typ Type, buffer int) Value {
+<a id="L1659"></a><span class="ln">  1659</span>		if typ.Kind() != Chan {
+<a id="L1660"></a><span class="ln">  1660</span>			panic(&#34;reflect.MakeChan of non-chan type&#34;)
+<a id="L1661"></a><span class="ln">  1661</span>		}
+<a id="L1662"></a><span class="ln">  1662</span>		if buffer &lt; 0 {
+<a id="L1663"></a><span class="ln">  1663</span>			panic(&#34;reflect.MakeChan: negative buffer size&#34;)
+<a id="L1664"></a><span class="ln">  1664</span>		}
+<a id="L1665"></a><span class="ln">  1665</span>		if typ.ChanDir() != BothDir {
+<a id="L1666"></a><span class="ln">  1666</span>			panic(&#34;reflect.MakeChan: unidirectional channel type&#34;)
+<a id="L1667"></a><span class="ln">  1667</span>		}
+<a id="L1668"></a><span class="ln">  1668</span>		ch := makechan(typ.runtimeType(), uint32(buffer))
+<a id="L1669"></a><span class="ln">  1669</span>		return Value{typ.common(), unsafe.Pointer(ch), flag(Chan) &lt;&lt; flagKindShift}
+<a id="L1670"></a><span class="ln">  1670</span>	}
+<a id="L1671"></a><span class="ln">  1671</span>	
+<a id="L1672"></a><span class="ln">  1672</span>	<span class="comment">// MakeMap creates a new map of the specified type.</span>
+<a id="L1673"></a><span class="ln">  1673</span>	func MakeMap(typ Type) Value {
+<a id="L1674"></a><span class="ln">  1674</span>		if typ.Kind() != Map {
+<a id="L1675"></a><span class="ln">  1675</span>			panic(&#34;reflect.MakeMap of non-map type&#34;)
+<a id="L1676"></a><span class="ln">  1676</span>		}
+<a id="L1677"></a><span class="ln">  1677</span>		m := makemap(typ.runtimeType())
+<a id="L1678"></a><span class="ln">  1678</span>		return Value{typ.common(), unsafe.Pointer(m), flag(Map) &lt;&lt; flagKindShift}
+<a id="L1679"></a><span class="ln">  1679</span>	}
+<a id="L1680"></a><span class="ln">  1680</span>	
+<a id="L1681"></a><span class="ln">  1681</span>	<span class="comment">// Indirect returns the value that v points to.</span>
+<a id="L1682"></a><span class="ln">  1682</span>	<span class="comment">// If v is a nil pointer, Indirect returns a zero Value.</span>
+<a id="L1683"></a><span class="ln">  1683</span>	<span class="comment">// If v is not a pointer, Indirect returns v.</span>
+<a id="L1684"></a><span class="ln">  1684</span>	func Indirect(v Value) Value {
+<a id="L1685"></a><span class="ln">  1685</span>		if v.Kind() != Ptr {
+<a id="L1686"></a><span class="ln">  1686</span>			return v
+<a id="L1687"></a><span class="ln">  1687</span>		}
+<a id="L1688"></a><span class="ln">  1688</span>		return v.Elem()
+<a id="L1689"></a><span class="ln">  1689</span>	}
+<a id="L1690"></a><span class="ln">  1690</span>	
+<a id="L1691"></a><span class="ln">  1691</span>	<span class="comment">// ValueOf returns a new Value initialized to the concrete value</span>
+<a id="L1692"></a><span class="ln">  1692</span>	<span class="comment">// stored in the interface i.  ValueOf(nil) returns the zero Value.</span>
+<a id="L1693"></a><span class="ln">  1693</span>	func ValueOf(i interface{}) Value {
+<a id="L1694"></a><span class="ln">  1694</span>		if i == nil {
+<a id="L1695"></a><span class="ln">  1695</span>			return Value{}
+<a id="L1696"></a><span class="ln">  1696</span>		}
+<a id="L1697"></a><span class="ln">  1697</span>	
+<a id="L1698"></a><span class="ln">  1698</span>		<span class="comment">// TODO(rsc): Eliminate this terrible hack.</span>
+<a id="L1699"></a><span class="ln">  1699</span>		<span class="comment">// In the call to packValue, eface.typ doesn&#39;t escape,</span>
+<a id="L1700"></a><span class="ln">  1700</span>		<span class="comment">// and eface.word is an integer.  So it looks like</span>
+<a id="L1701"></a><span class="ln">  1701</span>		<span class="comment">// i (= eface) doesn&#39;t escape.  But really it does,</span>
+<a id="L1702"></a><span class="ln">  1702</span>		<span class="comment">// because eface.word is actually a pointer.</span>
+<a id="L1703"></a><span class="ln">  1703</span>		escapes(i)
+<a id="L1704"></a><span class="ln">  1704</span>	
+<a id="L1705"></a><span class="ln">  1705</span>		<span class="comment">// For an interface value with the noAddr bit set,</span>
+<a id="L1706"></a><span class="ln">  1706</span>		<span class="comment">// the representation is identical to an empty interface.</span>
+<a id="L1707"></a><span class="ln">  1707</span>		eface := *(*emptyInterface)(unsafe.Pointer(&amp;i))
+<a id="L1708"></a><span class="ln">  1708</span>		typ := toCommonType(eface.typ)
+<a id="L1709"></a><span class="ln">  1709</span>		fl := flag(typ.Kind()) &lt;&lt; flagKindShift
+<a id="L1710"></a><span class="ln">  1710</span>		if typ.size &gt; ptrSize {
+<a id="L1711"></a><span class="ln">  1711</span>			fl |= flagIndir
+<a id="L1712"></a><span class="ln">  1712</span>		}
+<a id="L1713"></a><span class="ln">  1713</span>		return Value{typ, unsafe.Pointer(eface.word), fl}
+<a id="L1714"></a><span class="ln">  1714</span>	}
+<a id="L1715"></a><span class="ln">  1715</span>	
+<a id="L1716"></a><span class="ln">  1716</span>	<span class="comment">// Zero returns a Value representing a zero value for the specified type.</span>
+<a id="L1717"></a><span class="ln">  1717</span>	<span class="comment">// The result is different from the zero value of the Value struct,</span>
+<a id="L1718"></a><span class="ln">  1718</span>	<span class="comment">// which represents no value at all.</span>
+<a id="L1719"></a><span class="ln">  1719</span>	<span class="comment">// For example, Zero(TypeOf(42)) returns a Value with Kind Int and value 0.</span>
+<a id="L1720"></a><span class="ln">  1720</span>	func Zero(typ Type) Value {
+<a id="L1721"></a><span class="ln">  1721</span>		if typ == nil {
+<a id="L1722"></a><span class="ln">  1722</span>			panic(&#34;reflect: Zero(nil)&#34;)
+<a id="L1723"></a><span class="ln">  1723</span>		}
+<a id="L1724"></a><span class="ln">  1724</span>		t := typ.common()
+<a id="L1725"></a><span class="ln">  1725</span>		fl := flag(t.Kind()) &lt;&lt; flagKindShift
+<a id="L1726"></a><span class="ln">  1726</span>		if t.size &lt;= ptrSize {
+<a id="L1727"></a><span class="ln">  1727</span>			return Value{t, nil, fl}
+<a id="L1728"></a><span class="ln">  1728</span>		}
+<a id="L1729"></a><span class="ln">  1729</span>		return Value{t, unsafe_New(typ), fl | flagIndir}
+<a id="L1730"></a><span class="ln">  1730</span>	}
+<a id="L1731"></a><span class="ln">  1731</span>	
+<a id="L1732"></a><span class="ln">  1732</span>	<span class="comment">// New returns a Value representing a pointer to a new zero value</span>
+<a id="L1733"></a><span class="ln">  1733</span>	<span class="comment">// for the specified type.  That is, the returned Value&#39;s Type is PtrTo(t).</span>
+<a id="L1734"></a><span class="ln">  1734</span>	func New(typ Type) Value {
+<a id="L1735"></a><span class="ln">  1735</span>		if typ == nil {
+<a id="L1736"></a><span class="ln">  1736</span>			panic(&#34;reflect: New(nil)&#34;)
+<a id="L1737"></a><span class="ln">  1737</span>		}
+<a id="L1738"></a><span class="ln">  1738</span>		ptr := unsafe_New(typ)
+<a id="L1739"></a><span class="ln">  1739</span>		fl := flag(Ptr) &lt;&lt; flagKindShift
+<a id="L1740"></a><span class="ln">  1740</span>		return Value{typ.common().ptrTo(), ptr, fl}
+<a id="L1741"></a><span class="ln">  1741</span>	}
+<a id="L1742"></a><span class="ln">  1742</span>	
+<a id="L1743"></a><span class="ln">  1743</span>	<span class="comment">// NewAt returns a Value representing a pointer to a value of the</span>
+<a id="L1744"></a><span class="ln">  1744</span>	<span class="comment">// specified type, using p as that pointer.</span>
+<a id="L1745"></a><span class="ln">  1745</span>	func NewAt(typ Type, p unsafe.Pointer) Value {
+<a id="L1746"></a><span class="ln">  1746</span>		fl := flag(Ptr) &lt;&lt; flagKindShift
+<a id="L1747"></a><span class="ln">  1747</span>		return Value{typ.common().ptrTo(), p, fl}
+<a id="L1748"></a><span class="ln">  1748</span>	}
+<a id="L1749"></a><span class="ln">  1749</span>	
+<a id="L1750"></a><span class="ln">  1750</span>	<span class="comment">// assignTo returns a value v that can be assigned directly to typ.</span>
+<a id="L1751"></a><span class="ln">  1751</span>	<span class="comment">// It panics if v is not assignable to typ.</span>
+<a id="L1752"></a><span class="ln">  1752</span>	<span class="comment">// For a conversion to an interface type, target is a suggested scratch space to use.</span>
+<a id="L1753"></a><span class="ln">  1753</span>	func (v Value) assignTo(context string, dst *commonType, target *interface{}) Value {
+<a id="L1754"></a><span class="ln">  1754</span>		if v.flag&amp;flagMethod != 0 {
+<a id="L1755"></a><span class="ln">  1755</span>			panic(context + &#34;: cannot assign method value to type &#34; + dst.String())
+<a id="L1756"></a><span class="ln">  1756</span>		}
+<a id="L1757"></a><span class="ln">  1757</span>	
+<a id="L1758"></a><span class="ln">  1758</span>		switch {
+<a id="L1759"></a><span class="ln">  1759</span>		case directlyAssignable(dst, v.typ):
+<a id="L1760"></a><span class="ln">  1760</span>			<span class="comment">// Overwrite type so that they match.</span>
+<a id="L1761"></a><span class="ln">  1761</span>			<span class="comment">// Same memory layout, so no harm done.</span>
+<a id="L1762"></a><span class="ln">  1762</span>			v.typ = dst
+<a id="L1763"></a><span class="ln">  1763</span>			fl := v.flag &amp; (flagRO | flagAddr | flagIndir)
+<a id="L1764"></a><span class="ln">  1764</span>			fl |= flag(dst.Kind()) &lt;&lt; flagKindShift
+<a id="L1765"></a><span class="ln">  1765</span>			return Value{dst, v.val, fl}
+<a id="L1766"></a><span class="ln">  1766</span>	
+<a id="L1767"></a><span class="ln">  1767</span>		case implements(dst, v.typ):
+<a id="L1768"></a><span class="ln">  1768</span>			if target == nil {
+<a id="L1769"></a><span class="ln">  1769</span>				target = new(interface{})
+<a id="L1770"></a><span class="ln">  1770</span>			}
+<a id="L1771"></a><span class="ln">  1771</span>			x := valueInterface(v, false)
+<a id="L1772"></a><span class="ln">  1772</span>			if dst.NumMethod() == 0 {
+<a id="L1773"></a><span class="ln">  1773</span>				*target = x
+<a id="L1774"></a><span class="ln">  1774</span>			} else {
+<a id="L1775"></a><span class="ln">  1775</span>				ifaceE2I(dst.runtimeType(), x, unsafe.Pointer(target))
+<a id="L1776"></a><span class="ln">  1776</span>			}
+<a id="L1777"></a><span class="ln">  1777</span>			return Value{dst, unsafe.Pointer(target), flagIndir | flag(Interface)&lt;&lt;flagKindShift}
+<a id="L1778"></a><span class="ln">  1778</span>		}
+<a id="L1779"></a><span class="ln">  1779</span>	
+<a id="L1780"></a><span class="ln">  1780</span>		<span class="comment">// Failed.</span>
+<a id="L1781"></a><span class="ln">  1781</span>		panic(context + &#34;: value of type &#34; + v.typ.String() + &#34; is not assignable to type &#34; + dst.String())
+<a id="L1782"></a><span class="ln">  1782</span>	}
+<a id="L1783"></a><span class="ln">  1783</span>	
+<a id="L1784"></a><span class="ln">  1784</span>	<span class="comment">// implemented in ../pkg/runtime</span>
+<a id="L1785"></a><span class="ln">  1785</span>	func chancap(ch iword) int32
+<a id="L1786"></a><span class="ln">  1786</span>	func chanclose(ch iword)
+<a id="L1787"></a><span class="ln">  1787</span>	func chanlen(ch iword) int32
+<a id="L1788"></a><span class="ln">  1788</span>	func chanrecv(t *runtimeType, ch iword, nb bool) (val iword, selected, received bool)
+<a id="L1789"></a><span class="ln">  1789</span>	func chansend(t *runtimeType, ch iword, val iword, nb bool) bool
+<a id="L1790"></a><span class="ln">  1790</span>	
+<a id="L1791"></a><span class="ln">  1791</span>	func makechan(typ *runtimeType, size uint32) (ch iword)
+<a id="L1792"></a><span class="ln">  1792</span>	func makemap(t *runtimeType) (m iword)
+<a id="L1793"></a><span class="ln">  1793</span>	func mapaccess(t *runtimeType, m iword, key iword) (val iword, ok bool)
+<a id="L1794"></a><span class="ln">  1794</span>	func mapassign(t *runtimeType, m iword, key, val iword, ok bool)
+<a id="L1795"></a><span class="ln">  1795</span>	func mapiterinit(t *runtimeType, m iword) *byte
+<a id="L1796"></a><span class="ln">  1796</span>	func mapiterkey(it *byte) (key iword, ok bool)
+<a id="L1797"></a><span class="ln">  1797</span>	func mapiternext(it *byte)
+<a id="L1798"></a><span class="ln">  1798</span>	func maplen(m iword) int32
+<a id="L1799"></a><span class="ln">  1799</span>	
+<a id="L1800"></a><span class="ln">  1800</span>	func call(fn, arg unsafe.Pointer, n uint32)
+<a id="L1801"></a><span class="ln">  1801</span>	func ifaceE2I(t *runtimeType, src interface{}, dst unsafe.Pointer)
+<a id="L1802"></a><span class="ln">  1802</span>	
+<a id="L1803"></a><span class="ln">  1803</span>	<span class="comment">// Dummy annotation marking that the value x escapes,</span>
+<a id="L1804"></a><span class="ln">  1804</span>	<span class="comment">// for use in cases where the reflect code is so clever that</span>
+<a id="L1805"></a><span class="ln">  1805</span>	<span class="comment">// the compiler cannot follow.</span>
+<a id="L1806"></a><span class="ln">  1806</span>	func escapes(x interface{}) {
+<a id="L1807"></a><span class="ln">  1807</span>		if dummy.b {
+<a id="L1808"></a><span class="ln">  1808</span>			dummy.x = x
+<a id="L1809"></a><span class="ln">  1809</span>		}
+<a id="L1810"></a><span class="ln">  1810</span>	}
+<a id="L1811"></a><span class="ln">  1811</span>	
+<a id="L1812"></a><span class="ln">  1812</span>	var dummy struct {
+<a id="L1813"></a><span class="ln">  1813</span>		b bool
+<a id="L1814"></a><span class="ln">  1814</span>		x interface{}
+<a id="L1815"></a><span class="ln">  1815</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

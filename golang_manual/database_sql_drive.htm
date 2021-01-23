@@ -1,0 +1,794 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>driver - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="../../doc/style.css">
+<script type="text/javascript" src="../../doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Package driver</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<!--
+	Copyright 2009 The Go Authors. All rights reserved.
+	Use of this source code is governed by a BSD-style
+	license that can be found in the LICENSE file.
+-->
+
+	
+		<div id="short-nav">
+			<dl>
+			<dd><code>import "database/sql/driver"</code></dd>
+			</dl>
+			<dl>
+			<dd><a href="#overview" class="overviewLink">Overview</a></dd>
+			<dd><a href="#index">Index</a></dd>
+			
+			
+			</dl>
+		</div>
+		<!-- The package's Name is printed as title by the top-level template -->
+		<div id="overview" class="toggleVisible">
+			<div class="collapsed">
+				<h2 class="toggleButton" title="Click to show Overview section">Overview ?</h2>
+			</div>
+			<div class="expanded">
+				<h2 class="toggleButton" title="Click to hide Overview section">Overview ?</h2>
+				<p>
+Package driver defines interfaces to be implemented by database
+drivers as used by package sql.
+</p>
+<p>
+Most code should use package sql.
+</p>
+
+			</div>
+		</div>
+		
+	
+		<h2 id="index">Index</h2>
+		<!-- Table of contents for API; must be named manual-nav to turn off auto nav. -->
+		<div id="manual-nav">
+			<dl>
+			
+			
+				<dd><a href="#variables">Variables</a></dd>
+			
+			
+				
+				<dd><a href="#IsScanValue">func IsScanValue(v interface{}) bool</a></dd>
+			
+				
+				<dd><a href="#IsValue">func IsValue(v interface{}) bool</a></dd>
+			
+			
+				
+				<dd><a href="#ColumnConverter">type ColumnConverter</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Conn">type Conn</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Driver">type Driver</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Execer">type Execer</a></dd>
+				
+				
+			
+				
+				<dd><a href="#NotNull">type NotNull</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NotNull.ConvertValue">func (n NotNull) ConvertValue(v interface{}) (Value, error)</a></dd>
+				
+			
+				
+				<dd><a href="#Null">type Null</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Null.ConvertValue">func (n Null) ConvertValue(v interface{}) (Value, error)</a></dd>
+				
+			
+				
+				<dd><a href="#Result">type Result</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Rows">type Rows</a></dd>
+				
+				
+			
+				
+				<dd><a href="#RowsAffected">type RowsAffected</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RowsAffected.LastInsertId">func (RowsAffected) LastInsertId() (int64, error)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RowsAffected.RowsAffected">func (v RowsAffected) RowsAffected() (int64, error)</a></dd>
+				
+			
+				
+				<dd><a href="#Stmt">type Stmt</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Tx">type Tx</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Value">type Value</a></dd>
+				
+				
+			
+				
+				<dd><a href="#ValueConverter">type ValueConverter</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Valuer">type Valuer</a></dd>
+				
+				
+			
+			
+		</dl>
+
+		
+
+		
+			<h4>Package files</h4>
+			<p>
+			<span style="font-size:90%">
+			
+				<a href="src/pkg/database/sql/driver/driver.htm">driver.go</a>
+			
+				<a href="src/pkg/database/sql/driver/types.htm">types.go</a>
+			
+			</span>
+			</p>
+		
+	
+		
+		
+			<h2 id="variables">Variables</h2>
+			
+				<pre>var Bool boolType</pre>
+				<p>
+Bool is a ValueConverter that converts input values to bools.
+</p>
+<p>
+The conversion rules are:
+</p>
+<pre>- booleans are returned unchanged
+- for integer types,
+     1 is true
+     0 is false,
+     other integers are an error
+- for strings and []byte, same rules as strconv.ParseBool
+- all other types are an error
+</pre>
+
+			
+				<pre>var DefaultParameterConverter defaultConverter</pre>
+				<p>
+DefaultParameterConverter is the default implementation of
+ValueConverter that&#39;s used when a Stmt doesn&#39;t implement
+ColumnConverter.
+</p>
+<p>
+DefaultParameterConverter returns the given value directly if
+IsValue(value).  Otherwise integer type are converted to
+int64, floats to float64, and strings to []byte.  Other types are
+an error.
+</p>
+
+			
+				<pre>var ErrBadConn = errors.New(&#34;driver: bad connection&#34;)</pre>
+				<p>
+ErrBadConn should be returned by a driver to signal to the sql
+package that a driver.Conn is in a bad state (such as the server
+having earlier closed the connection) and the sql package should
+retry on a new connection.
+</p>
+<p>
+To prevent duplicate operations, ErrBadConn should NOT be returned
+if there&#39;s a possibility that the database server might have
+performed the operation. Even if the server sends back an error,
+you shouldn&#39;t return ErrBadConn.
+</p>
+
+			
+				<pre>var ErrSkip = errors.New(&#34;driver: skip fast-path; continue as if unimplemented&#34;)</pre>
+				<p>
+ErrSkip may be returned by some optional interfaces&#39; methods to
+indicate at runtime that the fast path is unavailable and the sql
+package should continue as if the optional interface was not
+implemented. ErrSkip is only supported where explicitly
+documented.
+</p>
+
+			
+				<pre>var Int32 int32Type</pre>
+				<p>
+Int32 is a ValueConverter that converts input values to int64,
+respecting the limits of an int32 value.
+</p>
+
+			
+				<pre>var ResultNoRows noRows</pre>
+				<p>
+ResultNoRows is a pre-defined Result for drivers to return when a DDL
+command (such as a CREATE TABLE) succeeds. It returns an error for both
+LastInsertId and RowsAffected.
+</p>
+
+			
+				<pre>var String stringType</pre>
+				<p>
+String is a ValueConverter that converts its input to a string.
+If the value is already a string or []byte, it&#39;s unchanged.
+If the value is of another type, conversion to string is done
+with fmt.Sprintf(&#34;%v&#34;, v).
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="IsScanValue">func <a href="src/pkg/database/sql/driver/types.htm#L178">IsScanValue</a></h2>
+			<pre>func IsScanValue(v interface{}) bool</pre>
+			<p>
+IsScanValue reports whether v is a valid Value scan type.
+Unlike IsValue, IsScanValue does not permit the string type.
+</p>
+
+			
+		
+			
+			
+			<h2 id="IsValue">func <a href="src/pkg/database/sql/driver/types.htm#L166">IsValue</a></h2>
+			<pre>func IsValue(v interface{}) bool</pre>
+			<p>
+IsValue reports whether v is a valid Value parameter type.
+Unlike IsScanValue, IsValue permits the string type.
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="ColumnConverter">type <a href="src/pkg/database/sql/driver/driver.htm#L139">ColumnConverter</a></h2>
+			<pre>type ColumnConverter interface {
+    <span class="comment">// ColumnConverter returns a ValueConverter for the provided</span>
+    <span class="comment">// column index.  If the type of a specific column isn&#39;t known</span>
+    <span class="comment">// or shouldn&#39;t be handled specially, DefaultValueConverter</span>
+    <span class="comment">// can be returned.</span>
+    ColumnConverter(idx int) ValueConverter
+}</pre>
+			<p>
+ColumnConverter may be optionally implemented by Stmt if the
+the statement is aware of its own columns&#39; types and can
+convert from any type to a driver Value.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Conn">type <a href="src/pkg/database/sql/driver/driver.htm#L62">Conn</a></h2>
+			<pre>type Conn interface {
+    <span class="comment">// Prepare returns a prepared statement, bound to this connection.</span>
+    Prepare(query string) (Stmt, error)
+
+    <span class="comment">// Close invalidates and potentially stops any current</span>
+    <span class="comment">// prepared statements and transactions, marking this</span>
+    <span class="comment">// connection as no longer in use.</span>
+    <span class="comment">//</span>
+    <span class="comment">// Because the sql package maintains a free pool of</span>
+    <span class="comment">// connections and only calls Close when there&#39;s a surplus of</span>
+    <span class="comment">// idle connections, it shouldn&#39;t be necessary for drivers to</span>
+    <span class="comment">// do their own connection caching.</span>
+    Close() error
+
+    <span class="comment">// Begin starts and returns a new transaction.</span>
+    Begin() (Tx, error)
+}</pre>
+			<p>
+Conn is a connection to a database. It is not used concurrently
+by multiple goroutines.
+</p>
+<p>
+Conn is assumed to be stateful.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Driver">type <a href="src/pkg/database/sql/driver/driver.htm#L16">Driver</a></h2>
+			<pre>type Driver interface {
+    <span class="comment">// Open returns a new connection to the database.</span>
+    <span class="comment">// The name is a string in a driver-specific format.</span>
+    <span class="comment">//</span>
+    <span class="comment">// Open may return a cached connection (one previously</span>
+    <span class="comment">// closed), but doing so is unnecessary; the sql package</span>
+    <span class="comment">// maintains a pool of idle connections for efficient re-use.</span>
+    <span class="comment">//</span>
+    <span class="comment">// The returned connection is only used by one goroutine at a</span>
+    <span class="comment">// time.</span>
+    Open(name string) (Conn, error)
+}</pre>
+			<p>
+Driver is the interface that must be implemented by a database
+driver.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Execer">type <a href="src/pkg/database/sql/driver/driver.htm#L54">Execer</a></h2>
+			<pre>type Execer interface {
+    Exec(query string, args []Value) (Result, error)
+}</pre>
+			<p>
+Execer is an optional interface that may be implemented by a Conn.
+</p>
+<p>
+If a Conn does not implement Execer, the db package&#39;s DB.Exec will
+first prepare a query, execute the statement, and then close the
+statement.
+</p>
+<p>
+Exec may return ErrSkip.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="NotNull">type <a href="src/pkg/database/sql/driver/types.htm#L153">NotNull</a></h2>
+			<pre>type NotNull struct {
+    Converter ValueConverter
+}</pre>
+			<p>
+NotNull is a type that implements ValueConverter by disallowing nil
+values but otherwise delegating to another ValueConverter.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NotNull.ConvertValue">func (NotNull) <a href="src/pkg/database/sql/driver/types.htm#L157">ConvertValue</a></h3>
+				<pre>func (n NotNull) ConvertValue(v interface{}) (Value, error)</pre>
+				
+				
+				
+			
+		
+			
+			
+			<h2 id="Null">type <a href="src/pkg/database/sql/driver/types.htm#L140">Null</a></h2>
+			<pre>type Null struct {
+    Converter ValueConverter
+}</pre>
+			<p>
+Null is a type that implements ValueConverter by allowing nil
+values but otherwise delegating to another ValueConverter.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="Null.ConvertValue">func (Null) <a href="src/pkg/database/sql/driver/types.htm#L144">ConvertValue</a></h3>
+				<pre>func (n Null) ConvertValue(v interface{}) (Value, error)</pre>
+				
+				
+				
+			
+		
+			
+			
+			<h2 id="Result">type <a href="src/pkg/database/sql/driver/driver.htm#L81">Result</a></h2>
+			<pre>type Result interface {
+    <span class="comment">// LastInsertId returns the database&#39;s auto-generated ID</span>
+    <span class="comment">// after, for example, an INSERT into a table with primary</span>
+    <span class="comment">// key.</span>
+    LastInsertId() (int64, error)
+
+    <span class="comment">// RowsAffected returns the number of rows affected by the</span>
+    <span class="comment">// query.</span>
+    RowsAffected() (int64, error)
+}</pre>
+			<p>
+Result is the result of a query execution.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Rows">type <a href="src/pkg/database/sql/driver/driver.htm#L148">Rows</a></h2>
+			<pre>type Rows interface {
+    <span class="comment">// Columns returns the names of the columns. The number of</span>
+    <span class="comment">// columns of the result is inferred from the length of the</span>
+    <span class="comment">// slice.  If a particular column name isn&#39;t known, an empty</span>
+    <span class="comment">// string should be returned for that entry.</span>
+    Columns() []string
+
+    <span class="comment">// Close closes the rows iterator.</span>
+    Close() error
+
+    <span class="comment">// Next is called to populate the next row of data into</span>
+    <span class="comment">// the provided slice. The provided slice will be the same</span>
+    <span class="comment">// size as the Columns() are wide.</span>
+    <span class="comment">//</span>
+    <span class="comment">// The dest slice may be populated only with</span>
+    <span class="comment">// a driver Value type, but excluding string.</span>
+    <span class="comment">// All string values must be converted to []byte.</span>
+    <span class="comment">//</span>
+    <span class="comment">// Next should return io.EOF when there are no more rows.</span>
+    Next(dest []Value) error
+}</pre>
+			<p>
+Rows is an iterator over an executed query&#39;s results.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="RowsAffected">type <a href="src/pkg/database/sql/driver/driver.htm#L178">RowsAffected</a></h2>
+			<pre>type RowsAffected int64</pre>
+			<p>
+RowsAffected implements Result for an INSERT or UPDATE operation
+which mutates a number of rows.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="RowsAffected.LastInsertId">func (RowsAffected) <a href="src/pkg/database/sql/driver/driver.htm#L182">LastInsertId</a></h3>
+				<pre>func (RowsAffected) LastInsertId() (int64, error)</pre>
+				
+				
+				
+			
+				
+				<h3 id="RowsAffected.RowsAffected">func (RowsAffected) <a href="src/pkg/database/sql/driver/driver.htm#L186">RowsAffected</a></h3>
+				<pre>func (v RowsAffected) RowsAffected() (int64, error)</pre>
+				
+				
+				
+			
+		
+			
+			
+			<h2 id="Stmt">type <a href="src/pkg/database/sql/driver/driver.htm#L94">Stmt</a></h2>
+			<pre>type Stmt interface {
+    <span class="comment">// Close closes the statement.</span>
+    <span class="comment">//</span>
+    <span class="comment">// Closing a statement should not interrupt any outstanding</span>
+    <span class="comment">// query created from that statement. That is, the following</span>
+    <span class="comment">// order of operations is valid:</span>
+    <span class="comment">//</span>
+    <span class="comment">//  * create a driver statement</span>
+    <span class="comment">//  * call Query on statement, returning Rows</span>
+    <span class="comment">//  * close the statement</span>
+    <span class="comment">//  * read from Rows</span>
+    <span class="comment">//</span>
+    <span class="comment">// If closing a statement invalidates currently-running</span>
+    <span class="comment">// queries, the final step above will incorrectly fail.</span>
+    <span class="comment">//</span>
+    <span class="comment">// TODO(bradfitz): possibly remove the restriction above, if</span>
+    <span class="comment">// enough driver authors object and find it complicates their</span>
+    <span class="comment">// code too much. The sql package could be smarter about</span>
+    <span class="comment">// refcounting the statement and closing it at the appropriate</span>
+    <span class="comment">// time.</span>
+    Close() error
+
+    <span class="comment">// NumInput returns the number of placeholder parameters.</span>
+    <span class="comment">//</span>
+    <span class="comment">// If NumInput returns &gt;= 0, the sql package will sanity check</span>
+    <span class="comment">// argument counts from callers and return errors to the caller</span>
+    <span class="comment">// before the statement&#39;s Exec or Query methods are called.</span>
+    <span class="comment">//</span>
+    <span class="comment">// NumInput may also return -1, if the driver doesn&#39;t know</span>
+    <span class="comment">// its number of placeholders. In that case, the sql package</span>
+    <span class="comment">// will not sanity check Exec or Query argument counts.</span>
+    NumInput() int
+
+    <span class="comment">// Exec executes a query that doesn&#39;t return rows, such</span>
+    <span class="comment">// as an INSERT or UPDATE.</span>
+    Exec(args []Value) (Result, error)
+
+    <span class="comment">// Exec executes a query that may return rows, such as a</span>
+    <span class="comment">// SELECT.</span>
+    Query(args []Value) (Rows, error)
+}</pre>
+			<p>
+Stmt is a prepared statement. It is bound to a Conn and not
+used by multiple goroutines concurrently.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Tx">type <a href="src/pkg/database/sql/driver/driver.htm#L171">Tx</a></h2>
+			<pre>type Tx interface {
+    Commit() error
+    Rollback() error
+}</pre>
+			<p>
+Tx is a transaction.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Value">type <a href="src/pkg/database/sql/driver/driver.htm#L12">Value</a></h2>
+			<pre>type Value interface{}</pre>
+			<p>
+A driver Value is a value that drivers must be able to handle.
+A Value is either nil or an instance of one of these types:
+</p>
+<pre>int64
+float64
+bool
+[]byte
+string   [*] everywhere except from Rows.Next.
+time.Time
+</pre>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="ValueConverter">type <a href="src/pkg/database/sql/driver/types.htm#L20">ValueConverter</a></h2>
+			<pre>type ValueConverter interface {
+    <span class="comment">// ConvertValue converts a value to a driver Value.</span>
+    ConvertValue(v interface{}) (Value, error)
+}</pre>
+			<p>
+ValueConverter is the interface providing the ConvertValue method.
+</p>
+<p>
+Various implementations of ValueConverter are provided by the
+driver package to provide consistent implementations of conversions
+between drivers.  The ValueConverters have several uses:
+</p>
+<pre>* converting from the Value types as provided by the sql package
+  into a database table&#39;s specific column type and making sure it
+  fits, such as making sure a particular int64 fits in a
+  table&#39;s uint16 column.
+
+* converting a value as given from the database into one of the
+  driver Value types.
+
+* by the sql package, for converting from a driver&#39;s Value type
+  to a user&#39;s type in a scan.
+</pre>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Valuer">type <a href="src/pkg/database/sql/driver/types.htm#L29">Valuer</a></h2>
+			<pre>type Valuer interface {
+    <span class="comment">// Value returns a driver Value.</span>
+    Value() (Value, error)
+}</pre>
+			<p>
+Valuer is the interface providing the Value method.
+</p>
+<p>
+Types implementing Valuer interface are able to convert
+themselves to a driver Value.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+		</div>
+	
+
+	
+
+
+
+
+
+
+
+
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>

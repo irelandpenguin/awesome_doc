@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/debug/macho/macho.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/debug/macho/macho.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Mach-O header data structures</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// http://developer.apple.com/mac/library/documentation/DeveloperTools/Conceptual/MachORuntime/Reference/reference.html</span>
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	package macho
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import &#34;strconv&#34;
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// A FileHeader represents a Mach-O file header.</span>
+<a id="L13"></a><span class="ln">    13</span>	type FileHeader struct {
+<a id="L14"></a><span class="ln">    14</span>		Magic  uint32
+<a id="L15"></a><span class="ln">    15</span>		Cpu    Cpu
+<a id="L16"></a><span class="ln">    16</span>		SubCpu uint32
+<a id="L17"></a><span class="ln">    17</span>		Type   Type
+<a id="L18"></a><span class="ln">    18</span>		Ncmd   uint32
+<a id="L19"></a><span class="ln">    19</span>		Cmdsz  uint32
+<a id="L20"></a><span class="ln">    20</span>		Flags  uint32
+<a id="L21"></a><span class="ln">    21</span>	}
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	const (
+<a id="L24"></a><span class="ln">    24</span>		fileHeaderSize32 = 7 * 4
+<a id="L25"></a><span class="ln">    25</span>		fileHeaderSize64 = 8 * 4
+<a id="L26"></a><span class="ln">    26</span>	)
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	const (
+<a id="L29"></a><span class="ln">    29</span>		Magic32 uint32 = 0xfeedface
+<a id="L30"></a><span class="ln">    30</span>		Magic64 uint32 = 0xfeedfacf
+<a id="L31"></a><span class="ln">    31</span>	)
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// A Type is a Mach-O file type, either an object or an executable.</span>
+<a id="L34"></a><span class="ln">    34</span>	type Type uint32
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	const (
+<a id="L37"></a><span class="ln">    37</span>		TypeObj  Type = 1
+<a id="L38"></a><span class="ln">    38</span>		TypeExec Type = 2
+<a id="L39"></a><span class="ln">    39</span>	)
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// A Cpu is a Mach-O cpu type.</span>
+<a id="L42"></a><span class="ln">    42</span>	type Cpu uint32
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	const (
+<a id="L45"></a><span class="ln">    45</span>		Cpu386   Cpu = 7
+<a id="L46"></a><span class="ln">    46</span>		CpuAmd64 Cpu = Cpu386 + 1&lt;&lt;24
+<a id="L47"></a><span class="ln">    47</span>	)
+<a id="L48"></a><span class="ln">    48</span>	
+<a id="L49"></a><span class="ln">    49</span>	var cpuStrings = []intName{
+<a id="L50"></a><span class="ln">    50</span>		{uint32(Cpu386), &#34;Cpu386&#34;},
+<a id="L51"></a><span class="ln">    51</span>		{uint32(CpuAmd64), &#34;CpuAmd64&#34;},
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	func (i Cpu) String() string   { return stringName(uint32(i), cpuStrings, false) }
+<a id="L55"></a><span class="ln">    55</span>	func (i Cpu) GoString() string { return stringName(uint32(i), cpuStrings, true) }
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// A LoadCmd is a Mach-O load command.</span>
+<a id="L58"></a><span class="ln">    58</span>	type LoadCmd uint32
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>	const (
+<a id="L61"></a><span class="ln">    61</span>		LoadCmdSegment    LoadCmd = 1
+<a id="L62"></a><span class="ln">    62</span>		LoadCmdSymtab     LoadCmd = 2
+<a id="L63"></a><span class="ln">    63</span>		LoadCmdThread     LoadCmd = 4
+<a id="L64"></a><span class="ln">    64</span>		LoadCmdUnixThread LoadCmd = 5 <span class="comment">// thread+stack</span>
+<a id="L65"></a><span class="ln">    65</span>		LoadCmdDysymtab   LoadCmd = 11
+<a id="L66"></a><span class="ln">    66</span>		LoadCmdDylib      LoadCmd = 12
+<a id="L67"></a><span class="ln">    67</span>		LoadCmdDylinker   LoadCmd = 15
+<a id="L68"></a><span class="ln">    68</span>		LoadCmdSegment64  LoadCmd = 25
+<a id="L69"></a><span class="ln">    69</span>	)
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	var cmdStrings = []intName{
+<a id="L72"></a><span class="ln">    72</span>		{uint32(LoadCmdSegment), &#34;LoadCmdSegment&#34;},
+<a id="L73"></a><span class="ln">    73</span>		{uint32(LoadCmdThread), &#34;LoadCmdThread&#34;},
+<a id="L74"></a><span class="ln">    74</span>		{uint32(LoadCmdUnixThread), &#34;LoadCmdUnixThread&#34;},
+<a id="L75"></a><span class="ln">    75</span>		{uint32(LoadCmdDylib), &#34;LoadCmdDylib&#34;},
+<a id="L76"></a><span class="ln">    76</span>		{uint32(LoadCmdSegment64), &#34;LoadCmdSegment64&#34;},
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	func (i LoadCmd) String() string   { return stringName(uint32(i), cmdStrings, false) }
+<a id="L80"></a><span class="ln">    80</span>	func (i LoadCmd) GoString() string { return stringName(uint32(i), cmdStrings, true) }
+<a id="L81"></a><span class="ln">    81</span>	
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// A Segment64 is a 64-bit Mach-O segment load command.</span>
+<a id="L83"></a><span class="ln">    83</span>	type Segment64 struct {
+<a id="L84"></a><span class="ln">    84</span>		Cmd     LoadCmd
+<a id="L85"></a><span class="ln">    85</span>		Len     uint32
+<a id="L86"></a><span class="ln">    86</span>		Name    [16]byte
+<a id="L87"></a><span class="ln">    87</span>		Addr    uint64
+<a id="L88"></a><span class="ln">    88</span>		Memsz   uint64
+<a id="L89"></a><span class="ln">    89</span>		Offset  uint64
+<a id="L90"></a><span class="ln">    90</span>		Filesz  uint64
+<a id="L91"></a><span class="ln">    91</span>		Maxprot uint32
+<a id="L92"></a><span class="ln">    92</span>		Prot    uint32
+<a id="L93"></a><span class="ln">    93</span>		Nsect   uint32
+<a id="L94"></a><span class="ln">    94</span>		Flag    uint32
+<a id="L95"></a><span class="ln">    95</span>	}
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// A Segment32 is a 32-bit Mach-O segment load command.</span>
+<a id="L98"></a><span class="ln">    98</span>	type Segment32 struct {
+<a id="L99"></a><span class="ln">    99</span>		Cmd     LoadCmd
+<a id="L100"></a><span class="ln">   100</span>		Len     uint32
+<a id="L101"></a><span class="ln">   101</span>		Name    [16]byte
+<a id="L102"></a><span class="ln">   102</span>		Addr    uint32
+<a id="L103"></a><span class="ln">   103</span>		Memsz   uint32
+<a id="L104"></a><span class="ln">   104</span>		Offset  uint32
+<a id="L105"></a><span class="ln">   105</span>		Filesz  uint32
+<a id="L106"></a><span class="ln">   106</span>		Maxprot uint32
+<a id="L107"></a><span class="ln">   107</span>		Prot    uint32
+<a id="L108"></a><span class="ln">   108</span>		Nsect   uint32
+<a id="L109"></a><span class="ln">   109</span>		Flag    uint32
+<a id="L110"></a><span class="ln">   110</span>	}
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// A DylibCmd is a Mach-O load dynamic library command.</span>
+<a id="L113"></a><span class="ln">   113</span>	type DylibCmd struct {
+<a id="L114"></a><span class="ln">   114</span>		Cmd            LoadCmd
+<a id="L115"></a><span class="ln">   115</span>		Len            uint32
+<a id="L116"></a><span class="ln">   116</span>		Name           uint32
+<a id="L117"></a><span class="ln">   117</span>		Time           uint32
+<a id="L118"></a><span class="ln">   118</span>		CurrentVersion uint32
+<a id="L119"></a><span class="ln">   119</span>		CompatVersion  uint32
+<a id="L120"></a><span class="ln">   120</span>	}
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// A Section32 is a 32-bit Mach-O section header.</span>
+<a id="L123"></a><span class="ln">   123</span>	type Section32 struct {
+<a id="L124"></a><span class="ln">   124</span>		Name     [16]byte
+<a id="L125"></a><span class="ln">   125</span>		Seg      [16]byte
+<a id="L126"></a><span class="ln">   126</span>		Addr     uint32
+<a id="L127"></a><span class="ln">   127</span>		Size     uint32
+<a id="L128"></a><span class="ln">   128</span>		Offset   uint32
+<a id="L129"></a><span class="ln">   129</span>		Align    uint32
+<a id="L130"></a><span class="ln">   130</span>		Reloff   uint32
+<a id="L131"></a><span class="ln">   131</span>		Nreloc   uint32
+<a id="L132"></a><span class="ln">   132</span>		Flags    uint32
+<a id="L133"></a><span class="ln">   133</span>		Reserve1 uint32
+<a id="L134"></a><span class="ln">   134</span>		Reserve2 uint32
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// A Section32 is a 64-bit Mach-O section header.</span>
+<a id="L138"></a><span class="ln">   138</span>	type Section64 struct {
+<a id="L139"></a><span class="ln">   139</span>		Name     [16]byte
+<a id="L140"></a><span class="ln">   140</span>		Seg      [16]byte
+<a id="L141"></a><span class="ln">   141</span>		Addr     uint64
+<a id="L142"></a><span class="ln">   142</span>		Size     uint64
+<a id="L143"></a><span class="ln">   143</span>		Offset   uint32
+<a id="L144"></a><span class="ln">   144</span>		Align    uint32
+<a id="L145"></a><span class="ln">   145</span>		Reloff   uint32
+<a id="L146"></a><span class="ln">   146</span>		Nreloc   uint32
+<a id="L147"></a><span class="ln">   147</span>		Flags    uint32
+<a id="L148"></a><span class="ln">   148</span>		Reserve1 uint32
+<a id="L149"></a><span class="ln">   149</span>		Reserve2 uint32
+<a id="L150"></a><span class="ln">   150</span>		Reserve3 uint32
+<a id="L151"></a><span class="ln">   151</span>	}
+<a id="L152"></a><span class="ln">   152</span>	
+<a id="L153"></a><span class="ln">   153</span>	<span class="comment">// A SymtabCmd is a Mach-O symbol table command.</span>
+<a id="L154"></a><span class="ln">   154</span>	type SymtabCmd struct {
+<a id="L155"></a><span class="ln">   155</span>		Cmd     LoadCmd
+<a id="L156"></a><span class="ln">   156</span>		Len     uint32
+<a id="L157"></a><span class="ln">   157</span>		Symoff  uint32
+<a id="L158"></a><span class="ln">   158</span>		Nsyms   uint32
+<a id="L159"></a><span class="ln">   159</span>		Stroff  uint32
+<a id="L160"></a><span class="ln">   160</span>		Strsize uint32
+<a id="L161"></a><span class="ln">   161</span>	}
+<a id="L162"></a><span class="ln">   162</span>	
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// A DysymtabCmd is a Mach-O dynamic symbol table command.</span>
+<a id="L164"></a><span class="ln">   164</span>	type DysymtabCmd struct {
+<a id="L165"></a><span class="ln">   165</span>		Cmd            LoadCmd
+<a id="L166"></a><span class="ln">   166</span>		Len            uint32
+<a id="L167"></a><span class="ln">   167</span>		Ilocalsym      uint32
+<a id="L168"></a><span class="ln">   168</span>		Nlocalsym      uint32
+<a id="L169"></a><span class="ln">   169</span>		Iextdefsym     uint32
+<a id="L170"></a><span class="ln">   170</span>		Nextdefsym     uint32
+<a id="L171"></a><span class="ln">   171</span>		Iundefsym      uint32
+<a id="L172"></a><span class="ln">   172</span>		Nundefsym      uint32
+<a id="L173"></a><span class="ln">   173</span>		Tocoffset      uint32
+<a id="L174"></a><span class="ln">   174</span>		Ntoc           uint32
+<a id="L175"></a><span class="ln">   175</span>		Modtaboff      uint32
+<a id="L176"></a><span class="ln">   176</span>		Nmodtab        uint32
+<a id="L177"></a><span class="ln">   177</span>		Extrefsymoff   uint32
+<a id="L178"></a><span class="ln">   178</span>		Nextrefsyms    uint32
+<a id="L179"></a><span class="ln">   179</span>		Indirectsymoff uint32
+<a id="L180"></a><span class="ln">   180</span>		Nindirectsyms  uint32
+<a id="L181"></a><span class="ln">   181</span>		Extreloff      uint32
+<a id="L182"></a><span class="ln">   182</span>		Nextrel        uint32
+<a id="L183"></a><span class="ln">   183</span>		Locreloff      uint32
+<a id="L184"></a><span class="ln">   184</span>		Nlocrel        uint32
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// An Nlist32 is a Mach-O 32-bit symbol table entry.</span>
+<a id="L188"></a><span class="ln">   188</span>	type Nlist32 struct {
+<a id="L189"></a><span class="ln">   189</span>		Name  uint32
+<a id="L190"></a><span class="ln">   190</span>		Type  uint8
+<a id="L191"></a><span class="ln">   191</span>		Sect  uint8
+<a id="L192"></a><span class="ln">   192</span>		Desc  uint16
+<a id="L193"></a><span class="ln">   193</span>		Value uint32
+<a id="L194"></a><span class="ln">   194</span>	}
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// An Nlist64 is a Mach-O 64-bit symbol table entry.</span>
+<a id="L197"></a><span class="ln">   197</span>	type Nlist64 struct {
+<a id="L198"></a><span class="ln">   198</span>		Name  uint32
+<a id="L199"></a><span class="ln">   199</span>		Type  uint8
+<a id="L200"></a><span class="ln">   200</span>		Sect  uint8
+<a id="L201"></a><span class="ln">   201</span>		Desc  uint16
+<a id="L202"></a><span class="ln">   202</span>		Value uint64
+<a id="L203"></a><span class="ln">   203</span>	}
+<a id="L204"></a><span class="ln">   204</span>	
+<a id="L205"></a><span class="ln">   205</span>	<span class="comment">// A Symbol is a Mach-O 32-bit or 64-bit symbol table entry.</span>
+<a id="L206"></a><span class="ln">   206</span>	type Symbol struct {
+<a id="L207"></a><span class="ln">   207</span>		Name  string
+<a id="L208"></a><span class="ln">   208</span>		Type  uint8
+<a id="L209"></a><span class="ln">   209</span>		Sect  uint8
+<a id="L210"></a><span class="ln">   210</span>		Desc  uint16
+<a id="L211"></a><span class="ln">   211</span>		Value uint64
+<a id="L212"></a><span class="ln">   212</span>	}
+<a id="L213"></a><span class="ln">   213</span>	
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// A Thread is a Mach-O thread state command.</span>
+<a id="L215"></a><span class="ln">   215</span>	type Thread struct {
+<a id="L216"></a><span class="ln">   216</span>		Cmd  LoadCmd
+<a id="L217"></a><span class="ln">   217</span>		Len  uint32
+<a id="L218"></a><span class="ln">   218</span>		Type uint32
+<a id="L219"></a><span class="ln">   219</span>		Data []uint32
+<a id="L220"></a><span class="ln">   220</span>	}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// Regs386 is the Mach-O 386 register structure.</span>
+<a id="L223"></a><span class="ln">   223</span>	type Regs386 struct {
+<a id="L224"></a><span class="ln">   224</span>		AX    uint32
+<a id="L225"></a><span class="ln">   225</span>		BX    uint32
+<a id="L226"></a><span class="ln">   226</span>		CX    uint32
+<a id="L227"></a><span class="ln">   227</span>		DX    uint32
+<a id="L228"></a><span class="ln">   228</span>		DI    uint32
+<a id="L229"></a><span class="ln">   229</span>		SI    uint32
+<a id="L230"></a><span class="ln">   230</span>		BP    uint32
+<a id="L231"></a><span class="ln">   231</span>		SP    uint32
+<a id="L232"></a><span class="ln">   232</span>		SS    uint32
+<a id="L233"></a><span class="ln">   233</span>		FLAGS uint32
+<a id="L234"></a><span class="ln">   234</span>		IP    uint32
+<a id="L235"></a><span class="ln">   235</span>		CS    uint32
+<a id="L236"></a><span class="ln">   236</span>		DS    uint32
+<a id="L237"></a><span class="ln">   237</span>		ES    uint32
+<a id="L238"></a><span class="ln">   238</span>		FS    uint32
+<a id="L239"></a><span class="ln">   239</span>		GS    uint32
+<a id="L240"></a><span class="ln">   240</span>	}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>	<span class="comment">// RegsAMD64 is the Mach-O AMD64 register structure.</span>
+<a id="L243"></a><span class="ln">   243</span>	type RegsAMD64 struct {
+<a id="L244"></a><span class="ln">   244</span>		AX    uint64
+<a id="L245"></a><span class="ln">   245</span>		BX    uint64
+<a id="L246"></a><span class="ln">   246</span>		CX    uint64
+<a id="L247"></a><span class="ln">   247</span>		DX    uint64
+<a id="L248"></a><span class="ln">   248</span>		DI    uint64
+<a id="L249"></a><span class="ln">   249</span>		SI    uint64
+<a id="L250"></a><span class="ln">   250</span>		BP    uint64
+<a id="L251"></a><span class="ln">   251</span>		SP    uint64
+<a id="L252"></a><span class="ln">   252</span>		R8    uint64
+<a id="L253"></a><span class="ln">   253</span>		R9    uint64
+<a id="L254"></a><span class="ln">   254</span>		R10   uint64
+<a id="L255"></a><span class="ln">   255</span>		R11   uint64
+<a id="L256"></a><span class="ln">   256</span>		R12   uint64
+<a id="L257"></a><span class="ln">   257</span>		R13   uint64
+<a id="L258"></a><span class="ln">   258</span>		R14   uint64
+<a id="L259"></a><span class="ln">   259</span>		R15   uint64
+<a id="L260"></a><span class="ln">   260</span>		IP    uint64
+<a id="L261"></a><span class="ln">   261</span>		FLAGS uint64
+<a id="L262"></a><span class="ln">   262</span>		CS    uint64
+<a id="L263"></a><span class="ln">   263</span>		FS    uint64
+<a id="L264"></a><span class="ln">   264</span>		GS    uint64
+<a id="L265"></a><span class="ln">   265</span>	}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>	type intName struct {
+<a id="L268"></a><span class="ln">   268</span>		i uint32
+<a id="L269"></a><span class="ln">   269</span>		s string
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	func stringName(i uint32, names []intName, goSyntax bool) string {
+<a id="L273"></a><span class="ln">   273</span>		for _, n := range names {
+<a id="L274"></a><span class="ln">   274</span>			if n.i == i {
+<a id="L275"></a><span class="ln">   275</span>				if goSyntax {
+<a id="L276"></a><span class="ln">   276</span>					return &#34;macho.&#34; + n.s
+<a id="L277"></a><span class="ln">   277</span>				}
+<a id="L278"></a><span class="ln">   278</span>				return n.s
+<a id="L279"></a><span class="ln">   279</span>			}
+<a id="L280"></a><span class="ln">   280</span>		}
+<a id="L281"></a><span class="ln">   281</span>		return strconv.FormatUint(uint64(i), 10)
+<a id="L282"></a><span class="ln">   282</span>	}
+<a id="L283"></a><span class="ln">   283</span>	
+<a id="L284"></a><span class="ln">   284</span>	func flagName(i uint32, names []intName, goSyntax bool) string {
+<a id="L285"></a><span class="ln">   285</span>		s := &#34;&#34;
+<a id="L286"></a><span class="ln">   286</span>		for _, n := range names {
+<a id="L287"></a><span class="ln">   287</span>			if n.i&amp;i == n.i {
+<a id="L288"></a><span class="ln">   288</span>				if len(s) &gt; 0 {
+<a id="L289"></a><span class="ln">   289</span>					s += &#34;+&#34;
+<a id="L290"></a><span class="ln">   290</span>				}
+<a id="L291"></a><span class="ln">   291</span>				if goSyntax {
+<a id="L292"></a><span class="ln">   292</span>					s += &#34;macho.&#34;
+<a id="L293"></a><span class="ln">   293</span>				}
+<a id="L294"></a><span class="ln">   294</span>				s += n.s
+<a id="L295"></a><span class="ln">   295</span>				i -= n.i
+<a id="L296"></a><span class="ln">   296</span>			}
+<a id="L297"></a><span class="ln">   297</span>		}
+<a id="L298"></a><span class="ln">   298</span>		if len(s) == 0 {
+<a id="L299"></a><span class="ln">   299</span>			return &#34;0x&#34; + strconv.FormatUint(uint64(i), 16)
+<a id="L300"></a><span class="ln">   300</span>		}
+<a id="L301"></a><span class="ln">   301</span>		if i != 0 {
+<a id="L302"></a><span class="ln">   302</span>			s += &#34;+0x&#34; + strconv.FormatUint(uint64(i), 16)
+<a id="L303"></a><span class="ln">   303</span>		}
+<a id="L304"></a><span class="ln">   304</span>		return s
+<a id="L305"></a><span class="ln">   305</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

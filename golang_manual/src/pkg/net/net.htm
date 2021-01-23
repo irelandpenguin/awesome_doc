@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/net.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/net.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">/*
+</span><a id="L6"></a><span class="ln">     6</span>	<span class="comment">Package net provides a portable interface for network I/O, including
+</span><a id="L7"></a><span class="ln">     7</span>	<span class="comment">TCP/IP, UDP, domain name resolution, and Unix domain sockets.
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">Although the package provides access to low-level networking
+</span><a id="L10"></a><span class="ln">    10</span>	<span class="comment">primitives, most clients will need only the basic interface provided
+</span><a id="L11"></a><span class="ln">    11</span>	<span class="comment">by the Dial, Listen, and Accept functions and the associated
+</span><a id="L12"></a><span class="ln">    12</span>	<span class="comment">Conn and Listener interfaces. The crypto/tls package uses
+</span><a id="L13"></a><span class="ln">    13</span>	<span class="comment">the same interfaces and similar Dial and Listen functions.
+</span><a id="L14"></a><span class="ln">    14</span>	<span class="comment">
+</span><a id="L15"></a><span class="ln">    15</span>	<span class="comment">The Dial function connects to a server:
+</span><a id="L16"></a><span class="ln">    16</span>	<span class="comment">
+</span><a id="L17"></a><span class="ln">    17</span>	<span class="comment">	conn, err := net.Dial(&#34;tcp&#34;, &#34;google.com:80&#34;)
+</span><a id="L18"></a><span class="ln">    18</span>	<span class="comment">	if err != nil {
+</span><a id="L19"></a><span class="ln">    19</span>	<span class="comment">		// handle error
+</span><a id="L20"></a><span class="ln">    20</span>	<span class="comment">	}
+</span><a id="L21"></a><span class="ln">    21</span>	<span class="comment">	fmt.Fprintf(conn, &#34;GET / HTTP/1.0\r\n\r\n&#34;)
+</span><a id="L22"></a><span class="ln">    22</span>	<span class="comment">	status, err := bufio.NewReader(conn).ReadString(&#39;\n&#39;)
+</span><a id="L23"></a><span class="ln">    23</span>	<span class="comment">	// ...
+</span><a id="L24"></a><span class="ln">    24</span>	<span class="comment">
+</span><a id="L25"></a><span class="ln">    25</span>	<span class="comment">The Listen function creates servers:
+</span><a id="L26"></a><span class="ln">    26</span>	<span class="comment">
+</span><a id="L27"></a><span class="ln">    27</span>	<span class="comment">	ln, err := net.Listen(&#34;tcp&#34;, &#34;:8080&#34;)
+</span><a id="L28"></a><span class="ln">    28</span>	<span class="comment">	if err != nil {
+</span><a id="L29"></a><span class="ln">    29</span>	<span class="comment">		// handle error
+</span><a id="L30"></a><span class="ln">    30</span>	<span class="comment">	}
+</span><a id="L31"></a><span class="ln">    31</span>	<span class="comment">	for {
+</span><a id="L32"></a><span class="ln">    32</span>	<span class="comment">		conn, err := ln.Accept()
+</span><a id="L33"></a><span class="ln">    33</span>	<span class="comment">		if err != nil {
+</span><a id="L34"></a><span class="ln">    34</span>	<span class="comment">			// handle error
+</span><a id="L35"></a><span class="ln">    35</span>	<span class="comment">			continue
+</span><a id="L36"></a><span class="ln">    36</span>	<span class="comment">		}
+</span><a id="L37"></a><span class="ln">    37</span>	<span class="comment">		go handleConnection(conn)
+</span><a id="L38"></a><span class="ln">    38</span>	<span class="comment">	}
+</span><a id="L39"></a><span class="ln">    39</span>	<span class="comment">*/</span>
+<a id="L40"></a><span class="ln">    40</span>	package net
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// TODO(rsc):</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//	support for raw ethernet sockets</span>
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	import (
+<a id="L46"></a><span class="ln">    46</span>		&#34;errors&#34;
+<a id="L47"></a><span class="ln">    47</span>		&#34;time&#34;
+<a id="L48"></a><span class="ln">    48</span>	)
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// Addr represents a network end point address.</span>
+<a id="L51"></a><span class="ln">    51</span>	type Addr interface {
+<a id="L52"></a><span class="ln">    52</span>		Network() string <span class="comment">// name of the network</span>
+<a id="L53"></a><span class="ln">    53</span>		String() string  <span class="comment">// string form of address</span>
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// Conn is a generic stream-oriented network connection.</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// Multiple goroutines may invoke methods on a Conn simultaneously.</span>
+<a id="L59"></a><span class="ln">    59</span>	type Conn interface {
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// Read reads data from the connection.</span>
+<a id="L61"></a><span class="ln">    61</span>		<span class="comment">// Read can be made to time out and return a Error with Timeout() == true</span>
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// after a fixed time limit; see SetDeadline and SetReadDeadline.</span>
+<a id="L63"></a><span class="ln">    63</span>		Read(b []byte) (n int, err error)
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// Write writes data to the connection.</span>
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">// Write can be made to time out and return a Error with Timeout() == true</span>
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// after a fixed time limit; see SetDeadline and SetWriteDeadline.</span>
+<a id="L68"></a><span class="ln">    68</span>		Write(b []byte) (n int, err error)
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>		<span class="comment">// Close closes the connection.</span>
+<a id="L71"></a><span class="ln">    71</span>		<span class="comment">// Any blocked Read or Write operations will be unblocked and return errors.</span>
+<a id="L72"></a><span class="ln">    72</span>		Close() error
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>		<span class="comment">// LocalAddr returns the local network address.</span>
+<a id="L75"></a><span class="ln">    75</span>		LocalAddr() Addr
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>		<span class="comment">// RemoteAddr returns the remote network address.</span>
+<a id="L78"></a><span class="ln">    78</span>		RemoteAddr() Addr
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>		<span class="comment">// SetDeadline sets the read and write deadlines associated</span>
+<a id="L81"></a><span class="ln">    81</span>		<span class="comment">// with the connection. It is equivalent to calling both</span>
+<a id="L82"></a><span class="ln">    82</span>		<span class="comment">// SetReadDeadline and SetWriteDeadline.</span>
+<a id="L83"></a><span class="ln">    83</span>		<span class="comment">//</span>
+<a id="L84"></a><span class="ln">    84</span>		<span class="comment">// A deadline is an absolute time after which I/O operations</span>
+<a id="L85"></a><span class="ln">    85</span>		<span class="comment">// fail with a timeout (see type Error) instead of</span>
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// blocking. The deadline applies to all future I/O, not just</span>
+<a id="L87"></a><span class="ln">    87</span>		<span class="comment">// the immediately following call to Read or Write.</span>
+<a id="L88"></a><span class="ln">    88</span>		<span class="comment">//</span>
+<a id="L89"></a><span class="ln">    89</span>		<span class="comment">// An idle timeout can be implemented by repeatedly extending</span>
+<a id="L90"></a><span class="ln">    90</span>		<span class="comment">// the deadline after successful Read or Write calls.</span>
+<a id="L91"></a><span class="ln">    91</span>		<span class="comment">//</span>
+<a id="L92"></a><span class="ln">    92</span>		<span class="comment">// A zero value for t means I/O operations will not time out.</span>
+<a id="L93"></a><span class="ln">    93</span>		SetDeadline(t time.Time) error
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>		<span class="comment">// SetReadDeadline sets the deadline for future Read calls.</span>
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// A zero value for t means Read will not time out.</span>
+<a id="L97"></a><span class="ln">    97</span>		SetReadDeadline(t time.Time) error
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>		<span class="comment">// SetWriteDeadline sets the deadline for future Write calls.</span>
+<a id="L100"></a><span class="ln">   100</span>		<span class="comment">// Even if write times out, it may return n &gt; 0, indicating that</span>
+<a id="L101"></a><span class="ln">   101</span>		<span class="comment">// some of the data was successfully written.</span>
+<a id="L102"></a><span class="ln">   102</span>		<span class="comment">// A zero value for t means Write will not time out.</span>
+<a id="L103"></a><span class="ln">   103</span>		SetWriteDeadline(t time.Time) error
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// An Error represents a network error.</span>
+<a id="L107"></a><span class="ln">   107</span>	type Error interface {
+<a id="L108"></a><span class="ln">   108</span>		error
+<a id="L109"></a><span class="ln">   109</span>		Timeout() bool   <span class="comment">// Is the error a timeout?</span>
+<a id="L110"></a><span class="ln">   110</span>		Temporary() bool <span class="comment">// Is the error temporary?</span>
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// PacketConn is a generic packet-oriented network connection.</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">//</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// Multiple goroutines may invoke methods on a PacketConn simultaneously.</span>
+<a id="L116"></a><span class="ln">   116</span>	type PacketConn interface {
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// ReadFrom reads a packet from the connection,</span>
+<a id="L118"></a><span class="ln">   118</span>		<span class="comment">// copying the payload into b.  It returns the number of</span>
+<a id="L119"></a><span class="ln">   119</span>		<span class="comment">// bytes copied into b and the return address that</span>
+<a id="L120"></a><span class="ln">   120</span>		<span class="comment">// was on the packet.</span>
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">// ReadFrom can be made to time out and return</span>
+<a id="L122"></a><span class="ln">   122</span>		<span class="comment">// an error with Timeout() == true after a fixed time limit;</span>
+<a id="L123"></a><span class="ln">   123</span>		<span class="comment">// see SetDeadline and SetReadDeadline.</span>
+<a id="L124"></a><span class="ln">   124</span>		ReadFrom(b []byte) (n int, addr Addr, err error)
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>		<span class="comment">// WriteTo writes a packet with payload b to addr.</span>
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// WriteTo can be made to time out and return</span>
+<a id="L128"></a><span class="ln">   128</span>		<span class="comment">// an error with Timeout() == true after a fixed time limit;</span>
+<a id="L129"></a><span class="ln">   129</span>		<span class="comment">// see SetDeadline and SetWriteDeadline.</span>
+<a id="L130"></a><span class="ln">   130</span>		<span class="comment">// On packet-oriented connections, write timeouts are rare.</span>
+<a id="L131"></a><span class="ln">   131</span>		WriteTo(b []byte, addr Addr) (n int, err error)
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>		<span class="comment">// Close closes the connection.</span>
+<a id="L134"></a><span class="ln">   134</span>		<span class="comment">// Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.</span>
+<a id="L135"></a><span class="ln">   135</span>		Close() error
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>		<span class="comment">// LocalAddr returns the local network address.</span>
+<a id="L138"></a><span class="ln">   138</span>		LocalAddr() Addr
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		<span class="comment">// SetDeadline sets the read and write deadlines associated</span>
+<a id="L141"></a><span class="ln">   141</span>		<span class="comment">// with the connection.</span>
+<a id="L142"></a><span class="ln">   142</span>		SetDeadline(t time.Time) error
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>		<span class="comment">// SetReadDeadline sets the deadline for future Read calls.</span>
+<a id="L145"></a><span class="ln">   145</span>		<span class="comment">// If the deadline is reached, Read will fail with a timeout</span>
+<a id="L146"></a><span class="ln">   146</span>		<span class="comment">// (see type Error) instead of blocking.</span>
+<a id="L147"></a><span class="ln">   147</span>		<span class="comment">// A zero value for t means Read will not time out.</span>
+<a id="L148"></a><span class="ln">   148</span>		SetReadDeadline(t time.Time) error
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// SetWriteDeadline sets the deadline for future Write calls.</span>
+<a id="L151"></a><span class="ln">   151</span>		<span class="comment">// If the deadline is reached, Write will fail with a timeout</span>
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">// (see type Error) instead of blocking.</span>
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">// A zero value for t means Write will not time out.</span>
+<a id="L154"></a><span class="ln">   154</span>		<span class="comment">// Even if write times out, it may return n &gt; 0, indicating that</span>
+<a id="L155"></a><span class="ln">   155</span>		<span class="comment">// some of the data was successfully written.</span>
+<a id="L156"></a><span class="ln">   156</span>		SetWriteDeadline(t time.Time) error
+<a id="L157"></a><span class="ln">   157</span>	}
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">// A Listener is a generic network listener for stream-oriented protocols.</span>
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">//</span>
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// Multiple goroutines may invoke methods on a Listener simultaneously.</span>
+<a id="L162"></a><span class="ln">   162</span>	type Listener interface {
+<a id="L163"></a><span class="ln">   163</span>		<span class="comment">// Accept waits for and returns the next connection to the listener.</span>
+<a id="L164"></a><span class="ln">   164</span>		Accept() (c Conn, err error)
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>		<span class="comment">// Close closes the listener.</span>
+<a id="L167"></a><span class="ln">   167</span>		<span class="comment">// Any blocked Accept operations will be unblocked and return errors.</span>
+<a id="L168"></a><span class="ln">   168</span>		Close() error
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>		<span class="comment">// Addr returns the listener&#39;s network address.</span>
+<a id="L171"></a><span class="ln">   171</span>		Addr() Addr
+<a id="L172"></a><span class="ln">   172</span>	}
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>	var errMissingAddress = errors.New(&#34;missing address&#34;)
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>	type OpError struct {
+<a id="L177"></a><span class="ln">   177</span>		Op   string
+<a id="L178"></a><span class="ln">   178</span>		Net  string
+<a id="L179"></a><span class="ln">   179</span>		Addr Addr
+<a id="L180"></a><span class="ln">   180</span>		Err  error
+<a id="L181"></a><span class="ln">   181</span>	}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>	func (e *OpError) Error() string {
+<a id="L184"></a><span class="ln">   184</span>		if e == nil {
+<a id="L185"></a><span class="ln">   185</span>			return &#34;&lt;nil&gt;&#34;
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		s := e.Op
+<a id="L188"></a><span class="ln">   188</span>		if e.Net != &#34;&#34; {
+<a id="L189"></a><span class="ln">   189</span>			s += &#34; &#34; + e.Net
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>		if e.Addr != nil {
+<a id="L192"></a><span class="ln">   192</span>			s += &#34; &#34; + e.Addr.String()
+<a id="L193"></a><span class="ln">   193</span>		}
+<a id="L194"></a><span class="ln">   194</span>		s += &#34;: &#34; + e.Err.Error()
+<a id="L195"></a><span class="ln">   195</span>		return s
+<a id="L196"></a><span class="ln">   196</span>	}
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>	type temporary interface {
+<a id="L199"></a><span class="ln">   199</span>		Temporary() bool
+<a id="L200"></a><span class="ln">   200</span>	}
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	func (e *OpError) Temporary() bool {
+<a id="L203"></a><span class="ln">   203</span>		t, ok := e.Err.(temporary)
+<a id="L204"></a><span class="ln">   204</span>		return ok &amp;&amp; t.Temporary()
+<a id="L205"></a><span class="ln">   205</span>	}
+<a id="L206"></a><span class="ln">   206</span>	
+<a id="L207"></a><span class="ln">   207</span>	type timeout interface {
+<a id="L208"></a><span class="ln">   208</span>		Timeout() bool
+<a id="L209"></a><span class="ln">   209</span>	}
+<a id="L210"></a><span class="ln">   210</span>	
+<a id="L211"></a><span class="ln">   211</span>	func (e *OpError) Timeout() bool {
+<a id="L212"></a><span class="ln">   212</span>		t, ok := e.Err.(timeout)
+<a id="L213"></a><span class="ln">   213</span>		return ok &amp;&amp; t.Timeout()
+<a id="L214"></a><span class="ln">   214</span>	}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>	type timeoutError struct{}
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>	func (e *timeoutError) Error() string   { return &#34;i/o timeout&#34; }
+<a id="L219"></a><span class="ln">   219</span>	func (e *timeoutError) Timeout() bool   { return true }
+<a id="L220"></a><span class="ln">   220</span>	func (e *timeoutError) Temporary() bool { return true }
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>	var errTimeout error = &amp;timeoutError{}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	type AddrError struct {
+<a id="L225"></a><span class="ln">   225</span>		Err  string
+<a id="L226"></a><span class="ln">   226</span>		Addr string
+<a id="L227"></a><span class="ln">   227</span>	}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>	func (e *AddrError) Error() string {
+<a id="L230"></a><span class="ln">   230</span>		if e == nil {
+<a id="L231"></a><span class="ln">   231</span>			return &#34;&lt;nil&gt;&#34;
+<a id="L232"></a><span class="ln">   232</span>		}
+<a id="L233"></a><span class="ln">   233</span>		s := e.Err
+<a id="L234"></a><span class="ln">   234</span>		if e.Addr != &#34;&#34; {
+<a id="L235"></a><span class="ln">   235</span>			s += &#34; &#34; + e.Addr
+<a id="L236"></a><span class="ln">   236</span>		}
+<a id="L237"></a><span class="ln">   237</span>		return s
+<a id="L238"></a><span class="ln">   238</span>	}
+<a id="L239"></a><span class="ln">   239</span>	
+<a id="L240"></a><span class="ln">   240</span>	func (e *AddrError) Temporary() bool {
+<a id="L241"></a><span class="ln">   241</span>		return false
+<a id="L242"></a><span class="ln">   242</span>	}
+<a id="L243"></a><span class="ln">   243</span>	
+<a id="L244"></a><span class="ln">   244</span>	func (e *AddrError) Timeout() bool {
+<a id="L245"></a><span class="ln">   245</span>		return false
+<a id="L246"></a><span class="ln">   246</span>	}
+<a id="L247"></a><span class="ln">   247</span>	
+<a id="L248"></a><span class="ln">   248</span>	type UnknownNetworkError string
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>	func (e UnknownNetworkError) Error() string   { return &#34;unknown network &#34; + string(e) }
+<a id="L251"></a><span class="ln">   251</span>	func (e UnknownNetworkError) Temporary() bool { return false }
+<a id="L252"></a><span class="ln">   252</span>	func (e UnknownNetworkError) Timeout() bool   { return false }
+<a id="L253"></a><span class="ln">   253</span>	
+<a id="L254"></a><span class="ln">   254</span>	<span class="comment">// DNSConfigError represents an error reading the machine&#39;s DNS configuration.</span>
+<a id="L255"></a><span class="ln">   255</span>	type DNSConfigError struct {
+<a id="L256"></a><span class="ln">   256</span>		Err error
+<a id="L257"></a><span class="ln">   257</span>	}
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>	func (e *DNSConfigError) Error() string {
+<a id="L260"></a><span class="ln">   260</span>		return &#34;error reading DNS config: &#34; + e.Err.Error()
+<a id="L261"></a><span class="ln">   261</span>	}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>	func (e *DNSConfigError) Timeout() bool   { return false }
+<a id="L264"></a><span class="ln">   264</span>	func (e *DNSConfigError) Temporary() bool { return false }
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

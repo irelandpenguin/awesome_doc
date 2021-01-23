@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/rsa/pkcs1v15.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/rsa/pkcs1v15.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package rsa
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;crypto&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;crypto/subtle&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;io&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;math/big&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// This file implements encryption and decryption using PKCS#1 v1.5 padding.</span>
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// EncryptPKCS1v15 encrypts the given message with RSA and the padding scheme from PKCS#1 v1.5.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// The message must be no longer than the length of the public modulus minus 11 bytes.</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// WARNING: use of this function to encrypt plaintexts other than session keys</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// is dangerous. Use RSA OAEP in new protocols.</span>
+<a id="L21"></a><span class="ln">    21</span>	func EncryptPKCS1v15(rand io.Reader, pub *PublicKey, msg []byte) (out []byte, err error) {
+<a id="L22"></a><span class="ln">    22</span>		k := (pub.N.BitLen() + 7) / 8
+<a id="L23"></a><span class="ln">    23</span>		if len(msg) &gt; k-11 {
+<a id="L24"></a><span class="ln">    24</span>			err = ErrMessageTooLong
+<a id="L25"></a><span class="ln">    25</span>			return
+<a id="L26"></a><span class="ln">    26</span>		}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// EM = 0x02 || PS || 0x00 || M</span>
+<a id="L29"></a><span class="ln">    29</span>		em := make([]byte, k-1)
+<a id="L30"></a><span class="ln">    30</span>		em[0] = 2
+<a id="L31"></a><span class="ln">    31</span>		ps, mm := em[1:len(em)-len(msg)-1], em[len(em)-len(msg):]
+<a id="L32"></a><span class="ln">    32</span>		err = nonZeroRandomBytes(ps, rand)
+<a id="L33"></a><span class="ln">    33</span>		if err != nil {
+<a id="L34"></a><span class="ln">    34</span>			return
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>		em[len(em)-len(msg)-1] = 0
+<a id="L37"></a><span class="ln">    37</span>		copy(mm, msg)
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>		m := new(big.Int).SetBytes(em)
+<a id="L40"></a><span class="ln">    40</span>		c := encrypt(new(big.Int), pub, m)
+<a id="L41"></a><span class="ln">    41</span>		out = c.Bytes()
+<a id="L42"></a><span class="ln">    42</span>		return
+<a id="L43"></a><span class="ln">    43</span>	}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// DecryptPKCS1v15 decrypts a plaintext using RSA and the padding scheme from PKCS#1 v1.5.</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// If rand != nil, it uses RSA blinding to avoid timing side-channel attacks.</span>
+<a id="L47"></a><span class="ln">    47</span>	func DecryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (out []byte, err error) {
+<a id="L48"></a><span class="ln">    48</span>		valid, out, err := decryptPKCS1v15(rand, priv, ciphertext)
+<a id="L49"></a><span class="ln">    49</span>		if err == nil &amp;&amp; valid == 0 {
+<a id="L50"></a><span class="ln">    50</span>			err = ErrDecryption
+<a id="L51"></a><span class="ln">    51</span>		}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>		return
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// DecryptPKCS1v15SessionKey decrypts a session key using RSA and the padding scheme from PKCS#1 v1.5.</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// If rand != nil, it uses RSA blinding to avoid timing side-channel attacks.</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// It returns an error if the ciphertext is the wrong length or if the</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// ciphertext is greater than the public modulus. Otherwise, no error is</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// returned. If the padding is valid, the resulting plaintext message is copied</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// into key. Otherwise, key is unchanged. These alternatives occur in constant</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// time. It is intended that the user of this function generate a random</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// session key beforehand and continue the protocol with the resulting value.</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// This will remove any possibility that an attacker can learn any information</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// about the plaintext.</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// See ``Chosen Ciphertext Attacks Against Protocols Based on the RSA</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// Encryption Standard PKCS #1&#39;&#39;, Daniel Bleichenbacher, Advances in Cryptology</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// (Crypto &#39;98).</span>
+<a id="L69"></a><span class="ln">    69</span>	func DecryptPKCS1v15SessionKey(rand io.Reader, priv *PrivateKey, ciphertext []byte, key []byte) (err error) {
+<a id="L70"></a><span class="ln">    70</span>		k := (priv.N.BitLen() + 7) / 8
+<a id="L71"></a><span class="ln">    71</span>		if k-(len(key)+3+8) &lt; 0 {
+<a id="L72"></a><span class="ln">    72</span>			err = ErrDecryption
+<a id="L73"></a><span class="ln">    73</span>			return
+<a id="L74"></a><span class="ln">    74</span>		}
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>		valid, msg, err := decryptPKCS1v15(rand, priv, ciphertext)
+<a id="L77"></a><span class="ln">    77</span>		if err != nil {
+<a id="L78"></a><span class="ln">    78</span>			return
+<a id="L79"></a><span class="ln">    79</span>		}
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>		valid &amp;= subtle.ConstantTimeEq(int32(len(msg)), int32(len(key)))
+<a id="L82"></a><span class="ln">    82</span>		subtle.ConstantTimeCopy(valid, key, msg)
+<a id="L83"></a><span class="ln">    83</span>		return
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	func decryptPKCS1v15(rand io.Reader, priv *PrivateKey, ciphertext []byte) (valid int, msg []byte, err error) {
+<a id="L87"></a><span class="ln">    87</span>		k := (priv.N.BitLen() + 7) / 8
+<a id="L88"></a><span class="ln">    88</span>		if k &lt; 11 {
+<a id="L89"></a><span class="ln">    89</span>			err = ErrDecryption
+<a id="L90"></a><span class="ln">    90</span>			return
+<a id="L91"></a><span class="ln">    91</span>		}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>		c := new(big.Int).SetBytes(ciphertext)
+<a id="L94"></a><span class="ln">    94</span>		m, err := decrypt(rand, priv, c)
+<a id="L95"></a><span class="ln">    95</span>		if err != nil {
+<a id="L96"></a><span class="ln">    96</span>			return
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>		em := leftPad(m.Bytes(), k)
+<a id="L100"></a><span class="ln">   100</span>		firstByteIsZero := subtle.ConstantTimeByteEq(em[0], 0)
+<a id="L101"></a><span class="ln">   101</span>		secondByteIsTwo := subtle.ConstantTimeByteEq(em[1], 2)
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>		<span class="comment">// The remainder of the plaintext must be a string of non-zero random</span>
+<a id="L104"></a><span class="ln">   104</span>		<span class="comment">// octets, followed by a 0, followed by the message.</span>
+<a id="L105"></a><span class="ln">   105</span>		<span class="comment">//   lookingForIndex: 1 iff we are still looking for the zero.</span>
+<a id="L106"></a><span class="ln">   106</span>		<span class="comment">//   index: the offset of the first zero byte.</span>
+<a id="L107"></a><span class="ln">   107</span>		var lookingForIndex, index int
+<a id="L108"></a><span class="ln">   108</span>		lookingForIndex = 1
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>		for i := 2; i &lt; len(em); i++ {
+<a id="L111"></a><span class="ln">   111</span>			equals0 := subtle.ConstantTimeByteEq(em[i], 0)
+<a id="L112"></a><span class="ln">   112</span>			index = subtle.ConstantTimeSelect(lookingForIndex&amp;equals0, i, index)
+<a id="L113"></a><span class="ln">   113</span>			lookingForIndex = subtle.ConstantTimeSelect(equals0, 0, lookingForIndex)
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>		valid = firstByteIsZero &amp; secondByteIsTwo &amp; (^lookingForIndex &amp; 1)
+<a id="L117"></a><span class="ln">   117</span>		msg = em[index+1:]
+<a id="L118"></a><span class="ln">   118</span>		return
+<a id="L119"></a><span class="ln">   119</span>	}
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// nonZeroRandomBytes fills the given slice with non-zero random octets.</span>
+<a id="L122"></a><span class="ln">   122</span>	func nonZeroRandomBytes(s []byte, rand io.Reader) (err error) {
+<a id="L123"></a><span class="ln">   123</span>		_, err = io.ReadFull(rand, s)
+<a id="L124"></a><span class="ln">   124</span>		if err != nil {
+<a id="L125"></a><span class="ln">   125</span>			return
+<a id="L126"></a><span class="ln">   126</span>		}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L129"></a><span class="ln">   129</span>			for s[i] == 0 {
+<a id="L130"></a><span class="ln">   130</span>				_, err = io.ReadFull(rand, s[i:i+1])
+<a id="L131"></a><span class="ln">   131</span>				if err != nil {
+<a id="L132"></a><span class="ln">   132</span>					return
+<a id="L133"></a><span class="ln">   133</span>				}
+<a id="L134"></a><span class="ln">   134</span>				<span class="comment">// In tests, the PRNG may return all zeros so we do</span>
+<a id="L135"></a><span class="ln">   135</span>				<span class="comment">// this to break the loop.</span>
+<a id="L136"></a><span class="ln">   136</span>				s[i] ^= 0x42
+<a id="L137"></a><span class="ln">   137</span>			}
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		return
+<a id="L141"></a><span class="ln">   141</span>	}
+<a id="L142"></a><span class="ln">   142</span>	
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">// These are ASN1 DER structures:</span>
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">//   DigestInfo ::= SEQUENCE {</span>
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">//     digestAlgorithm AlgorithmIdentifier,</span>
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">//     digest OCTET STRING</span>
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">//   }</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// For performance, we don&#39;t use the generic ASN1 encoder. Rather, we</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// precompute a prefix of the digest value that makes a valid ASN1 DER string</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// with the correct contents.</span>
+<a id="L151"></a><span class="ln">   151</span>	var hashPrefixes = map[crypto.Hash][]byte{
+<a id="L152"></a><span class="ln">   152</span>		crypto.MD5:       {0x30, 0x20, 0x30, 0x0c, 0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05, 0x05, 0x00, 0x04, 0x10},
+<a id="L153"></a><span class="ln">   153</span>		crypto.SHA1:      {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14},
+<a id="L154"></a><span class="ln">   154</span>		crypto.SHA256:    {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
+<a id="L155"></a><span class="ln">   155</span>		crypto.SHA384:    {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
+<a id="L156"></a><span class="ln">   156</span>		crypto.SHA512:    {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+<a id="L157"></a><span class="ln">   157</span>		crypto.MD5SHA1:   {}, <span class="comment">// A special TLS case which doesn&#39;t use an ASN1 prefix.</span>
+<a id="L158"></a><span class="ln">   158</span>		crypto.RIPEMD160: {0x30, 0x20, 0x30, 0x08, 0x06, 0x06, 0x28, 0xcf, 0x06, 0x03, 0x00, 0x31, 0x04, 0x14},
+<a id="L159"></a><span class="ln">   159</span>	}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// SignPKCS1v15 calculates the signature of hashed using RSASSA-PKCS1-V1_5-SIGN from RSA PKCS#1 v1.5.</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// Note that hashed must be the result of hashing the input message using the</span>
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// given hash function.</span>
+<a id="L164"></a><span class="ln">   164</span>	func SignPKCS1v15(rand io.Reader, priv *PrivateKey, hash crypto.Hash, hashed []byte) (s []byte, err error) {
+<a id="L165"></a><span class="ln">   165</span>		hashLen, prefix, err := pkcs1v15HashInfo(hash, len(hashed))
+<a id="L166"></a><span class="ln">   166</span>		if err != nil {
+<a id="L167"></a><span class="ln">   167</span>			return
+<a id="L168"></a><span class="ln">   168</span>		}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>		tLen := len(prefix) + hashLen
+<a id="L171"></a><span class="ln">   171</span>		k := (priv.N.BitLen() + 7) / 8
+<a id="L172"></a><span class="ln">   172</span>		if k &lt; tLen+11 {
+<a id="L173"></a><span class="ln">   173</span>			return nil, ErrMessageTooLong
+<a id="L174"></a><span class="ln">   174</span>		}
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>		<span class="comment">// EM = 0x00 || 0x01 || PS || 0x00 || T</span>
+<a id="L177"></a><span class="ln">   177</span>		em := make([]byte, k)
+<a id="L178"></a><span class="ln">   178</span>		em[1] = 1
+<a id="L179"></a><span class="ln">   179</span>		for i := 2; i &lt; k-tLen-1; i++ {
+<a id="L180"></a><span class="ln">   180</span>			em[i] = 0xff
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>		copy(em[k-tLen:k-hashLen], prefix)
+<a id="L183"></a><span class="ln">   183</span>		copy(em[k-hashLen:k], hashed)
+<a id="L184"></a><span class="ln">   184</span>	
+<a id="L185"></a><span class="ln">   185</span>		m := new(big.Int).SetBytes(em)
+<a id="L186"></a><span class="ln">   186</span>		c, err := decrypt(rand, priv, m)
+<a id="L187"></a><span class="ln">   187</span>		if err == nil {
+<a id="L188"></a><span class="ln">   188</span>			s = c.Bytes()
+<a id="L189"></a><span class="ln">   189</span>		}
+<a id="L190"></a><span class="ln">   190</span>		return
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	<span class="comment">// VerifyPKCS1v15 verifies an RSA PKCS#1 v1.5 signature.</span>
+<a id="L194"></a><span class="ln">   194</span>	<span class="comment">// hashed is the result of hashing the input message using the given hash</span>
+<a id="L195"></a><span class="ln">   195</span>	<span class="comment">// function and sig is the signature. A valid signature is indicated by</span>
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// returning a nil error.</span>
+<a id="L197"></a><span class="ln">   197</span>	func VerifyPKCS1v15(pub *PublicKey, hash crypto.Hash, hashed []byte, sig []byte) (err error) {
+<a id="L198"></a><span class="ln">   198</span>		hashLen, prefix, err := pkcs1v15HashInfo(hash, len(hashed))
+<a id="L199"></a><span class="ln">   199</span>		if err != nil {
+<a id="L200"></a><span class="ln">   200</span>			return
+<a id="L201"></a><span class="ln">   201</span>		}
+<a id="L202"></a><span class="ln">   202</span>	
+<a id="L203"></a><span class="ln">   203</span>		tLen := len(prefix) + hashLen
+<a id="L204"></a><span class="ln">   204</span>		k := (pub.N.BitLen() + 7) / 8
+<a id="L205"></a><span class="ln">   205</span>		if k &lt; tLen+11 {
+<a id="L206"></a><span class="ln">   206</span>			err = ErrVerification
+<a id="L207"></a><span class="ln">   207</span>			return
+<a id="L208"></a><span class="ln">   208</span>		}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>		c := new(big.Int).SetBytes(sig)
+<a id="L211"></a><span class="ln">   211</span>		m := encrypt(new(big.Int), pub, c)
+<a id="L212"></a><span class="ln">   212</span>		em := leftPad(m.Bytes(), k)
+<a id="L213"></a><span class="ln">   213</span>		<span class="comment">// EM = 0x00 || 0x01 || PS || 0x00 || T</span>
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>		ok := subtle.ConstantTimeByteEq(em[0], 0)
+<a id="L216"></a><span class="ln">   216</span>		ok &amp;= subtle.ConstantTimeByteEq(em[1], 1)
+<a id="L217"></a><span class="ln">   217</span>		ok &amp;= subtle.ConstantTimeCompare(em[k-hashLen:k], hashed)
+<a id="L218"></a><span class="ln">   218</span>		ok &amp;= subtle.ConstantTimeCompare(em[k-tLen:k-hashLen], prefix)
+<a id="L219"></a><span class="ln">   219</span>		ok &amp;= subtle.ConstantTimeByteEq(em[k-tLen-1], 0)
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>		for i := 2; i &lt; k-tLen-1; i++ {
+<a id="L222"></a><span class="ln">   222</span>			ok &amp;= subtle.ConstantTimeByteEq(em[i], 0xff)
+<a id="L223"></a><span class="ln">   223</span>		}
+<a id="L224"></a><span class="ln">   224</span>	
+<a id="L225"></a><span class="ln">   225</span>		if ok != 1 {
+<a id="L226"></a><span class="ln">   226</span>			return ErrVerification
+<a id="L227"></a><span class="ln">   227</span>		}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>		return nil
+<a id="L230"></a><span class="ln">   230</span>	}
+<a id="L231"></a><span class="ln">   231</span>	
+<a id="L232"></a><span class="ln">   232</span>	func pkcs1v15HashInfo(hash crypto.Hash, inLen int) (hashLen int, prefix []byte, err error) {
+<a id="L233"></a><span class="ln">   233</span>		hashLen = hash.Size()
+<a id="L234"></a><span class="ln">   234</span>		if inLen != hashLen {
+<a id="L235"></a><span class="ln">   235</span>			return 0, nil, errors.New(&#34;input must be hashed message&#34;)
+<a id="L236"></a><span class="ln">   236</span>		}
+<a id="L237"></a><span class="ln">   237</span>		prefix, ok := hashPrefixes[hash]
+<a id="L238"></a><span class="ln">   238</span>		if !ok {
+<a id="L239"></a><span class="ln">   239</span>			return 0, nil, errors.New(&#34;unsupported hash function&#34;)
+<a id="L240"></a><span class="ln">   240</span>		}
+<a id="L241"></a><span class="ln">   241</span>		return
+<a id="L242"></a><span class="ln">   242</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

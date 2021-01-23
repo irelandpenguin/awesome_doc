@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/strconv/quote.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/strconv/quote.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package strconv
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;unicode/utf8&#34;
+<a id="L9"></a><span class="ln">     9</span>	)
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	const lowerhex = &#34;0123456789abcdef&#34;
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	func quoteWith(s string, quote byte, ASCIIonly bool) string {
+<a id="L14"></a><span class="ln">    14</span>		var runeTmp [utf8.UTFMax]byte
+<a id="L15"></a><span class="ln">    15</span>		buf := make([]byte, 0, 3*len(s)/2) <span class="comment">// Try to avoid more allocations.</span>
+<a id="L16"></a><span class="ln">    16</span>		buf = append(buf, quote)
+<a id="L17"></a><span class="ln">    17</span>		for width := 0; len(s) &gt; 0; s = s[width:] {
+<a id="L18"></a><span class="ln">    18</span>			r := rune(s[0])
+<a id="L19"></a><span class="ln">    19</span>			width = 1
+<a id="L20"></a><span class="ln">    20</span>			if r &gt;= utf8.RuneSelf {
+<a id="L21"></a><span class="ln">    21</span>				r, width = utf8.DecodeRuneInString(s)
+<a id="L22"></a><span class="ln">    22</span>			}
+<a id="L23"></a><span class="ln">    23</span>			if width == 1 &amp;&amp; r == utf8.RuneError {
+<a id="L24"></a><span class="ln">    24</span>				buf = append(buf, `\x`...)
+<a id="L25"></a><span class="ln">    25</span>				buf = append(buf, lowerhex[s[0]&gt;&gt;4])
+<a id="L26"></a><span class="ln">    26</span>				buf = append(buf, lowerhex[s[0]&amp;0xF])
+<a id="L27"></a><span class="ln">    27</span>				continue
+<a id="L28"></a><span class="ln">    28</span>			}
+<a id="L29"></a><span class="ln">    29</span>			if r == rune(quote) || r == &#39;\\&#39; { <span class="comment">// always backslashed</span>
+<a id="L30"></a><span class="ln">    30</span>				buf = append(buf, &#39;\\&#39;)
+<a id="L31"></a><span class="ln">    31</span>				buf = append(buf, byte(r))
+<a id="L32"></a><span class="ln">    32</span>				continue
+<a id="L33"></a><span class="ln">    33</span>			}
+<a id="L34"></a><span class="ln">    34</span>			if ASCIIonly {
+<a id="L35"></a><span class="ln">    35</span>				if r &lt; utf8.RuneSelf &amp;&amp; IsPrint(r) {
+<a id="L36"></a><span class="ln">    36</span>					buf = append(buf, byte(r))
+<a id="L37"></a><span class="ln">    37</span>					continue
+<a id="L38"></a><span class="ln">    38</span>				}
+<a id="L39"></a><span class="ln">    39</span>			} else if IsPrint(r) {
+<a id="L40"></a><span class="ln">    40</span>				n := utf8.EncodeRune(runeTmp[:], r)
+<a id="L41"></a><span class="ln">    41</span>				buf = append(buf, runeTmp[:n]...)
+<a id="L42"></a><span class="ln">    42</span>				continue
+<a id="L43"></a><span class="ln">    43</span>			}
+<a id="L44"></a><span class="ln">    44</span>			switch r {
+<a id="L45"></a><span class="ln">    45</span>			case &#39;\a&#39;:
+<a id="L46"></a><span class="ln">    46</span>				buf = append(buf, `\a`...)
+<a id="L47"></a><span class="ln">    47</span>			case &#39;\b&#39;:
+<a id="L48"></a><span class="ln">    48</span>				buf = append(buf, `\b`...)
+<a id="L49"></a><span class="ln">    49</span>			case &#39;\f&#39;:
+<a id="L50"></a><span class="ln">    50</span>				buf = append(buf, `\f`...)
+<a id="L51"></a><span class="ln">    51</span>			case &#39;\n&#39;:
+<a id="L52"></a><span class="ln">    52</span>				buf = append(buf, `\n`...)
+<a id="L53"></a><span class="ln">    53</span>			case &#39;\r&#39;:
+<a id="L54"></a><span class="ln">    54</span>				buf = append(buf, `\r`...)
+<a id="L55"></a><span class="ln">    55</span>			case &#39;\t&#39;:
+<a id="L56"></a><span class="ln">    56</span>				buf = append(buf, `\t`...)
+<a id="L57"></a><span class="ln">    57</span>			case &#39;\v&#39;:
+<a id="L58"></a><span class="ln">    58</span>				buf = append(buf, `\v`...)
+<a id="L59"></a><span class="ln">    59</span>			default:
+<a id="L60"></a><span class="ln">    60</span>				switch {
+<a id="L61"></a><span class="ln">    61</span>				case r &lt; &#39; &#39;:
+<a id="L62"></a><span class="ln">    62</span>					buf = append(buf, `\x`...)
+<a id="L63"></a><span class="ln">    63</span>					buf = append(buf, lowerhex[s[0]&gt;&gt;4])
+<a id="L64"></a><span class="ln">    64</span>					buf = append(buf, lowerhex[s[0]&amp;0xF])
+<a id="L65"></a><span class="ln">    65</span>				case r &gt; utf8.MaxRune:
+<a id="L66"></a><span class="ln">    66</span>					r = 0xFFFD
+<a id="L67"></a><span class="ln">    67</span>					fallthrough
+<a id="L68"></a><span class="ln">    68</span>				case r &lt; 0x10000:
+<a id="L69"></a><span class="ln">    69</span>					buf = append(buf, `\u`...)
+<a id="L70"></a><span class="ln">    70</span>					for s := 12; s &gt;= 0; s -= 4 {
+<a id="L71"></a><span class="ln">    71</span>						buf = append(buf, lowerhex[r&gt;&gt;uint(s)&amp;0xF])
+<a id="L72"></a><span class="ln">    72</span>					}
+<a id="L73"></a><span class="ln">    73</span>				default:
+<a id="L74"></a><span class="ln">    74</span>					buf = append(buf, `\U`...)
+<a id="L75"></a><span class="ln">    75</span>					for s := 28; s &gt;= 0; s -= 4 {
+<a id="L76"></a><span class="ln">    76</span>						buf = append(buf, lowerhex[r&gt;&gt;uint(s)&amp;0xF])
+<a id="L77"></a><span class="ln">    77</span>					}
+<a id="L78"></a><span class="ln">    78</span>				}
+<a id="L79"></a><span class="ln">    79</span>			}
+<a id="L80"></a><span class="ln">    80</span>		}
+<a id="L81"></a><span class="ln">    81</span>		buf = append(buf, quote)
+<a id="L82"></a><span class="ln">    82</span>		return string(buf)
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// Quote returns a double-quoted Go string literal representing s.  The</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// returned string uses Go escape sequences (\t, \n, \xFF, \u0100) for</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// control characters and non-printable characters as defined by</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// IsPrint.</span>
+<a id="L90"></a><span class="ln">    90</span>	func Quote(s string) string {
+<a id="L91"></a><span class="ln">    91</span>		return quoteWith(s, &#39;&#34;&#39;, false)
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// AppendQuote appends a double-quoted Go string literal representing s,</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// as generated by Quote, to dst and returns the extended buffer.</span>
+<a id="L96"></a><span class="ln">    96</span>	func AppendQuote(dst []byte, s string) []byte {
+<a id="L97"></a><span class="ln">    97</span>		return append(dst, Quote(s)...)
+<a id="L98"></a><span class="ln">    98</span>	}
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// QuoteToASCII returns a double-quoted Go string literal representing s.</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// The returned string uses Go escape sequences (\t, \n, \xFF, \u0100) for</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// non-ASCII characters and non-printable characters as defined by IsPrint.</span>
+<a id="L103"></a><span class="ln">   103</span>	func QuoteToASCII(s string) string {
+<a id="L104"></a><span class="ln">   104</span>		return quoteWith(s, &#39;&#34;&#39;, true)
+<a id="L105"></a><span class="ln">   105</span>	}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// AppendQuoteToASCII appends a double-quoted Go string literal representing s,</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// as generated by QuoteToASCII, to dst and returns the extended buffer.</span>
+<a id="L109"></a><span class="ln">   109</span>	func AppendQuoteToASCII(dst []byte, s string) []byte {
+<a id="L110"></a><span class="ln">   110</span>		return append(dst, QuoteToASCII(s)...)
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// QuoteRune returns a single-quoted Go character literal representing the</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// rune.  The returned string uses Go escape sequences (\t, \n, \xFF, \u0100)</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// for control characters and non-printable characters as defined by IsPrint.</span>
+<a id="L116"></a><span class="ln">   116</span>	func QuoteRune(r rune) string {
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// TODO: avoid the allocation here.</span>
+<a id="L118"></a><span class="ln">   118</span>		return quoteWith(string(r), &#39;\&#39;&#39;, false)
+<a id="L119"></a><span class="ln">   119</span>	}
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// AppendQuoteRune appends a single-quoted Go character literal representing the rune,</span>
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// as generated by QuoteRune, to dst and returns the extended buffer.</span>
+<a id="L123"></a><span class="ln">   123</span>	func AppendQuoteRune(dst []byte, r rune) []byte {
+<a id="L124"></a><span class="ln">   124</span>		return append(dst, QuoteRune(r)...)
+<a id="L125"></a><span class="ln">   125</span>	}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// QuoteRuneToASCII returns a single-quoted Go character literal representing</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// the rune.  The returned string uses Go escape sequences (\t, \n, \xFF,</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// \u0100) for non-ASCII characters and non-printable characters as defined</span>
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// by IsPrint.</span>
+<a id="L131"></a><span class="ln">   131</span>	func QuoteRuneToASCII(r rune) string {
+<a id="L132"></a><span class="ln">   132</span>		<span class="comment">// TODO: avoid the allocation here.</span>
+<a id="L133"></a><span class="ln">   133</span>		return quoteWith(string(r), &#39;\&#39;&#39;, true)
+<a id="L134"></a><span class="ln">   134</span>	}
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// AppendQuoteRune appends a single-quoted Go character literal representing the rune,</span>
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// as generated by QuoteRuneToASCII, to dst and returns the extended buffer.</span>
+<a id="L138"></a><span class="ln">   138</span>	func AppendQuoteRuneToASCII(dst []byte, r rune) []byte {
+<a id="L139"></a><span class="ln">   139</span>		return append(dst, QuoteRuneToASCII(r)...)
+<a id="L140"></a><span class="ln">   140</span>	}
+<a id="L141"></a><span class="ln">   141</span>	
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// CanBackquote returns whether the string s would be</span>
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">// a valid Go string literal if enclosed in backquotes.</span>
+<a id="L144"></a><span class="ln">   144</span>	func CanBackquote(s string) bool {
+<a id="L145"></a><span class="ln">   145</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L146"></a><span class="ln">   146</span>			if (s[i] &lt; &#39; &#39; &amp;&amp; s[i] != &#39;\t&#39;) || s[i] == &#39;`&#39; {
+<a id="L147"></a><span class="ln">   147</span>				return false
+<a id="L148"></a><span class="ln">   148</span>			}
+<a id="L149"></a><span class="ln">   149</span>		}
+<a id="L150"></a><span class="ln">   150</span>		return true
+<a id="L151"></a><span class="ln">   151</span>	}
+<a id="L152"></a><span class="ln">   152</span>	
+<a id="L153"></a><span class="ln">   153</span>	func unhex(b byte) (v rune, ok bool) {
+<a id="L154"></a><span class="ln">   154</span>		c := rune(b)
+<a id="L155"></a><span class="ln">   155</span>		switch {
+<a id="L156"></a><span class="ln">   156</span>		case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L157"></a><span class="ln">   157</span>			return c - &#39;0&#39;, true
+<a id="L158"></a><span class="ln">   158</span>		case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L159"></a><span class="ln">   159</span>			return c - &#39;a&#39; + 10, true
+<a id="L160"></a><span class="ln">   160</span>		case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L161"></a><span class="ln">   161</span>			return c - &#39;A&#39; + 10, true
+<a id="L162"></a><span class="ln">   162</span>		}
+<a id="L163"></a><span class="ln">   163</span>		return
+<a id="L164"></a><span class="ln">   164</span>	}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// UnquoteChar decodes the first character or byte in the escaped string</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// or character literal represented by the string s.</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// It returns four values:</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">//</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">//	1) value, the decoded Unicode code point or byte value;</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">//	2) multibyte, a boolean indicating whether the decoded character requires a multibyte UTF-8 representation;</span>
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">//	3) tail, the remainder of the string after the character; and</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">//	4) an error that will be nil if the character is syntactically valid.</span>
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">//</span>
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// The second argument, quote, specifies the type of literal being parsed</span>
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// and therefore which escaped quote character is permitted.</span>
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// If set to a single quote, it permits the sequence \&#39; and disallows unescaped &#39;.</span>
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// If set to a double quote, it permits \&#34; and disallows unescaped &#34;.</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// If set to zero, it does not permit either escape and allows both quote characters to appear unescaped.</span>
+<a id="L180"></a><span class="ln">   180</span>	func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string, err error) {
+<a id="L181"></a><span class="ln">   181</span>		<span class="comment">// easy cases</span>
+<a id="L182"></a><span class="ln">   182</span>		switch c := s[0]; {
+<a id="L183"></a><span class="ln">   183</span>		case c == quote &amp;&amp; (quote == &#39;\&#39;&#39; || quote == &#39;&#34;&#39;):
+<a id="L184"></a><span class="ln">   184</span>			err = ErrSyntax
+<a id="L185"></a><span class="ln">   185</span>			return
+<a id="L186"></a><span class="ln">   186</span>		case c &gt;= utf8.RuneSelf:
+<a id="L187"></a><span class="ln">   187</span>			r, size := utf8.DecodeRuneInString(s)
+<a id="L188"></a><span class="ln">   188</span>			return r, true, s[size:], nil
+<a id="L189"></a><span class="ln">   189</span>		case c != &#39;\\&#39;:
+<a id="L190"></a><span class="ln">   190</span>			return rune(s[0]), false, s[1:], nil
+<a id="L191"></a><span class="ln">   191</span>		}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>		<span class="comment">// hard case: c is backslash</span>
+<a id="L194"></a><span class="ln">   194</span>		if len(s) &lt;= 1 {
+<a id="L195"></a><span class="ln">   195</span>			err = ErrSyntax
+<a id="L196"></a><span class="ln">   196</span>			return
+<a id="L197"></a><span class="ln">   197</span>		}
+<a id="L198"></a><span class="ln">   198</span>		c := s[1]
+<a id="L199"></a><span class="ln">   199</span>		s = s[2:]
+<a id="L200"></a><span class="ln">   200</span>	
+<a id="L201"></a><span class="ln">   201</span>		switch c {
+<a id="L202"></a><span class="ln">   202</span>		case &#39;a&#39;:
+<a id="L203"></a><span class="ln">   203</span>			value = &#39;\a&#39;
+<a id="L204"></a><span class="ln">   204</span>		case &#39;b&#39;:
+<a id="L205"></a><span class="ln">   205</span>			value = &#39;\b&#39;
+<a id="L206"></a><span class="ln">   206</span>		case &#39;f&#39;:
+<a id="L207"></a><span class="ln">   207</span>			value = &#39;\f&#39;
+<a id="L208"></a><span class="ln">   208</span>		case &#39;n&#39;:
+<a id="L209"></a><span class="ln">   209</span>			value = &#39;\n&#39;
+<a id="L210"></a><span class="ln">   210</span>		case &#39;r&#39;:
+<a id="L211"></a><span class="ln">   211</span>			value = &#39;\r&#39;
+<a id="L212"></a><span class="ln">   212</span>		case &#39;t&#39;:
+<a id="L213"></a><span class="ln">   213</span>			value = &#39;\t&#39;
+<a id="L214"></a><span class="ln">   214</span>		case &#39;v&#39;:
+<a id="L215"></a><span class="ln">   215</span>			value = &#39;\v&#39;
+<a id="L216"></a><span class="ln">   216</span>		case &#39;x&#39;, &#39;u&#39;, &#39;U&#39;:
+<a id="L217"></a><span class="ln">   217</span>			n := 0
+<a id="L218"></a><span class="ln">   218</span>			switch c {
+<a id="L219"></a><span class="ln">   219</span>			case &#39;x&#39;:
+<a id="L220"></a><span class="ln">   220</span>				n = 2
+<a id="L221"></a><span class="ln">   221</span>			case &#39;u&#39;:
+<a id="L222"></a><span class="ln">   222</span>				n = 4
+<a id="L223"></a><span class="ln">   223</span>			case &#39;U&#39;:
+<a id="L224"></a><span class="ln">   224</span>				n = 8
+<a id="L225"></a><span class="ln">   225</span>			}
+<a id="L226"></a><span class="ln">   226</span>			var v rune
+<a id="L227"></a><span class="ln">   227</span>			if len(s) &lt; n {
+<a id="L228"></a><span class="ln">   228</span>				err = ErrSyntax
+<a id="L229"></a><span class="ln">   229</span>				return
+<a id="L230"></a><span class="ln">   230</span>			}
+<a id="L231"></a><span class="ln">   231</span>			for j := 0; j &lt; n; j++ {
+<a id="L232"></a><span class="ln">   232</span>				x, ok := unhex(s[j])
+<a id="L233"></a><span class="ln">   233</span>				if !ok {
+<a id="L234"></a><span class="ln">   234</span>					err = ErrSyntax
+<a id="L235"></a><span class="ln">   235</span>					return
+<a id="L236"></a><span class="ln">   236</span>				}
+<a id="L237"></a><span class="ln">   237</span>				v = v&lt;&lt;4 | x
+<a id="L238"></a><span class="ln">   238</span>			}
+<a id="L239"></a><span class="ln">   239</span>			s = s[n:]
+<a id="L240"></a><span class="ln">   240</span>			if c == &#39;x&#39; {
+<a id="L241"></a><span class="ln">   241</span>				<span class="comment">// single-byte string, possibly not UTF-8</span>
+<a id="L242"></a><span class="ln">   242</span>				value = v
+<a id="L243"></a><span class="ln">   243</span>				break
+<a id="L244"></a><span class="ln">   244</span>			}
+<a id="L245"></a><span class="ln">   245</span>			if v &gt; utf8.MaxRune {
+<a id="L246"></a><span class="ln">   246</span>				err = ErrSyntax
+<a id="L247"></a><span class="ln">   247</span>				return
+<a id="L248"></a><span class="ln">   248</span>			}
+<a id="L249"></a><span class="ln">   249</span>			value = v
+<a id="L250"></a><span class="ln">   250</span>			multibyte = true
+<a id="L251"></a><span class="ln">   251</span>		case &#39;0&#39;, &#39;1&#39;, &#39;2&#39;, &#39;3&#39;, &#39;4&#39;, &#39;5&#39;, &#39;6&#39;, &#39;7&#39;:
+<a id="L252"></a><span class="ln">   252</span>			v := rune(c) - &#39;0&#39;
+<a id="L253"></a><span class="ln">   253</span>			if len(s) &lt; 2 {
+<a id="L254"></a><span class="ln">   254</span>				err = ErrSyntax
+<a id="L255"></a><span class="ln">   255</span>				return
+<a id="L256"></a><span class="ln">   256</span>			}
+<a id="L257"></a><span class="ln">   257</span>			for j := 0; j &lt; 2; j++ { <span class="comment">// one digit already; two more</span>
+<a id="L258"></a><span class="ln">   258</span>				x := rune(s[j]) - &#39;0&#39;
+<a id="L259"></a><span class="ln">   259</span>				if x &lt; 0 || x &gt; 7 {
+<a id="L260"></a><span class="ln">   260</span>					err = ErrSyntax
+<a id="L261"></a><span class="ln">   261</span>					return
+<a id="L262"></a><span class="ln">   262</span>				}
+<a id="L263"></a><span class="ln">   263</span>				v = (v &lt;&lt; 3) | x
+<a id="L264"></a><span class="ln">   264</span>			}
+<a id="L265"></a><span class="ln">   265</span>			s = s[2:]
+<a id="L266"></a><span class="ln">   266</span>			if v &gt; 255 {
+<a id="L267"></a><span class="ln">   267</span>				err = ErrSyntax
+<a id="L268"></a><span class="ln">   268</span>				return
+<a id="L269"></a><span class="ln">   269</span>			}
+<a id="L270"></a><span class="ln">   270</span>			value = v
+<a id="L271"></a><span class="ln">   271</span>		case &#39;\\&#39;:
+<a id="L272"></a><span class="ln">   272</span>			value = &#39;\\&#39;
+<a id="L273"></a><span class="ln">   273</span>		case &#39;\&#39;&#39;, &#39;&#34;&#39;:
+<a id="L274"></a><span class="ln">   274</span>			if c != quote {
+<a id="L275"></a><span class="ln">   275</span>				err = ErrSyntax
+<a id="L276"></a><span class="ln">   276</span>				return
+<a id="L277"></a><span class="ln">   277</span>			}
+<a id="L278"></a><span class="ln">   278</span>			value = rune(c)
+<a id="L279"></a><span class="ln">   279</span>		default:
+<a id="L280"></a><span class="ln">   280</span>			err = ErrSyntax
+<a id="L281"></a><span class="ln">   281</span>			return
+<a id="L282"></a><span class="ln">   282</span>		}
+<a id="L283"></a><span class="ln">   283</span>		tail = s
+<a id="L284"></a><span class="ln">   284</span>		return
+<a id="L285"></a><span class="ln">   285</span>	}
+<a id="L286"></a><span class="ln">   286</span>	
+<a id="L287"></a><span class="ln">   287</span>	<span class="comment">// Unquote interprets s as a single-quoted, double-quoted,</span>
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// or backquoted Go string literal, returning the string value</span>
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// that s quotes.  (If s is single-quoted, it would be a Go</span>
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">// character literal; Unquote returns the corresponding</span>
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// one-character string.)</span>
+<a id="L292"></a><span class="ln">   292</span>	func Unquote(s string) (t string, err error) {
+<a id="L293"></a><span class="ln">   293</span>		n := len(s)
+<a id="L294"></a><span class="ln">   294</span>		if n &lt; 2 {
+<a id="L295"></a><span class="ln">   295</span>			return &#34;&#34;, ErrSyntax
+<a id="L296"></a><span class="ln">   296</span>		}
+<a id="L297"></a><span class="ln">   297</span>		quote := s[0]
+<a id="L298"></a><span class="ln">   298</span>		if quote != s[n-1] {
+<a id="L299"></a><span class="ln">   299</span>			return &#34;&#34;, ErrSyntax
+<a id="L300"></a><span class="ln">   300</span>		}
+<a id="L301"></a><span class="ln">   301</span>		s = s[1 : n-1]
+<a id="L302"></a><span class="ln">   302</span>	
+<a id="L303"></a><span class="ln">   303</span>		if quote == &#39;`&#39; {
+<a id="L304"></a><span class="ln">   304</span>			if contains(s, &#39;`&#39;) {
+<a id="L305"></a><span class="ln">   305</span>				return &#34;&#34;, ErrSyntax
+<a id="L306"></a><span class="ln">   306</span>			}
+<a id="L307"></a><span class="ln">   307</span>			return s, nil
+<a id="L308"></a><span class="ln">   308</span>		}
+<a id="L309"></a><span class="ln">   309</span>		if quote != &#39;&#34;&#39; &amp;&amp; quote != &#39;\&#39;&#39; {
+<a id="L310"></a><span class="ln">   310</span>			return &#34;&#34;, ErrSyntax
+<a id="L311"></a><span class="ln">   311</span>		}
+<a id="L312"></a><span class="ln">   312</span>		if contains(s, &#39;\n&#39;) {
+<a id="L313"></a><span class="ln">   313</span>			return &#34;&#34;, ErrSyntax
+<a id="L314"></a><span class="ln">   314</span>		}
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>		<span class="comment">// Is it trivial?  Avoid allocation.</span>
+<a id="L317"></a><span class="ln">   317</span>		if !contains(s, &#39;\\&#39;) &amp;&amp; !contains(s, quote) {
+<a id="L318"></a><span class="ln">   318</span>			switch quote {
+<a id="L319"></a><span class="ln">   319</span>			case &#39;&#34;&#39;:
+<a id="L320"></a><span class="ln">   320</span>				return s, nil
+<a id="L321"></a><span class="ln">   321</span>			case &#39;\&#39;&#39;:
+<a id="L322"></a><span class="ln">   322</span>				r, size := utf8.DecodeRuneInString(s)
+<a id="L323"></a><span class="ln">   323</span>				if size == len(s) &amp;&amp; (r != utf8.RuneError || size != 1) {
+<a id="L324"></a><span class="ln">   324</span>					return s, nil
+<a id="L325"></a><span class="ln">   325</span>				}
+<a id="L326"></a><span class="ln">   326</span>			}
+<a id="L327"></a><span class="ln">   327</span>		}
+<a id="L328"></a><span class="ln">   328</span>	
+<a id="L329"></a><span class="ln">   329</span>		var runeTmp [utf8.UTFMax]byte
+<a id="L330"></a><span class="ln">   330</span>		buf := make([]byte, 0, 3*len(s)/2) <span class="comment">// Try to avoid more allocations.</span>
+<a id="L331"></a><span class="ln">   331</span>		for len(s) &gt; 0 {
+<a id="L332"></a><span class="ln">   332</span>			c, multibyte, ss, err := UnquoteChar(s, quote)
+<a id="L333"></a><span class="ln">   333</span>			if err != nil {
+<a id="L334"></a><span class="ln">   334</span>				return &#34;&#34;, err
+<a id="L335"></a><span class="ln">   335</span>			}
+<a id="L336"></a><span class="ln">   336</span>			s = ss
+<a id="L337"></a><span class="ln">   337</span>			if c &lt; utf8.RuneSelf || !multibyte {
+<a id="L338"></a><span class="ln">   338</span>				buf = append(buf, byte(c))
+<a id="L339"></a><span class="ln">   339</span>			} else {
+<a id="L340"></a><span class="ln">   340</span>				n := utf8.EncodeRune(runeTmp[:], c)
+<a id="L341"></a><span class="ln">   341</span>				buf = append(buf, runeTmp[:n]...)
+<a id="L342"></a><span class="ln">   342</span>			}
+<a id="L343"></a><span class="ln">   343</span>			if quote == &#39;\&#39;&#39; &amp;&amp; len(s) != 0 {
+<a id="L344"></a><span class="ln">   344</span>				<span class="comment">// single-quoted must be single character</span>
+<a id="L345"></a><span class="ln">   345</span>				return &#34;&#34;, ErrSyntax
+<a id="L346"></a><span class="ln">   346</span>			}
+<a id="L347"></a><span class="ln">   347</span>		}
+<a id="L348"></a><span class="ln">   348</span>		return string(buf), nil
+<a id="L349"></a><span class="ln">   349</span>	}
+<a id="L350"></a><span class="ln">   350</span>	
+<a id="L351"></a><span class="ln">   351</span>	<span class="comment">// contains reports whether the string contains the byte c.</span>
+<a id="L352"></a><span class="ln">   352</span>	func contains(s string, c byte) bool {
+<a id="L353"></a><span class="ln">   353</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L354"></a><span class="ln">   354</span>			if s[i] == c {
+<a id="L355"></a><span class="ln">   355</span>				return true
+<a id="L356"></a><span class="ln">   356</span>			}
+<a id="L357"></a><span class="ln">   357</span>		}
+<a id="L358"></a><span class="ln">   358</span>		return false
+<a id="L359"></a><span class="ln">   359</span>	}
+<a id="L360"></a><span class="ln">   360</span>	
+<a id="L361"></a><span class="ln">   361</span>	<span class="comment">// bsearch16 returns the smallest i such that a[i] &gt;= x.</span>
+<a id="L362"></a><span class="ln">   362</span>	<span class="comment">// If there is no such i, bsearch16 returns len(a).</span>
+<a id="L363"></a><span class="ln">   363</span>	func bsearch16(a []uint16, x uint16) int {
+<a id="L364"></a><span class="ln">   364</span>		i, j := 0, len(a)
+<a id="L365"></a><span class="ln">   365</span>		for i &lt; j {
+<a id="L366"></a><span class="ln">   366</span>			h := i + (j-i)/2
+<a id="L367"></a><span class="ln">   367</span>			if a[h] &lt; x {
+<a id="L368"></a><span class="ln">   368</span>				i = h + 1
+<a id="L369"></a><span class="ln">   369</span>			} else {
+<a id="L370"></a><span class="ln">   370</span>				j = h
+<a id="L371"></a><span class="ln">   371</span>			}
+<a id="L372"></a><span class="ln">   372</span>		}
+<a id="L373"></a><span class="ln">   373</span>		return i
+<a id="L374"></a><span class="ln">   374</span>	}
+<a id="L375"></a><span class="ln">   375</span>	
+<a id="L376"></a><span class="ln">   376</span>	<span class="comment">// bsearch32 returns the smallest i such that a[i] &gt;= x.</span>
+<a id="L377"></a><span class="ln">   377</span>	<span class="comment">// If there is no such i, bsearch32 returns len(a).</span>
+<a id="L378"></a><span class="ln">   378</span>	func bsearch32(a []uint32, x uint32) int {
+<a id="L379"></a><span class="ln">   379</span>		i, j := 0, len(a)
+<a id="L380"></a><span class="ln">   380</span>		for i &lt; j {
+<a id="L381"></a><span class="ln">   381</span>			h := i + (j-i)/2
+<a id="L382"></a><span class="ln">   382</span>			if a[h] &lt; x {
+<a id="L383"></a><span class="ln">   383</span>				i = h + 1
+<a id="L384"></a><span class="ln">   384</span>			} else {
+<a id="L385"></a><span class="ln">   385</span>				j = h
+<a id="L386"></a><span class="ln">   386</span>			}
+<a id="L387"></a><span class="ln">   387</span>		}
+<a id="L388"></a><span class="ln">   388</span>		return i
+<a id="L389"></a><span class="ln">   389</span>	}
+<a id="L390"></a><span class="ln">   390</span>	
+<a id="L391"></a><span class="ln">   391</span>	<span class="comment">// TODO: IsPrint is a local implementation of unicode.IsPrint, verified by the tests</span>
+<a id="L392"></a><span class="ln">   392</span>	<span class="comment">// to give the same answer. It allows this package not to depend on unicode,</span>
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// and therefore not pull in all the Unicode tables. If the linker were better</span>
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">// at tossing unused tables, we could get rid of this implementation.</span>
+<a id="L395"></a><span class="ln">   395</span>	<span class="comment">// That would be nice.</span>
+<a id="L396"></a><span class="ln">   396</span>	
+<a id="L397"></a><span class="ln">   397</span>	<span class="comment">// IsPrint reports whether the rune is defined as printable by Go, with</span>
+<a id="L398"></a><span class="ln">   398</span>	<span class="comment">// the same definition as unicode.IsPrint: letters, numbers, punctuation,</span>
+<a id="L399"></a><span class="ln">   399</span>	<span class="comment">// symbols and ASCII space.</span>
+<a id="L400"></a><span class="ln">   400</span>	func IsPrint(r rune) bool {
+<a id="L401"></a><span class="ln">   401</span>		<span class="comment">// Fast check for Latin-1</span>
+<a id="L402"></a><span class="ln">   402</span>		if r &lt;= 0xFF {
+<a id="L403"></a><span class="ln">   403</span>			if 0x20 &lt;= r &amp;&amp; r &lt;= 0x7E {
+<a id="L404"></a><span class="ln">   404</span>				<span class="comment">// All the ASCII is printable from space through DEL-1.</span>
+<a id="L405"></a><span class="ln">   405</span>				return true
+<a id="L406"></a><span class="ln">   406</span>			}
+<a id="L407"></a><span class="ln">   407</span>			if 0xA1 &lt;= r &amp;&amp; r &lt;= 0xFF {
+<a id="L408"></a><span class="ln">   408</span>				<span class="comment">// Similarly for ¡ through ÿ...</span>
+<a id="L409"></a><span class="ln">   409</span>				return r != 0xAD <span class="comment">// ...except for the bizarre soft hyphen.</span>
+<a id="L410"></a><span class="ln">   410</span>			}
+<a id="L411"></a><span class="ln">   411</span>			return false
+<a id="L412"></a><span class="ln">   412</span>		}
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>		<span class="comment">// Same algorithm, either on uint16 or uint32 value.</span>
+<a id="L415"></a><span class="ln">   415</span>		<span class="comment">// First, find first i such that isPrint[i] &gt;= x.</span>
+<a id="L416"></a><span class="ln">   416</span>		<span class="comment">// This is the index of either the start or end of a pair that might span x.</span>
+<a id="L417"></a><span class="ln">   417</span>		<span class="comment">// The start is even (isPrint[i&amp;^1]) and the end is odd (isPrint[i|1]).</span>
+<a id="L418"></a><span class="ln">   418</span>		<span class="comment">// If we find x in a range, make sure x is not in isNotPrint list.</span>
+<a id="L419"></a><span class="ln">   419</span>	
+<a id="L420"></a><span class="ln">   420</span>		if 0 &lt;= r &amp;&amp; r &lt; 1&lt;&lt;16 {
+<a id="L421"></a><span class="ln">   421</span>			rr, isPrint, isNotPrint := uint16(r), isPrint16, isNotPrint16
+<a id="L422"></a><span class="ln">   422</span>			i := bsearch16(isPrint, rr)
+<a id="L423"></a><span class="ln">   423</span>			if i &gt;= len(isPrint) || rr &lt; isPrint[i&amp;^1] || isPrint[i|1] &lt; rr {
+<a id="L424"></a><span class="ln">   424</span>				return false
+<a id="L425"></a><span class="ln">   425</span>			}
+<a id="L426"></a><span class="ln">   426</span>			j := bsearch16(isNotPrint, rr)
+<a id="L427"></a><span class="ln">   427</span>			return j &gt;= len(isNotPrint) || isNotPrint[j] != rr
+<a id="L428"></a><span class="ln">   428</span>		}
+<a id="L429"></a><span class="ln">   429</span>	
+<a id="L430"></a><span class="ln">   430</span>		rr, isPrint, isNotPrint := uint32(r), isPrint32, isNotPrint32
+<a id="L431"></a><span class="ln">   431</span>		i := bsearch32(isPrint, rr)
+<a id="L432"></a><span class="ln">   432</span>		if i &gt;= len(isPrint) || rr &lt; isPrint[i&amp;^1] || isPrint[i|1] &lt; rr {
+<a id="L433"></a><span class="ln">   433</span>			return false
+<a id="L434"></a><span class="ln">   434</span>		}
+<a id="L435"></a><span class="ln">   435</span>		if r &gt;= 0x20000 {
+<a id="L436"></a><span class="ln">   436</span>			return true
+<a id="L437"></a><span class="ln">   437</span>		}
+<a id="L438"></a><span class="ln">   438</span>		r -= 0x10000
+<a id="L439"></a><span class="ln">   439</span>		j := bsearch16(isNotPrint, uint16(r))
+<a id="L440"></a><span class="ln">   440</span>		return j &gt;= len(isNotPrint) || isNotPrint[j] != uint16(r)
+<a id="L441"></a><span class="ln">   441</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

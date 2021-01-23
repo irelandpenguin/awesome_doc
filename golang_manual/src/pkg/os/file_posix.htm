@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/os/file_posix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/os/file_posix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd windows</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package os
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;syscall&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;time&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	func sigpipe() <span class="comment">// implemented in package runtime</span>
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	func epipecheck(file *File, e error) {
+<a id="L17"></a><span class="ln">    17</span>		if e == syscall.EPIPE {
+<a id="L18"></a><span class="ln">    18</span>			file.nepipe++
+<a id="L19"></a><span class="ln">    19</span>			if file.nepipe &gt;= 10 {
+<a id="L20"></a><span class="ln">    20</span>				sigpipe()
+<a id="L21"></a><span class="ln">    21</span>			}
+<a id="L22"></a><span class="ln">    22</span>		} else {
+<a id="L23"></a><span class="ln">    23</span>			file.nepipe = 0
+<a id="L24"></a><span class="ln">    24</span>		}
+<a id="L25"></a><span class="ln">    25</span>	}
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Link creates newname as a hard link to the oldname file.</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// If there is an error, it will be of type *LinkError.</span>
+<a id="L29"></a><span class="ln">    29</span>	func Link(oldname, newname string) error {
+<a id="L30"></a><span class="ln">    30</span>		e := syscall.Link(oldname, newname)
+<a id="L31"></a><span class="ln">    31</span>		if e != nil {
+<a id="L32"></a><span class="ln">    32</span>			return &amp;LinkError{&#34;link&#34;, oldname, newname, e}
+<a id="L33"></a><span class="ln">    33</span>		}
+<a id="L34"></a><span class="ln">    34</span>		return nil
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// Symlink creates newname as a symbolic link to oldname.</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// If there is an error, it will be of type *LinkError.</span>
+<a id="L39"></a><span class="ln">    39</span>	func Symlink(oldname, newname string) error {
+<a id="L40"></a><span class="ln">    40</span>		e := syscall.Symlink(oldname, newname)
+<a id="L41"></a><span class="ln">    41</span>		if e != nil {
+<a id="L42"></a><span class="ln">    42</span>			return &amp;LinkError{&#34;symlink&#34;, oldname, newname, e}
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>		return nil
+<a id="L45"></a><span class="ln">    45</span>	}
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// Readlink returns the destination of the named symbolic link.</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L49"></a><span class="ln">    49</span>	func Readlink(name string) (string, error) {
+<a id="L50"></a><span class="ln">    50</span>		for len := 128; ; len *= 2 {
+<a id="L51"></a><span class="ln">    51</span>			b := make([]byte, len)
+<a id="L52"></a><span class="ln">    52</span>			n, e := syscall.Readlink(name, b)
+<a id="L53"></a><span class="ln">    53</span>			if e != nil {
+<a id="L54"></a><span class="ln">    54</span>				return &#34;&#34;, &amp;PathError{&#34;readlink&#34;, name, e}
+<a id="L55"></a><span class="ln">    55</span>			}
+<a id="L56"></a><span class="ln">    56</span>			if n &lt; len {
+<a id="L57"></a><span class="ln">    57</span>				return string(b[0:n]), nil
+<a id="L58"></a><span class="ln">    58</span>			}
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// Silence 6g.</span>
+<a id="L61"></a><span class="ln">    61</span>		return &#34;&#34;, nil
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// Rename renames a file.</span>
+<a id="L65"></a><span class="ln">    65</span>	func Rename(oldname, newname string) error {
+<a id="L66"></a><span class="ln">    66</span>		e := syscall.Rename(oldname, newname)
+<a id="L67"></a><span class="ln">    67</span>		if e != nil {
+<a id="L68"></a><span class="ln">    68</span>			return &amp;LinkError{&#34;rename&#34;, oldname, newname, e}
+<a id="L69"></a><span class="ln">    69</span>		}
+<a id="L70"></a><span class="ln">    70</span>		return nil
+<a id="L71"></a><span class="ln">    71</span>	}
+<a id="L72"></a><span class="ln">    72</span>	
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// syscallMode returns the syscall-specific mode bits from Go&#39;s portable mode bits.</span>
+<a id="L74"></a><span class="ln">    74</span>	func syscallMode(i FileMode) (o uint32) {
+<a id="L75"></a><span class="ln">    75</span>		o |= uint32(i.Perm())
+<a id="L76"></a><span class="ln">    76</span>		if i&amp;ModeSetuid != 0 {
+<a id="L77"></a><span class="ln">    77</span>			o |= syscall.S_ISUID
+<a id="L78"></a><span class="ln">    78</span>		}
+<a id="L79"></a><span class="ln">    79</span>		if i&amp;ModeSetgid != 0 {
+<a id="L80"></a><span class="ln">    80</span>			o |= syscall.S_ISGID
+<a id="L81"></a><span class="ln">    81</span>		}
+<a id="L82"></a><span class="ln">    82</span>		if i&amp;ModeSticky != 0 {
+<a id="L83"></a><span class="ln">    83</span>			o |= syscall.S_ISVTX
+<a id="L84"></a><span class="ln">    84</span>		}
+<a id="L85"></a><span class="ln">    85</span>		<span class="comment">// No mapping for Go&#39;s ModeTemporary (plan9 only).</span>
+<a id="L86"></a><span class="ln">    86</span>		return
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// Chmod changes the mode of the named file to mode.</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// If the file is a symbolic link, it changes the mode of the link&#39;s target.</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L92"></a><span class="ln">    92</span>	func Chmod(name string, mode FileMode) error {
+<a id="L93"></a><span class="ln">    93</span>		if e := syscall.Chmod(name, syscallMode(mode)); e != nil {
+<a id="L94"></a><span class="ln">    94</span>			return &amp;PathError{&#34;chmod&#34;, name, e}
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>		return nil
+<a id="L97"></a><span class="ln">    97</span>	}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// Chmod changes the mode of the file to mode.</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L101"></a><span class="ln">   101</span>	func (f *File) Chmod(mode FileMode) error {
+<a id="L102"></a><span class="ln">   102</span>		if e := syscall.Fchmod(f.fd, syscallMode(mode)); e != nil {
+<a id="L103"></a><span class="ln">   103</span>			return &amp;PathError{&#34;chmod&#34;, f.name, e}
+<a id="L104"></a><span class="ln">   104</span>		}
+<a id="L105"></a><span class="ln">   105</span>		return nil
+<a id="L106"></a><span class="ln">   106</span>	}
+<a id="L107"></a><span class="ln">   107</span>	
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// Chown changes the numeric uid and gid of the named file.</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// If the file is a symbolic link, it changes the uid and gid of the link&#39;s target.</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L111"></a><span class="ln">   111</span>	func Chown(name string, uid, gid int) error {
+<a id="L112"></a><span class="ln">   112</span>		if e := syscall.Chown(name, uid, gid); e != nil {
+<a id="L113"></a><span class="ln">   113</span>			return &amp;PathError{&#34;chown&#34;, name, e}
+<a id="L114"></a><span class="ln">   114</span>		}
+<a id="L115"></a><span class="ln">   115</span>		return nil
+<a id="L116"></a><span class="ln">   116</span>	}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">// Lchown changes the numeric uid and gid of the named file.</span>
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// If the file is a symbolic link, it changes the uid and gid of the link itself.</span>
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L121"></a><span class="ln">   121</span>	func Lchown(name string, uid, gid int) error {
+<a id="L122"></a><span class="ln">   122</span>		if e := syscall.Lchown(name, uid, gid); e != nil {
+<a id="L123"></a><span class="ln">   123</span>			return &amp;PathError{&#34;lchown&#34;, name, e}
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>		return nil
+<a id="L126"></a><span class="ln">   126</span>	}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// Chown changes the numeric uid and gid of the named file.</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L130"></a><span class="ln">   130</span>	func (f *File) Chown(uid, gid int) error {
+<a id="L131"></a><span class="ln">   131</span>		if e := syscall.Fchown(f.fd, uid, gid); e != nil {
+<a id="L132"></a><span class="ln">   132</span>			return &amp;PathError{&#34;chown&#34;, f.name, e}
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>		return nil
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// Truncate changes the size of the file.</span>
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// It does not change the I/O offset.</span>
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L140"></a><span class="ln">   140</span>	func (f *File) Truncate(size int64) error {
+<a id="L141"></a><span class="ln">   141</span>		if e := syscall.Ftruncate(f.fd, size); e != nil {
+<a id="L142"></a><span class="ln">   142</span>			return &amp;PathError{&#34;truncate&#34;, f.name, e}
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>		return nil
+<a id="L145"></a><span class="ln">   145</span>	}
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// Sync commits the current contents of the file to stable storage.</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// Typically, this means flushing the file system&#39;s in-memory copy</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// of recently written data to disk.</span>
+<a id="L150"></a><span class="ln">   150</span>	func (f *File) Sync() (err error) {
+<a id="L151"></a><span class="ln">   151</span>		if f == nil {
+<a id="L152"></a><span class="ln">   152</span>			return syscall.EINVAL
+<a id="L153"></a><span class="ln">   153</span>		}
+<a id="L154"></a><span class="ln">   154</span>		if e := syscall.Fsync(f.fd); e != nil {
+<a id="L155"></a><span class="ln">   155</span>			return NewSyscallError(&#34;fsync&#34;, e)
+<a id="L156"></a><span class="ln">   156</span>		}
+<a id="L157"></a><span class="ln">   157</span>		return nil
+<a id="L158"></a><span class="ln">   158</span>	}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">// Chtimes changes the access and modification times of the named</span>
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// file, similar to the Unix utime() or utimes() functions.</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">//</span>
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// The underlying filesystem may truncate or round the values to a</span>
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// less precise time unit.</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// If there is an error, it will be of type *PathError.</span>
+<a id="L166"></a><span class="ln">   166</span>	func Chtimes(name string, atime time.Time, mtime time.Time) error {
+<a id="L167"></a><span class="ln">   167</span>		var utimes [2]syscall.Timeval
+<a id="L168"></a><span class="ln">   168</span>		atime_ns := atime.Unix()*1e9 + int64(atime.Nanosecond())
+<a id="L169"></a><span class="ln">   169</span>		mtime_ns := mtime.Unix()*1e9 + int64(mtime.Nanosecond())
+<a id="L170"></a><span class="ln">   170</span>		utimes[0] = syscall.NsecToTimeval(atime_ns)
+<a id="L171"></a><span class="ln">   171</span>		utimes[1] = syscall.NsecToTimeval(mtime_ns)
+<a id="L172"></a><span class="ln">   172</span>		if e := syscall.Utimes(name, utimes[0:]); e != nil {
+<a id="L173"></a><span class="ln">   173</span>			return &amp;PathError{&#34;chtimes&#34;, name, e}
+<a id="L174"></a><span class="ln">   174</span>		}
+<a id="L175"></a><span class="ln">   175</span>		return nil
+<a id="L176"></a><span class="ln">   176</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

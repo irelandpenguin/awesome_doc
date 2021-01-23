@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/rand/zipf.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/rand/zipf.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// W.Hormann, G.Derflinger:</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// &#34;Rejection-Inversion to Generate Variates</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// from Monotone Discrete Distributions&#34;</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// http://eeyore.wu-wien.ac.at/papers/96-04-04.wh-der.ps.gz</span>
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	package rand
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	import &#34;math&#34;
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// A Zipf generates Zipf distributed variates.</span>
+<a id="L15"></a><span class="ln">    15</span>	type Zipf struct {
+<a id="L16"></a><span class="ln">    16</span>		r            *Rand
+<a id="L17"></a><span class="ln">    17</span>		imax         float64
+<a id="L18"></a><span class="ln">    18</span>		v            float64
+<a id="L19"></a><span class="ln">    19</span>		q            float64
+<a id="L20"></a><span class="ln">    20</span>		s            float64
+<a id="L21"></a><span class="ln">    21</span>		oneminusQ    float64
+<a id="L22"></a><span class="ln">    22</span>		oneminusQinv float64
+<a id="L23"></a><span class="ln">    23</span>		hxm          float64
+<a id="L24"></a><span class="ln">    24</span>		hx0minusHxm  float64
+<a id="L25"></a><span class="ln">    25</span>	}
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	func (z *Zipf) h(x float64) float64 {
+<a id="L28"></a><span class="ln">    28</span>		return math.Exp(z.oneminusQ*math.Log(z.v+x)) * z.oneminusQinv
+<a id="L29"></a><span class="ln">    29</span>	}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	func (z *Zipf) hinv(x float64) float64 {
+<a id="L32"></a><span class="ln">    32</span>		return math.Exp(z.oneminusQinv*math.Log(z.oneminusQ*x)) - z.v
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// NewZipf returns a Zipf generating variates p(k) on [0, imax]</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// proportional to (v+k)**(-s) where s&gt;1 and k&gt;=0, and v&gt;=1.</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//</span>
+<a id="L38"></a><span class="ln">    38</span>	func NewZipf(r *Rand, s float64, v float64, imax uint64) *Zipf {
+<a id="L39"></a><span class="ln">    39</span>		z := new(Zipf)
+<a id="L40"></a><span class="ln">    40</span>		if s &lt;= 1.0 || v &lt; 1 {
+<a id="L41"></a><span class="ln">    41</span>			return nil
+<a id="L42"></a><span class="ln">    42</span>		}
+<a id="L43"></a><span class="ln">    43</span>		z.r = r
+<a id="L44"></a><span class="ln">    44</span>		z.imax = float64(imax)
+<a id="L45"></a><span class="ln">    45</span>		z.v = v
+<a id="L46"></a><span class="ln">    46</span>		z.q = s
+<a id="L47"></a><span class="ln">    47</span>		z.oneminusQ = 1.0 - z.q
+<a id="L48"></a><span class="ln">    48</span>		z.oneminusQinv = 1.0 / z.oneminusQ
+<a id="L49"></a><span class="ln">    49</span>		z.hxm = z.h(z.imax + 0.5)
+<a id="L50"></a><span class="ln">    50</span>		z.hx0minusHxm = z.h(0.5) - math.Exp(math.Log(z.v)*(-z.q)) - z.hxm
+<a id="L51"></a><span class="ln">    51</span>		z.s = 1 - z.hinv(z.h(1.5)-math.Exp(-z.q*math.Log(z.v+1.0)))
+<a id="L52"></a><span class="ln">    52</span>		return z
+<a id="L53"></a><span class="ln">    53</span>	}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// Uint64 returns a value drawn from the Zipf distributed described</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// by the Zipf object.</span>
+<a id="L57"></a><span class="ln">    57</span>	func (z *Zipf) Uint64() uint64 {
+<a id="L58"></a><span class="ln">    58</span>		k := 0.0
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>		for {
+<a id="L61"></a><span class="ln">    61</span>			r := z.r.Float64() <span class="comment">// r on [0,1]</span>
+<a id="L62"></a><span class="ln">    62</span>			ur := z.hxm + r*z.hx0minusHxm
+<a id="L63"></a><span class="ln">    63</span>			x := z.hinv(ur)
+<a id="L64"></a><span class="ln">    64</span>			k = math.Floor(x + 0.5)
+<a id="L65"></a><span class="ln">    65</span>			if k-x &lt;= z.s {
+<a id="L66"></a><span class="ln">    66</span>				break
+<a id="L67"></a><span class="ln">    67</span>			}
+<a id="L68"></a><span class="ln">    68</span>			if ur &gt;= z.h(k+0.5)-math.Exp(-math.Log(k+z.v)*z.q) {
+<a id="L69"></a><span class="ln">    69</span>				break
+<a id="L70"></a><span class="ln">    70</span>			}
+<a id="L71"></a><span class="ln">    71</span>		}
+<a id="L72"></a><span class="ln">    72</span>		return uint64(k)
+<a id="L73"></a><span class="ln">    73</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

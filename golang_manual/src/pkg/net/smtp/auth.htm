@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/smtp/auth.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/smtp/auth.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package smtp
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;crypto/hmac&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;crypto/md5&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// Auth is implemented by an SMTP authentication mechanism.</span>
+<a id="L15"></a><span class="ln">    15</span>	type Auth interface {
+<a id="L16"></a><span class="ln">    16</span>		<span class="comment">// Start begins an authentication with a server.</span>
+<a id="L17"></a><span class="ln">    17</span>		<span class="comment">// It returns the name of the authentication protocol</span>
+<a id="L18"></a><span class="ln">    18</span>		<span class="comment">// and optionally data to include in the initial AUTH message</span>
+<a id="L19"></a><span class="ln">    19</span>		<span class="comment">// sent to the server. It can return proto == &#34;&#34; to indicate</span>
+<a id="L20"></a><span class="ln">    20</span>		<span class="comment">// that the authentication should be skipped.</span>
+<a id="L21"></a><span class="ln">    21</span>		<span class="comment">// If it returns a non-nil error, the SMTP client aborts</span>
+<a id="L22"></a><span class="ln">    22</span>		<span class="comment">// the authentication attempt and closes the connection.</span>
+<a id="L23"></a><span class="ln">    23</span>		Start(server *ServerInfo) (proto string, toServer []byte, err error)
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>		<span class="comment">// Next continues the authentication. The server has just sent</span>
+<a id="L26"></a><span class="ln">    26</span>		<span class="comment">// the fromServer data. If more is true, the server expects a</span>
+<a id="L27"></a><span class="ln">    27</span>		<span class="comment">// response, which Next should return as toServer; otherwise</span>
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// Next should return toServer == nil.</span>
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// If Next returns a non-nil error, the SMTP client aborts</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// the authentication attempt and closes the connection.</span>
+<a id="L31"></a><span class="ln">    31</span>		Next(fromServer []byte, more bool) (toServer []byte, err error)
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// ServerInfo records information about an SMTP server.</span>
+<a id="L35"></a><span class="ln">    35</span>	type ServerInfo struct {
+<a id="L36"></a><span class="ln">    36</span>		Name string   <span class="comment">// SMTP server name</span>
+<a id="L37"></a><span class="ln">    37</span>		TLS  bool     <span class="comment">// using TLS, with valid certificate for Name</span>
+<a id="L38"></a><span class="ln">    38</span>		Auth []string <span class="comment">// advertised authentication mechanisms</span>
+<a id="L39"></a><span class="ln">    39</span>	}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	type plainAuth struct {
+<a id="L42"></a><span class="ln">    42</span>		identity, username, password string
+<a id="L43"></a><span class="ln">    43</span>		host                         string
+<a id="L44"></a><span class="ln">    44</span>	}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// PlainAuth returns an Auth that implements the PLAIN authentication</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// mechanism as defined in RFC 4616.</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// The returned Auth uses the given username and password to authenticate</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// on TLS connections to host and act as identity. Usually identity will be</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// left blank to act as username.</span>
+<a id="L51"></a><span class="ln">    51</span>	func PlainAuth(identity, username, password, host string) Auth {
+<a id="L52"></a><span class="ln">    52</span>		return &amp;plainAuth{identity, username, password, host}
+<a id="L53"></a><span class="ln">    53</span>	}
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	func (a *plainAuth) Start(server *ServerInfo) (string, []byte, error) {
+<a id="L56"></a><span class="ln">    56</span>		if !server.TLS {
+<a id="L57"></a><span class="ln">    57</span>			return &#34;&#34;, nil, errors.New(&#34;unencrypted connection&#34;)
+<a id="L58"></a><span class="ln">    58</span>		}
+<a id="L59"></a><span class="ln">    59</span>		if server.Name != a.host {
+<a id="L60"></a><span class="ln">    60</span>			return &#34;&#34;, nil, errors.New(&#34;wrong host name&#34;)
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		resp := []byte(a.identity + &#34;\x00&#34; + a.username + &#34;\x00&#34; + a.password)
+<a id="L63"></a><span class="ln">    63</span>		return &#34;PLAIN&#34;, resp, nil
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	func (a *plainAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+<a id="L67"></a><span class="ln">    67</span>		if more {
+<a id="L68"></a><span class="ln">    68</span>			<span class="comment">// We&#39;ve already sent everything.</span>
+<a id="L69"></a><span class="ln">    69</span>			return nil, errors.New(&#34;unexpected server challenge&#34;)
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>		return nil, nil
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	type cramMD5Auth struct {
+<a id="L75"></a><span class="ln">    75</span>		username, secret string
+<a id="L76"></a><span class="ln">    76</span>	}
+<a id="L77"></a><span class="ln">    77</span>	
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// CRAMMD5Auth returns an Auth that implements the CRAM-MD5 authentication</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// mechanism as defined in RFC 2195.</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// The returned Auth uses the given username and secret to authenticate</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// to the server using the challenge-response mechanism.</span>
+<a id="L82"></a><span class="ln">    82</span>	func CRAMMD5Auth(username, secret string) Auth {
+<a id="L83"></a><span class="ln">    83</span>		return &amp;cramMD5Auth{username, secret}
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	func (a *cramMD5Auth) Start(server *ServerInfo) (string, []byte, error) {
+<a id="L87"></a><span class="ln">    87</span>		return &#34;CRAM-MD5&#34;, nil, nil
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	func (a *cramMD5Auth) Next(fromServer []byte, more bool) ([]byte, error) {
+<a id="L91"></a><span class="ln">    91</span>		if more {
+<a id="L92"></a><span class="ln">    92</span>			d := hmac.New(md5.New, []byte(a.secret))
+<a id="L93"></a><span class="ln">    93</span>			d.Write(fromServer)
+<a id="L94"></a><span class="ln">    94</span>			s := make([]byte, 0, d.Size())
+<a id="L95"></a><span class="ln">    95</span>			return []byte(fmt.Sprintf(&#34;%s %x&#34;, a.username, d.Sum(s))), nil
+<a id="L96"></a><span class="ln">    96</span>		}
+<a id="L97"></a><span class="ln">    97</span>		return nil, nil
+<a id="L98"></a><span class="ln">    98</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

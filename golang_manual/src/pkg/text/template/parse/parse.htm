@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/text/template/parse/parse.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/text/template/parse/parse.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package parse builds parse trees for templates as defined by text/template</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// and html/template. Clients should use those packages to construct templates</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// rather than this one, which provides shared internal data structures not</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// intended for general use.</span>
+<a id="L9"></a><span class="ln">     9</span>	package parse
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import (
+<a id="L12"></a><span class="ln">    12</span>		&#34;bytes&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;fmt&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;runtime&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;strconv&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;unicode&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Tree is the representation of a single parsed template.</span>
+<a id="L20"></a><span class="ln">    20</span>	type Tree struct {
+<a id="L21"></a><span class="ln">    21</span>		Name string    <span class="comment">// name of the template represented by the tree.</span>
+<a id="L22"></a><span class="ln">    22</span>		Root *ListNode <span class="comment">// top-level root of the tree.</span>
+<a id="L23"></a><span class="ln">    23</span>		<span class="comment">// Parsing only; cleared after parse.</span>
+<a id="L24"></a><span class="ln">    24</span>		funcs     []map[string]interface{}
+<a id="L25"></a><span class="ln">    25</span>		lex       *lexer
+<a id="L26"></a><span class="ln">    26</span>		token     [2]item <span class="comment">// two-token lookahead for parser.</span>
+<a id="L27"></a><span class="ln">    27</span>		peekCount int
+<a id="L28"></a><span class="ln">    28</span>		vars      []string <span class="comment">// variables defined at the moment.</span>
+<a id="L29"></a><span class="ln">    29</span>	}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// Parse returns a map from template name to parse.Tree, created by parsing the</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// templates described in the argument string. The top-level template will be</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// given the specified name. If an error is encountered, parsing stops and an</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// empty map is returned with the error.</span>
+<a id="L35"></a><span class="ln">    35</span>	func Parse(name, text, leftDelim, rightDelim string, funcs ...map[string]interface{}) (treeSet map[string]*Tree, err error) {
+<a id="L36"></a><span class="ln">    36</span>		treeSet = make(map[string]*Tree)
+<a id="L37"></a><span class="ln">    37</span>		_, err = New(name).Parse(text, leftDelim, rightDelim, treeSet, funcs...)
+<a id="L38"></a><span class="ln">    38</span>		return
+<a id="L39"></a><span class="ln">    39</span>	}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// next returns the next token.</span>
+<a id="L42"></a><span class="ln">    42</span>	func (t *Tree) next() item {
+<a id="L43"></a><span class="ln">    43</span>		if t.peekCount &gt; 0 {
+<a id="L44"></a><span class="ln">    44</span>			t.peekCount--
+<a id="L45"></a><span class="ln">    45</span>		} else {
+<a id="L46"></a><span class="ln">    46</span>			t.token[0] = t.lex.nextItem()
+<a id="L47"></a><span class="ln">    47</span>		}
+<a id="L48"></a><span class="ln">    48</span>		return t.token[t.peekCount]
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// backup backs the input stream up one token.</span>
+<a id="L52"></a><span class="ln">    52</span>	func (t *Tree) backup() {
+<a id="L53"></a><span class="ln">    53</span>		t.peekCount++
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// backup2 backs the input stream up two tokens</span>
+<a id="L57"></a><span class="ln">    57</span>	func (t *Tree) backup2(t1 item) {
+<a id="L58"></a><span class="ln">    58</span>		t.token[1] = t1
+<a id="L59"></a><span class="ln">    59</span>		t.peekCount = 2
+<a id="L60"></a><span class="ln">    60</span>	}
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// peek returns but does not consume the next token.</span>
+<a id="L63"></a><span class="ln">    63</span>	func (t *Tree) peek() item {
+<a id="L64"></a><span class="ln">    64</span>		if t.peekCount &gt; 0 {
+<a id="L65"></a><span class="ln">    65</span>			return t.token[t.peekCount-1]
+<a id="L66"></a><span class="ln">    66</span>		}
+<a id="L67"></a><span class="ln">    67</span>		t.peekCount = 1
+<a id="L68"></a><span class="ln">    68</span>		t.token[0] = t.lex.nextItem()
+<a id="L69"></a><span class="ln">    69</span>		return t.token[0]
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// Parsing.</span>
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// New allocates a new parse tree with the given name.</span>
+<a id="L75"></a><span class="ln">    75</span>	func New(name string, funcs ...map[string]interface{}) *Tree {
+<a id="L76"></a><span class="ln">    76</span>		return &amp;Tree{
+<a id="L77"></a><span class="ln">    77</span>			Name:  name,
+<a id="L78"></a><span class="ln">    78</span>			funcs: funcs,
+<a id="L79"></a><span class="ln">    79</span>		}
+<a id="L80"></a><span class="ln">    80</span>	}
+<a id="L81"></a><span class="ln">    81</span>	
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// errorf formats the error and terminates processing.</span>
+<a id="L83"></a><span class="ln">    83</span>	func (t *Tree) errorf(format string, args ...interface{}) {
+<a id="L84"></a><span class="ln">    84</span>		t.Root = nil
+<a id="L85"></a><span class="ln">    85</span>		format = fmt.Sprintf(&#34;template: %s:%d: %s&#34;, t.Name, t.lex.lineNumber(), format)
+<a id="L86"></a><span class="ln">    86</span>		panic(fmt.Errorf(format, args...))
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// error terminates processing.</span>
+<a id="L90"></a><span class="ln">    90</span>	func (t *Tree) error(err error) {
+<a id="L91"></a><span class="ln">    91</span>		t.errorf(&#34;%s&#34;, err)
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// expect consumes the next token and guarantees it has the required type.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (t *Tree) expect(expected itemType, context string) item {
+<a id="L96"></a><span class="ln">    96</span>		token := t.next()
+<a id="L97"></a><span class="ln">    97</span>		if token.typ != expected {
+<a id="L98"></a><span class="ln">    98</span>			t.errorf(&#34;expected %s in %s; got %s&#34;, expected, context, token)
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>		return token
+<a id="L101"></a><span class="ln">   101</span>	}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// expectEither consumes the next token and guarantees it has one of the required types.</span>
+<a id="L104"></a><span class="ln">   104</span>	func (t *Tree) expectOneOf(expected1, expected2 itemType, context string) item {
+<a id="L105"></a><span class="ln">   105</span>		token := t.next()
+<a id="L106"></a><span class="ln">   106</span>		if token.typ != expected1 &amp;&amp; token.typ != expected2 {
+<a id="L107"></a><span class="ln">   107</span>			t.errorf(&#34;expected %s or %s in %s; got %s&#34;, expected1, expected2, context, token)
+<a id="L108"></a><span class="ln">   108</span>		}
+<a id="L109"></a><span class="ln">   109</span>		return token
+<a id="L110"></a><span class="ln">   110</span>	}
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// unexpected complains about the token and terminates processing.</span>
+<a id="L113"></a><span class="ln">   113</span>	func (t *Tree) unexpected(token item, context string) {
+<a id="L114"></a><span class="ln">   114</span>		t.errorf(&#34;unexpected %s in %s&#34;, token, context)
+<a id="L115"></a><span class="ln">   115</span>	}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">// recover is the handler that turns panics into returns from the top level of Parse.</span>
+<a id="L118"></a><span class="ln">   118</span>	func (t *Tree) recover(errp *error) {
+<a id="L119"></a><span class="ln">   119</span>		e := recover()
+<a id="L120"></a><span class="ln">   120</span>		if e != nil {
+<a id="L121"></a><span class="ln">   121</span>			if _, ok := e.(runtime.Error); ok {
+<a id="L122"></a><span class="ln">   122</span>				panic(e)
+<a id="L123"></a><span class="ln">   123</span>			}
+<a id="L124"></a><span class="ln">   124</span>			if t != nil {
+<a id="L125"></a><span class="ln">   125</span>				t.stopParse()
+<a id="L126"></a><span class="ln">   126</span>			}
+<a id="L127"></a><span class="ln">   127</span>			*errp = e.(error)
+<a id="L128"></a><span class="ln">   128</span>		}
+<a id="L129"></a><span class="ln">   129</span>		return
+<a id="L130"></a><span class="ln">   130</span>	}
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>	<span class="comment">// startParse initializes the parser, using the lexer.</span>
+<a id="L133"></a><span class="ln">   133</span>	func (t *Tree) startParse(funcs []map[string]interface{}, lex *lexer) {
+<a id="L134"></a><span class="ln">   134</span>		t.Root = nil
+<a id="L135"></a><span class="ln">   135</span>		t.lex = lex
+<a id="L136"></a><span class="ln">   136</span>		t.vars = []string{&#34;$&#34;}
+<a id="L137"></a><span class="ln">   137</span>		t.funcs = funcs
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// stopParse terminates parsing.</span>
+<a id="L141"></a><span class="ln">   141</span>	func (t *Tree) stopParse() {
+<a id="L142"></a><span class="ln">   142</span>		t.lex = nil
+<a id="L143"></a><span class="ln">   143</span>		t.vars = nil
+<a id="L144"></a><span class="ln">   144</span>		t.funcs = nil
+<a id="L145"></a><span class="ln">   145</span>	}
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// atEOF returns true if, possibly after spaces, we&#39;re at EOF.</span>
+<a id="L148"></a><span class="ln">   148</span>	func (t *Tree) atEOF() bool {
+<a id="L149"></a><span class="ln">   149</span>		for {
+<a id="L150"></a><span class="ln">   150</span>			token := t.peek()
+<a id="L151"></a><span class="ln">   151</span>			switch token.typ {
+<a id="L152"></a><span class="ln">   152</span>			case itemEOF:
+<a id="L153"></a><span class="ln">   153</span>				return true
+<a id="L154"></a><span class="ln">   154</span>			case itemText:
+<a id="L155"></a><span class="ln">   155</span>				for _, r := range token.val {
+<a id="L156"></a><span class="ln">   156</span>					if !unicode.IsSpace(r) {
+<a id="L157"></a><span class="ln">   157</span>						return false
+<a id="L158"></a><span class="ln">   158</span>					}
+<a id="L159"></a><span class="ln">   159</span>				}
+<a id="L160"></a><span class="ln">   160</span>				t.next() <span class="comment">// skip spaces.</span>
+<a id="L161"></a><span class="ln">   161</span>				continue
+<a id="L162"></a><span class="ln">   162</span>			}
+<a id="L163"></a><span class="ln">   163</span>			break
+<a id="L164"></a><span class="ln">   164</span>		}
+<a id="L165"></a><span class="ln">   165</span>		return false
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// Parse parses the template definition string to construct a representation of</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// the template for execution. If either action delimiter string is empty, the</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// default (&#34;{{&#34; or &#34;}}&#34;) is used. Embedded template definitions are added to</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">// the treeSet map.</span>
+<a id="L172"></a><span class="ln">   172</span>	func (t *Tree) Parse(s, leftDelim, rightDelim string, treeSet map[string]*Tree, funcs ...map[string]interface{}) (tree *Tree, err error) {
+<a id="L173"></a><span class="ln">   173</span>		defer t.recover(&amp;err)
+<a id="L174"></a><span class="ln">   174</span>		t.startParse(funcs, lex(t.Name, s, leftDelim, rightDelim))
+<a id="L175"></a><span class="ln">   175</span>		t.parse(treeSet)
+<a id="L176"></a><span class="ln">   176</span>		t.add(treeSet)
+<a id="L177"></a><span class="ln">   177</span>		t.stopParse()
+<a id="L178"></a><span class="ln">   178</span>		return t, nil
+<a id="L179"></a><span class="ln">   179</span>	}
+<a id="L180"></a><span class="ln">   180</span>	
+<a id="L181"></a><span class="ln">   181</span>	<span class="comment">// add adds tree to the treeSet.</span>
+<a id="L182"></a><span class="ln">   182</span>	func (t *Tree) add(treeSet map[string]*Tree) {
+<a id="L183"></a><span class="ln">   183</span>		tree := treeSet[t.Name]
+<a id="L184"></a><span class="ln">   184</span>		if tree == nil || IsEmptyTree(tree.Root) {
+<a id="L185"></a><span class="ln">   185</span>			treeSet[t.Name] = t
+<a id="L186"></a><span class="ln">   186</span>			return
+<a id="L187"></a><span class="ln">   187</span>		}
+<a id="L188"></a><span class="ln">   188</span>		if !IsEmptyTree(t.Root) {
+<a id="L189"></a><span class="ln">   189</span>			t.errorf(&#34;template: multiple definition of template %q&#34;, t.Name)
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	<span class="comment">// IsEmptyTree reports whether this tree (node) is empty of everything but space.</span>
+<a id="L194"></a><span class="ln">   194</span>	func IsEmptyTree(n Node) bool {
+<a id="L195"></a><span class="ln">   195</span>		switch n := n.(type) {
+<a id="L196"></a><span class="ln">   196</span>		case nil:
+<a id="L197"></a><span class="ln">   197</span>			return true
+<a id="L198"></a><span class="ln">   198</span>		case *ActionNode:
+<a id="L199"></a><span class="ln">   199</span>		case *IfNode:
+<a id="L200"></a><span class="ln">   200</span>		case *ListNode:
+<a id="L201"></a><span class="ln">   201</span>			for _, node := range n.Nodes {
+<a id="L202"></a><span class="ln">   202</span>				if !IsEmptyTree(node) {
+<a id="L203"></a><span class="ln">   203</span>					return false
+<a id="L204"></a><span class="ln">   204</span>				}
+<a id="L205"></a><span class="ln">   205</span>			}
+<a id="L206"></a><span class="ln">   206</span>			return true
+<a id="L207"></a><span class="ln">   207</span>		case *RangeNode:
+<a id="L208"></a><span class="ln">   208</span>		case *TemplateNode:
+<a id="L209"></a><span class="ln">   209</span>		case *TextNode:
+<a id="L210"></a><span class="ln">   210</span>			return len(bytes.TrimSpace(n.Text)) == 0
+<a id="L211"></a><span class="ln">   211</span>		case *WithNode:
+<a id="L212"></a><span class="ln">   212</span>		default:
+<a id="L213"></a><span class="ln">   213</span>			panic(&#34;unknown node: &#34; + n.String())
+<a id="L214"></a><span class="ln">   214</span>		}
+<a id="L215"></a><span class="ln">   215</span>		return false
+<a id="L216"></a><span class="ln">   216</span>	}
+<a id="L217"></a><span class="ln">   217</span>	
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// parse is the top-level parser for a template, essentially the same</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// as itemList except it also parses {{define}} actions.</span>
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">// It runs to EOF.</span>
+<a id="L221"></a><span class="ln">   221</span>	func (t *Tree) parse(treeSet map[string]*Tree) (next Node) {
+<a id="L222"></a><span class="ln">   222</span>		t.Root = newList()
+<a id="L223"></a><span class="ln">   223</span>		for t.peek().typ != itemEOF {
+<a id="L224"></a><span class="ln">   224</span>			if t.peek().typ == itemLeftDelim {
+<a id="L225"></a><span class="ln">   225</span>				delim := t.next()
+<a id="L226"></a><span class="ln">   226</span>				if t.next().typ == itemDefine {
+<a id="L227"></a><span class="ln">   227</span>					newT := New(&#34;definition&#34;) <span class="comment">// name will be updated once we know it.</span>
+<a id="L228"></a><span class="ln">   228</span>					newT.startParse(t.funcs, t.lex)
+<a id="L229"></a><span class="ln">   229</span>					newT.parseDefinition(treeSet)
+<a id="L230"></a><span class="ln">   230</span>					continue
+<a id="L231"></a><span class="ln">   231</span>				}
+<a id="L232"></a><span class="ln">   232</span>				t.backup2(delim)
+<a id="L233"></a><span class="ln">   233</span>			}
+<a id="L234"></a><span class="ln">   234</span>			n := t.textOrAction()
+<a id="L235"></a><span class="ln">   235</span>			if n.Type() == nodeEnd {
+<a id="L236"></a><span class="ln">   236</span>				t.errorf(&#34;unexpected %s&#34;, n)
+<a id="L237"></a><span class="ln">   237</span>			}
+<a id="L238"></a><span class="ln">   238</span>			t.Root.append(n)
+<a id="L239"></a><span class="ln">   239</span>		}
+<a id="L240"></a><span class="ln">   240</span>		return nil
+<a id="L241"></a><span class="ln">   241</span>	}
+<a id="L242"></a><span class="ln">   242</span>	
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// parseDefinition parses a {{define}} ...  {{end}} template definition and</span>
+<a id="L244"></a><span class="ln">   244</span>	<span class="comment">// installs the definition in the treeSet map.  The &#34;define&#34; keyword has already</span>
+<a id="L245"></a><span class="ln">   245</span>	<span class="comment">// been scanned.</span>
+<a id="L246"></a><span class="ln">   246</span>	func (t *Tree) parseDefinition(treeSet map[string]*Tree) {
+<a id="L247"></a><span class="ln">   247</span>		const context = &#34;define clause&#34;
+<a id="L248"></a><span class="ln">   248</span>		name := t.expectOneOf(itemString, itemRawString, context)
+<a id="L249"></a><span class="ln">   249</span>		var err error
+<a id="L250"></a><span class="ln">   250</span>		t.Name, err = strconv.Unquote(name.val)
+<a id="L251"></a><span class="ln">   251</span>		if err != nil {
+<a id="L252"></a><span class="ln">   252</span>			t.error(err)
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>		t.expect(itemRightDelim, context)
+<a id="L255"></a><span class="ln">   255</span>		var end Node
+<a id="L256"></a><span class="ln">   256</span>		t.Root, end = t.itemList()
+<a id="L257"></a><span class="ln">   257</span>		if end.Type() != nodeEnd {
+<a id="L258"></a><span class="ln">   258</span>			t.errorf(&#34;unexpected %s in %s&#34;, end, context)
+<a id="L259"></a><span class="ln">   259</span>		}
+<a id="L260"></a><span class="ln">   260</span>		t.stopParse()
+<a id="L261"></a><span class="ln">   261</span>		t.add(treeSet)
+<a id="L262"></a><span class="ln">   262</span>	}
+<a id="L263"></a><span class="ln">   263</span>	
+<a id="L264"></a><span class="ln">   264</span>	<span class="comment">// itemList:</span>
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">//	textOrAction*</span>
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">// Terminates at {{end}} or {{else}}, returned separately.</span>
+<a id="L267"></a><span class="ln">   267</span>	func (t *Tree) itemList() (list *ListNode, next Node) {
+<a id="L268"></a><span class="ln">   268</span>		list = newList()
+<a id="L269"></a><span class="ln">   269</span>		for t.peek().typ != itemEOF {
+<a id="L270"></a><span class="ln">   270</span>			n := t.textOrAction()
+<a id="L271"></a><span class="ln">   271</span>			switch n.Type() {
+<a id="L272"></a><span class="ln">   272</span>			case nodeEnd, nodeElse:
+<a id="L273"></a><span class="ln">   273</span>				return list, n
+<a id="L274"></a><span class="ln">   274</span>			}
+<a id="L275"></a><span class="ln">   275</span>			list.append(n)
+<a id="L276"></a><span class="ln">   276</span>		}
+<a id="L277"></a><span class="ln">   277</span>		t.errorf(&#34;unexpected EOF&#34;)
+<a id="L278"></a><span class="ln">   278</span>		return
+<a id="L279"></a><span class="ln">   279</span>	}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// textOrAction:</span>
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">//	text | action</span>
+<a id="L283"></a><span class="ln">   283</span>	func (t *Tree) textOrAction() Node {
+<a id="L284"></a><span class="ln">   284</span>		switch token := t.next(); token.typ {
+<a id="L285"></a><span class="ln">   285</span>		case itemText:
+<a id="L286"></a><span class="ln">   286</span>			return newText(token.val)
+<a id="L287"></a><span class="ln">   287</span>		case itemLeftDelim:
+<a id="L288"></a><span class="ln">   288</span>			return t.action()
+<a id="L289"></a><span class="ln">   289</span>		default:
+<a id="L290"></a><span class="ln">   290</span>			t.unexpected(token, &#34;input&#34;)
+<a id="L291"></a><span class="ln">   291</span>		}
+<a id="L292"></a><span class="ln">   292</span>		return nil
+<a id="L293"></a><span class="ln">   293</span>	}
+<a id="L294"></a><span class="ln">   294</span>	
+<a id="L295"></a><span class="ln">   295</span>	<span class="comment">// Action:</span>
+<a id="L296"></a><span class="ln">   296</span>	<span class="comment">//	control</span>
+<a id="L297"></a><span class="ln">   297</span>	<span class="comment">//	command (&#34;|&#34; command)*</span>
+<a id="L298"></a><span class="ln">   298</span>	<span class="comment">// Left delim is past. Now get actions.</span>
+<a id="L299"></a><span class="ln">   299</span>	<span class="comment">// First word could be a keyword such as range.</span>
+<a id="L300"></a><span class="ln">   300</span>	func (t *Tree) action() (n Node) {
+<a id="L301"></a><span class="ln">   301</span>		switch token := t.next(); token.typ {
+<a id="L302"></a><span class="ln">   302</span>		case itemElse:
+<a id="L303"></a><span class="ln">   303</span>			return t.elseControl()
+<a id="L304"></a><span class="ln">   304</span>		case itemEnd:
+<a id="L305"></a><span class="ln">   305</span>			return t.endControl()
+<a id="L306"></a><span class="ln">   306</span>		case itemIf:
+<a id="L307"></a><span class="ln">   307</span>			return t.ifControl()
+<a id="L308"></a><span class="ln">   308</span>		case itemRange:
+<a id="L309"></a><span class="ln">   309</span>			return t.rangeControl()
+<a id="L310"></a><span class="ln">   310</span>		case itemTemplate:
+<a id="L311"></a><span class="ln">   311</span>			return t.templateControl()
+<a id="L312"></a><span class="ln">   312</span>		case itemWith:
+<a id="L313"></a><span class="ln">   313</span>			return t.withControl()
+<a id="L314"></a><span class="ln">   314</span>		}
+<a id="L315"></a><span class="ln">   315</span>		t.backup()
+<a id="L316"></a><span class="ln">   316</span>		<span class="comment">// Do not pop variables; they persist until &#34;end&#34;.</span>
+<a id="L317"></a><span class="ln">   317</span>		return newAction(t.lex.lineNumber(), t.pipeline(&#34;command&#34;))
+<a id="L318"></a><span class="ln">   318</span>	}
+<a id="L319"></a><span class="ln">   319</span>	
+<a id="L320"></a><span class="ln">   320</span>	<span class="comment">// Pipeline:</span>
+<a id="L321"></a><span class="ln">   321</span>	<span class="comment">//	field or command</span>
+<a id="L322"></a><span class="ln">   322</span>	<span class="comment">//	pipeline &#34;|&#34; pipeline</span>
+<a id="L323"></a><span class="ln">   323</span>	func (t *Tree) pipeline(context string) (pipe *PipeNode) {
+<a id="L324"></a><span class="ln">   324</span>		var decl []*VariableNode
+<a id="L325"></a><span class="ln">   325</span>		<span class="comment">// Are there declarations?</span>
+<a id="L326"></a><span class="ln">   326</span>		for {
+<a id="L327"></a><span class="ln">   327</span>			if v := t.peek(); v.typ == itemVariable {
+<a id="L328"></a><span class="ln">   328</span>				t.next()
+<a id="L329"></a><span class="ln">   329</span>				if next := t.peek(); next.typ == itemColonEquals || (next.typ == itemChar &amp;&amp; next.val == &#34;,&#34;) {
+<a id="L330"></a><span class="ln">   330</span>					t.next()
+<a id="L331"></a><span class="ln">   331</span>					variable := newVariable(v.val)
+<a id="L332"></a><span class="ln">   332</span>					if len(variable.Ident) != 1 {
+<a id="L333"></a><span class="ln">   333</span>						t.errorf(&#34;illegal variable in declaration: %s&#34;, v.val)
+<a id="L334"></a><span class="ln">   334</span>					}
+<a id="L335"></a><span class="ln">   335</span>					decl = append(decl, variable)
+<a id="L336"></a><span class="ln">   336</span>					t.vars = append(t.vars, v.val)
+<a id="L337"></a><span class="ln">   337</span>					if next.typ == itemChar &amp;&amp; next.val == &#34;,&#34; {
+<a id="L338"></a><span class="ln">   338</span>						if context == &#34;range&#34; &amp;&amp; len(decl) &lt; 2 {
+<a id="L339"></a><span class="ln">   339</span>							continue
+<a id="L340"></a><span class="ln">   340</span>						}
+<a id="L341"></a><span class="ln">   341</span>						t.errorf(&#34;too many declarations in %s&#34;, context)
+<a id="L342"></a><span class="ln">   342</span>					}
+<a id="L343"></a><span class="ln">   343</span>				} else {
+<a id="L344"></a><span class="ln">   344</span>					t.backup2(v)
+<a id="L345"></a><span class="ln">   345</span>				}
+<a id="L346"></a><span class="ln">   346</span>			}
+<a id="L347"></a><span class="ln">   347</span>			break
+<a id="L348"></a><span class="ln">   348</span>		}
+<a id="L349"></a><span class="ln">   349</span>		pipe = newPipeline(t.lex.lineNumber(), decl)
+<a id="L350"></a><span class="ln">   350</span>		for {
+<a id="L351"></a><span class="ln">   351</span>			switch token := t.next(); token.typ {
+<a id="L352"></a><span class="ln">   352</span>			case itemRightDelim:
+<a id="L353"></a><span class="ln">   353</span>				if len(pipe.Cmds) == 0 {
+<a id="L354"></a><span class="ln">   354</span>					t.errorf(&#34;missing value for %s&#34;, context)
+<a id="L355"></a><span class="ln">   355</span>				}
+<a id="L356"></a><span class="ln">   356</span>				return
+<a id="L357"></a><span class="ln">   357</span>			case itemBool, itemCharConstant, itemComplex, itemDot, itemField, itemIdentifier,
+<a id="L358"></a><span class="ln">   358</span>				itemVariable, itemNumber, itemRawString, itemString:
+<a id="L359"></a><span class="ln">   359</span>				t.backup()
+<a id="L360"></a><span class="ln">   360</span>				pipe.append(t.command())
+<a id="L361"></a><span class="ln">   361</span>			default:
+<a id="L362"></a><span class="ln">   362</span>				t.unexpected(token, context)
+<a id="L363"></a><span class="ln">   363</span>			}
+<a id="L364"></a><span class="ln">   364</span>		}
+<a id="L365"></a><span class="ln">   365</span>		return
+<a id="L366"></a><span class="ln">   366</span>	}
+<a id="L367"></a><span class="ln">   367</span>	
+<a id="L368"></a><span class="ln">   368</span>	func (t *Tree) parseControl(context string) (lineNum int, pipe *PipeNode, list, elseList *ListNode) {
+<a id="L369"></a><span class="ln">   369</span>		lineNum = t.lex.lineNumber()
+<a id="L370"></a><span class="ln">   370</span>		defer t.popVars(len(t.vars))
+<a id="L371"></a><span class="ln">   371</span>		pipe = t.pipeline(context)
+<a id="L372"></a><span class="ln">   372</span>		var next Node
+<a id="L373"></a><span class="ln">   373</span>		list, next = t.itemList()
+<a id="L374"></a><span class="ln">   374</span>		switch next.Type() {
+<a id="L375"></a><span class="ln">   375</span>		case nodeEnd: <span class="comment">//done</span>
+<a id="L376"></a><span class="ln">   376</span>		case nodeElse:
+<a id="L377"></a><span class="ln">   377</span>			elseList, next = t.itemList()
+<a id="L378"></a><span class="ln">   378</span>			if next.Type() != nodeEnd {
+<a id="L379"></a><span class="ln">   379</span>				t.errorf(&#34;expected end; found %s&#34;, next)
+<a id="L380"></a><span class="ln">   380</span>			}
+<a id="L381"></a><span class="ln">   381</span>			elseList = elseList
+<a id="L382"></a><span class="ln">   382</span>		}
+<a id="L383"></a><span class="ln">   383</span>		return lineNum, pipe, list, elseList
+<a id="L384"></a><span class="ln">   384</span>	}
+<a id="L385"></a><span class="ln">   385</span>	
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// If:</span>
+<a id="L387"></a><span class="ln">   387</span>	<span class="comment">//	{{if pipeline}} itemList {{end}}</span>
+<a id="L388"></a><span class="ln">   388</span>	<span class="comment">//	{{if pipeline}} itemList {{else}} itemList {{end}}</span>
+<a id="L389"></a><span class="ln">   389</span>	<span class="comment">// If keyword is past.</span>
+<a id="L390"></a><span class="ln">   390</span>	func (t *Tree) ifControl() Node {
+<a id="L391"></a><span class="ln">   391</span>		return newIf(t.parseControl(&#34;if&#34;))
+<a id="L392"></a><span class="ln">   392</span>	}
+<a id="L393"></a><span class="ln">   393</span>	
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">// Range:</span>
+<a id="L395"></a><span class="ln">   395</span>	<span class="comment">//	{{range pipeline}} itemList {{end}}</span>
+<a id="L396"></a><span class="ln">   396</span>	<span class="comment">//	{{range pipeline}} itemList {{else}} itemList {{end}}</span>
+<a id="L397"></a><span class="ln">   397</span>	<span class="comment">// Range keyword is past.</span>
+<a id="L398"></a><span class="ln">   398</span>	func (t *Tree) rangeControl() Node {
+<a id="L399"></a><span class="ln">   399</span>		return newRange(t.parseControl(&#34;range&#34;))
+<a id="L400"></a><span class="ln">   400</span>	}
+<a id="L401"></a><span class="ln">   401</span>	
+<a id="L402"></a><span class="ln">   402</span>	<span class="comment">// With:</span>
+<a id="L403"></a><span class="ln">   403</span>	<span class="comment">//	{{with pipeline}} itemList {{end}}</span>
+<a id="L404"></a><span class="ln">   404</span>	<span class="comment">//	{{with pipeline}} itemList {{else}} itemList {{end}}</span>
+<a id="L405"></a><span class="ln">   405</span>	<span class="comment">// If keyword is past.</span>
+<a id="L406"></a><span class="ln">   406</span>	func (t *Tree) withControl() Node {
+<a id="L407"></a><span class="ln">   407</span>		return newWith(t.parseControl(&#34;with&#34;))
+<a id="L408"></a><span class="ln">   408</span>	}
+<a id="L409"></a><span class="ln">   409</span>	
+<a id="L410"></a><span class="ln">   410</span>	<span class="comment">// End:</span>
+<a id="L411"></a><span class="ln">   411</span>	<span class="comment">//	{{end}}</span>
+<a id="L412"></a><span class="ln">   412</span>	<span class="comment">// End keyword is past.</span>
+<a id="L413"></a><span class="ln">   413</span>	func (t *Tree) endControl() Node {
+<a id="L414"></a><span class="ln">   414</span>		t.expect(itemRightDelim, &#34;end&#34;)
+<a id="L415"></a><span class="ln">   415</span>		return newEnd()
+<a id="L416"></a><span class="ln">   416</span>	}
+<a id="L417"></a><span class="ln">   417</span>	
+<a id="L418"></a><span class="ln">   418</span>	<span class="comment">// Else:</span>
+<a id="L419"></a><span class="ln">   419</span>	<span class="comment">//	{{else}}</span>
+<a id="L420"></a><span class="ln">   420</span>	<span class="comment">// Else keyword is past.</span>
+<a id="L421"></a><span class="ln">   421</span>	func (t *Tree) elseControl() Node {
+<a id="L422"></a><span class="ln">   422</span>		t.expect(itemRightDelim, &#34;else&#34;)
+<a id="L423"></a><span class="ln">   423</span>		return newElse(t.lex.lineNumber())
+<a id="L424"></a><span class="ln">   424</span>	}
+<a id="L425"></a><span class="ln">   425</span>	
+<a id="L426"></a><span class="ln">   426</span>	<span class="comment">// Template:</span>
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">//	{{template stringValue pipeline}}</span>
+<a id="L428"></a><span class="ln">   428</span>	<span class="comment">// Template keyword is past.  The name must be something that can evaluate</span>
+<a id="L429"></a><span class="ln">   429</span>	<span class="comment">// to a string.</span>
+<a id="L430"></a><span class="ln">   430</span>	func (t *Tree) templateControl() Node {
+<a id="L431"></a><span class="ln">   431</span>		var name string
+<a id="L432"></a><span class="ln">   432</span>		switch token := t.next(); token.typ {
+<a id="L433"></a><span class="ln">   433</span>		case itemString, itemRawString:
+<a id="L434"></a><span class="ln">   434</span>			s, err := strconv.Unquote(token.val)
+<a id="L435"></a><span class="ln">   435</span>			if err != nil {
+<a id="L436"></a><span class="ln">   436</span>				t.error(err)
+<a id="L437"></a><span class="ln">   437</span>			}
+<a id="L438"></a><span class="ln">   438</span>			name = s
+<a id="L439"></a><span class="ln">   439</span>		default:
+<a id="L440"></a><span class="ln">   440</span>			t.unexpected(token, &#34;template invocation&#34;)
+<a id="L441"></a><span class="ln">   441</span>		}
+<a id="L442"></a><span class="ln">   442</span>		var pipe *PipeNode
+<a id="L443"></a><span class="ln">   443</span>		if t.next().typ != itemRightDelim {
+<a id="L444"></a><span class="ln">   444</span>			t.backup()
+<a id="L445"></a><span class="ln">   445</span>			<span class="comment">// Do not pop variables; they persist until &#34;end&#34;.</span>
+<a id="L446"></a><span class="ln">   446</span>			pipe = t.pipeline(&#34;template&#34;)
+<a id="L447"></a><span class="ln">   447</span>		}
+<a id="L448"></a><span class="ln">   448</span>		return newTemplate(t.lex.lineNumber(), name, pipe)
+<a id="L449"></a><span class="ln">   449</span>	}
+<a id="L450"></a><span class="ln">   450</span>	
+<a id="L451"></a><span class="ln">   451</span>	<span class="comment">// command:</span>
+<a id="L452"></a><span class="ln">   452</span>	<span class="comment">// space-separated arguments up to a pipeline character or right delimiter.</span>
+<a id="L453"></a><span class="ln">   453</span>	<span class="comment">// we consume the pipe character but leave the right delim to terminate the action.</span>
+<a id="L454"></a><span class="ln">   454</span>	func (t *Tree) command() *CommandNode {
+<a id="L455"></a><span class="ln">   455</span>		cmd := newCommand()
+<a id="L456"></a><span class="ln">   456</span>	Loop:
+<a id="L457"></a><span class="ln">   457</span>		for {
+<a id="L458"></a><span class="ln">   458</span>			switch token := t.next(); token.typ {
+<a id="L459"></a><span class="ln">   459</span>			case itemRightDelim:
+<a id="L460"></a><span class="ln">   460</span>				t.backup()
+<a id="L461"></a><span class="ln">   461</span>				break Loop
+<a id="L462"></a><span class="ln">   462</span>			case itemPipe:
+<a id="L463"></a><span class="ln">   463</span>				break Loop
+<a id="L464"></a><span class="ln">   464</span>			case itemError:
+<a id="L465"></a><span class="ln">   465</span>				t.errorf(&#34;%s&#34;, token.val)
+<a id="L466"></a><span class="ln">   466</span>			case itemIdentifier:
+<a id="L467"></a><span class="ln">   467</span>				if !t.hasFunction(token.val) {
+<a id="L468"></a><span class="ln">   468</span>					t.errorf(&#34;function %q not defined&#34;, token.val)
+<a id="L469"></a><span class="ln">   469</span>				}
+<a id="L470"></a><span class="ln">   470</span>				cmd.append(NewIdentifier(token.val))
+<a id="L471"></a><span class="ln">   471</span>			case itemDot:
+<a id="L472"></a><span class="ln">   472</span>				cmd.append(newDot())
+<a id="L473"></a><span class="ln">   473</span>			case itemVariable:
+<a id="L474"></a><span class="ln">   474</span>				cmd.append(t.useVar(token.val))
+<a id="L475"></a><span class="ln">   475</span>			case itemField:
+<a id="L476"></a><span class="ln">   476</span>				cmd.append(newField(token.val))
+<a id="L477"></a><span class="ln">   477</span>			case itemBool:
+<a id="L478"></a><span class="ln">   478</span>				cmd.append(newBool(token.val == &#34;true&#34;))
+<a id="L479"></a><span class="ln">   479</span>			case itemCharConstant, itemComplex, itemNumber:
+<a id="L480"></a><span class="ln">   480</span>				number, err := newNumber(token.val, token.typ)
+<a id="L481"></a><span class="ln">   481</span>				if err != nil {
+<a id="L482"></a><span class="ln">   482</span>					t.error(err)
+<a id="L483"></a><span class="ln">   483</span>				}
+<a id="L484"></a><span class="ln">   484</span>				cmd.append(number)
+<a id="L485"></a><span class="ln">   485</span>			case itemString, itemRawString:
+<a id="L486"></a><span class="ln">   486</span>				s, err := strconv.Unquote(token.val)
+<a id="L487"></a><span class="ln">   487</span>				if err != nil {
+<a id="L488"></a><span class="ln">   488</span>					t.error(err)
+<a id="L489"></a><span class="ln">   489</span>				}
+<a id="L490"></a><span class="ln">   490</span>				cmd.append(newString(token.val, s))
+<a id="L491"></a><span class="ln">   491</span>			default:
+<a id="L492"></a><span class="ln">   492</span>				t.unexpected(token, &#34;command&#34;)
+<a id="L493"></a><span class="ln">   493</span>			}
+<a id="L494"></a><span class="ln">   494</span>		}
+<a id="L495"></a><span class="ln">   495</span>		if len(cmd.Args) == 0 {
+<a id="L496"></a><span class="ln">   496</span>			t.errorf(&#34;empty command&#34;)
+<a id="L497"></a><span class="ln">   497</span>		}
+<a id="L498"></a><span class="ln">   498</span>		return cmd
+<a id="L499"></a><span class="ln">   499</span>	}
+<a id="L500"></a><span class="ln">   500</span>	
+<a id="L501"></a><span class="ln">   501</span>	<span class="comment">// hasFunction reports if a function name exists in the Tree&#39;s maps.</span>
+<a id="L502"></a><span class="ln">   502</span>	func (t *Tree) hasFunction(name string) bool {
+<a id="L503"></a><span class="ln">   503</span>		for _, funcMap := range t.funcs {
+<a id="L504"></a><span class="ln">   504</span>			if funcMap == nil {
+<a id="L505"></a><span class="ln">   505</span>				continue
+<a id="L506"></a><span class="ln">   506</span>			}
+<a id="L507"></a><span class="ln">   507</span>			if funcMap[name] != nil {
+<a id="L508"></a><span class="ln">   508</span>				return true
+<a id="L509"></a><span class="ln">   509</span>			}
+<a id="L510"></a><span class="ln">   510</span>		}
+<a id="L511"></a><span class="ln">   511</span>		return false
+<a id="L512"></a><span class="ln">   512</span>	}
+<a id="L513"></a><span class="ln">   513</span>	
+<a id="L514"></a><span class="ln">   514</span>	<span class="comment">// popVars trims the variable list to the specified length</span>
+<a id="L515"></a><span class="ln">   515</span>	func (t *Tree) popVars(n int) {
+<a id="L516"></a><span class="ln">   516</span>		t.vars = t.vars[:n]
+<a id="L517"></a><span class="ln">   517</span>	}
+<a id="L518"></a><span class="ln">   518</span>	
+<a id="L519"></a><span class="ln">   519</span>	<span class="comment">// useVar returns a node for a variable reference. It errors if the</span>
+<a id="L520"></a><span class="ln">   520</span>	<span class="comment">// variable is not defined.</span>
+<a id="L521"></a><span class="ln">   521</span>	func (t *Tree) useVar(name string) Node {
+<a id="L522"></a><span class="ln">   522</span>		v := newVariable(name)
+<a id="L523"></a><span class="ln">   523</span>		for _, varName := range t.vars {
+<a id="L524"></a><span class="ln">   524</span>			if varName == v.Ident[0] {
+<a id="L525"></a><span class="ln">   525</span>				return v
+<a id="L526"></a><span class="ln">   526</span>			}
+<a id="L527"></a><span class="ln">   527</span>		}
+<a id="L528"></a><span class="ln">   528</span>		t.errorf(&#34;undefined variable %q&#34;, v.Ident[0])
+<a id="L529"></a><span class="ln">   529</span>		return nil
+<a id="L530"></a><span class="ln">   530</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

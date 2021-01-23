@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/time/sys_unix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/time/sys_unix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	package time
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;syscall&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// for testing: whatever interrupts a sleep</span>
+<a id="L15"></a><span class="ln">    15</span>	func interrupt() {
+<a id="L16"></a><span class="ln">    16</span>		syscall.Kill(syscall.Getpid(), syscall.SIGCHLD)
+<a id="L17"></a><span class="ln">    17</span>	}
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// readFile reads and returns the content of the named file.</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// It is a trivial implementation of ioutil.ReadFile, reimplemented</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// here to avoid depending on io/ioutil or os.</span>
+<a id="L22"></a><span class="ln">    22</span>	func readFile(name string) ([]byte, error) {
+<a id="L23"></a><span class="ln">    23</span>		f, err := syscall.Open(name, syscall.O_RDONLY, 0)
+<a id="L24"></a><span class="ln">    24</span>		if err != nil {
+<a id="L25"></a><span class="ln">    25</span>			return nil, err
+<a id="L26"></a><span class="ln">    26</span>		}
+<a id="L27"></a><span class="ln">    27</span>		defer syscall.Close(f)
+<a id="L28"></a><span class="ln">    28</span>		var (
+<a id="L29"></a><span class="ln">    29</span>			buf [4096]byte
+<a id="L30"></a><span class="ln">    30</span>			ret []byte
+<a id="L31"></a><span class="ln">    31</span>			n   int
+<a id="L32"></a><span class="ln">    32</span>		)
+<a id="L33"></a><span class="ln">    33</span>		for {
+<a id="L34"></a><span class="ln">    34</span>			n, err = syscall.Read(f, buf[:])
+<a id="L35"></a><span class="ln">    35</span>			if n &gt; 0 {
+<a id="L36"></a><span class="ln">    36</span>				ret = append(ret, buf[:n]...)
+<a id="L37"></a><span class="ln">    37</span>			}
+<a id="L38"></a><span class="ln">    38</span>			if n == 0 || err != nil {
+<a id="L39"></a><span class="ln">    39</span>				break
+<a id="L40"></a><span class="ln">    40</span>			}
+<a id="L41"></a><span class="ln">    41</span>		}
+<a id="L42"></a><span class="ln">    42</span>		return ret, err
+<a id="L43"></a><span class="ln">    43</span>	}
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	func open(name string) (uintptr, error) {
+<a id="L46"></a><span class="ln">    46</span>		fd, err := syscall.Open(name, syscall.O_RDONLY, 0)
+<a id="L47"></a><span class="ln">    47</span>		if err != nil {
+<a id="L48"></a><span class="ln">    48</span>			return 0, err
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		return uintptr(fd), nil
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	func closefd(fd uintptr) {
+<a id="L54"></a><span class="ln">    54</span>		syscall.Close(int(fd))
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	func preadn(fd uintptr, buf []byte, off int) error {
+<a id="L58"></a><span class="ln">    58</span>		whence := 0
+<a id="L59"></a><span class="ln">    59</span>		if off &lt; 0 {
+<a id="L60"></a><span class="ln">    60</span>			whence = 2
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		if _, err := syscall.Seek(int(fd), int64(off), whence); err != nil {
+<a id="L63"></a><span class="ln">    63</span>			return err
+<a id="L64"></a><span class="ln">    64</span>		}
+<a id="L65"></a><span class="ln">    65</span>		for len(buf) &gt; 0 {
+<a id="L66"></a><span class="ln">    66</span>			m, err := syscall.Read(int(fd), buf)
+<a id="L67"></a><span class="ln">    67</span>			if m &lt;= 0 {
+<a id="L68"></a><span class="ln">    68</span>				if err == nil {
+<a id="L69"></a><span class="ln">    69</span>					return errors.New(&#34;short read&#34;)
+<a id="L70"></a><span class="ln">    70</span>				}
+<a id="L71"></a><span class="ln">    71</span>				return err
+<a id="L72"></a><span class="ln">    72</span>			}
+<a id="L73"></a><span class="ln">    73</span>			buf = buf[m:]
+<a id="L74"></a><span class="ln">    74</span>		}
+<a id="L75"></a><span class="ln">    75</span>		return nil
+<a id="L76"></a><span class="ln">    76</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

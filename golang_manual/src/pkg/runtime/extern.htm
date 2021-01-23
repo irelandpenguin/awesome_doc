@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/runtime/extern.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/runtime/extern.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">/*
+</span><a id="L6"></a><span class="ln">     6</span>	<span class="comment">	Package runtime contains operations that interact with Go&#39;s runtime system,
+</span><a id="L7"></a><span class="ln">     7</span>	<span class="comment">	such as functions to control goroutines. It also includes the low-level type information
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">	used by the reflect package; see reflect&#39;s documentation for the programmable
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">	interface to the run-time type system.
+</span><a id="L10"></a><span class="ln">    10</span>	<span class="comment">*/</span>
+<a id="L11"></a><span class="ln">    11</span>	package runtime
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Gosched yields the processor, allowing other goroutines to run.  It does not</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// suspend the current goroutine, so execution resumes automatically.</span>
+<a id="L15"></a><span class="ln">    15</span>	func Gosched()
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// Goexit terminates the goroutine that calls it.  No other goroutine is affected.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// Goexit runs all deferred calls before terminating the goroutine.</span>
+<a id="L19"></a><span class="ln">    19</span>	func Goexit()
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// Caller reports file and line number information about function invocations on</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// the calling goroutine&#39;s stack.  The argument skip is the number of stack frames</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// to ascend, with 1 identifying the caller of Caller.  (For historical reasons the</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// meaning of skip differs between Caller and Callers.) The return values report the</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// program counter, file name, and line number within the file of the corresponding</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// call.  The boolean ok is false if it was not possible to recover the information.</span>
+<a id="L27"></a><span class="ln">    27</span>	func Caller(skip int) (pc uintptr, file string, line int, ok bool)
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// Callers fills the slice pc with the program counters of function invocations</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// on the calling goroutine&#39;s stack.  The argument skip is the number of stack frames</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// to skip before recording in pc, with 0 starting at the caller of Callers.</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// It returns the number of entries written to pc.</span>
+<a id="L33"></a><span class="ln">    33</span>	func Callers(skip int, pc []uintptr) int
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	type Func struct { <span class="comment">// Keep in sync with runtime.h:struct Func</span>
+<a id="L36"></a><span class="ln">    36</span>		name   string
+<a id="L37"></a><span class="ln">    37</span>		typ    string  <span class="comment">// go type string</span>
+<a id="L38"></a><span class="ln">    38</span>		src    string  <span class="comment">// src file name</span>
+<a id="L39"></a><span class="ln">    39</span>		pcln   []byte  <span class="comment">// pc/ln tab for this func</span>
+<a id="L40"></a><span class="ln">    40</span>		entry  uintptr <span class="comment">// entry pc</span>
+<a id="L41"></a><span class="ln">    41</span>		pc0    uintptr <span class="comment">// starting pc, ln for table</span>
+<a id="L42"></a><span class="ln">    42</span>		ln0    int32
+<a id="L43"></a><span class="ln">    43</span>		frame  int32 <span class="comment">// stack frame size</span>
+<a id="L44"></a><span class="ln">    44</span>		args   int32 <span class="comment">// number of 32-bit in/out args</span>
+<a id="L45"></a><span class="ln">    45</span>		locals int32 <span class="comment">// number of 32-bit locals</span>
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// FuncForPC returns a *Func describing the function that contains the</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// given program counter address, or else nil.</span>
+<a id="L50"></a><span class="ln">    50</span>	func FuncForPC(pc uintptr) *Func
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// Name returns the name of the function.</span>
+<a id="L53"></a><span class="ln">    53</span>	func (f *Func) Name() string { return f.name }
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// Entry returns the entry address of the function.</span>
+<a id="L56"></a><span class="ln">    56</span>	func (f *Func) Entry() uintptr { return f.entry }
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// FileLine returns the file name and line number of the</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// source code corresponding to the program counter pc.</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// The result will not be accurate if pc is not a program</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// counter within f.</span>
+<a id="L62"></a><span class="ln">    62</span>	func (f *Func) FileLine(pc uintptr) (file string, line int) {
+<a id="L63"></a><span class="ln">    63</span>		return funcline_go(f, pc)
+<a id="L64"></a><span class="ln">    64</span>	}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// implemented in symtab.c</span>
+<a id="L67"></a><span class="ln">    67</span>	func funcline_go(*Func, uintptr) (string, int)
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// mid returns the current os thread (m) id.</span>
+<a id="L70"></a><span class="ln">    70</span>	func mid() uint32
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// SetFinalizer sets the finalizer associated with x to f.</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// When the garbage collector finds an unreachable block</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// with an associated finalizer, it clears the association and runs</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// f(x) in a separate goroutine.  This makes x reachable again, but</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// now without an associated finalizer.  Assuming that SetFinalizer</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// is not called again, the next time the garbage collector sees</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// that x is unreachable, it will free x.</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">//</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// SetFinalizer(x, nil) clears any finalizer associated with x.</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">//</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// The argument x must be a pointer to an object allocated by</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// calling new or by taking the address of a composite literal.</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// The argument f must be a function that takes a single argument</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// of x&#39;s type and can have arbitrary ignored return values.</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// If either of these is not true, SetFinalizer aborts the program.</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">//</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// Finalizers are run in dependency order: if A points at B, both have</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// finalizers, and they are otherwise unreachable, only the finalizer</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// for A runs; once A is freed, the finalizer for B can run.</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// If a cyclic structure includes a block with a finalizer, that</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// cycle is not guaranteed to be garbage collected and the finalizer</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// is not guaranteed to run, because there is no ordering that</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// respects the dependencies.</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">//</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">// The finalizer for x is scheduled to run at some arbitrary time after</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// x becomes unreachable.</span>
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// There is no guarantee that finalizers will run before a program exits,</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// so typically they are useful only for releasing non-memory resources</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// associated with an object during a long-running program.</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// For example, an os.File object could use a finalizer to close the</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">// associated operating system file descriptor when a program discards</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">// an os.File without calling Close, but it would be a mistake</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// to depend on a finalizer to flush an in-memory I/O buffer such as a</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// bufio.Writer, because the buffer would not be flushed at program exit.</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">//</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// A single goroutine runs all finalizers for a program, sequentially.</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// If a finalizer must run for a long time, it should do so by starting</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// a new goroutine.</span>
+<a id="L110"></a><span class="ln">   110</span>	func SetFinalizer(x, f interface{})
+<a id="L111"></a><span class="ln">   111</span>	
+<a id="L112"></a><span class="ln">   112</span>	func getgoroot() string
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// GOROOT returns the root of the Go tree.</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// It uses the GOROOT environment variable, if set,</span>
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// or else the root used during the Go build.</span>
+<a id="L117"></a><span class="ln">   117</span>	func GOROOT() string {
+<a id="L118"></a><span class="ln">   118</span>		s := getgoroot()
+<a id="L119"></a><span class="ln">   119</span>		if s != &#34;&#34; {
+<a id="L120"></a><span class="ln">   120</span>			return s
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		return defaultGoroot
+<a id="L123"></a><span class="ln">   123</span>	}
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// Version returns the Go tree&#39;s version string.</span>
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// It is either a sequence number or, when possible,</span>
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// a release tag like &#34;release.2010-03-04&#34;.</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// A trailing + indicates that the tree had local modifications</span>
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// at the time of the build.</span>
+<a id="L130"></a><span class="ln">   130</span>	func Version() string {
+<a id="L131"></a><span class="ln">   131</span>		return theVersion
+<a id="L132"></a><span class="ln">   132</span>	}
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// GOOS is the running program&#39;s operating system target:</span>
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// one of darwin, freebsd, linux, and so on.</span>
+<a id="L136"></a><span class="ln">   136</span>	const GOOS string = theGoos
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// GOARCH is the running program&#39;s architecture target:</span>
+<a id="L139"></a><span class="ln">   139</span>	<span class="comment">// 386, amd64, or arm.</span>
+<a id="L140"></a><span class="ln">   140</span>	const GOARCH string = theGoarch
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

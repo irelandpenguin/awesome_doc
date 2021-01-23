@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/io/ioutil/tempfile.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/io/ioutil/tempfile.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package ioutil
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;os&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;path/filepath&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;strconv&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;time&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// Random number state, accessed without lock; racy but harmless.</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// We generate random temporary file names so that there&#39;s a good</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// chance the file doesn&#39;t exist yet - keeps the number of tries in</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// TempFile to a minimum.</span>
+<a id="L18"></a><span class="ln">    18</span>	var rand uint32
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	func reseed() uint32 {
+<a id="L21"></a><span class="ln">    21</span>		return uint32(time.Now().UnixNano() + int64(os.Getpid()))
+<a id="L22"></a><span class="ln">    22</span>	}
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	func nextSuffix() string {
+<a id="L25"></a><span class="ln">    25</span>		r := rand
+<a id="L26"></a><span class="ln">    26</span>		if r == 0 {
+<a id="L27"></a><span class="ln">    27</span>			r = reseed()
+<a id="L28"></a><span class="ln">    28</span>		}
+<a id="L29"></a><span class="ln">    29</span>		r = r*1664525 + 1013904223 <span class="comment">// constants from Numerical Recipes</span>
+<a id="L30"></a><span class="ln">    30</span>		rand = r
+<a id="L31"></a><span class="ln">    31</span>		return strconv.Itoa(int(1e9 + r%1e9))[1:]
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// TempFile creates a new temporary file in the directory dir</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// with a name beginning with prefix, opens the file for reading</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// and writing, and returns the resulting *os.File.</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// If dir is the empty string, TempFile uses the default directory</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// for temporary files (see os.TempDir).</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Multiple programs calling TempFile simultaneously</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// will not choose the same file.  The caller can use f.Name()</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// to find the name of the file.  It is the caller&#39;s responsibility to</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// remove the file when no longer needed.</span>
+<a id="L43"></a><span class="ln">    43</span>	func TempFile(dir, prefix string) (f *os.File, err error) {
+<a id="L44"></a><span class="ln">    44</span>		if dir == &#34;&#34; {
+<a id="L45"></a><span class="ln">    45</span>			dir = os.TempDir()
+<a id="L46"></a><span class="ln">    46</span>		}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>		nconflict := 0
+<a id="L49"></a><span class="ln">    49</span>		for i := 0; i &lt; 10000; i++ {
+<a id="L50"></a><span class="ln">    50</span>			name := filepath.Join(dir, prefix+nextSuffix())
+<a id="L51"></a><span class="ln">    51</span>			f, err = os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+<a id="L52"></a><span class="ln">    52</span>			if os.IsExist(err) {
+<a id="L53"></a><span class="ln">    53</span>				if nconflict++; nconflict &gt; 10 {
+<a id="L54"></a><span class="ln">    54</span>					rand = reseed()
+<a id="L55"></a><span class="ln">    55</span>				}
+<a id="L56"></a><span class="ln">    56</span>				continue
+<a id="L57"></a><span class="ln">    57</span>			}
+<a id="L58"></a><span class="ln">    58</span>			break
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		return
+<a id="L61"></a><span class="ln">    61</span>	}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// TempDir creates a new temporary directory in the directory dir</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// with a name beginning with prefix and returns the path of the</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// new directory.  If dir is the empty string, TempDir uses the</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// default directory for temporary files (see os.TempDir).</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// Multiple programs calling TempDir simultaneously</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// will not choose the same directory.  It is the caller&#39;s responsibility</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// to remove the directory when no longer needed.</span>
+<a id="L70"></a><span class="ln">    70</span>	func TempDir(dir, prefix string) (name string, err error) {
+<a id="L71"></a><span class="ln">    71</span>		if dir == &#34;&#34; {
+<a id="L72"></a><span class="ln">    72</span>			dir = os.TempDir()
+<a id="L73"></a><span class="ln">    73</span>		}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>		nconflict := 0
+<a id="L76"></a><span class="ln">    76</span>		for i := 0; i &lt; 10000; i++ {
+<a id="L77"></a><span class="ln">    77</span>			try := filepath.Join(dir, prefix+nextSuffix())
+<a id="L78"></a><span class="ln">    78</span>			err = os.Mkdir(try, 0700)
+<a id="L79"></a><span class="ln">    79</span>			if os.IsExist(err) {
+<a id="L80"></a><span class="ln">    80</span>				if nconflict++; nconflict &gt; 10 {
+<a id="L81"></a><span class="ln">    81</span>					rand = reseed()
+<a id="L82"></a><span class="ln">    82</span>				}
+<a id="L83"></a><span class="ln">    83</span>				continue
+<a id="L84"></a><span class="ln">    84</span>			}
+<a id="L85"></a><span class="ln">    85</span>			if err == nil {
+<a id="L86"></a><span class="ln">    86</span>				name = try
+<a id="L87"></a><span class="ln">    87</span>			}
+<a id="L88"></a><span class="ln">    88</span>			break
+<a id="L89"></a><span class="ln">    89</span>		}
+<a id="L90"></a><span class="ln">    90</span>		return
+<a id="L91"></a><span class="ln">    91</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

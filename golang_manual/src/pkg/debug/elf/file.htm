@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/debug/elf/file.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/debug/elf/file.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package elf implements access to ELF object files.</span>
+<a id="L6"></a><span class="ln">     6</span>	package elf
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;bytes&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;debug/dwarf&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;encoding/binary&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;errors&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;fmt&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;io&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;os&#34;
+<a id="L16"></a><span class="ln">    16</span>	)
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// TODO: error reporting detail</span>
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">/*
+</span><a id="L21"></a><span class="ln">    21</span>	<span class="comment"> * Internal ELF representation
+</span><a id="L22"></a><span class="ln">    22</span>	<span class="comment"> */</span>
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// A FileHeader represents an ELF file header.</span>
+<a id="L25"></a><span class="ln">    25</span>	type FileHeader struct {
+<a id="L26"></a><span class="ln">    26</span>		Class      Class
+<a id="L27"></a><span class="ln">    27</span>		Data       Data
+<a id="L28"></a><span class="ln">    28</span>		Version    Version
+<a id="L29"></a><span class="ln">    29</span>		OSABI      OSABI
+<a id="L30"></a><span class="ln">    30</span>		ABIVersion uint8
+<a id="L31"></a><span class="ln">    31</span>		ByteOrder  binary.ByteOrder
+<a id="L32"></a><span class="ln">    32</span>		Type       Type
+<a id="L33"></a><span class="ln">    33</span>		Machine    Machine
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// A File represents an open ELF file.</span>
+<a id="L37"></a><span class="ln">    37</span>	type File struct {
+<a id="L38"></a><span class="ln">    38</span>		FileHeader
+<a id="L39"></a><span class="ln">    39</span>		Sections  []*Section
+<a id="L40"></a><span class="ln">    40</span>		Progs     []*Prog
+<a id="L41"></a><span class="ln">    41</span>		closer    io.Closer
+<a id="L42"></a><span class="ln">    42</span>		gnuNeed   []verneed
+<a id="L43"></a><span class="ln">    43</span>		gnuVersym []byte
+<a id="L44"></a><span class="ln">    44</span>	}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// A SectionHeader represents a single ELF section header.</span>
+<a id="L47"></a><span class="ln">    47</span>	type SectionHeader struct {
+<a id="L48"></a><span class="ln">    48</span>		Name      string
+<a id="L49"></a><span class="ln">    49</span>		Type      SectionType
+<a id="L50"></a><span class="ln">    50</span>		Flags     SectionFlag
+<a id="L51"></a><span class="ln">    51</span>		Addr      uint64
+<a id="L52"></a><span class="ln">    52</span>		Offset    uint64
+<a id="L53"></a><span class="ln">    53</span>		Size      uint64
+<a id="L54"></a><span class="ln">    54</span>		Link      uint32
+<a id="L55"></a><span class="ln">    55</span>		Info      uint32
+<a id="L56"></a><span class="ln">    56</span>		Addralign uint64
+<a id="L57"></a><span class="ln">    57</span>		Entsize   uint64
+<a id="L58"></a><span class="ln">    58</span>	}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// A Section represents a single section in an ELF file.</span>
+<a id="L61"></a><span class="ln">    61</span>	type Section struct {
+<a id="L62"></a><span class="ln">    62</span>		SectionHeader
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>		<span class="comment">// Embed ReaderAt for ReadAt method.</span>
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// Do not embed SectionReader directly</span>
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">// to avoid having Read and Seek.</span>
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// If a client wants Read and Seek it must use</span>
+<a id="L68"></a><span class="ln">    68</span>		<span class="comment">// Open() to avoid fighting over the seek offset</span>
+<a id="L69"></a><span class="ln">    69</span>		<span class="comment">// with other clients.</span>
+<a id="L70"></a><span class="ln">    70</span>		io.ReaderAt
+<a id="L71"></a><span class="ln">    71</span>		sr *io.SectionReader
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">// Data reads and returns the contents of the ELF section.</span>
+<a id="L75"></a><span class="ln">    75</span>	func (s *Section) Data() ([]byte, error) {
+<a id="L76"></a><span class="ln">    76</span>		dat := make([]byte, s.sr.Size())
+<a id="L77"></a><span class="ln">    77</span>		n, err := s.sr.ReadAt(dat, 0)
+<a id="L78"></a><span class="ln">    78</span>		return dat[0:n], err
+<a id="L79"></a><span class="ln">    79</span>	}
+<a id="L80"></a><span class="ln">    80</span>	
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// stringTable reads and returns the string table given by the</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// specified link value.</span>
+<a id="L83"></a><span class="ln">    83</span>	func (f *File) stringTable(link uint32) ([]byte, error) {
+<a id="L84"></a><span class="ln">    84</span>		if link &lt;= 0 || link &gt;= uint32(len(f.Sections)) {
+<a id="L85"></a><span class="ln">    85</span>			return nil, errors.New(&#34;section has invalid string table link&#34;)
+<a id="L86"></a><span class="ln">    86</span>		}
+<a id="L87"></a><span class="ln">    87</span>		return f.Sections[link].Data()
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// Open returns a new ReadSeeker reading the ELF section.</span>
+<a id="L91"></a><span class="ln">    91</span>	func (s *Section) Open() io.ReadSeeker { return io.NewSectionReader(s.sr, 0, 1&lt;&lt;63-1) }
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// A ProgHeader represents a single ELF program header.</span>
+<a id="L94"></a><span class="ln">    94</span>	type ProgHeader struct {
+<a id="L95"></a><span class="ln">    95</span>		Type   ProgType
+<a id="L96"></a><span class="ln">    96</span>		Flags  ProgFlag
+<a id="L97"></a><span class="ln">    97</span>		Off    uint64
+<a id="L98"></a><span class="ln">    98</span>		Vaddr  uint64
+<a id="L99"></a><span class="ln">    99</span>		Paddr  uint64
+<a id="L100"></a><span class="ln">   100</span>		Filesz uint64
+<a id="L101"></a><span class="ln">   101</span>		Memsz  uint64
+<a id="L102"></a><span class="ln">   102</span>		Align  uint64
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// A Prog represents a single ELF program header in an ELF binary.</span>
+<a id="L106"></a><span class="ln">   106</span>	type Prog struct {
+<a id="L107"></a><span class="ln">   107</span>		ProgHeader
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// Embed ReaderAt for ReadAt method.</span>
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">// Do not embed SectionReader directly</span>
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">// to avoid having Read and Seek.</span>
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">// If a client wants Read and Seek it must use</span>
+<a id="L113"></a><span class="ln">   113</span>		<span class="comment">// Open() to avoid fighting over the seek offset</span>
+<a id="L114"></a><span class="ln">   114</span>		<span class="comment">// with other clients.</span>
+<a id="L115"></a><span class="ln">   115</span>		io.ReaderAt
+<a id="L116"></a><span class="ln">   116</span>		sr *io.SectionReader
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// Open returns a new ReadSeeker reading the ELF program body.</span>
+<a id="L120"></a><span class="ln">   120</span>	func (p *Prog) Open() io.ReadSeeker { return io.NewSectionReader(p.sr, 0, 1&lt;&lt;63-1) }
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>	<span class="comment">// A Symbol represents an entry in an ELF symbol table section.</span>
+<a id="L123"></a><span class="ln">   123</span>	type Symbol struct {
+<a id="L124"></a><span class="ln">   124</span>		Name        string
+<a id="L125"></a><span class="ln">   125</span>		Info, Other byte
+<a id="L126"></a><span class="ln">   126</span>		Section     SectionIndex
+<a id="L127"></a><span class="ln">   127</span>		Value, Size uint64
+<a id="L128"></a><span class="ln">   128</span>	}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">/*
+</span><a id="L131"></a><span class="ln">   131</span>	<span class="comment"> * ELF reader
+</span><a id="L132"></a><span class="ln">   132</span>	<span class="comment"> */</span>
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	type FormatError struct {
+<a id="L135"></a><span class="ln">   135</span>		off int64
+<a id="L136"></a><span class="ln">   136</span>		msg string
+<a id="L137"></a><span class="ln">   137</span>		val interface{}
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	func (e *FormatError) Error() string {
+<a id="L141"></a><span class="ln">   141</span>		msg := e.msg
+<a id="L142"></a><span class="ln">   142</span>		if e.val != nil {
+<a id="L143"></a><span class="ln">   143</span>			msg += fmt.Sprintf(&#34; &#39;%v&#39; &#34;, e.val)
+<a id="L144"></a><span class="ln">   144</span>		}
+<a id="L145"></a><span class="ln">   145</span>		msg += fmt.Sprintf(&#34;in record at byte %#x&#34;, e.off)
+<a id="L146"></a><span class="ln">   146</span>		return msg
+<a id="L147"></a><span class="ln">   147</span>	}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// Open opens the named file using os.Open and prepares it for use as an ELF binary.</span>
+<a id="L150"></a><span class="ln">   150</span>	func Open(name string) (*File, error) {
+<a id="L151"></a><span class="ln">   151</span>		f, err := os.Open(name)
+<a id="L152"></a><span class="ln">   152</span>		if err != nil {
+<a id="L153"></a><span class="ln">   153</span>			return nil, err
+<a id="L154"></a><span class="ln">   154</span>		}
+<a id="L155"></a><span class="ln">   155</span>		ff, err := NewFile(f)
+<a id="L156"></a><span class="ln">   156</span>		if err != nil {
+<a id="L157"></a><span class="ln">   157</span>			f.Close()
+<a id="L158"></a><span class="ln">   158</span>			return nil, err
+<a id="L159"></a><span class="ln">   159</span>		}
+<a id="L160"></a><span class="ln">   160</span>		ff.closer = f
+<a id="L161"></a><span class="ln">   161</span>		return ff, nil
+<a id="L162"></a><span class="ln">   162</span>	}
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// Close closes the File.</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// If the File was created using NewFile directly instead of Open,</span>
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// Close has no effect.</span>
+<a id="L167"></a><span class="ln">   167</span>	func (f *File) Close() error {
+<a id="L168"></a><span class="ln">   168</span>		var err error
+<a id="L169"></a><span class="ln">   169</span>		if f.closer != nil {
+<a id="L170"></a><span class="ln">   170</span>			err = f.closer.Close()
+<a id="L171"></a><span class="ln">   171</span>			f.closer = nil
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>		return err
+<a id="L174"></a><span class="ln">   174</span>	}
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// SectionByType returns the first section in f with the</span>
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// given type, or nil if there is no such section.</span>
+<a id="L178"></a><span class="ln">   178</span>	func (f *File) SectionByType(typ SectionType) *Section {
+<a id="L179"></a><span class="ln">   179</span>		for _, s := range f.Sections {
+<a id="L180"></a><span class="ln">   180</span>			if s.Type == typ {
+<a id="L181"></a><span class="ln">   181</span>				return s
+<a id="L182"></a><span class="ln">   182</span>			}
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>		return nil
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// NewFile creates a new File for accessing an ELF binary in an underlying reader.</span>
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">// The ELF binary is expected to start at position 0 in the ReaderAt.</span>
+<a id="L189"></a><span class="ln">   189</span>	func NewFile(r io.ReaderAt) (*File, error) {
+<a id="L190"></a><span class="ln">   190</span>		sr := io.NewSectionReader(r, 0, 1&lt;&lt;63-1)
+<a id="L191"></a><span class="ln">   191</span>		<span class="comment">// Read and decode ELF identifier</span>
+<a id="L192"></a><span class="ln">   192</span>		var ident [16]uint8
+<a id="L193"></a><span class="ln">   193</span>		if _, err := r.ReadAt(ident[0:], 0); err != nil {
+<a id="L194"></a><span class="ln">   194</span>			return nil, err
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>		if ident[0] != &#39;\x7f&#39; || ident[1] != &#39;E&#39; || ident[2] != &#39;L&#39; || ident[3] != &#39;F&#39; {
+<a id="L197"></a><span class="ln">   197</span>			return nil, &amp;FormatError{0, &#34;bad magic number&#34;, ident[0:4]}
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>	
+<a id="L200"></a><span class="ln">   200</span>		f := new(File)
+<a id="L201"></a><span class="ln">   201</span>		f.Class = Class(ident[EI_CLASS])
+<a id="L202"></a><span class="ln">   202</span>		switch f.Class {
+<a id="L203"></a><span class="ln">   203</span>		case ELFCLASS32:
+<a id="L204"></a><span class="ln">   204</span>		case ELFCLASS64:
+<a id="L205"></a><span class="ln">   205</span>			<span class="comment">// ok</span>
+<a id="L206"></a><span class="ln">   206</span>		default:
+<a id="L207"></a><span class="ln">   207</span>			return nil, &amp;FormatError{0, &#34;unknown ELF class&#34;, f.Class}
+<a id="L208"></a><span class="ln">   208</span>		}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>		f.Data = Data(ident[EI_DATA])
+<a id="L211"></a><span class="ln">   211</span>		switch f.Data {
+<a id="L212"></a><span class="ln">   212</span>		case ELFDATA2LSB:
+<a id="L213"></a><span class="ln">   213</span>			f.ByteOrder = binary.LittleEndian
+<a id="L214"></a><span class="ln">   214</span>		case ELFDATA2MSB:
+<a id="L215"></a><span class="ln">   215</span>			f.ByteOrder = binary.BigEndian
+<a id="L216"></a><span class="ln">   216</span>		default:
+<a id="L217"></a><span class="ln">   217</span>			return nil, &amp;FormatError{0, &#34;unknown ELF data encoding&#34;, f.Data}
+<a id="L218"></a><span class="ln">   218</span>		}
+<a id="L219"></a><span class="ln">   219</span>	
+<a id="L220"></a><span class="ln">   220</span>		f.Version = Version(ident[EI_VERSION])
+<a id="L221"></a><span class="ln">   221</span>		if f.Version != EV_CURRENT {
+<a id="L222"></a><span class="ln">   222</span>			return nil, &amp;FormatError{0, &#34;unknown ELF version&#34;, f.Version}
+<a id="L223"></a><span class="ln">   223</span>		}
+<a id="L224"></a><span class="ln">   224</span>	
+<a id="L225"></a><span class="ln">   225</span>		f.OSABI = OSABI(ident[EI_OSABI])
+<a id="L226"></a><span class="ln">   226</span>		f.ABIVersion = ident[EI_ABIVERSION]
+<a id="L227"></a><span class="ln">   227</span>	
+<a id="L228"></a><span class="ln">   228</span>		<span class="comment">// Read ELF file header</span>
+<a id="L229"></a><span class="ln">   229</span>		var phoff int64
+<a id="L230"></a><span class="ln">   230</span>		var phentsize, phnum int
+<a id="L231"></a><span class="ln">   231</span>		var shoff int64
+<a id="L232"></a><span class="ln">   232</span>		var shentsize, shnum, shstrndx int
+<a id="L233"></a><span class="ln">   233</span>		shstrndx = -1
+<a id="L234"></a><span class="ln">   234</span>		switch f.Class {
+<a id="L235"></a><span class="ln">   235</span>		case ELFCLASS32:
+<a id="L236"></a><span class="ln">   236</span>			hdr := new(Header32)
+<a id="L237"></a><span class="ln">   237</span>			sr.Seek(0, os.SEEK_SET)
+<a id="L238"></a><span class="ln">   238</span>			if err := binary.Read(sr, f.ByteOrder, hdr); err != nil {
+<a id="L239"></a><span class="ln">   239</span>				return nil, err
+<a id="L240"></a><span class="ln">   240</span>			}
+<a id="L241"></a><span class="ln">   241</span>			f.Type = Type(hdr.Type)
+<a id="L242"></a><span class="ln">   242</span>			f.Machine = Machine(hdr.Machine)
+<a id="L243"></a><span class="ln">   243</span>			if v := Version(hdr.Version); v != f.Version {
+<a id="L244"></a><span class="ln">   244</span>				return nil, &amp;FormatError{0, &#34;mismatched ELF version&#34;, v}
+<a id="L245"></a><span class="ln">   245</span>			}
+<a id="L246"></a><span class="ln">   246</span>			phoff = int64(hdr.Phoff)
+<a id="L247"></a><span class="ln">   247</span>			phentsize = int(hdr.Phentsize)
+<a id="L248"></a><span class="ln">   248</span>			phnum = int(hdr.Phnum)
+<a id="L249"></a><span class="ln">   249</span>			shoff = int64(hdr.Shoff)
+<a id="L250"></a><span class="ln">   250</span>			shentsize = int(hdr.Shentsize)
+<a id="L251"></a><span class="ln">   251</span>			shnum = int(hdr.Shnum)
+<a id="L252"></a><span class="ln">   252</span>			shstrndx = int(hdr.Shstrndx)
+<a id="L253"></a><span class="ln">   253</span>		case ELFCLASS64:
+<a id="L254"></a><span class="ln">   254</span>			hdr := new(Header64)
+<a id="L255"></a><span class="ln">   255</span>			sr.Seek(0, os.SEEK_SET)
+<a id="L256"></a><span class="ln">   256</span>			if err := binary.Read(sr, f.ByteOrder, hdr); err != nil {
+<a id="L257"></a><span class="ln">   257</span>				return nil, err
+<a id="L258"></a><span class="ln">   258</span>			}
+<a id="L259"></a><span class="ln">   259</span>			f.Type = Type(hdr.Type)
+<a id="L260"></a><span class="ln">   260</span>			f.Machine = Machine(hdr.Machine)
+<a id="L261"></a><span class="ln">   261</span>			if v := Version(hdr.Version); v != f.Version {
+<a id="L262"></a><span class="ln">   262</span>				return nil, &amp;FormatError{0, &#34;mismatched ELF version&#34;, v}
+<a id="L263"></a><span class="ln">   263</span>			}
+<a id="L264"></a><span class="ln">   264</span>			phoff = int64(hdr.Phoff)
+<a id="L265"></a><span class="ln">   265</span>			phentsize = int(hdr.Phentsize)
+<a id="L266"></a><span class="ln">   266</span>			phnum = int(hdr.Phnum)
+<a id="L267"></a><span class="ln">   267</span>			shoff = int64(hdr.Shoff)
+<a id="L268"></a><span class="ln">   268</span>			shentsize = int(hdr.Shentsize)
+<a id="L269"></a><span class="ln">   269</span>			shnum = int(hdr.Shnum)
+<a id="L270"></a><span class="ln">   270</span>			shstrndx = int(hdr.Shstrndx)
+<a id="L271"></a><span class="ln">   271</span>		}
+<a id="L272"></a><span class="ln">   272</span>		if shstrndx &lt; 0 || shstrndx &gt;= shnum {
+<a id="L273"></a><span class="ln">   273</span>			return nil, &amp;FormatError{0, &#34;invalid ELF shstrndx&#34;, shstrndx}
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>	
+<a id="L276"></a><span class="ln">   276</span>		<span class="comment">// Read program headers</span>
+<a id="L277"></a><span class="ln">   277</span>		f.Progs = make([]*Prog, phnum)
+<a id="L278"></a><span class="ln">   278</span>		for i := 0; i &lt; phnum; i++ {
+<a id="L279"></a><span class="ln">   279</span>			off := phoff + int64(i)*int64(phentsize)
+<a id="L280"></a><span class="ln">   280</span>			sr.Seek(off, os.SEEK_SET)
+<a id="L281"></a><span class="ln">   281</span>			p := new(Prog)
+<a id="L282"></a><span class="ln">   282</span>			switch f.Class {
+<a id="L283"></a><span class="ln">   283</span>			case ELFCLASS32:
+<a id="L284"></a><span class="ln">   284</span>				ph := new(Prog32)
+<a id="L285"></a><span class="ln">   285</span>				if err := binary.Read(sr, f.ByteOrder, ph); err != nil {
+<a id="L286"></a><span class="ln">   286</span>					return nil, err
+<a id="L287"></a><span class="ln">   287</span>				}
+<a id="L288"></a><span class="ln">   288</span>				p.ProgHeader = ProgHeader{
+<a id="L289"></a><span class="ln">   289</span>					Type:   ProgType(ph.Type),
+<a id="L290"></a><span class="ln">   290</span>					Flags:  ProgFlag(ph.Flags),
+<a id="L291"></a><span class="ln">   291</span>					Off:    uint64(ph.Off),
+<a id="L292"></a><span class="ln">   292</span>					Vaddr:  uint64(ph.Vaddr),
+<a id="L293"></a><span class="ln">   293</span>					Paddr:  uint64(ph.Paddr),
+<a id="L294"></a><span class="ln">   294</span>					Filesz: uint64(ph.Filesz),
+<a id="L295"></a><span class="ln">   295</span>					Memsz:  uint64(ph.Memsz),
+<a id="L296"></a><span class="ln">   296</span>					Align:  uint64(ph.Align),
+<a id="L297"></a><span class="ln">   297</span>				}
+<a id="L298"></a><span class="ln">   298</span>			case ELFCLASS64:
+<a id="L299"></a><span class="ln">   299</span>				ph := new(Prog64)
+<a id="L300"></a><span class="ln">   300</span>				if err := binary.Read(sr, f.ByteOrder, ph); err != nil {
+<a id="L301"></a><span class="ln">   301</span>					return nil, err
+<a id="L302"></a><span class="ln">   302</span>				}
+<a id="L303"></a><span class="ln">   303</span>				p.ProgHeader = ProgHeader{
+<a id="L304"></a><span class="ln">   304</span>					Type:   ProgType(ph.Type),
+<a id="L305"></a><span class="ln">   305</span>					Flags:  ProgFlag(ph.Flags),
+<a id="L306"></a><span class="ln">   306</span>					Off:    uint64(ph.Off),
+<a id="L307"></a><span class="ln">   307</span>					Vaddr:  uint64(ph.Vaddr),
+<a id="L308"></a><span class="ln">   308</span>					Paddr:  uint64(ph.Paddr),
+<a id="L309"></a><span class="ln">   309</span>					Filesz: uint64(ph.Filesz),
+<a id="L310"></a><span class="ln">   310</span>					Memsz:  uint64(ph.Memsz),
+<a id="L311"></a><span class="ln">   311</span>					Align:  uint64(ph.Align),
+<a id="L312"></a><span class="ln">   312</span>				}
+<a id="L313"></a><span class="ln">   313</span>			}
+<a id="L314"></a><span class="ln">   314</span>			p.sr = io.NewSectionReader(r, int64(p.Off), int64(p.Filesz))
+<a id="L315"></a><span class="ln">   315</span>			p.ReaderAt = p.sr
+<a id="L316"></a><span class="ln">   316</span>			f.Progs[i] = p
+<a id="L317"></a><span class="ln">   317</span>		}
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>		<span class="comment">// Read section headers</span>
+<a id="L320"></a><span class="ln">   320</span>		f.Sections = make([]*Section, shnum)
+<a id="L321"></a><span class="ln">   321</span>		names := make([]uint32, shnum)
+<a id="L322"></a><span class="ln">   322</span>		for i := 0; i &lt; shnum; i++ {
+<a id="L323"></a><span class="ln">   323</span>			off := shoff + int64(i)*int64(shentsize)
+<a id="L324"></a><span class="ln">   324</span>			sr.Seek(off, os.SEEK_SET)
+<a id="L325"></a><span class="ln">   325</span>			s := new(Section)
+<a id="L326"></a><span class="ln">   326</span>			switch f.Class {
+<a id="L327"></a><span class="ln">   327</span>			case ELFCLASS32:
+<a id="L328"></a><span class="ln">   328</span>				sh := new(Section32)
+<a id="L329"></a><span class="ln">   329</span>				if err := binary.Read(sr, f.ByteOrder, sh); err != nil {
+<a id="L330"></a><span class="ln">   330</span>					return nil, err
+<a id="L331"></a><span class="ln">   331</span>				}
+<a id="L332"></a><span class="ln">   332</span>				names[i] = sh.Name
+<a id="L333"></a><span class="ln">   333</span>				s.SectionHeader = SectionHeader{
+<a id="L334"></a><span class="ln">   334</span>					Type:      SectionType(sh.Type),
+<a id="L335"></a><span class="ln">   335</span>					Flags:     SectionFlag(sh.Flags),
+<a id="L336"></a><span class="ln">   336</span>					Addr:      uint64(sh.Addr),
+<a id="L337"></a><span class="ln">   337</span>					Offset:    uint64(sh.Off),
+<a id="L338"></a><span class="ln">   338</span>					Size:      uint64(sh.Size),
+<a id="L339"></a><span class="ln">   339</span>					Link:      uint32(sh.Link),
+<a id="L340"></a><span class="ln">   340</span>					Info:      uint32(sh.Info),
+<a id="L341"></a><span class="ln">   341</span>					Addralign: uint64(sh.Addralign),
+<a id="L342"></a><span class="ln">   342</span>					Entsize:   uint64(sh.Entsize),
+<a id="L343"></a><span class="ln">   343</span>				}
+<a id="L344"></a><span class="ln">   344</span>			case ELFCLASS64:
+<a id="L345"></a><span class="ln">   345</span>				sh := new(Section64)
+<a id="L346"></a><span class="ln">   346</span>				if err := binary.Read(sr, f.ByteOrder, sh); err != nil {
+<a id="L347"></a><span class="ln">   347</span>					return nil, err
+<a id="L348"></a><span class="ln">   348</span>				}
+<a id="L349"></a><span class="ln">   349</span>				names[i] = sh.Name
+<a id="L350"></a><span class="ln">   350</span>				s.SectionHeader = SectionHeader{
+<a id="L351"></a><span class="ln">   351</span>					Type:      SectionType(sh.Type),
+<a id="L352"></a><span class="ln">   352</span>					Flags:     SectionFlag(sh.Flags),
+<a id="L353"></a><span class="ln">   353</span>					Offset:    uint64(sh.Off),
+<a id="L354"></a><span class="ln">   354</span>					Size:      uint64(sh.Size),
+<a id="L355"></a><span class="ln">   355</span>					Addr:      uint64(sh.Addr),
+<a id="L356"></a><span class="ln">   356</span>					Link:      uint32(sh.Link),
+<a id="L357"></a><span class="ln">   357</span>					Info:      uint32(sh.Info),
+<a id="L358"></a><span class="ln">   358</span>					Addralign: uint64(sh.Addralign),
+<a id="L359"></a><span class="ln">   359</span>					Entsize:   uint64(sh.Entsize),
+<a id="L360"></a><span class="ln">   360</span>				}
+<a id="L361"></a><span class="ln">   361</span>			}
+<a id="L362"></a><span class="ln">   362</span>			s.sr = io.NewSectionReader(r, int64(s.Offset), int64(s.Size))
+<a id="L363"></a><span class="ln">   363</span>			s.ReaderAt = s.sr
+<a id="L364"></a><span class="ln">   364</span>			f.Sections[i] = s
+<a id="L365"></a><span class="ln">   365</span>		}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>		<span class="comment">// Load section header string table.</span>
+<a id="L368"></a><span class="ln">   368</span>		shstrtab, err := f.Sections[shstrndx].Data()
+<a id="L369"></a><span class="ln">   369</span>		if err != nil {
+<a id="L370"></a><span class="ln">   370</span>			return nil, err
+<a id="L371"></a><span class="ln">   371</span>		}
+<a id="L372"></a><span class="ln">   372</span>		for i, s := range f.Sections {
+<a id="L373"></a><span class="ln">   373</span>			var ok bool
+<a id="L374"></a><span class="ln">   374</span>			s.Name, ok = getString(shstrtab, int(names[i]))
+<a id="L375"></a><span class="ln">   375</span>			if !ok {
+<a id="L376"></a><span class="ln">   376</span>				return nil, &amp;FormatError{shoff + int64(i*shentsize), &#34;bad section name index&#34;, names[i]}
+<a id="L377"></a><span class="ln">   377</span>			}
+<a id="L378"></a><span class="ln">   378</span>		}
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>		return f, nil
+<a id="L381"></a><span class="ln">   381</span>	}
+<a id="L382"></a><span class="ln">   382</span>	
+<a id="L383"></a><span class="ln">   383</span>	<span class="comment">// getSymbols returns a slice of Symbols from parsing the symbol table</span>
+<a id="L384"></a><span class="ln">   384</span>	<span class="comment">// with the given type, along with the associated string table.</span>
+<a id="L385"></a><span class="ln">   385</span>	func (f *File) getSymbols(typ SectionType) ([]Symbol, []byte, error) {
+<a id="L386"></a><span class="ln">   386</span>		switch f.Class {
+<a id="L387"></a><span class="ln">   387</span>		case ELFCLASS64:
+<a id="L388"></a><span class="ln">   388</span>			return f.getSymbols64(typ)
+<a id="L389"></a><span class="ln">   389</span>	
+<a id="L390"></a><span class="ln">   390</span>		case ELFCLASS32:
+<a id="L391"></a><span class="ln">   391</span>			return f.getSymbols32(typ)
+<a id="L392"></a><span class="ln">   392</span>		}
+<a id="L393"></a><span class="ln">   393</span>	
+<a id="L394"></a><span class="ln">   394</span>		return nil, nil, errors.New(&#34;not implemented&#34;)
+<a id="L395"></a><span class="ln">   395</span>	}
+<a id="L396"></a><span class="ln">   396</span>	
+<a id="L397"></a><span class="ln">   397</span>	func (f *File) getSymbols32(typ SectionType) ([]Symbol, []byte, error) {
+<a id="L398"></a><span class="ln">   398</span>		symtabSection := f.SectionByType(typ)
+<a id="L399"></a><span class="ln">   399</span>		if symtabSection == nil {
+<a id="L400"></a><span class="ln">   400</span>			return nil, nil, errors.New(&#34;no symbol section&#34;)
+<a id="L401"></a><span class="ln">   401</span>		}
+<a id="L402"></a><span class="ln">   402</span>	
+<a id="L403"></a><span class="ln">   403</span>		data, err := symtabSection.Data()
+<a id="L404"></a><span class="ln">   404</span>		if err != nil {
+<a id="L405"></a><span class="ln">   405</span>			return nil, nil, errors.New(&#34;cannot load symbol section&#34;)
+<a id="L406"></a><span class="ln">   406</span>		}
+<a id="L407"></a><span class="ln">   407</span>		symtab := bytes.NewBuffer(data)
+<a id="L408"></a><span class="ln">   408</span>		if symtab.Len()%Sym32Size != 0 {
+<a id="L409"></a><span class="ln">   409</span>			return nil, nil, errors.New(&#34;length of symbol section is not a multiple of SymSize&#34;)
+<a id="L410"></a><span class="ln">   410</span>		}
+<a id="L411"></a><span class="ln">   411</span>	
+<a id="L412"></a><span class="ln">   412</span>		strdata, err := f.stringTable(symtabSection.Link)
+<a id="L413"></a><span class="ln">   413</span>		if err != nil {
+<a id="L414"></a><span class="ln">   414</span>			return nil, nil, errors.New(&#34;cannot load string table section&#34;)
+<a id="L415"></a><span class="ln">   415</span>		}
+<a id="L416"></a><span class="ln">   416</span>	
+<a id="L417"></a><span class="ln">   417</span>		<span class="comment">// The first entry is all zeros.</span>
+<a id="L418"></a><span class="ln">   418</span>		var skip [Sym32Size]byte
+<a id="L419"></a><span class="ln">   419</span>		symtab.Read(skip[0:])
+<a id="L420"></a><span class="ln">   420</span>	
+<a id="L421"></a><span class="ln">   421</span>		symbols := make([]Symbol, symtab.Len()/Sym32Size)
+<a id="L422"></a><span class="ln">   422</span>	
+<a id="L423"></a><span class="ln">   423</span>		i := 0
+<a id="L424"></a><span class="ln">   424</span>		var sym Sym32
+<a id="L425"></a><span class="ln">   425</span>		for symtab.Len() &gt; 0 {
+<a id="L426"></a><span class="ln">   426</span>			binary.Read(symtab, f.ByteOrder, &amp;sym)
+<a id="L427"></a><span class="ln">   427</span>			str, _ := getString(strdata, int(sym.Name))
+<a id="L428"></a><span class="ln">   428</span>			symbols[i].Name = str
+<a id="L429"></a><span class="ln">   429</span>			symbols[i].Info = sym.Info
+<a id="L430"></a><span class="ln">   430</span>			symbols[i].Other = sym.Other
+<a id="L431"></a><span class="ln">   431</span>			symbols[i].Section = SectionIndex(sym.Shndx)
+<a id="L432"></a><span class="ln">   432</span>			symbols[i].Value = uint64(sym.Value)
+<a id="L433"></a><span class="ln">   433</span>			symbols[i].Size = uint64(sym.Size)
+<a id="L434"></a><span class="ln">   434</span>			i++
+<a id="L435"></a><span class="ln">   435</span>		}
+<a id="L436"></a><span class="ln">   436</span>	
+<a id="L437"></a><span class="ln">   437</span>		return symbols, strdata, nil
+<a id="L438"></a><span class="ln">   438</span>	}
+<a id="L439"></a><span class="ln">   439</span>	
+<a id="L440"></a><span class="ln">   440</span>	func (f *File) getSymbols64(typ SectionType) ([]Symbol, []byte, error) {
+<a id="L441"></a><span class="ln">   441</span>		symtabSection := f.SectionByType(typ)
+<a id="L442"></a><span class="ln">   442</span>		if symtabSection == nil {
+<a id="L443"></a><span class="ln">   443</span>			return nil, nil, errors.New(&#34;no symbol section&#34;)
+<a id="L444"></a><span class="ln">   444</span>		}
+<a id="L445"></a><span class="ln">   445</span>	
+<a id="L446"></a><span class="ln">   446</span>		data, err := symtabSection.Data()
+<a id="L447"></a><span class="ln">   447</span>		if err != nil {
+<a id="L448"></a><span class="ln">   448</span>			return nil, nil, errors.New(&#34;cannot load symbol section&#34;)
+<a id="L449"></a><span class="ln">   449</span>		}
+<a id="L450"></a><span class="ln">   450</span>		symtab := bytes.NewBuffer(data)
+<a id="L451"></a><span class="ln">   451</span>		if symtab.Len()%Sym64Size != 0 {
+<a id="L452"></a><span class="ln">   452</span>			return nil, nil, errors.New(&#34;length of symbol section is not a multiple of Sym64Size&#34;)
+<a id="L453"></a><span class="ln">   453</span>		}
+<a id="L454"></a><span class="ln">   454</span>	
+<a id="L455"></a><span class="ln">   455</span>		strdata, err := f.stringTable(symtabSection.Link)
+<a id="L456"></a><span class="ln">   456</span>		if err != nil {
+<a id="L457"></a><span class="ln">   457</span>			return nil, nil, errors.New(&#34;cannot load string table section&#34;)
+<a id="L458"></a><span class="ln">   458</span>		}
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>		<span class="comment">// The first entry is all zeros.</span>
+<a id="L461"></a><span class="ln">   461</span>		var skip [Sym64Size]byte
+<a id="L462"></a><span class="ln">   462</span>		symtab.Read(skip[0:])
+<a id="L463"></a><span class="ln">   463</span>	
+<a id="L464"></a><span class="ln">   464</span>		symbols := make([]Symbol, symtab.Len()/Sym64Size)
+<a id="L465"></a><span class="ln">   465</span>	
+<a id="L466"></a><span class="ln">   466</span>		i := 0
+<a id="L467"></a><span class="ln">   467</span>		var sym Sym64
+<a id="L468"></a><span class="ln">   468</span>		for symtab.Len() &gt; 0 {
+<a id="L469"></a><span class="ln">   469</span>			binary.Read(symtab, f.ByteOrder, &amp;sym)
+<a id="L470"></a><span class="ln">   470</span>			str, _ := getString(strdata, int(sym.Name))
+<a id="L471"></a><span class="ln">   471</span>			symbols[i].Name = str
+<a id="L472"></a><span class="ln">   472</span>			symbols[i].Info = sym.Info
+<a id="L473"></a><span class="ln">   473</span>			symbols[i].Other = sym.Other
+<a id="L474"></a><span class="ln">   474</span>			symbols[i].Section = SectionIndex(sym.Shndx)
+<a id="L475"></a><span class="ln">   475</span>			symbols[i].Value = sym.Value
+<a id="L476"></a><span class="ln">   476</span>			symbols[i].Size = sym.Size
+<a id="L477"></a><span class="ln">   477</span>			i++
+<a id="L478"></a><span class="ln">   478</span>		}
+<a id="L479"></a><span class="ln">   479</span>	
+<a id="L480"></a><span class="ln">   480</span>		return symbols, strdata, nil
+<a id="L481"></a><span class="ln">   481</span>	}
+<a id="L482"></a><span class="ln">   482</span>	
+<a id="L483"></a><span class="ln">   483</span>	<span class="comment">// getString extracts a string from an ELF string table.</span>
+<a id="L484"></a><span class="ln">   484</span>	func getString(section []byte, start int) (string, bool) {
+<a id="L485"></a><span class="ln">   485</span>		if start &lt; 0 || start &gt;= len(section) {
+<a id="L486"></a><span class="ln">   486</span>			return &#34;&#34;, false
+<a id="L487"></a><span class="ln">   487</span>		}
+<a id="L488"></a><span class="ln">   488</span>	
+<a id="L489"></a><span class="ln">   489</span>		for end := start; end &lt; len(section); end++ {
+<a id="L490"></a><span class="ln">   490</span>			if section[end] == 0 {
+<a id="L491"></a><span class="ln">   491</span>				return string(section[start:end]), true
+<a id="L492"></a><span class="ln">   492</span>			}
+<a id="L493"></a><span class="ln">   493</span>		}
+<a id="L494"></a><span class="ln">   494</span>		return &#34;&#34;, false
+<a id="L495"></a><span class="ln">   495</span>	}
+<a id="L496"></a><span class="ln">   496</span>	
+<a id="L497"></a><span class="ln">   497</span>	<span class="comment">// Section returns a section with the given name, or nil if no such</span>
+<a id="L498"></a><span class="ln">   498</span>	<span class="comment">// section exists.</span>
+<a id="L499"></a><span class="ln">   499</span>	func (f *File) Section(name string) *Section {
+<a id="L500"></a><span class="ln">   500</span>		for _, s := range f.Sections {
+<a id="L501"></a><span class="ln">   501</span>			if s.Name == name {
+<a id="L502"></a><span class="ln">   502</span>				return s
+<a id="L503"></a><span class="ln">   503</span>			}
+<a id="L504"></a><span class="ln">   504</span>		}
+<a id="L505"></a><span class="ln">   505</span>		return nil
+<a id="L506"></a><span class="ln">   506</span>	}
+<a id="L507"></a><span class="ln">   507</span>	
+<a id="L508"></a><span class="ln">   508</span>	<span class="comment">// applyRelocations applies relocations to dst. rels is a relocations section</span>
+<a id="L509"></a><span class="ln">   509</span>	<span class="comment">// in RELA format.</span>
+<a id="L510"></a><span class="ln">   510</span>	func (f *File) applyRelocations(dst []byte, rels []byte) error {
+<a id="L511"></a><span class="ln">   511</span>		if f.Class == ELFCLASS64 &amp;&amp; f.Machine == EM_X86_64 {
+<a id="L512"></a><span class="ln">   512</span>			return f.applyRelocationsAMD64(dst, rels)
+<a id="L513"></a><span class="ln">   513</span>		}
+<a id="L514"></a><span class="ln">   514</span>	
+<a id="L515"></a><span class="ln">   515</span>		return errors.New(&#34;not implemented&#34;)
+<a id="L516"></a><span class="ln">   516</span>	}
+<a id="L517"></a><span class="ln">   517</span>	
+<a id="L518"></a><span class="ln">   518</span>	func (f *File) applyRelocationsAMD64(dst []byte, rels []byte) error {
+<a id="L519"></a><span class="ln">   519</span>		if len(rels)%Sym64Size != 0 {
+<a id="L520"></a><span class="ln">   520</span>			return errors.New(&#34;length of relocation section is not a multiple of Sym64Size&#34;)
+<a id="L521"></a><span class="ln">   521</span>		}
+<a id="L522"></a><span class="ln">   522</span>	
+<a id="L523"></a><span class="ln">   523</span>		symbols, _, err := f.getSymbols(SHT_SYMTAB)
+<a id="L524"></a><span class="ln">   524</span>		if err != nil {
+<a id="L525"></a><span class="ln">   525</span>			return err
+<a id="L526"></a><span class="ln">   526</span>		}
+<a id="L527"></a><span class="ln">   527</span>	
+<a id="L528"></a><span class="ln">   528</span>		b := bytes.NewBuffer(rels)
+<a id="L529"></a><span class="ln">   529</span>		var rela Rela64
+<a id="L530"></a><span class="ln">   530</span>	
+<a id="L531"></a><span class="ln">   531</span>		for b.Len() &gt; 0 {
+<a id="L532"></a><span class="ln">   532</span>			binary.Read(b, f.ByteOrder, &amp;rela)
+<a id="L533"></a><span class="ln">   533</span>			symNo := rela.Info &gt;&gt; 32
+<a id="L534"></a><span class="ln">   534</span>			t := R_X86_64(rela.Info &amp; 0xffff)
+<a id="L535"></a><span class="ln">   535</span>	
+<a id="L536"></a><span class="ln">   536</span>			if symNo &gt;= uint64(len(symbols)) {
+<a id="L537"></a><span class="ln">   537</span>				continue
+<a id="L538"></a><span class="ln">   538</span>			}
+<a id="L539"></a><span class="ln">   539</span>			sym := &amp;symbols[symNo]
+<a id="L540"></a><span class="ln">   540</span>			if SymType(sym.Info&amp;0xf) != STT_SECTION {
+<a id="L541"></a><span class="ln">   541</span>				<span class="comment">// We don&#39;t handle non-section relocations for now.</span>
+<a id="L542"></a><span class="ln">   542</span>				continue
+<a id="L543"></a><span class="ln">   543</span>			}
+<a id="L544"></a><span class="ln">   544</span>	
+<a id="L545"></a><span class="ln">   545</span>			switch t {
+<a id="L546"></a><span class="ln">   546</span>			case R_X86_64_64:
+<a id="L547"></a><span class="ln">   547</span>				if rela.Off+8 &gt;= uint64(len(dst)) || rela.Addend &lt; 0 {
+<a id="L548"></a><span class="ln">   548</span>					continue
+<a id="L549"></a><span class="ln">   549</span>				}
+<a id="L550"></a><span class="ln">   550</span>				f.ByteOrder.PutUint64(dst[rela.Off:rela.Off+8], uint64(rela.Addend))
+<a id="L551"></a><span class="ln">   551</span>			case R_X86_64_32:
+<a id="L552"></a><span class="ln">   552</span>				if rela.Off+4 &gt;= uint64(len(dst)) || rela.Addend &lt; 0 {
+<a id="L553"></a><span class="ln">   553</span>					continue
+<a id="L554"></a><span class="ln">   554</span>				}
+<a id="L555"></a><span class="ln">   555</span>				f.ByteOrder.PutUint32(dst[rela.Off:rela.Off+4], uint32(rela.Addend))
+<a id="L556"></a><span class="ln">   556</span>			}
+<a id="L557"></a><span class="ln">   557</span>		}
+<a id="L558"></a><span class="ln">   558</span>	
+<a id="L559"></a><span class="ln">   559</span>		return nil
+<a id="L560"></a><span class="ln">   560</span>	}
+<a id="L561"></a><span class="ln">   561</span>	
+<a id="L562"></a><span class="ln">   562</span>	func (f *File) DWARF() (*dwarf.Data, error) {
+<a id="L563"></a><span class="ln">   563</span>		<span class="comment">// There are many other DWARF sections, but these</span>
+<a id="L564"></a><span class="ln">   564</span>		<span class="comment">// are the required ones, and the debug/dwarf package</span>
+<a id="L565"></a><span class="ln">   565</span>		<span class="comment">// does not use the others, so don&#39;t bother loading them.</span>
+<a id="L566"></a><span class="ln">   566</span>		var names = [...]string{&#34;abbrev&#34;, &#34;info&#34;, &#34;str&#34;}
+<a id="L567"></a><span class="ln">   567</span>		var dat [len(names)][]byte
+<a id="L568"></a><span class="ln">   568</span>		for i, name := range names {
+<a id="L569"></a><span class="ln">   569</span>			name = &#34;.debug_&#34; + name
+<a id="L570"></a><span class="ln">   570</span>			s := f.Section(name)
+<a id="L571"></a><span class="ln">   571</span>			if s == nil {
+<a id="L572"></a><span class="ln">   572</span>				continue
+<a id="L573"></a><span class="ln">   573</span>			}
+<a id="L574"></a><span class="ln">   574</span>			b, err := s.Data()
+<a id="L575"></a><span class="ln">   575</span>			if err != nil &amp;&amp; uint64(len(b)) &lt; s.Size {
+<a id="L576"></a><span class="ln">   576</span>				return nil, err
+<a id="L577"></a><span class="ln">   577</span>			}
+<a id="L578"></a><span class="ln">   578</span>			dat[i] = b
+<a id="L579"></a><span class="ln">   579</span>		}
+<a id="L580"></a><span class="ln">   580</span>	
+<a id="L581"></a><span class="ln">   581</span>		<span class="comment">// If there&#39;s a relocation table for .debug_info, we have to process it</span>
+<a id="L582"></a><span class="ln">   582</span>		<span class="comment">// now otherwise the data in .debug_info is invalid for x86-64 objects.</span>
+<a id="L583"></a><span class="ln">   583</span>		rela := f.Section(&#34;.rela.debug_info&#34;)
+<a id="L584"></a><span class="ln">   584</span>		if rela != nil &amp;&amp; rela.Type == SHT_RELA &amp;&amp; f.Machine == EM_X86_64 {
+<a id="L585"></a><span class="ln">   585</span>			data, err := rela.Data()
+<a id="L586"></a><span class="ln">   586</span>			if err != nil {
+<a id="L587"></a><span class="ln">   587</span>				return nil, err
+<a id="L588"></a><span class="ln">   588</span>			}
+<a id="L589"></a><span class="ln">   589</span>			err = f.applyRelocations(dat[1], data)
+<a id="L590"></a><span class="ln">   590</span>			if err != nil {
+<a id="L591"></a><span class="ln">   591</span>				return nil, err
+<a id="L592"></a><span class="ln">   592</span>			}
+<a id="L593"></a><span class="ln">   593</span>		}
+<a id="L594"></a><span class="ln">   594</span>	
+<a id="L595"></a><span class="ln">   595</span>		abbrev, info, str := dat[0], dat[1], dat[2]
+<a id="L596"></a><span class="ln">   596</span>		return dwarf.New(abbrev, nil, nil, info, nil, nil, nil, str)
+<a id="L597"></a><span class="ln">   597</span>	}
+<a id="L598"></a><span class="ln">   598</span>	
+<a id="L599"></a><span class="ln">   599</span>	<span class="comment">// Symbols returns the symbol table for f.</span>
+<a id="L600"></a><span class="ln">   600</span>	func (f *File) Symbols() ([]Symbol, error) {
+<a id="L601"></a><span class="ln">   601</span>		sym, _, err := f.getSymbols(SHT_SYMTAB)
+<a id="L602"></a><span class="ln">   602</span>		return sym, err
+<a id="L603"></a><span class="ln">   603</span>	}
+<a id="L604"></a><span class="ln">   604</span>	
+<a id="L605"></a><span class="ln">   605</span>	type ImportedSymbol struct {
+<a id="L606"></a><span class="ln">   606</span>		Name    string
+<a id="L607"></a><span class="ln">   607</span>		Version string
+<a id="L608"></a><span class="ln">   608</span>		Library string
+<a id="L609"></a><span class="ln">   609</span>	}
+<a id="L610"></a><span class="ln">   610</span>	
+<a id="L611"></a><span class="ln">   611</span>	<span class="comment">// ImportedSymbols returns the names of all symbols</span>
+<a id="L612"></a><span class="ln">   612</span>	<span class="comment">// referred to by the binary f that are expected to be</span>
+<a id="L613"></a><span class="ln">   613</span>	<span class="comment">// satisfied by other libraries at dynamic load time.</span>
+<a id="L614"></a><span class="ln">   614</span>	<span class="comment">// It does not return weak symbols.</span>
+<a id="L615"></a><span class="ln">   615</span>	func (f *File) ImportedSymbols() ([]ImportedSymbol, error) {
+<a id="L616"></a><span class="ln">   616</span>		sym, str, err := f.getSymbols(SHT_DYNSYM)
+<a id="L617"></a><span class="ln">   617</span>		if err != nil {
+<a id="L618"></a><span class="ln">   618</span>			return nil, err
+<a id="L619"></a><span class="ln">   619</span>		}
+<a id="L620"></a><span class="ln">   620</span>		f.gnuVersionInit(str)
+<a id="L621"></a><span class="ln">   621</span>		var all []ImportedSymbol
+<a id="L622"></a><span class="ln">   622</span>		for i, s := range sym {
+<a id="L623"></a><span class="ln">   623</span>			if ST_BIND(s.Info) == STB_GLOBAL &amp;&amp; s.Section == SHN_UNDEF {
+<a id="L624"></a><span class="ln">   624</span>				all = append(all, ImportedSymbol{Name: s.Name})
+<a id="L625"></a><span class="ln">   625</span>				f.gnuVersion(i, &amp;all[len(all)-1])
+<a id="L626"></a><span class="ln">   626</span>			}
+<a id="L627"></a><span class="ln">   627</span>		}
+<a id="L628"></a><span class="ln">   628</span>		return all, nil
+<a id="L629"></a><span class="ln">   629</span>	}
+<a id="L630"></a><span class="ln">   630</span>	
+<a id="L631"></a><span class="ln">   631</span>	type verneed struct {
+<a id="L632"></a><span class="ln">   632</span>		File string
+<a id="L633"></a><span class="ln">   633</span>		Name string
+<a id="L634"></a><span class="ln">   634</span>	}
+<a id="L635"></a><span class="ln">   635</span>	
+<a id="L636"></a><span class="ln">   636</span>	<span class="comment">// gnuVersionInit parses the GNU version tables</span>
+<a id="L637"></a><span class="ln">   637</span>	<span class="comment">// for use by calls to gnuVersion.</span>
+<a id="L638"></a><span class="ln">   638</span>	func (f *File) gnuVersionInit(str []byte) {
+<a id="L639"></a><span class="ln">   639</span>		<span class="comment">// Accumulate verneed information.</span>
+<a id="L640"></a><span class="ln">   640</span>		vn := f.SectionByType(SHT_GNU_VERNEED)
+<a id="L641"></a><span class="ln">   641</span>		if vn == nil {
+<a id="L642"></a><span class="ln">   642</span>			return
+<a id="L643"></a><span class="ln">   643</span>		}
+<a id="L644"></a><span class="ln">   644</span>		d, _ := vn.Data()
+<a id="L645"></a><span class="ln">   645</span>	
+<a id="L646"></a><span class="ln">   646</span>		var need []verneed
+<a id="L647"></a><span class="ln">   647</span>		i := 0
+<a id="L648"></a><span class="ln">   648</span>		for {
+<a id="L649"></a><span class="ln">   649</span>			if i+16 &gt; len(d) {
+<a id="L650"></a><span class="ln">   650</span>				break
+<a id="L651"></a><span class="ln">   651</span>			}
+<a id="L652"></a><span class="ln">   652</span>			vers := f.ByteOrder.Uint16(d[i : i+2])
+<a id="L653"></a><span class="ln">   653</span>			if vers != 1 {
+<a id="L654"></a><span class="ln">   654</span>				break
+<a id="L655"></a><span class="ln">   655</span>			}
+<a id="L656"></a><span class="ln">   656</span>			cnt := f.ByteOrder.Uint16(d[i+2 : i+4])
+<a id="L657"></a><span class="ln">   657</span>			fileoff := f.ByteOrder.Uint32(d[i+4 : i+8])
+<a id="L658"></a><span class="ln">   658</span>			aux := f.ByteOrder.Uint32(d[i+8 : i+12])
+<a id="L659"></a><span class="ln">   659</span>			next := f.ByteOrder.Uint32(d[i+12 : i+16])
+<a id="L660"></a><span class="ln">   660</span>			file, _ := getString(str, int(fileoff))
+<a id="L661"></a><span class="ln">   661</span>	
+<a id="L662"></a><span class="ln">   662</span>			var name string
+<a id="L663"></a><span class="ln">   663</span>			j := i + int(aux)
+<a id="L664"></a><span class="ln">   664</span>			for c := 0; c &lt; int(cnt); c++ {
+<a id="L665"></a><span class="ln">   665</span>				if j+16 &gt; len(d) {
+<a id="L666"></a><span class="ln">   666</span>					break
+<a id="L667"></a><span class="ln">   667</span>				}
+<a id="L668"></a><span class="ln">   668</span>				<span class="comment">// hash := f.ByteOrder.Uint32(d[j:j+4])</span>
+<a id="L669"></a><span class="ln">   669</span>				<span class="comment">// flags := f.ByteOrder.Uint16(d[j+4:j+6])</span>
+<a id="L670"></a><span class="ln">   670</span>				other := f.ByteOrder.Uint16(d[j+6 : j+8])
+<a id="L671"></a><span class="ln">   671</span>				nameoff := f.ByteOrder.Uint32(d[j+8 : j+12])
+<a id="L672"></a><span class="ln">   672</span>				next := f.ByteOrder.Uint32(d[j+12 : j+16])
+<a id="L673"></a><span class="ln">   673</span>				name, _ = getString(str, int(nameoff))
+<a id="L674"></a><span class="ln">   674</span>				ndx := int(other)
+<a id="L675"></a><span class="ln">   675</span>				if ndx &gt;= len(need) {
+<a id="L676"></a><span class="ln">   676</span>					a := make([]verneed, 2*(ndx+1))
+<a id="L677"></a><span class="ln">   677</span>					copy(a, need)
+<a id="L678"></a><span class="ln">   678</span>					need = a
+<a id="L679"></a><span class="ln">   679</span>				}
+<a id="L680"></a><span class="ln">   680</span>	
+<a id="L681"></a><span class="ln">   681</span>				need[ndx] = verneed{file, name}
+<a id="L682"></a><span class="ln">   682</span>				if next == 0 {
+<a id="L683"></a><span class="ln">   683</span>					break
+<a id="L684"></a><span class="ln">   684</span>				}
+<a id="L685"></a><span class="ln">   685</span>				j += int(next)
+<a id="L686"></a><span class="ln">   686</span>			}
+<a id="L687"></a><span class="ln">   687</span>	
+<a id="L688"></a><span class="ln">   688</span>			if next == 0 {
+<a id="L689"></a><span class="ln">   689</span>				break
+<a id="L690"></a><span class="ln">   690</span>			}
+<a id="L691"></a><span class="ln">   691</span>			i += int(next)
+<a id="L692"></a><span class="ln">   692</span>		}
+<a id="L693"></a><span class="ln">   693</span>	
+<a id="L694"></a><span class="ln">   694</span>		<span class="comment">// Versym parallels symbol table, indexing into verneed.</span>
+<a id="L695"></a><span class="ln">   695</span>		vs := f.SectionByType(SHT_GNU_VERSYM)
+<a id="L696"></a><span class="ln">   696</span>		if vs == nil {
+<a id="L697"></a><span class="ln">   697</span>			return
+<a id="L698"></a><span class="ln">   698</span>		}
+<a id="L699"></a><span class="ln">   699</span>		d, _ = vs.Data()
+<a id="L700"></a><span class="ln">   700</span>	
+<a id="L701"></a><span class="ln">   701</span>		f.gnuNeed = need
+<a id="L702"></a><span class="ln">   702</span>		f.gnuVersym = d
+<a id="L703"></a><span class="ln">   703</span>	}
+<a id="L704"></a><span class="ln">   704</span>	
+<a id="L705"></a><span class="ln">   705</span>	<span class="comment">// gnuVersion adds Library and Version information to sym,</span>
+<a id="L706"></a><span class="ln">   706</span>	<span class="comment">// which came from offset i of the symbol table.</span>
+<a id="L707"></a><span class="ln">   707</span>	func (f *File) gnuVersion(i int, sym *ImportedSymbol) {
+<a id="L708"></a><span class="ln">   708</span>		<span class="comment">// Each entry is two bytes; skip undef entry at beginning.</span>
+<a id="L709"></a><span class="ln">   709</span>		i = (i + 1) * 2
+<a id="L710"></a><span class="ln">   710</span>		if i &gt;= len(f.gnuVersym) {
+<a id="L711"></a><span class="ln">   711</span>			return
+<a id="L712"></a><span class="ln">   712</span>		}
+<a id="L713"></a><span class="ln">   713</span>		j := int(f.ByteOrder.Uint16(f.gnuVersym[i:]))
+<a id="L714"></a><span class="ln">   714</span>		if j &lt; 2 || j &gt;= len(f.gnuNeed) {
+<a id="L715"></a><span class="ln">   715</span>			return
+<a id="L716"></a><span class="ln">   716</span>		}
+<a id="L717"></a><span class="ln">   717</span>		n := &amp;f.gnuNeed[j]
+<a id="L718"></a><span class="ln">   718</span>		sym.Library = n.File
+<a id="L719"></a><span class="ln">   719</span>		sym.Version = n.Name
+<a id="L720"></a><span class="ln">   720</span>	}
+<a id="L721"></a><span class="ln">   721</span>	
+<a id="L722"></a><span class="ln">   722</span>	<span class="comment">// ImportedLibraries returns the names of all libraries</span>
+<a id="L723"></a><span class="ln">   723</span>	<span class="comment">// referred to by the binary f that are expected to be</span>
+<a id="L724"></a><span class="ln">   724</span>	<span class="comment">// linked with the binary at dynamic link time.</span>
+<a id="L725"></a><span class="ln">   725</span>	func (f *File) ImportedLibraries() ([]string, error) {
+<a id="L726"></a><span class="ln">   726</span>		ds := f.SectionByType(SHT_DYNAMIC)
+<a id="L727"></a><span class="ln">   727</span>		if ds == nil {
+<a id="L728"></a><span class="ln">   728</span>			<span class="comment">// not dynamic, so no libraries</span>
+<a id="L729"></a><span class="ln">   729</span>			return nil, nil
+<a id="L730"></a><span class="ln">   730</span>		}
+<a id="L731"></a><span class="ln">   731</span>		d, err := ds.Data()
+<a id="L732"></a><span class="ln">   732</span>		if err != nil {
+<a id="L733"></a><span class="ln">   733</span>			return nil, err
+<a id="L734"></a><span class="ln">   734</span>		}
+<a id="L735"></a><span class="ln">   735</span>		str, err := f.stringTable(ds.Link)
+<a id="L736"></a><span class="ln">   736</span>		if err != nil {
+<a id="L737"></a><span class="ln">   737</span>			return nil, err
+<a id="L738"></a><span class="ln">   738</span>		}
+<a id="L739"></a><span class="ln">   739</span>		var all []string
+<a id="L740"></a><span class="ln">   740</span>		for len(d) &gt; 0 {
+<a id="L741"></a><span class="ln">   741</span>			var tag DynTag
+<a id="L742"></a><span class="ln">   742</span>			var value uint64
+<a id="L743"></a><span class="ln">   743</span>			switch f.Class {
+<a id="L744"></a><span class="ln">   744</span>			case ELFCLASS32:
+<a id="L745"></a><span class="ln">   745</span>				tag = DynTag(f.ByteOrder.Uint32(d[0:4]))
+<a id="L746"></a><span class="ln">   746</span>				value = uint64(f.ByteOrder.Uint32(d[4:8]))
+<a id="L747"></a><span class="ln">   747</span>				d = d[8:]
+<a id="L748"></a><span class="ln">   748</span>			case ELFCLASS64:
+<a id="L749"></a><span class="ln">   749</span>				tag = DynTag(f.ByteOrder.Uint64(d[0:8]))
+<a id="L750"></a><span class="ln">   750</span>				value = f.ByteOrder.Uint64(d[8:16])
+<a id="L751"></a><span class="ln">   751</span>				d = d[16:]
+<a id="L752"></a><span class="ln">   752</span>			}
+<a id="L753"></a><span class="ln">   753</span>			if tag == DT_NEEDED {
+<a id="L754"></a><span class="ln">   754</span>				s, ok := getString(str, int(value))
+<a id="L755"></a><span class="ln">   755</span>				if ok {
+<a id="L756"></a><span class="ln">   756</span>					all = append(all, s)
+<a id="L757"></a><span class="ln">   757</span>				}
+<a id="L758"></a><span class="ln">   758</span>			}
+<a id="L759"></a><span class="ln">   759</span>		}
+<a id="L760"></a><span class="ln">   760</span>	
+<a id="L761"></a><span class="ln">   761</span>		return all, nil
+<a id="L762"></a><span class="ln">   762</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

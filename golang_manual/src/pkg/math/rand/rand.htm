@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/math/rand/rand.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/math/rand/rand.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package rand implements pseudo-random number generators.</span>
+<a id="L6"></a><span class="ln">     6</span>	package rand
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import &#34;sync&#34;
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// A Source represents a source of uniformly-distributed</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// pseudo-random int64 values in the range [0, 1&lt;&lt;63).</span>
+<a id="L12"></a><span class="ln">    12</span>	type Source interface {
+<a id="L13"></a><span class="ln">    13</span>		Int63() int64
+<a id="L14"></a><span class="ln">    14</span>		Seed(seed int64)
+<a id="L15"></a><span class="ln">    15</span>	}
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// NewSource returns a new pseudo-random Source seeded with the given value.</span>
+<a id="L18"></a><span class="ln">    18</span>	func NewSource(seed int64) Source {
+<a id="L19"></a><span class="ln">    19</span>		var rng rngSource
+<a id="L20"></a><span class="ln">    20</span>		rng.Seed(seed)
+<a id="L21"></a><span class="ln">    21</span>		return &amp;rng
+<a id="L22"></a><span class="ln">    22</span>	}
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// A Rand is a source of random numbers.</span>
+<a id="L25"></a><span class="ln">    25</span>	type Rand struct {
+<a id="L26"></a><span class="ln">    26</span>		src Source
+<a id="L27"></a><span class="ln">    27</span>	}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// New returns a new Rand that uses random values from src</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// to generate other random values.</span>
+<a id="L31"></a><span class="ln">    31</span>	func New(src Source) *Rand { return &amp;Rand{src} }
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// Seed uses the provided seed value to initialize the generator to a deterministic state.</span>
+<a id="L34"></a><span class="ln">    34</span>	func (r *Rand) Seed(seed int64) { r.src.Seed(seed) }
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// Int63 returns a non-negative pseudo-random 63-bit integer as an int64.</span>
+<a id="L37"></a><span class="ln">    37</span>	func (r *Rand) Int63() int64 { return r.src.Int63() }
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Uint32 returns a pseudo-random 32-bit value as a uint32.</span>
+<a id="L40"></a><span class="ln">    40</span>	func (r *Rand) Uint32() uint32 { return uint32(r.Int63() &gt;&gt; 31) }
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// Int31 returns a non-negative pseudo-random 31-bit integer as an int32.</span>
+<a id="L43"></a><span class="ln">    43</span>	func (r *Rand) Int31() int32 { return int32(r.Int63() &gt;&gt; 32) }
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// Int returns a non-negative pseudo-random int.</span>
+<a id="L46"></a><span class="ln">    46</span>	func (r *Rand) Int() int {
+<a id="L47"></a><span class="ln">    47</span>		u := uint(r.Int63())
+<a id="L48"></a><span class="ln">    48</span>		return int(u &lt;&lt; 1 &gt;&gt; 1) <span class="comment">// clear sign bit if int == int32</span>
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// Int63n returns, as an int64, a non-negative pseudo-random number in [0,n).</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// It panics if n &lt;= 0.</span>
+<a id="L53"></a><span class="ln">    53</span>	func (r *Rand) Int63n(n int64) int64 {
+<a id="L54"></a><span class="ln">    54</span>		if n &lt;= 0 {
+<a id="L55"></a><span class="ln">    55</span>			panic(&#34;invalid argument to Int63n&#34;)
+<a id="L56"></a><span class="ln">    56</span>		}
+<a id="L57"></a><span class="ln">    57</span>		max := int64((1 &lt;&lt; 63) - 1 - (1&lt;&lt;63)%uint64(n))
+<a id="L58"></a><span class="ln">    58</span>		v := r.Int63()
+<a id="L59"></a><span class="ln">    59</span>		for v &gt; max {
+<a id="L60"></a><span class="ln">    60</span>			v = r.Int63()
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		return v % n
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// Int31n returns, as an int32, a non-negative pseudo-random number in [0,n).</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// It panics if n &lt;= 0.</span>
+<a id="L67"></a><span class="ln">    67</span>	func (r *Rand) Int31n(n int32) int32 {
+<a id="L68"></a><span class="ln">    68</span>		if n &lt;= 0 {
+<a id="L69"></a><span class="ln">    69</span>			panic(&#34;invalid argument to Int31n&#34;)
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>		max := int32((1 &lt;&lt; 31) - 1 - (1&lt;&lt;31)%uint32(n))
+<a id="L72"></a><span class="ln">    72</span>		v := r.Int31()
+<a id="L73"></a><span class="ln">    73</span>		for v &gt; max {
+<a id="L74"></a><span class="ln">    74</span>			v = r.Int31()
+<a id="L75"></a><span class="ln">    75</span>		}
+<a id="L76"></a><span class="ln">    76</span>		return v % n
+<a id="L77"></a><span class="ln">    77</span>	}
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// Intn returns, as an int, a non-negative pseudo-random number in [0,n).</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// It panics if n &lt;= 0.</span>
+<a id="L81"></a><span class="ln">    81</span>	func (r *Rand) Intn(n int) int {
+<a id="L82"></a><span class="ln">    82</span>		if n &lt;= 0 {
+<a id="L83"></a><span class="ln">    83</span>			panic(&#34;invalid argument to Intn&#34;)
+<a id="L84"></a><span class="ln">    84</span>		}
+<a id="L85"></a><span class="ln">    85</span>		if n &lt;= 1&lt;&lt;31-1 {
+<a id="L86"></a><span class="ln">    86</span>			return int(r.Int31n(int32(n)))
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>		return int(r.Int63n(int64(n)))
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// Float64 returns, as a float64, a pseudo-random number in [0.0,1.0).</span>
+<a id="L92"></a><span class="ln">    92</span>	func (r *Rand) Float64() float64 { return float64(r.Int63()) / (1 &lt;&lt; 63) }
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// Float32 returns, as a float32, a pseudo-random number in [0.0,1.0).</span>
+<a id="L95"></a><span class="ln">    95</span>	func (r *Rand) Float32() float32 { return float32(r.Float64()) }
+<a id="L96"></a><span class="ln">    96</span>	
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// Perm returns, as a slice of n ints, a pseudo-random permutation of the integers [0,n).</span>
+<a id="L98"></a><span class="ln">    98</span>	func (r *Rand) Perm(n int) []int {
+<a id="L99"></a><span class="ln">    99</span>		m := make([]int, n)
+<a id="L100"></a><span class="ln">   100</span>		for i := 0; i &lt; n; i++ {
+<a id="L101"></a><span class="ln">   101</span>			m[i] = i
+<a id="L102"></a><span class="ln">   102</span>		}
+<a id="L103"></a><span class="ln">   103</span>		for i := 0; i &lt; n; i++ {
+<a id="L104"></a><span class="ln">   104</span>			j := r.Intn(i + 1)
+<a id="L105"></a><span class="ln">   105</span>			m[i], m[j] = m[j], m[i]
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>		return m
+<a id="L108"></a><span class="ln">   108</span>	}
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">/*
+</span><a id="L111"></a><span class="ln">   111</span>	<span class="comment"> * Top-level convenience functions
+</span><a id="L112"></a><span class="ln">   112</span>	<span class="comment"> */</span>
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	var globalRand = New(&amp;lockedSource{src: NewSource(1)})
+<a id="L115"></a><span class="ln">   115</span>	
+<a id="L116"></a><span class="ln">   116</span>	<span class="comment">// Seed uses the provided seed value to initialize the generator to a</span>
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">// deterministic state. If Seed is not called, the generator behaves as</span>
+<a id="L118"></a><span class="ln">   118</span>	<span class="comment">// if seeded by Seed(1).</span>
+<a id="L119"></a><span class="ln">   119</span>	func Seed(seed int64) { globalRand.Seed(seed) }
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	<span class="comment">// Int63 returns a non-negative pseudo-random 63-bit integer as an int64.</span>
+<a id="L122"></a><span class="ln">   122</span>	func Int63() int64 { return globalRand.Int63() }
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// Uint32 returns a pseudo-random 32-bit value as a uint32.</span>
+<a id="L125"></a><span class="ln">   125</span>	func Uint32() uint32 { return globalRand.Uint32() }
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// Int31 returns a non-negative pseudo-random 31-bit integer as an int32.</span>
+<a id="L128"></a><span class="ln">   128</span>	func Int31() int32 { return globalRand.Int31() }
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// Int returns a non-negative pseudo-random int.</span>
+<a id="L131"></a><span class="ln">   131</span>	func Int() int { return globalRand.Int() }
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// Int63n returns, as an int64, a non-negative pseudo-random number in [0,n).</span>
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// It panics if n &lt;= 0.</span>
+<a id="L135"></a><span class="ln">   135</span>	func Int63n(n int64) int64 { return globalRand.Int63n(n) }
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// Int31n returns, as an int32, a non-negative pseudo-random number in [0,n).</span>
+<a id="L138"></a><span class="ln">   138</span>	<span class="comment">// It panics if n &lt;= 0.</span>
+<a id="L139"></a><span class="ln">   139</span>	func Int31n(n int32) int32 { return globalRand.Int31n(n) }
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// Intn returns, as an int, a non-negative pseudo-random number in [0,n).</span>
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// It panics if n &lt;= 0.</span>
+<a id="L143"></a><span class="ln">   143</span>	func Intn(n int) int { return globalRand.Intn(n) }
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// Float64 returns, as a float64, a pseudo-random number in [0.0,1.0).</span>
+<a id="L146"></a><span class="ln">   146</span>	func Float64() float64 { return globalRand.Float64() }
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// Float32 returns, as a float32, a pseudo-random number in [0.0,1.0).</span>
+<a id="L149"></a><span class="ln">   149</span>	func Float32() float32 { return globalRand.Float32() }
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// Perm returns, as a slice of n ints, a pseudo-random permutation of the integers [0,n).</span>
+<a id="L152"></a><span class="ln">   152</span>	func Perm(n int) []int { return globalRand.Perm(n) }
+<a id="L153"></a><span class="ln">   153</span>	
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">// NormFloat64 returns a normally distributed float64 in the range</span>
+<a id="L155"></a><span class="ln">   155</span>	<span class="comment">// [-math.MaxFloat64, +math.MaxFloat64] with</span>
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// standard normal distribution (mean = 0, stddev = 1).</span>
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// To produce a different normal distribution, callers can</span>
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// adjust the output using:</span>
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">//</span>
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">//  sample = NormFloat64() * desiredStdDev + desiredMean</span>
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">//</span>
+<a id="L162"></a><span class="ln">   162</span>	func NormFloat64() float64 { return globalRand.NormFloat64() }
+<a id="L163"></a><span class="ln">   163</span>	
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// ExpFloat64 returns an exponentially distributed float64 in the range</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// (0, +math.MaxFloat64] with an exponential distribution whose rate parameter</span>
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// (lambda) is 1 and whose mean is 1/lambda (1).</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// To produce a distribution with a different rate parameter,</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// callers can adjust the output using:</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">//</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">//  sample = ExpFloat64() / desiredRateParameter</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">//</span>
+<a id="L172"></a><span class="ln">   172</span>	func ExpFloat64() float64 { return globalRand.ExpFloat64() }
+<a id="L173"></a><span class="ln">   173</span>	
+<a id="L174"></a><span class="ln">   174</span>	type lockedSource struct {
+<a id="L175"></a><span class="ln">   175</span>		lk  sync.Mutex
+<a id="L176"></a><span class="ln">   176</span>		src Source
+<a id="L177"></a><span class="ln">   177</span>	}
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>	func (r *lockedSource) Int63() (n int64) {
+<a id="L180"></a><span class="ln">   180</span>		r.lk.Lock()
+<a id="L181"></a><span class="ln">   181</span>		n = r.src.Int63()
+<a id="L182"></a><span class="ln">   182</span>		r.lk.Unlock()
+<a id="L183"></a><span class="ln">   183</span>		return
+<a id="L184"></a><span class="ln">   184</span>	}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>	func (r *lockedSource) Seed(seed int64) {
+<a id="L187"></a><span class="ln">   187</span>		r.lk.Lock()
+<a id="L188"></a><span class="ln">   188</span>		r.src.Seed(seed)
+<a id="L189"></a><span class="ln">   189</span>		r.lk.Unlock()
+<a id="L190"></a><span class="ln">   190</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

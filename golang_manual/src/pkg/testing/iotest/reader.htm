@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/testing/iotest/reader.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/testing/iotest/reader.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package iotest implements Readers and Writers useful mainly for testing.</span>
+<a id="L6"></a><span class="ln">     6</span>	package iotest
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;errors&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;io&#34;
+<a id="L11"></a><span class="ln">    11</span>	)
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// OneByteReader returns a Reader that implements</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// each non-empty Read by reading one byte from r.</span>
+<a id="L15"></a><span class="ln">    15</span>	func OneByteReader(r io.Reader) io.Reader { return &amp;oneByteReader{r} }
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	type oneByteReader struct {
+<a id="L18"></a><span class="ln">    18</span>		r io.Reader
+<a id="L19"></a><span class="ln">    19</span>	}
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	func (r *oneByteReader) Read(p []byte) (int, error) {
+<a id="L22"></a><span class="ln">    22</span>		if len(p) == 0 {
+<a id="L23"></a><span class="ln">    23</span>			return 0, nil
+<a id="L24"></a><span class="ln">    24</span>		}
+<a id="L25"></a><span class="ln">    25</span>		return r.r.Read(p[0:1])
+<a id="L26"></a><span class="ln">    26</span>	}
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// HalfReader returns a Reader that implements Read</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// by reading half as many requested bytes from r.</span>
+<a id="L30"></a><span class="ln">    30</span>	func HalfReader(r io.Reader) io.Reader { return &amp;halfReader{r} }
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	type halfReader struct {
+<a id="L33"></a><span class="ln">    33</span>		r io.Reader
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	func (r *halfReader) Read(p []byte) (int, error) {
+<a id="L37"></a><span class="ln">    37</span>		return r.r.Read(p[0 : (len(p)+1)/2])
+<a id="L38"></a><span class="ln">    38</span>	}
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// DataErrReader returns a Reader that returns the final</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// error with the last data read, instead of by itself with</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// zero bytes of data.</span>
+<a id="L43"></a><span class="ln">    43</span>	func DataErrReader(r io.Reader) io.Reader { return &amp;dataErrReader{r, nil, make([]byte, 1024)} }
+<a id="L44"></a><span class="ln">    44</span>	
+<a id="L45"></a><span class="ln">    45</span>	type dataErrReader struct {
+<a id="L46"></a><span class="ln">    46</span>		r      io.Reader
+<a id="L47"></a><span class="ln">    47</span>		unread []byte
+<a id="L48"></a><span class="ln">    48</span>		data   []byte
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	func (r *dataErrReader) Read(p []byte) (n int, err error) {
+<a id="L52"></a><span class="ln">    52</span>		<span class="comment">// loop because first call needs two reads:</span>
+<a id="L53"></a><span class="ln">    53</span>		<span class="comment">// one to get data and a second to look for an error.</span>
+<a id="L54"></a><span class="ln">    54</span>		for {
+<a id="L55"></a><span class="ln">    55</span>			if len(r.unread) == 0 {
+<a id="L56"></a><span class="ln">    56</span>				n1, err1 := r.r.Read(r.data)
+<a id="L57"></a><span class="ln">    57</span>				r.unread = r.data[0:n1]
+<a id="L58"></a><span class="ln">    58</span>				err = err1
+<a id="L59"></a><span class="ln">    59</span>			}
+<a id="L60"></a><span class="ln">    60</span>			if n &gt; 0 || err != nil {
+<a id="L61"></a><span class="ln">    61</span>				break
+<a id="L62"></a><span class="ln">    62</span>			}
+<a id="L63"></a><span class="ln">    63</span>			n = copy(p, r.unread)
+<a id="L64"></a><span class="ln">    64</span>			r.unread = r.unread[n:]
+<a id="L65"></a><span class="ln">    65</span>		}
+<a id="L66"></a><span class="ln">    66</span>		return
+<a id="L67"></a><span class="ln">    67</span>	}
+<a id="L68"></a><span class="ln">    68</span>	
+<a id="L69"></a><span class="ln">    69</span>	var ErrTimeout = errors.New(&#34;timeout&#34;)
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// TimeoutReader returns ErrTimeout on the second read</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// with no data.  Subsequent calls to read succeed.</span>
+<a id="L73"></a><span class="ln">    73</span>	func TimeoutReader(r io.Reader) io.Reader { return &amp;timeoutReader{r, 0} }
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	type timeoutReader struct {
+<a id="L76"></a><span class="ln">    76</span>		r     io.Reader
+<a id="L77"></a><span class="ln">    77</span>		count int
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	func (r *timeoutReader) Read(p []byte) (int, error) {
+<a id="L81"></a><span class="ln">    81</span>		r.count++
+<a id="L82"></a><span class="ln">    82</span>		if r.count == 2 {
+<a id="L83"></a><span class="ln">    83</span>			return 0, ErrTimeout
+<a id="L84"></a><span class="ln">    84</span>		}
+<a id="L85"></a><span class="ln">    85</span>		return r.r.Read(p)
+<a id="L86"></a><span class="ln">    86</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

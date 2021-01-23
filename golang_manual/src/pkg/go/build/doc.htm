@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/build/doc.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/build/doc.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors.  All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package build gathers information about Go packages.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">//</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Go Path</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">//</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// The Go path is a list of directory trees containing Go source code.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// It is consulted to resolve imports that cannot be found in the standard</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// Go tree.  The default path is the value of the GOPATH environment</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// variable, interpreted as a path list appropriate to the operating system</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// (on Unix, the variable is a colon-separated string;</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// on Windows, a semicolon-separated string;</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// on Plan 9, a list).</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">//</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// Each directory listed in the Go path must have a prescribed structure:</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// The src/ directory holds source code.  The path below &#39;src&#39; determines</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// the import path or executable name.</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// The pkg/ directory holds installed package objects.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// As in the Go tree, each target operating system and</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// architecture pair has its own subdirectory of pkg</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// (pkg/GOOS_GOARCH).</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// </span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// If DIR is a directory listed in the Go path, a package with</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// source in DIR/src/foo/bar can be imported as &#34;foo/bar&#34; and</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// has its compiled form installed to &#34;DIR/pkg/GOOS_GOARCH/foo/bar.a&#34;</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// (or, for gccgo, &#34;DIR/pkg/gccgo/foo/libbar.a&#34;).</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// </span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// The bin/ directory holds compiled commands.</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// Each command is named for its source directory, but only</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// using the final element, not the entire path.  That is, the</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// command with source in DIR/src/foo/quux is installed into</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// DIR/bin/quux, not DIR/bin/foo/quux.  The foo/ is stripped</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// so that you can add DIR/bin to your PATH to get at the</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// installed commands.</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// </span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// Here&#39;s an example directory layout:</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// </span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">//	GOPATH=/home/user/gocode</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// </span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//	/home/user/gocode/</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">//	    src/</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">//	        foo/</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">//	            bar/               (go code in package bar)</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">//	                x.go</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">//	            quux/              (go code in package main)</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">//	                y.go</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">//	    bin/</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">//	        quux                   (installed command)</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//	    pkg/</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">//	        linux_amd64/</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//	            foo/</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">//	                bar.a          (installed package object)</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">//</span>
+<a id="L58"></a><span class="ln">    58</span>	<span class="comment">// Build Constraints</span>
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">//</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// A build constraint is a line comment beginning with the directive +build</span>
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// that lists the conditions under which a file should be included in the package.</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// Constraints may appear in any kind of source file (not just Go), but</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// they must be appear near the top of the file, preceded</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// only by blank lines and other line comments.</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">//</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// A build constraint is evaluated as the OR of space-separated options;</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// each option evaluates as the AND of its comma-separated terms;</span>
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// and each term is an alphanumeric word or, preceded by !, its negation.</span>
+<a id="L69"></a><span class="ln">    69</span>	<span class="comment">// That is, the build constraint:</span>
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">//</span>
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">//	// +build linux,386 darwin,!cgo</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">//</span>
+<a id="L73"></a><span class="ln">    73</span>	<span class="comment">// corresponds to the boolean formula:</span>
+<a id="L74"></a><span class="ln">    74</span>	<span class="comment">//</span>
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">//	(linux AND 386) OR (darwin AND (NOT cgo))</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">//</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// During a particular build, the following words are satisfied:</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">//</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">//	- the target operating system, as spelled by runtime.GOOS</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">//	- the target architecture, as spelled by runtime.GOARCH</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">//	- &#34;cgo&#34;, if ctxt.CgoEnabled is true</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">//	- any additional words listed in ctxt.BuildTags</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">//</span>
+<a id="L84"></a><span class="ln">    84</span>	<span class="comment">// If a file&#39;s name, after stripping the extension and a possible _test suffix,</span>
+<a id="L85"></a><span class="ln">    85</span>	<span class="comment">// matches *_GOOS, *_GOARCH, or *_GOOS_GOARCH for any known operating</span>
+<a id="L86"></a><span class="ln">    86</span>	<span class="comment">// system and architecture values, then the file is considered to have an implicit</span>
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// build constraint requiring those terms.</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">//</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// To keep a file from being considered for the build:</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">//</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">//	// +build ignore</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">//</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// (any other unsatisfied word will work as well, but ``ignore&#39;&#39; is conventional.)</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">//</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// To build a file only when using cgo, and only on Linux and OS X:</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">//</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">//	// +build linux,cgo darwin,cgo</span>
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">//</span>
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// Such a file is usually paired with another file implementing the</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// default functionality for other systems, which in this case would</span>
+<a id="L101"></a><span class="ln">   101</span>	<span class="comment">// carry the constraint:</span>
+<a id="L102"></a><span class="ln">   102</span>	<span class="comment">//</span>
+<a id="L103"></a><span class="ln">   103</span>	<span class="comment">//	// +build !linux !darwin !cgo</span>
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">//</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// Naming a file dns_windows.go will cause it to be included only when</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// building the package for Windows; similarly, math_386.s will be included</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// only when building the package for 32-bit x86.</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">//</span>
+<a id="L109"></a><span class="ln">   109</span>	package build
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

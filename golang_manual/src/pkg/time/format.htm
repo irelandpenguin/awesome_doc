@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/time/format.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/time/format.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package time
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;errors&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// These are predefined layouts for use in Time.Format.</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// The standard time used in the layouts is:</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">//	Mon Jan 2 15:04:05 MST 2006</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// which is Unix time 1136243045. Since MST is GMT-0700,</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// the standard time can be thought of as</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">//	01/02 03:04:05PM &#39;06 -0700</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// To define your own format, write down what the standard time would look</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// like formatted your way; see the values of constants like ANSIC,</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// StampMicro or Kitchen for examples.</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">//</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// Within the format string, an underscore _ represents a space that may be</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// replaced by a digit if the following number (a day) has two digits; for</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// compatibility with fixed-width Unix time formats.</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">//</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// A decimal point followed by one or more zeros represents a fractional</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// second, printed to the given number of decimal places.  A decimal point</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// followed by one or more nines represents a fractional second, printed to</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// the given number of decimal places, with trailing zeros removed.</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// When parsing (only), the input may contain a fractional second</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// field immediately after the seconds field, even if the layout does not</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// signify its presence. In that case a decimal point followed by a maximal</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// series of digits is parsed as a fractional second.</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">//</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// Numeric time zone offsets format as follows:</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//	-0700  ±hhmm</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">//	-07:00 ±hh:mm</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// Replacing the sign in the format with a Z triggers</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// the ISO 8601 behavior of printing Z instead of an</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// offset for the UTC zone.  Thus:</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//	Z0700  Z or ±hhmm</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//	Z07:00 Z or ±hh:mm</span>
+<a id="L40"></a><span class="ln">    40</span>	const (
+<a id="L41"></a><span class="ln">    41</span>		ANSIC       = &#34;Mon Jan _2 15:04:05 2006&#34;
+<a id="L42"></a><span class="ln">    42</span>		UnixDate    = &#34;Mon Jan _2 15:04:05 MST 2006&#34;
+<a id="L43"></a><span class="ln">    43</span>		RubyDate    = &#34;Mon Jan 02 15:04:05 -0700 2006&#34;
+<a id="L44"></a><span class="ln">    44</span>		RFC822      = &#34;02 Jan 06 15:04 MST&#34;
+<a id="L45"></a><span class="ln">    45</span>		RFC822Z     = &#34;02 Jan 06 15:04 -0700&#34; <span class="comment">// RFC822 with numeric zone</span>
+<a id="L46"></a><span class="ln">    46</span>		RFC850      = &#34;Monday, 02-Jan-06 15:04:05 MST&#34;
+<a id="L47"></a><span class="ln">    47</span>		RFC1123     = &#34;Mon, 02 Jan 2006 15:04:05 MST&#34;
+<a id="L48"></a><span class="ln">    48</span>		RFC1123Z    = &#34;Mon, 02 Jan 2006 15:04:05 -0700&#34; <span class="comment">// RFC1123 with numeric zone</span>
+<a id="L49"></a><span class="ln">    49</span>		RFC3339     = &#34;2006-01-02T15:04:05Z07:00&#34;
+<a id="L50"></a><span class="ln">    50</span>		RFC3339Nano = &#34;2006-01-02T15:04:05.999999999Z07:00&#34;
+<a id="L51"></a><span class="ln">    51</span>		Kitchen     = &#34;3:04PM&#34;
+<a id="L52"></a><span class="ln">    52</span>		<span class="comment">// Handy time stamps.</span>
+<a id="L53"></a><span class="ln">    53</span>		Stamp      = &#34;Jan _2 15:04:05&#34;
+<a id="L54"></a><span class="ln">    54</span>		StampMilli = &#34;Jan _2 15:04:05.000&#34;
+<a id="L55"></a><span class="ln">    55</span>		StampMicro = &#34;Jan _2 15:04:05.000000&#34;
+<a id="L56"></a><span class="ln">    56</span>		StampNano  = &#34;Jan _2 15:04:05.000000000&#34;
+<a id="L57"></a><span class="ln">    57</span>	)
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>	const (
+<a id="L60"></a><span class="ln">    60</span>		stdLongMonth      = &#34;January&#34;
+<a id="L61"></a><span class="ln">    61</span>		stdMonth          = &#34;Jan&#34;
+<a id="L62"></a><span class="ln">    62</span>		stdNumMonth       = &#34;1&#34;
+<a id="L63"></a><span class="ln">    63</span>		stdZeroMonth      = &#34;01&#34;
+<a id="L64"></a><span class="ln">    64</span>		stdLongWeekDay    = &#34;Monday&#34;
+<a id="L65"></a><span class="ln">    65</span>		stdWeekDay        = &#34;Mon&#34;
+<a id="L66"></a><span class="ln">    66</span>		stdDay            = &#34;2&#34;
+<a id="L67"></a><span class="ln">    67</span>		stdUnderDay       = &#34;_2&#34;
+<a id="L68"></a><span class="ln">    68</span>		stdZeroDay        = &#34;02&#34;
+<a id="L69"></a><span class="ln">    69</span>		stdHour           = &#34;15&#34;
+<a id="L70"></a><span class="ln">    70</span>		stdHour12         = &#34;3&#34;
+<a id="L71"></a><span class="ln">    71</span>		stdZeroHour12     = &#34;03&#34;
+<a id="L72"></a><span class="ln">    72</span>		stdMinute         = &#34;4&#34;
+<a id="L73"></a><span class="ln">    73</span>		stdZeroMinute     = &#34;04&#34;
+<a id="L74"></a><span class="ln">    74</span>		stdSecond         = &#34;5&#34;
+<a id="L75"></a><span class="ln">    75</span>		stdZeroSecond     = &#34;05&#34;
+<a id="L76"></a><span class="ln">    76</span>		stdLongYear       = &#34;2006&#34;
+<a id="L77"></a><span class="ln">    77</span>		stdYear           = &#34;06&#34;
+<a id="L78"></a><span class="ln">    78</span>		stdPM             = &#34;PM&#34;
+<a id="L79"></a><span class="ln">    79</span>		stdpm             = &#34;pm&#34;
+<a id="L80"></a><span class="ln">    80</span>		stdTZ             = &#34;MST&#34;
+<a id="L81"></a><span class="ln">    81</span>		stdISO8601TZ      = &#34;Z0700&#34;  <span class="comment">// prints Z for UTC</span>
+<a id="L82"></a><span class="ln">    82</span>		stdISO8601ColonTZ = &#34;Z07:00&#34; <span class="comment">// prints Z for UTC</span>
+<a id="L83"></a><span class="ln">    83</span>		stdNumTZ          = &#34;-0700&#34;  <span class="comment">// always numeric</span>
+<a id="L84"></a><span class="ln">    84</span>		stdNumShortTZ     = &#34;-07&#34;    <span class="comment">// always numeric</span>
+<a id="L85"></a><span class="ln">    85</span>		stdNumColonTZ     = &#34;-07:00&#34; <span class="comment">// always numeric</span>
+<a id="L86"></a><span class="ln">    86</span>	)
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// nextStdChunk finds the first occurrence of a std string in</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">// layout and returns the text before, the std string, and the text after.</span>
+<a id="L90"></a><span class="ln">    90</span>	func nextStdChunk(layout string) (prefix, std, suffix string) {
+<a id="L91"></a><span class="ln">    91</span>		for i := 0; i &lt; len(layout); i++ {
+<a id="L92"></a><span class="ln">    92</span>			switch layout[i] {
+<a id="L93"></a><span class="ln">    93</span>			case &#39;J&#39;: <span class="comment">// January, Jan</span>
+<a id="L94"></a><span class="ln">    94</span>				if len(layout) &gt;= i+7 &amp;&amp; layout[i:i+7] == stdLongMonth {
+<a id="L95"></a><span class="ln">    95</span>					return layout[0:i], stdLongMonth, layout[i+7:]
+<a id="L96"></a><span class="ln">    96</span>				}
+<a id="L97"></a><span class="ln">    97</span>				if len(layout) &gt;= i+3 &amp;&amp; layout[i:i+3] == stdMonth {
+<a id="L98"></a><span class="ln">    98</span>					return layout[0:i], stdMonth, layout[i+3:]
+<a id="L99"></a><span class="ln">    99</span>				}
+<a id="L100"></a><span class="ln">   100</span>	
+<a id="L101"></a><span class="ln">   101</span>			case &#39;M&#39;: <span class="comment">// Monday, Mon, MST</span>
+<a id="L102"></a><span class="ln">   102</span>				if len(layout) &gt;= i+6 &amp;&amp; layout[i:i+6] == stdLongWeekDay {
+<a id="L103"></a><span class="ln">   103</span>					return layout[0:i], stdLongWeekDay, layout[i+6:]
+<a id="L104"></a><span class="ln">   104</span>				}
+<a id="L105"></a><span class="ln">   105</span>				if len(layout) &gt;= i+3 {
+<a id="L106"></a><span class="ln">   106</span>					if layout[i:i+3] == stdWeekDay {
+<a id="L107"></a><span class="ln">   107</span>						return layout[0:i], stdWeekDay, layout[i+3:]
+<a id="L108"></a><span class="ln">   108</span>					}
+<a id="L109"></a><span class="ln">   109</span>					if layout[i:i+3] == stdTZ {
+<a id="L110"></a><span class="ln">   110</span>						return layout[0:i], stdTZ, layout[i+3:]
+<a id="L111"></a><span class="ln">   111</span>					}
+<a id="L112"></a><span class="ln">   112</span>				}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>			case &#39;0&#39;: <span class="comment">// 01, 02, 03, 04, 05, 06</span>
+<a id="L115"></a><span class="ln">   115</span>				if len(layout) &gt;= i+2 &amp;&amp; &#39;1&#39; &lt;= layout[i+1] &amp;&amp; layout[i+1] &lt;= &#39;6&#39; {
+<a id="L116"></a><span class="ln">   116</span>					return layout[0:i], layout[i : i+2], layout[i+2:]
+<a id="L117"></a><span class="ln">   117</span>				}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>			case &#39;1&#39;: <span class="comment">// 15, 1</span>
+<a id="L120"></a><span class="ln">   120</span>				if len(layout) &gt;= i+2 &amp;&amp; layout[i+1] == &#39;5&#39; {
+<a id="L121"></a><span class="ln">   121</span>					return layout[0:i], stdHour, layout[i+2:]
+<a id="L122"></a><span class="ln">   122</span>				}
+<a id="L123"></a><span class="ln">   123</span>				return layout[0:i], stdNumMonth, layout[i+1:]
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>			case &#39;2&#39;: <span class="comment">// 2006, 2</span>
+<a id="L126"></a><span class="ln">   126</span>				if len(layout) &gt;= i+4 &amp;&amp; layout[i:i+4] == stdLongYear {
+<a id="L127"></a><span class="ln">   127</span>					return layout[0:i], stdLongYear, layout[i+4:]
+<a id="L128"></a><span class="ln">   128</span>				}
+<a id="L129"></a><span class="ln">   129</span>				return layout[0:i], stdDay, layout[i+1:]
+<a id="L130"></a><span class="ln">   130</span>	
+<a id="L131"></a><span class="ln">   131</span>			case &#39;_&#39;: <span class="comment">// _2</span>
+<a id="L132"></a><span class="ln">   132</span>				if len(layout) &gt;= i+2 &amp;&amp; layout[i+1] == &#39;2&#39; {
+<a id="L133"></a><span class="ln">   133</span>					return layout[0:i], stdUnderDay, layout[i+2:]
+<a id="L134"></a><span class="ln">   134</span>				}
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>			case &#39;3&#39;, &#39;4&#39;, &#39;5&#39;: <span class="comment">// 3, 4, 5</span>
+<a id="L137"></a><span class="ln">   137</span>				return layout[0:i], layout[i : i+1], layout[i+1:]
+<a id="L138"></a><span class="ln">   138</span>	
+<a id="L139"></a><span class="ln">   139</span>			case &#39;P&#39;: <span class="comment">// PM</span>
+<a id="L140"></a><span class="ln">   140</span>				if len(layout) &gt;= i+2 &amp;&amp; layout[i+1] == &#39;M&#39; {
+<a id="L141"></a><span class="ln">   141</span>					return layout[0:i], layout[i : i+2], layout[i+2:]
+<a id="L142"></a><span class="ln">   142</span>				}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>			case &#39;p&#39;: <span class="comment">// pm</span>
+<a id="L145"></a><span class="ln">   145</span>				if len(layout) &gt;= i+2 &amp;&amp; layout[i+1] == &#39;m&#39; {
+<a id="L146"></a><span class="ln">   146</span>					return layout[0:i], layout[i : i+2], layout[i+2:]
+<a id="L147"></a><span class="ln">   147</span>				}
+<a id="L148"></a><span class="ln">   148</span>	
+<a id="L149"></a><span class="ln">   149</span>			case &#39;-&#39;: <span class="comment">// -0700, -07:00, -07</span>
+<a id="L150"></a><span class="ln">   150</span>				if len(layout) &gt;= i+5 &amp;&amp; layout[i:i+5] == stdNumTZ {
+<a id="L151"></a><span class="ln">   151</span>					return layout[0:i], layout[i : i+5], layout[i+5:]
+<a id="L152"></a><span class="ln">   152</span>				}
+<a id="L153"></a><span class="ln">   153</span>				if len(layout) &gt;= i+6 &amp;&amp; layout[i:i+6] == stdNumColonTZ {
+<a id="L154"></a><span class="ln">   154</span>					return layout[0:i], layout[i : i+6], layout[i+6:]
+<a id="L155"></a><span class="ln">   155</span>				}
+<a id="L156"></a><span class="ln">   156</span>				if len(layout) &gt;= i+3 &amp;&amp; layout[i:i+3] == stdNumShortTZ {
+<a id="L157"></a><span class="ln">   157</span>					return layout[0:i], layout[i : i+3], layout[i+3:]
+<a id="L158"></a><span class="ln">   158</span>				}
+<a id="L159"></a><span class="ln">   159</span>			case &#39;Z&#39;: <span class="comment">// Z0700, Z07:00</span>
+<a id="L160"></a><span class="ln">   160</span>				if len(layout) &gt;= i+5 &amp;&amp; layout[i:i+5] == stdISO8601TZ {
+<a id="L161"></a><span class="ln">   161</span>					return layout[0:i], layout[i : i+5], layout[i+5:]
+<a id="L162"></a><span class="ln">   162</span>				}
+<a id="L163"></a><span class="ln">   163</span>				if len(layout) &gt;= i+6 &amp;&amp; layout[i:i+6] == stdISO8601ColonTZ {
+<a id="L164"></a><span class="ln">   164</span>					return layout[0:i], layout[i : i+6], layout[i+6:]
+<a id="L165"></a><span class="ln">   165</span>				}
+<a id="L166"></a><span class="ln">   166</span>			case &#39;.&#39;: <span class="comment">// .000 or .999 - repeated digits for fractional seconds.</span>
+<a id="L167"></a><span class="ln">   167</span>				if i+1 &lt; len(layout) &amp;&amp; (layout[i+1] == &#39;0&#39; || layout[i+1] == &#39;9&#39;) {
+<a id="L168"></a><span class="ln">   168</span>					ch := layout[i+1]
+<a id="L169"></a><span class="ln">   169</span>					j := i + 1
+<a id="L170"></a><span class="ln">   170</span>					for j &lt; len(layout) &amp;&amp; layout[j] == ch {
+<a id="L171"></a><span class="ln">   171</span>						j++
+<a id="L172"></a><span class="ln">   172</span>					}
+<a id="L173"></a><span class="ln">   173</span>					<span class="comment">// String of digits must end here - only fractional second is all digits.</span>
+<a id="L174"></a><span class="ln">   174</span>					if !isDigit(layout, j) {
+<a id="L175"></a><span class="ln">   175</span>						return layout[0:i], layout[i:j], layout[j:]
+<a id="L176"></a><span class="ln">   176</span>					}
+<a id="L177"></a><span class="ln">   177</span>				}
+<a id="L178"></a><span class="ln">   178</span>			}
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>		return layout, &#34;&#34;, &#34;&#34;
+<a id="L181"></a><span class="ln">   181</span>	}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>	var longDayNames = []string{
+<a id="L184"></a><span class="ln">   184</span>		&#34;Sunday&#34;,
+<a id="L185"></a><span class="ln">   185</span>		&#34;Monday&#34;,
+<a id="L186"></a><span class="ln">   186</span>		&#34;Tuesday&#34;,
+<a id="L187"></a><span class="ln">   187</span>		&#34;Wednesday&#34;,
+<a id="L188"></a><span class="ln">   188</span>		&#34;Thursday&#34;,
+<a id="L189"></a><span class="ln">   189</span>		&#34;Friday&#34;,
+<a id="L190"></a><span class="ln">   190</span>		&#34;Saturday&#34;,
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	var shortDayNames = []string{
+<a id="L194"></a><span class="ln">   194</span>		&#34;Sun&#34;,
+<a id="L195"></a><span class="ln">   195</span>		&#34;Mon&#34;,
+<a id="L196"></a><span class="ln">   196</span>		&#34;Tue&#34;,
+<a id="L197"></a><span class="ln">   197</span>		&#34;Wed&#34;,
+<a id="L198"></a><span class="ln">   198</span>		&#34;Thu&#34;,
+<a id="L199"></a><span class="ln">   199</span>		&#34;Fri&#34;,
+<a id="L200"></a><span class="ln">   200</span>		&#34;Sat&#34;,
+<a id="L201"></a><span class="ln">   201</span>	}
+<a id="L202"></a><span class="ln">   202</span>	
+<a id="L203"></a><span class="ln">   203</span>	var shortMonthNames = []string{
+<a id="L204"></a><span class="ln">   204</span>		&#34;---&#34;,
+<a id="L205"></a><span class="ln">   205</span>		&#34;Jan&#34;,
+<a id="L206"></a><span class="ln">   206</span>		&#34;Feb&#34;,
+<a id="L207"></a><span class="ln">   207</span>		&#34;Mar&#34;,
+<a id="L208"></a><span class="ln">   208</span>		&#34;Apr&#34;,
+<a id="L209"></a><span class="ln">   209</span>		&#34;May&#34;,
+<a id="L210"></a><span class="ln">   210</span>		&#34;Jun&#34;,
+<a id="L211"></a><span class="ln">   211</span>		&#34;Jul&#34;,
+<a id="L212"></a><span class="ln">   212</span>		&#34;Aug&#34;,
+<a id="L213"></a><span class="ln">   213</span>		&#34;Sep&#34;,
+<a id="L214"></a><span class="ln">   214</span>		&#34;Oct&#34;,
+<a id="L215"></a><span class="ln">   215</span>		&#34;Nov&#34;,
+<a id="L216"></a><span class="ln">   216</span>		&#34;Dec&#34;,
+<a id="L217"></a><span class="ln">   217</span>	}
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>	var longMonthNames = []string{
+<a id="L220"></a><span class="ln">   220</span>		&#34;---&#34;,
+<a id="L221"></a><span class="ln">   221</span>		&#34;January&#34;,
+<a id="L222"></a><span class="ln">   222</span>		&#34;February&#34;,
+<a id="L223"></a><span class="ln">   223</span>		&#34;March&#34;,
+<a id="L224"></a><span class="ln">   224</span>		&#34;April&#34;,
+<a id="L225"></a><span class="ln">   225</span>		&#34;May&#34;,
+<a id="L226"></a><span class="ln">   226</span>		&#34;June&#34;,
+<a id="L227"></a><span class="ln">   227</span>		&#34;July&#34;,
+<a id="L228"></a><span class="ln">   228</span>		&#34;August&#34;,
+<a id="L229"></a><span class="ln">   229</span>		&#34;September&#34;,
+<a id="L230"></a><span class="ln">   230</span>		&#34;October&#34;,
+<a id="L231"></a><span class="ln">   231</span>		&#34;November&#34;,
+<a id="L232"></a><span class="ln">   232</span>		&#34;December&#34;,
+<a id="L233"></a><span class="ln">   233</span>	}
+<a id="L234"></a><span class="ln">   234</span>	
+<a id="L235"></a><span class="ln">   235</span>	<span class="comment">// match returns true if s1 and s2 match ignoring case.</span>
+<a id="L236"></a><span class="ln">   236</span>	<span class="comment">// It is assumed s1 and s2 are the same length.</span>
+<a id="L237"></a><span class="ln">   237</span>	func match(s1, s2 string) bool {
+<a id="L238"></a><span class="ln">   238</span>		for i := 0; i &lt; len(s1); i++ {
+<a id="L239"></a><span class="ln">   239</span>			c1 := s1[i]
+<a id="L240"></a><span class="ln">   240</span>			c2 := s2[i]
+<a id="L241"></a><span class="ln">   241</span>			if c1 != c2 {
+<a id="L242"></a><span class="ln">   242</span>				<span class="comment">// Switch to lower-case; &#39;a&#39;-&#39;A&#39; is known to be a single bit.</span>
+<a id="L243"></a><span class="ln">   243</span>				c1 |= &#39;a&#39; - &#39;A&#39;
+<a id="L244"></a><span class="ln">   244</span>				c2 |= &#39;a&#39; - &#39;A&#39;
+<a id="L245"></a><span class="ln">   245</span>				if c1 != c2 || c1 &lt; &#39;a&#39; || c1 &gt; &#39;z&#39; {
+<a id="L246"></a><span class="ln">   246</span>					return false
+<a id="L247"></a><span class="ln">   247</span>				}
+<a id="L248"></a><span class="ln">   248</span>			}
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		return true
+<a id="L251"></a><span class="ln">   251</span>	}
+<a id="L252"></a><span class="ln">   252</span>	
+<a id="L253"></a><span class="ln">   253</span>	func lookup(tab []string, val string) (int, string, error) {
+<a id="L254"></a><span class="ln">   254</span>		for i, v := range tab {
+<a id="L255"></a><span class="ln">   255</span>			if len(val) &gt;= len(v) &amp;&amp; match(val[0:len(v)], v) {
+<a id="L256"></a><span class="ln">   256</span>				return i, val[len(v):], nil
+<a id="L257"></a><span class="ln">   257</span>			}
+<a id="L258"></a><span class="ln">   258</span>		}
+<a id="L259"></a><span class="ln">   259</span>		return -1, val, errBad
+<a id="L260"></a><span class="ln">   260</span>	}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>	<span class="comment">// Duplicates functionality in strconv, but avoids dependency.</span>
+<a id="L263"></a><span class="ln">   263</span>	func itoa(x int) string {
+<a id="L264"></a><span class="ln">   264</span>		var buf [32]byte
+<a id="L265"></a><span class="ln">   265</span>		n := len(buf)
+<a id="L266"></a><span class="ln">   266</span>		if x == 0 {
+<a id="L267"></a><span class="ln">   267</span>			return &#34;0&#34;
+<a id="L268"></a><span class="ln">   268</span>		}
+<a id="L269"></a><span class="ln">   269</span>		u := uint(x)
+<a id="L270"></a><span class="ln">   270</span>		if x &lt; 0 {
+<a id="L271"></a><span class="ln">   271</span>			u = -u
+<a id="L272"></a><span class="ln">   272</span>		}
+<a id="L273"></a><span class="ln">   273</span>		for u &gt; 0 {
+<a id="L274"></a><span class="ln">   274</span>			n--
+<a id="L275"></a><span class="ln">   275</span>			buf[n] = byte(u%10 + &#39;0&#39;)
+<a id="L276"></a><span class="ln">   276</span>			u /= 10
+<a id="L277"></a><span class="ln">   277</span>		}
+<a id="L278"></a><span class="ln">   278</span>		if x &lt; 0 {
+<a id="L279"></a><span class="ln">   279</span>			n--
+<a id="L280"></a><span class="ln">   280</span>			buf[n] = &#39;-&#39;
+<a id="L281"></a><span class="ln">   281</span>		}
+<a id="L282"></a><span class="ln">   282</span>		return string(buf[n:])
+<a id="L283"></a><span class="ln">   283</span>	}
+<a id="L284"></a><span class="ln">   284</span>	
+<a id="L285"></a><span class="ln">   285</span>	<span class="comment">// Never printed, just needs to be non-nil for return by atoi.</span>
+<a id="L286"></a><span class="ln">   286</span>	var atoiError = errors.New(&#34;time: invalid number&#34;)
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// Duplicates functionality in strconv, but avoids dependency.</span>
+<a id="L289"></a><span class="ln">   289</span>	func atoi(s string) (x int, err error) {
+<a id="L290"></a><span class="ln">   290</span>		neg := false
+<a id="L291"></a><span class="ln">   291</span>		if s != &#34;&#34; &amp;&amp; s[0] == &#39;-&#39; {
+<a id="L292"></a><span class="ln">   292</span>			neg = true
+<a id="L293"></a><span class="ln">   293</span>			s = s[1:]
+<a id="L294"></a><span class="ln">   294</span>		}
+<a id="L295"></a><span class="ln">   295</span>		x, rem, err := leadingInt(s)
+<a id="L296"></a><span class="ln">   296</span>		if err != nil || rem != &#34;&#34; {
+<a id="L297"></a><span class="ln">   297</span>			return 0, atoiError
+<a id="L298"></a><span class="ln">   298</span>		}
+<a id="L299"></a><span class="ln">   299</span>		if neg {
+<a id="L300"></a><span class="ln">   300</span>			x = -x
+<a id="L301"></a><span class="ln">   301</span>		}
+<a id="L302"></a><span class="ln">   302</span>		return x, nil
+<a id="L303"></a><span class="ln">   303</span>	}
+<a id="L304"></a><span class="ln">   304</span>	
+<a id="L305"></a><span class="ln">   305</span>	func pad(i int, padding string) string {
+<a id="L306"></a><span class="ln">   306</span>		s := itoa(i)
+<a id="L307"></a><span class="ln">   307</span>		if i &lt; 10 {
+<a id="L308"></a><span class="ln">   308</span>			s = padding + s
+<a id="L309"></a><span class="ln">   309</span>		}
+<a id="L310"></a><span class="ln">   310</span>		return s
+<a id="L311"></a><span class="ln">   311</span>	}
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>	func zeroPad(i int) string { return pad(i, &#34;0&#34;) }
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// formatNano formats a fractional second, as nanoseconds.</span>
+<a id="L316"></a><span class="ln">   316</span>	func formatNano(nanosec, n int, trim bool) string {
+<a id="L317"></a><span class="ln">   317</span>		<span class="comment">// User might give us bad data. Make sure it&#39;s positive and in range.</span>
+<a id="L318"></a><span class="ln">   318</span>		<span class="comment">// They&#39;ll get nonsense output but it will have the right format.</span>
+<a id="L319"></a><span class="ln">   319</span>		s := itoa(int(uint(nanosec) % 1e9))
+<a id="L320"></a><span class="ln">   320</span>		<span class="comment">// Zero pad left without fmt.</span>
+<a id="L321"></a><span class="ln">   321</span>		if len(s) &lt; 9 {
+<a id="L322"></a><span class="ln">   322</span>			s = &#34;000000000&#34;[:9-len(s)] + s
+<a id="L323"></a><span class="ln">   323</span>		}
+<a id="L324"></a><span class="ln">   324</span>		if n &gt; 9 {
+<a id="L325"></a><span class="ln">   325</span>			n = 9
+<a id="L326"></a><span class="ln">   326</span>		}
+<a id="L327"></a><span class="ln">   327</span>		if trim {
+<a id="L328"></a><span class="ln">   328</span>			for n &gt; 0 &amp;&amp; s[n-1] == &#39;0&#39; {
+<a id="L329"></a><span class="ln">   329</span>				n--
+<a id="L330"></a><span class="ln">   330</span>			}
+<a id="L331"></a><span class="ln">   331</span>			if n == 0 {
+<a id="L332"></a><span class="ln">   332</span>				return &#34;&#34;
+<a id="L333"></a><span class="ln">   333</span>			}
+<a id="L334"></a><span class="ln">   334</span>		}
+<a id="L335"></a><span class="ln">   335</span>		return &#34;.&#34; + s[:n]
+<a id="L336"></a><span class="ln">   336</span>	}
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>	<span class="comment">// String returns the time formatted using the format string</span>
+<a id="L339"></a><span class="ln">   339</span>	<span class="comment">//	&#34;2006-01-02 15:04:05.999999999 -0700 MST&#34;</span>
+<a id="L340"></a><span class="ln">   340</span>	func (t Time) String() string {
+<a id="L341"></a><span class="ln">   341</span>		return t.Format(&#34;2006-01-02 15:04:05.999999999 -0700 MST&#34;)
+<a id="L342"></a><span class="ln">   342</span>	}
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>	type buffer []byte
+<a id="L345"></a><span class="ln">   345</span>	
+<a id="L346"></a><span class="ln">   346</span>	func (b *buffer) WriteString(s string) {
+<a id="L347"></a><span class="ln">   347</span>		*b = append(*b, s...)
+<a id="L348"></a><span class="ln">   348</span>	}
+<a id="L349"></a><span class="ln">   349</span>	
+<a id="L350"></a><span class="ln">   350</span>	func (b *buffer) String() string {
+<a id="L351"></a><span class="ln">   351</span>		return string([]byte(*b))
+<a id="L352"></a><span class="ln">   352</span>	}
+<a id="L353"></a><span class="ln">   353</span>	
+<a id="L354"></a><span class="ln">   354</span>	<span class="comment">// Format returns a textual representation of the time value formatted</span>
+<a id="L355"></a><span class="ln">   355</span>	<span class="comment">// according to layout.  The layout defines the format by showing the</span>
+<a id="L356"></a><span class="ln">   356</span>	<span class="comment">// representation of the standard time,</span>
+<a id="L357"></a><span class="ln">   357</span>	<span class="comment">//	Mon Jan 2 15:04:05 -0700 MST 2006</span>
+<a id="L358"></a><span class="ln">   358</span>	<span class="comment">// which is then used to describe the time to be formatted. Predefined</span>
+<a id="L359"></a><span class="ln">   359</span>	<span class="comment">// layouts ANSIC, UnixDate, RFC3339 and others describe standard</span>
+<a id="L360"></a><span class="ln">   360</span>	<span class="comment">// representations. For more information about the formats and the</span>
+<a id="L361"></a><span class="ln">   361</span>	<span class="comment">// definition of the standard time, see the documentation for ANSIC.</span>
+<a id="L362"></a><span class="ln">   362</span>	func (t Time) Format(layout string) string {
+<a id="L363"></a><span class="ln">   363</span>		var (
+<a id="L364"></a><span class="ln">   364</span>			year  int = -1
+<a id="L365"></a><span class="ln">   365</span>			month Month
+<a id="L366"></a><span class="ln">   366</span>			day   int
+<a id="L367"></a><span class="ln">   367</span>			hour  int = -1
+<a id="L368"></a><span class="ln">   368</span>			min   int
+<a id="L369"></a><span class="ln">   369</span>			sec   int
+<a id="L370"></a><span class="ln">   370</span>			b     buffer
+<a id="L371"></a><span class="ln">   371</span>		)
+<a id="L372"></a><span class="ln">   372</span>		<span class="comment">// Each iteration generates one std value.</span>
+<a id="L373"></a><span class="ln">   373</span>		for {
+<a id="L374"></a><span class="ln">   374</span>			prefix, std, suffix := nextStdChunk(layout)
+<a id="L375"></a><span class="ln">   375</span>			b.WriteString(prefix)
+<a id="L376"></a><span class="ln">   376</span>			if std == &#34;&#34; {
+<a id="L377"></a><span class="ln">   377</span>				break
+<a id="L378"></a><span class="ln">   378</span>			}
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>			<span class="comment">// Compute year, month, day if needed.</span>
+<a id="L381"></a><span class="ln">   381</span>			if year &lt; 0 {
+<a id="L382"></a><span class="ln">   382</span>				<span class="comment">// Jan 01 02 2006</span>
+<a id="L383"></a><span class="ln">   383</span>				if a, z := std[0], std[len(std)-1]; a == &#39;J&#39; || a == &#39;j&#39; || z == &#39;1&#39; || z == &#39;2&#39; || z == &#39;6&#39; {
+<a id="L384"></a><span class="ln">   384</span>					year, month, day = t.Date()
+<a id="L385"></a><span class="ln">   385</span>				}
+<a id="L386"></a><span class="ln">   386</span>			}
+<a id="L387"></a><span class="ln">   387</span>	
+<a id="L388"></a><span class="ln">   388</span>			<span class="comment">// Compute hour, minute, second if needed.</span>
+<a id="L389"></a><span class="ln">   389</span>			if hour &lt; 0 {
+<a id="L390"></a><span class="ln">   390</span>				<span class="comment">// 03 04 05 15 pm</span>
+<a id="L391"></a><span class="ln">   391</span>				if z := std[len(std)-1]; z == &#39;3&#39; || z == &#39;4&#39; || z == &#39;5&#39; || z == &#39;m&#39; || z == &#39;M&#39; {
+<a id="L392"></a><span class="ln">   392</span>					hour, min, sec = t.Clock()
+<a id="L393"></a><span class="ln">   393</span>				}
+<a id="L394"></a><span class="ln">   394</span>			}
+<a id="L395"></a><span class="ln">   395</span>	
+<a id="L396"></a><span class="ln">   396</span>			var p string
+<a id="L397"></a><span class="ln">   397</span>			switch std {
+<a id="L398"></a><span class="ln">   398</span>			case stdYear:
+<a id="L399"></a><span class="ln">   399</span>				p = zeroPad(year % 100)
+<a id="L400"></a><span class="ln">   400</span>			case stdLongYear:
+<a id="L401"></a><span class="ln">   401</span>				<span class="comment">// Pad year to at least 4 digits.</span>
+<a id="L402"></a><span class="ln">   402</span>				p = itoa(year)
+<a id="L403"></a><span class="ln">   403</span>				switch {
+<a id="L404"></a><span class="ln">   404</span>				case year &lt;= -1000:
+<a id="L405"></a><span class="ln">   405</span>					<span class="comment">// ok</span>
+<a id="L406"></a><span class="ln">   406</span>				case year &lt;= -100:
+<a id="L407"></a><span class="ln">   407</span>					p = p[:1] + &#34;0&#34; + p[1:]
+<a id="L408"></a><span class="ln">   408</span>				case year &lt;= -10:
+<a id="L409"></a><span class="ln">   409</span>					p = p[:1] + &#34;00&#34; + p[1:]
+<a id="L410"></a><span class="ln">   410</span>				case year &lt; 0:
+<a id="L411"></a><span class="ln">   411</span>					p = p[:1] + &#34;000&#34; + p[1:]
+<a id="L412"></a><span class="ln">   412</span>				case year &lt; 10:
+<a id="L413"></a><span class="ln">   413</span>					p = &#34;000&#34; + p
+<a id="L414"></a><span class="ln">   414</span>				case year &lt; 100:
+<a id="L415"></a><span class="ln">   415</span>					p = &#34;00&#34; + p
+<a id="L416"></a><span class="ln">   416</span>				case year &lt; 1000:
+<a id="L417"></a><span class="ln">   417</span>					p = &#34;0&#34; + p
+<a id="L418"></a><span class="ln">   418</span>				}
+<a id="L419"></a><span class="ln">   419</span>			case stdMonth:
+<a id="L420"></a><span class="ln">   420</span>				p = month.String()[:3]
+<a id="L421"></a><span class="ln">   421</span>			case stdLongMonth:
+<a id="L422"></a><span class="ln">   422</span>				p = month.String()
+<a id="L423"></a><span class="ln">   423</span>			case stdNumMonth:
+<a id="L424"></a><span class="ln">   424</span>				p = itoa(int(month))
+<a id="L425"></a><span class="ln">   425</span>			case stdZeroMonth:
+<a id="L426"></a><span class="ln">   426</span>				p = zeroPad(int(month))
+<a id="L427"></a><span class="ln">   427</span>			case stdWeekDay:
+<a id="L428"></a><span class="ln">   428</span>				p = t.Weekday().String()[:3]
+<a id="L429"></a><span class="ln">   429</span>			case stdLongWeekDay:
+<a id="L430"></a><span class="ln">   430</span>				p = t.Weekday().String()
+<a id="L431"></a><span class="ln">   431</span>			case stdDay:
+<a id="L432"></a><span class="ln">   432</span>				p = itoa(day)
+<a id="L433"></a><span class="ln">   433</span>			case stdUnderDay:
+<a id="L434"></a><span class="ln">   434</span>				p = pad(day, &#34; &#34;)
+<a id="L435"></a><span class="ln">   435</span>			case stdZeroDay:
+<a id="L436"></a><span class="ln">   436</span>				p = zeroPad(day)
+<a id="L437"></a><span class="ln">   437</span>			case stdHour:
+<a id="L438"></a><span class="ln">   438</span>				p = zeroPad(hour)
+<a id="L439"></a><span class="ln">   439</span>			case stdHour12:
+<a id="L440"></a><span class="ln">   440</span>				<span class="comment">// Noon is 12PM, midnight is 12AM.</span>
+<a id="L441"></a><span class="ln">   441</span>				hr := hour % 12
+<a id="L442"></a><span class="ln">   442</span>				if hr == 0 {
+<a id="L443"></a><span class="ln">   443</span>					hr = 12
+<a id="L444"></a><span class="ln">   444</span>				}
+<a id="L445"></a><span class="ln">   445</span>				p = itoa(hr)
+<a id="L446"></a><span class="ln">   446</span>			case stdZeroHour12:
+<a id="L447"></a><span class="ln">   447</span>				<span class="comment">// Noon is 12PM, midnight is 12AM.</span>
+<a id="L448"></a><span class="ln">   448</span>				hr := hour % 12
+<a id="L449"></a><span class="ln">   449</span>				if hr == 0 {
+<a id="L450"></a><span class="ln">   450</span>					hr = 12
+<a id="L451"></a><span class="ln">   451</span>				}
+<a id="L452"></a><span class="ln">   452</span>				p = zeroPad(hr)
+<a id="L453"></a><span class="ln">   453</span>			case stdMinute:
+<a id="L454"></a><span class="ln">   454</span>				p = itoa(min)
+<a id="L455"></a><span class="ln">   455</span>			case stdZeroMinute:
+<a id="L456"></a><span class="ln">   456</span>				p = zeroPad(min)
+<a id="L457"></a><span class="ln">   457</span>			case stdSecond:
+<a id="L458"></a><span class="ln">   458</span>				p = itoa(sec)
+<a id="L459"></a><span class="ln">   459</span>			case stdZeroSecond:
+<a id="L460"></a><span class="ln">   460</span>				p = zeroPad(sec)
+<a id="L461"></a><span class="ln">   461</span>			case stdPM:
+<a id="L462"></a><span class="ln">   462</span>				if hour &gt;= 12 {
+<a id="L463"></a><span class="ln">   463</span>					p = &#34;PM&#34;
+<a id="L464"></a><span class="ln">   464</span>				} else {
+<a id="L465"></a><span class="ln">   465</span>					p = &#34;AM&#34;
+<a id="L466"></a><span class="ln">   466</span>				}
+<a id="L467"></a><span class="ln">   467</span>			case stdpm:
+<a id="L468"></a><span class="ln">   468</span>				if hour &gt;= 12 {
+<a id="L469"></a><span class="ln">   469</span>					p = &#34;pm&#34;
+<a id="L470"></a><span class="ln">   470</span>				} else {
+<a id="L471"></a><span class="ln">   471</span>					p = &#34;am&#34;
+<a id="L472"></a><span class="ln">   472</span>				}
+<a id="L473"></a><span class="ln">   473</span>			case stdISO8601TZ, stdISO8601ColonTZ, stdNumTZ, stdNumColonTZ:
+<a id="L474"></a><span class="ln">   474</span>				<span class="comment">// Ugly special case.  We cheat and take the &#34;Z&#34; variants</span>
+<a id="L475"></a><span class="ln">   475</span>				<span class="comment">// to mean &#34;the time zone as formatted for ISO 8601&#34;.</span>
+<a id="L476"></a><span class="ln">   476</span>				_, offset := t.Zone()
+<a id="L477"></a><span class="ln">   477</span>				if offset == 0 &amp;&amp; std[0] == &#39;Z&#39; {
+<a id="L478"></a><span class="ln">   478</span>					p = &#34;Z&#34;
+<a id="L479"></a><span class="ln">   479</span>					break
+<a id="L480"></a><span class="ln">   480</span>				}
+<a id="L481"></a><span class="ln">   481</span>				zone := offset / 60 <span class="comment">// convert to minutes</span>
+<a id="L482"></a><span class="ln">   482</span>				if zone &lt; 0 {
+<a id="L483"></a><span class="ln">   483</span>					p = &#34;-&#34;
+<a id="L484"></a><span class="ln">   484</span>					zone = -zone
+<a id="L485"></a><span class="ln">   485</span>				} else {
+<a id="L486"></a><span class="ln">   486</span>					p = &#34;+&#34;
+<a id="L487"></a><span class="ln">   487</span>				}
+<a id="L488"></a><span class="ln">   488</span>				p += zeroPad(zone / 60)
+<a id="L489"></a><span class="ln">   489</span>				if std == stdISO8601ColonTZ || std == stdNumColonTZ {
+<a id="L490"></a><span class="ln">   490</span>					p += &#34;:&#34;
+<a id="L491"></a><span class="ln">   491</span>				}
+<a id="L492"></a><span class="ln">   492</span>				p += zeroPad(zone % 60)
+<a id="L493"></a><span class="ln">   493</span>			case stdTZ:
+<a id="L494"></a><span class="ln">   494</span>				name, offset := t.Zone()
+<a id="L495"></a><span class="ln">   495</span>				if name != &#34;&#34; {
+<a id="L496"></a><span class="ln">   496</span>					p = name
+<a id="L497"></a><span class="ln">   497</span>				} else {
+<a id="L498"></a><span class="ln">   498</span>					<span class="comment">// No time zone known for this time, but we must print one.</span>
+<a id="L499"></a><span class="ln">   499</span>					<span class="comment">// Use the -0700 format.</span>
+<a id="L500"></a><span class="ln">   500</span>					zone := offset / 60 <span class="comment">// convert to minutes</span>
+<a id="L501"></a><span class="ln">   501</span>					if zone &lt; 0 {
+<a id="L502"></a><span class="ln">   502</span>						p = &#34;-&#34;
+<a id="L503"></a><span class="ln">   503</span>						zone = -zone
+<a id="L504"></a><span class="ln">   504</span>					} else {
+<a id="L505"></a><span class="ln">   505</span>						p = &#34;+&#34;
+<a id="L506"></a><span class="ln">   506</span>					}
+<a id="L507"></a><span class="ln">   507</span>					p += zeroPad(zone / 60)
+<a id="L508"></a><span class="ln">   508</span>					p += zeroPad(zone % 60)
+<a id="L509"></a><span class="ln">   509</span>				}
+<a id="L510"></a><span class="ln">   510</span>			default:
+<a id="L511"></a><span class="ln">   511</span>				if len(std) &gt;= 2 &amp;&amp; (std[0:2] == &#34;.0&#34; || std[0:2] == &#34;.9&#34;) {
+<a id="L512"></a><span class="ln">   512</span>					p = formatNano(t.Nanosecond(), len(std)-1, std[1] == &#39;9&#39;)
+<a id="L513"></a><span class="ln">   513</span>				}
+<a id="L514"></a><span class="ln">   514</span>			}
+<a id="L515"></a><span class="ln">   515</span>			b.WriteString(p)
+<a id="L516"></a><span class="ln">   516</span>			layout = suffix
+<a id="L517"></a><span class="ln">   517</span>		}
+<a id="L518"></a><span class="ln">   518</span>		return b.String()
+<a id="L519"></a><span class="ln">   519</span>	}
+<a id="L520"></a><span class="ln">   520</span>	
+<a id="L521"></a><span class="ln">   521</span>	var errBad = errors.New(&#34;bad value for field&#34;) <span class="comment">// placeholder not passed to user</span>
+<a id="L522"></a><span class="ln">   522</span>	
+<a id="L523"></a><span class="ln">   523</span>	<span class="comment">// ParseError describes a problem parsing a time string.</span>
+<a id="L524"></a><span class="ln">   524</span>	type ParseError struct {
+<a id="L525"></a><span class="ln">   525</span>		Layout     string
+<a id="L526"></a><span class="ln">   526</span>		Value      string
+<a id="L527"></a><span class="ln">   527</span>		LayoutElem string
+<a id="L528"></a><span class="ln">   528</span>		ValueElem  string
+<a id="L529"></a><span class="ln">   529</span>		Message    string
+<a id="L530"></a><span class="ln">   530</span>	}
+<a id="L531"></a><span class="ln">   531</span>	
+<a id="L532"></a><span class="ln">   532</span>	func quote(s string) string {
+<a id="L533"></a><span class="ln">   533</span>		return &#34;\&#34;&#34; + s + &#34;\&#34;&#34;
+<a id="L534"></a><span class="ln">   534</span>	}
+<a id="L535"></a><span class="ln">   535</span>	
+<a id="L536"></a><span class="ln">   536</span>	<span class="comment">// Error returns the string representation of a ParseError.</span>
+<a id="L537"></a><span class="ln">   537</span>	func (e *ParseError) Error() string {
+<a id="L538"></a><span class="ln">   538</span>		if e.Message == &#34;&#34; {
+<a id="L539"></a><span class="ln">   539</span>			return &#34;parsing time &#34; +
+<a id="L540"></a><span class="ln">   540</span>				quote(e.Value) + &#34; as &#34; +
+<a id="L541"></a><span class="ln">   541</span>				quote(e.Layout) + &#34;: cannot parse &#34; +
+<a id="L542"></a><span class="ln">   542</span>				quote(e.ValueElem) + &#34; as &#34; +
+<a id="L543"></a><span class="ln">   543</span>				quote(e.LayoutElem)
+<a id="L544"></a><span class="ln">   544</span>		}
+<a id="L545"></a><span class="ln">   545</span>		return &#34;parsing time &#34; +
+<a id="L546"></a><span class="ln">   546</span>			quote(e.Value) + e.Message
+<a id="L547"></a><span class="ln">   547</span>	}
+<a id="L548"></a><span class="ln">   548</span>	
+<a id="L549"></a><span class="ln">   549</span>	<span class="comment">// isDigit returns true if s[i] is a decimal digit, false if not or</span>
+<a id="L550"></a><span class="ln">   550</span>	<span class="comment">// if s[i] is out of range.</span>
+<a id="L551"></a><span class="ln">   551</span>	func isDigit(s string, i int) bool {
+<a id="L552"></a><span class="ln">   552</span>		if len(s) &lt;= i {
+<a id="L553"></a><span class="ln">   553</span>			return false
+<a id="L554"></a><span class="ln">   554</span>		}
+<a id="L555"></a><span class="ln">   555</span>		c := s[i]
+<a id="L556"></a><span class="ln">   556</span>		return &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;
+<a id="L557"></a><span class="ln">   557</span>	}
+<a id="L558"></a><span class="ln">   558</span>	
+<a id="L559"></a><span class="ln">   559</span>	<span class="comment">// getnum parses s[0:1] or s[0:2] (fixed forces the latter)</span>
+<a id="L560"></a><span class="ln">   560</span>	<span class="comment">// as a decimal integer and returns the integer and the</span>
+<a id="L561"></a><span class="ln">   561</span>	<span class="comment">// remainder of the string.</span>
+<a id="L562"></a><span class="ln">   562</span>	func getnum(s string, fixed bool) (int, string, error) {
+<a id="L563"></a><span class="ln">   563</span>		if !isDigit(s, 0) {
+<a id="L564"></a><span class="ln">   564</span>			return 0, s, errBad
+<a id="L565"></a><span class="ln">   565</span>		}
+<a id="L566"></a><span class="ln">   566</span>		if !isDigit(s, 1) {
+<a id="L567"></a><span class="ln">   567</span>			if fixed {
+<a id="L568"></a><span class="ln">   568</span>				return 0, s, errBad
+<a id="L569"></a><span class="ln">   569</span>			}
+<a id="L570"></a><span class="ln">   570</span>			return int(s[0] - &#39;0&#39;), s[1:], nil
+<a id="L571"></a><span class="ln">   571</span>		}
+<a id="L572"></a><span class="ln">   572</span>		return int(s[0]-&#39;0&#39;)*10 + int(s[1]-&#39;0&#39;), s[2:], nil
+<a id="L573"></a><span class="ln">   573</span>	}
+<a id="L574"></a><span class="ln">   574</span>	
+<a id="L575"></a><span class="ln">   575</span>	func cutspace(s string) string {
+<a id="L576"></a><span class="ln">   576</span>		for len(s) &gt; 0 &amp;&amp; s[0] == &#39; &#39; {
+<a id="L577"></a><span class="ln">   577</span>			s = s[1:]
+<a id="L578"></a><span class="ln">   578</span>		}
+<a id="L579"></a><span class="ln">   579</span>		return s
+<a id="L580"></a><span class="ln">   580</span>	}
+<a id="L581"></a><span class="ln">   581</span>	
+<a id="L582"></a><span class="ln">   582</span>	<span class="comment">// skip removes the given prefix from value,</span>
+<a id="L583"></a><span class="ln">   583</span>	<span class="comment">// treating runs of space characters as equivalent.</span>
+<a id="L584"></a><span class="ln">   584</span>	func skip(value, prefix string) (string, error) {
+<a id="L585"></a><span class="ln">   585</span>		for len(prefix) &gt; 0 {
+<a id="L586"></a><span class="ln">   586</span>			if prefix[0] == &#39; &#39; {
+<a id="L587"></a><span class="ln">   587</span>				if len(value) &gt; 0 &amp;&amp; value[0] != &#39; &#39; {
+<a id="L588"></a><span class="ln">   588</span>					return &#34;&#34;, errBad
+<a id="L589"></a><span class="ln">   589</span>				}
+<a id="L590"></a><span class="ln">   590</span>				prefix = cutspace(prefix)
+<a id="L591"></a><span class="ln">   591</span>				value = cutspace(value)
+<a id="L592"></a><span class="ln">   592</span>				continue
+<a id="L593"></a><span class="ln">   593</span>			}
+<a id="L594"></a><span class="ln">   594</span>			if len(value) == 0 || value[0] != prefix[0] {
+<a id="L595"></a><span class="ln">   595</span>				return &#34;&#34;, errBad
+<a id="L596"></a><span class="ln">   596</span>			}
+<a id="L597"></a><span class="ln">   597</span>			prefix = prefix[1:]
+<a id="L598"></a><span class="ln">   598</span>			value = value[1:]
+<a id="L599"></a><span class="ln">   599</span>		}
+<a id="L600"></a><span class="ln">   600</span>		return value, nil
+<a id="L601"></a><span class="ln">   601</span>	}
+<a id="L602"></a><span class="ln">   602</span>	
+<a id="L603"></a><span class="ln">   603</span>	<span class="comment">// Parse parses a formatted string and returns the time value it represents.</span>
+<a id="L604"></a><span class="ln">   604</span>	<span class="comment">// The layout defines the format by showing the representation of the</span>
+<a id="L605"></a><span class="ln">   605</span>	<span class="comment">// standard time,</span>
+<a id="L606"></a><span class="ln">   606</span>	<span class="comment">//	Mon Jan 2 15:04:05 -0700 MST 2006</span>
+<a id="L607"></a><span class="ln">   607</span>	<span class="comment">// which is then used to describe the string to be parsed. Predefined layouts</span>
+<a id="L608"></a><span class="ln">   608</span>	<span class="comment">// ANSIC, UnixDate, RFC3339 and others describe standard representations. For</span>
+<a id="L609"></a><span class="ln">   609</span>	<span class="comment">// more information about the formats and the definition of the standard</span>
+<a id="L610"></a><span class="ln">   610</span>	<span class="comment">// time, see the documentation for ANSIC.</span>
+<a id="L611"></a><span class="ln">   611</span>	<span class="comment">//</span>
+<a id="L612"></a><span class="ln">   612</span>	<span class="comment">// Elements omitted from the value are assumed to be zero or, when</span>
+<a id="L613"></a><span class="ln">   613</span>	<span class="comment">// zero is impossible, one, so parsing &#34;3:04pm&#34; returns the time</span>
+<a id="L614"></a><span class="ln">   614</span>	<span class="comment">// corresponding to Jan 1, year 0, 15:04:00 UTC.</span>
+<a id="L615"></a><span class="ln">   615</span>	<span class="comment">// Years must be in the range 0000..9999. The day of the week is checked</span>
+<a id="L616"></a><span class="ln">   616</span>	<span class="comment">// for syntax but it is otherwise ignored.</span>
+<a id="L617"></a><span class="ln">   617</span>	func Parse(layout, value string) (Time, error) {
+<a id="L618"></a><span class="ln">   618</span>		alayout, avalue := layout, value
+<a id="L619"></a><span class="ln">   619</span>		rangeErrString := &#34;&#34; <span class="comment">// set if a value is out of range</span>
+<a id="L620"></a><span class="ln">   620</span>		amSet := false       <span class="comment">// do we need to subtract 12 from the hour for midnight?</span>
+<a id="L621"></a><span class="ln">   621</span>		pmSet := false       <span class="comment">// do we need to add 12 to the hour?</span>
+<a id="L622"></a><span class="ln">   622</span>	
+<a id="L623"></a><span class="ln">   623</span>		<span class="comment">// Time being constructed.</span>
+<a id="L624"></a><span class="ln">   624</span>		var (
+<a id="L625"></a><span class="ln">   625</span>			year       int
+<a id="L626"></a><span class="ln">   626</span>			month      int = 1 <span class="comment">// January</span>
+<a id="L627"></a><span class="ln">   627</span>			day        int = 1
+<a id="L628"></a><span class="ln">   628</span>			hour       int
+<a id="L629"></a><span class="ln">   629</span>			min        int
+<a id="L630"></a><span class="ln">   630</span>			sec        int
+<a id="L631"></a><span class="ln">   631</span>			nsec       int
+<a id="L632"></a><span class="ln">   632</span>			z          *Location
+<a id="L633"></a><span class="ln">   633</span>			zoneOffset int = -1
+<a id="L634"></a><span class="ln">   634</span>			zoneName   string
+<a id="L635"></a><span class="ln">   635</span>		)
+<a id="L636"></a><span class="ln">   636</span>	
+<a id="L637"></a><span class="ln">   637</span>		<span class="comment">// Each iteration processes one std value.</span>
+<a id="L638"></a><span class="ln">   638</span>		for {
+<a id="L639"></a><span class="ln">   639</span>			var err error
+<a id="L640"></a><span class="ln">   640</span>			prefix, std, suffix := nextStdChunk(layout)
+<a id="L641"></a><span class="ln">   641</span>			value, err = skip(value, prefix)
+<a id="L642"></a><span class="ln">   642</span>			if err != nil {
+<a id="L643"></a><span class="ln">   643</span>				return Time{}, &amp;ParseError{alayout, avalue, prefix, value, &#34;&#34;}
+<a id="L644"></a><span class="ln">   644</span>			}
+<a id="L645"></a><span class="ln">   645</span>			if len(std) == 0 {
+<a id="L646"></a><span class="ln">   646</span>				if len(value) != 0 {
+<a id="L647"></a><span class="ln">   647</span>					return Time{}, &amp;ParseError{alayout, avalue, &#34;&#34;, value, &#34;: extra text: &#34; + value}
+<a id="L648"></a><span class="ln">   648</span>				}
+<a id="L649"></a><span class="ln">   649</span>				break
+<a id="L650"></a><span class="ln">   650</span>			}
+<a id="L651"></a><span class="ln">   651</span>			layout = suffix
+<a id="L652"></a><span class="ln">   652</span>			var p string
+<a id="L653"></a><span class="ln">   653</span>			switch std {
+<a id="L654"></a><span class="ln">   654</span>			case stdYear:
+<a id="L655"></a><span class="ln">   655</span>				if len(value) &lt; 2 {
+<a id="L656"></a><span class="ln">   656</span>					err = errBad
+<a id="L657"></a><span class="ln">   657</span>					break
+<a id="L658"></a><span class="ln">   658</span>				}
+<a id="L659"></a><span class="ln">   659</span>				p, value = value[0:2], value[2:]
+<a id="L660"></a><span class="ln">   660</span>				year, err = atoi(p)
+<a id="L661"></a><span class="ln">   661</span>				if year &gt;= 69 { <span class="comment">// Unix time starts Dec 31 1969 in some time zones</span>
+<a id="L662"></a><span class="ln">   662</span>					year += 1900
+<a id="L663"></a><span class="ln">   663</span>				} else {
+<a id="L664"></a><span class="ln">   664</span>					year += 2000
+<a id="L665"></a><span class="ln">   665</span>				}
+<a id="L666"></a><span class="ln">   666</span>			case stdLongYear:
+<a id="L667"></a><span class="ln">   667</span>				if len(value) &lt; 4 || !isDigit(value, 0) {
+<a id="L668"></a><span class="ln">   668</span>					err = errBad
+<a id="L669"></a><span class="ln">   669</span>					break
+<a id="L670"></a><span class="ln">   670</span>				}
+<a id="L671"></a><span class="ln">   671</span>				p, value = value[0:4], value[4:]
+<a id="L672"></a><span class="ln">   672</span>				year, err = atoi(p)
+<a id="L673"></a><span class="ln">   673</span>			case stdMonth:
+<a id="L674"></a><span class="ln">   674</span>				month, value, err = lookup(shortMonthNames, value)
+<a id="L675"></a><span class="ln">   675</span>			case stdLongMonth:
+<a id="L676"></a><span class="ln">   676</span>				month, value, err = lookup(longMonthNames, value)
+<a id="L677"></a><span class="ln">   677</span>			case stdNumMonth, stdZeroMonth:
+<a id="L678"></a><span class="ln">   678</span>				month, value, err = getnum(value, std == stdZeroMonth)
+<a id="L679"></a><span class="ln">   679</span>				if month &lt;= 0 || 12 &lt; month {
+<a id="L680"></a><span class="ln">   680</span>					rangeErrString = &#34;month&#34;
+<a id="L681"></a><span class="ln">   681</span>				}
+<a id="L682"></a><span class="ln">   682</span>			case stdWeekDay:
+<a id="L683"></a><span class="ln">   683</span>				<span class="comment">// Ignore weekday except for error checking.</span>
+<a id="L684"></a><span class="ln">   684</span>				_, value, err = lookup(shortDayNames, value)
+<a id="L685"></a><span class="ln">   685</span>			case stdLongWeekDay:
+<a id="L686"></a><span class="ln">   686</span>				_, value, err = lookup(longDayNames, value)
+<a id="L687"></a><span class="ln">   687</span>			case stdDay, stdUnderDay, stdZeroDay:
+<a id="L688"></a><span class="ln">   688</span>				if std == stdUnderDay &amp;&amp; len(value) &gt; 0 &amp;&amp; value[0] == &#39; &#39; {
+<a id="L689"></a><span class="ln">   689</span>					value = value[1:]
+<a id="L690"></a><span class="ln">   690</span>				}
+<a id="L691"></a><span class="ln">   691</span>				day, value, err = getnum(value, std == stdZeroDay)
+<a id="L692"></a><span class="ln">   692</span>				if day &lt; 0 || 31 &lt; day {
+<a id="L693"></a><span class="ln">   693</span>					rangeErrString = &#34;day&#34;
+<a id="L694"></a><span class="ln">   694</span>				}
+<a id="L695"></a><span class="ln">   695</span>			case stdHour:
+<a id="L696"></a><span class="ln">   696</span>				hour, value, err = getnum(value, false)
+<a id="L697"></a><span class="ln">   697</span>				if hour &lt; 0 || 24 &lt;= hour {
+<a id="L698"></a><span class="ln">   698</span>					rangeErrString = &#34;hour&#34;
+<a id="L699"></a><span class="ln">   699</span>				}
+<a id="L700"></a><span class="ln">   700</span>			case stdHour12, stdZeroHour12:
+<a id="L701"></a><span class="ln">   701</span>				hour, value, err = getnum(value, std == stdZeroHour12)
+<a id="L702"></a><span class="ln">   702</span>				if hour &lt; 0 || 12 &lt; hour {
+<a id="L703"></a><span class="ln">   703</span>					rangeErrString = &#34;hour&#34;
+<a id="L704"></a><span class="ln">   704</span>				}
+<a id="L705"></a><span class="ln">   705</span>			case stdMinute, stdZeroMinute:
+<a id="L706"></a><span class="ln">   706</span>				min, value, err = getnum(value, std == stdZeroMinute)
+<a id="L707"></a><span class="ln">   707</span>				if min &lt; 0 || 60 &lt;= min {
+<a id="L708"></a><span class="ln">   708</span>					rangeErrString = &#34;minute&#34;
+<a id="L709"></a><span class="ln">   709</span>				}
+<a id="L710"></a><span class="ln">   710</span>			case stdSecond, stdZeroSecond:
+<a id="L711"></a><span class="ln">   711</span>				sec, value, err = getnum(value, std == stdZeroSecond)
+<a id="L712"></a><span class="ln">   712</span>				if sec &lt; 0 || 60 &lt;= sec {
+<a id="L713"></a><span class="ln">   713</span>					rangeErrString = &#34;second&#34;
+<a id="L714"></a><span class="ln">   714</span>				}
+<a id="L715"></a><span class="ln">   715</span>				<span class="comment">// Special case: do we have a fractional second but no</span>
+<a id="L716"></a><span class="ln">   716</span>				<span class="comment">// fractional second in the format?</span>
+<a id="L717"></a><span class="ln">   717</span>				if len(value) &gt;= 2 &amp;&amp; value[0] == &#39;.&#39; &amp;&amp; isDigit(value, 1) {
+<a id="L718"></a><span class="ln">   718</span>					_, std, _ := nextStdChunk(layout)
+<a id="L719"></a><span class="ln">   719</span>					if len(std) &gt; 0 &amp;&amp; std[0] == &#39;.&#39; &amp;&amp; isDigit(std, 1) {
+<a id="L720"></a><span class="ln">   720</span>						<span class="comment">// Fractional second in the layout; proceed normally</span>
+<a id="L721"></a><span class="ln">   721</span>						break
+<a id="L722"></a><span class="ln">   722</span>					}
+<a id="L723"></a><span class="ln">   723</span>					<span class="comment">// No fractional second in the layout but we have one in the input.</span>
+<a id="L724"></a><span class="ln">   724</span>					n := 2
+<a id="L725"></a><span class="ln">   725</span>					for ; n &lt; len(value) &amp;&amp; isDigit(value, n); n++ {
+<a id="L726"></a><span class="ln">   726</span>					}
+<a id="L727"></a><span class="ln">   727</span>					nsec, rangeErrString, err = parseNanoseconds(value, n)
+<a id="L728"></a><span class="ln">   728</span>					value = value[n:]
+<a id="L729"></a><span class="ln">   729</span>				}
+<a id="L730"></a><span class="ln">   730</span>			case stdPM:
+<a id="L731"></a><span class="ln">   731</span>				if len(value) &lt; 2 {
+<a id="L732"></a><span class="ln">   732</span>					err = errBad
+<a id="L733"></a><span class="ln">   733</span>					break
+<a id="L734"></a><span class="ln">   734</span>				}
+<a id="L735"></a><span class="ln">   735</span>				p, value = value[0:2], value[2:]
+<a id="L736"></a><span class="ln">   736</span>				switch p {
+<a id="L737"></a><span class="ln">   737</span>				case &#34;PM&#34;:
+<a id="L738"></a><span class="ln">   738</span>					pmSet = true
+<a id="L739"></a><span class="ln">   739</span>				case &#34;AM&#34;:
+<a id="L740"></a><span class="ln">   740</span>					amSet = true
+<a id="L741"></a><span class="ln">   741</span>				default:
+<a id="L742"></a><span class="ln">   742</span>					err = errBad
+<a id="L743"></a><span class="ln">   743</span>				}
+<a id="L744"></a><span class="ln">   744</span>			case stdpm:
+<a id="L745"></a><span class="ln">   745</span>				if len(value) &lt; 2 {
+<a id="L746"></a><span class="ln">   746</span>					err = errBad
+<a id="L747"></a><span class="ln">   747</span>					break
+<a id="L748"></a><span class="ln">   748</span>				}
+<a id="L749"></a><span class="ln">   749</span>				p, value = value[0:2], value[2:]
+<a id="L750"></a><span class="ln">   750</span>				switch p {
+<a id="L751"></a><span class="ln">   751</span>				case &#34;pm&#34;:
+<a id="L752"></a><span class="ln">   752</span>					pmSet = true
+<a id="L753"></a><span class="ln">   753</span>				case &#34;am&#34;:
+<a id="L754"></a><span class="ln">   754</span>					amSet = true
+<a id="L755"></a><span class="ln">   755</span>				default:
+<a id="L756"></a><span class="ln">   756</span>					err = errBad
+<a id="L757"></a><span class="ln">   757</span>				}
+<a id="L758"></a><span class="ln">   758</span>			case stdISO8601TZ, stdISO8601ColonTZ, stdNumTZ, stdNumShortTZ, stdNumColonTZ:
+<a id="L759"></a><span class="ln">   759</span>				if std[0] == &#39;Z&#39; &amp;&amp; len(value) &gt;= 1 &amp;&amp; value[0] == &#39;Z&#39; {
+<a id="L760"></a><span class="ln">   760</span>					value = value[1:]
+<a id="L761"></a><span class="ln">   761</span>					z = UTC
+<a id="L762"></a><span class="ln">   762</span>					break
+<a id="L763"></a><span class="ln">   763</span>				}
+<a id="L764"></a><span class="ln">   764</span>				var sign, hour, min string
+<a id="L765"></a><span class="ln">   765</span>				if std == stdISO8601ColonTZ || std == stdNumColonTZ {
+<a id="L766"></a><span class="ln">   766</span>					if len(value) &lt; 6 {
+<a id="L767"></a><span class="ln">   767</span>						err = errBad
+<a id="L768"></a><span class="ln">   768</span>						break
+<a id="L769"></a><span class="ln">   769</span>					}
+<a id="L770"></a><span class="ln">   770</span>					if value[3] != &#39;:&#39; {
+<a id="L771"></a><span class="ln">   771</span>						err = errBad
+<a id="L772"></a><span class="ln">   772</span>						break
+<a id="L773"></a><span class="ln">   773</span>					}
+<a id="L774"></a><span class="ln">   774</span>					sign, hour, min, value = value[0:1], value[1:3], value[4:6], value[6:]
+<a id="L775"></a><span class="ln">   775</span>				} else if std == stdNumShortTZ {
+<a id="L776"></a><span class="ln">   776</span>					if len(value) &lt; 3 {
+<a id="L777"></a><span class="ln">   777</span>						err = errBad
+<a id="L778"></a><span class="ln">   778</span>						break
+<a id="L779"></a><span class="ln">   779</span>					}
+<a id="L780"></a><span class="ln">   780</span>					sign, hour, min, value = value[0:1], value[1:3], &#34;00&#34;, value[3:]
+<a id="L781"></a><span class="ln">   781</span>				} else {
+<a id="L782"></a><span class="ln">   782</span>					if len(value) &lt; 5 {
+<a id="L783"></a><span class="ln">   783</span>						err = errBad
+<a id="L784"></a><span class="ln">   784</span>						break
+<a id="L785"></a><span class="ln">   785</span>					}
+<a id="L786"></a><span class="ln">   786</span>					sign, hour, min, value = value[0:1], value[1:3], value[3:5], value[5:]
+<a id="L787"></a><span class="ln">   787</span>				}
+<a id="L788"></a><span class="ln">   788</span>				var hr, mm int
+<a id="L789"></a><span class="ln">   789</span>				hr, err = atoi(hour)
+<a id="L790"></a><span class="ln">   790</span>				if err == nil {
+<a id="L791"></a><span class="ln">   791</span>					mm, err = atoi(min)
+<a id="L792"></a><span class="ln">   792</span>				}
+<a id="L793"></a><span class="ln">   793</span>				zoneOffset = (hr*60 + mm) * 60 <span class="comment">// offset is in seconds</span>
+<a id="L794"></a><span class="ln">   794</span>				switch sign[0] {
+<a id="L795"></a><span class="ln">   795</span>				case &#39;+&#39;:
+<a id="L796"></a><span class="ln">   796</span>				case &#39;-&#39;:
+<a id="L797"></a><span class="ln">   797</span>					zoneOffset = -zoneOffset
+<a id="L798"></a><span class="ln">   798</span>				default:
+<a id="L799"></a><span class="ln">   799</span>					err = errBad
+<a id="L800"></a><span class="ln">   800</span>				}
+<a id="L801"></a><span class="ln">   801</span>			case stdTZ:
+<a id="L802"></a><span class="ln">   802</span>				<span class="comment">// Does it look like a time zone?</span>
+<a id="L803"></a><span class="ln">   803</span>				if len(value) &gt;= 3 &amp;&amp; value[0:3] == &#34;UTC&#34; {
+<a id="L804"></a><span class="ln">   804</span>					z = UTC
+<a id="L805"></a><span class="ln">   805</span>					value = value[3:]
+<a id="L806"></a><span class="ln">   806</span>					break
+<a id="L807"></a><span class="ln">   807</span>				}
+<a id="L808"></a><span class="ln">   808</span>	
+<a id="L809"></a><span class="ln">   809</span>				if len(value) &gt;= 3 &amp;&amp; value[2] == &#39;T&#39; {
+<a id="L810"></a><span class="ln">   810</span>					p, value = value[0:3], value[3:]
+<a id="L811"></a><span class="ln">   811</span>				} else if len(value) &gt;= 4 &amp;&amp; value[3] == &#39;T&#39; {
+<a id="L812"></a><span class="ln">   812</span>					p, value = value[0:4], value[4:]
+<a id="L813"></a><span class="ln">   813</span>				} else {
+<a id="L814"></a><span class="ln">   814</span>					err = errBad
+<a id="L815"></a><span class="ln">   815</span>					break
+<a id="L816"></a><span class="ln">   816</span>				}
+<a id="L817"></a><span class="ln">   817</span>				for i := 0; i &lt; len(p); i++ {
+<a id="L818"></a><span class="ln">   818</span>					if p[i] &lt; &#39;A&#39; || &#39;Z&#39; &lt; p[i] {
+<a id="L819"></a><span class="ln">   819</span>						err = errBad
+<a id="L820"></a><span class="ln">   820</span>					}
+<a id="L821"></a><span class="ln">   821</span>				}
+<a id="L822"></a><span class="ln">   822</span>				if err != nil {
+<a id="L823"></a><span class="ln">   823</span>					break
+<a id="L824"></a><span class="ln">   824</span>				}
+<a id="L825"></a><span class="ln">   825</span>				<span class="comment">// It&#39;s a valid format.</span>
+<a id="L826"></a><span class="ln">   826</span>				zoneName = p
+<a id="L827"></a><span class="ln">   827</span>			default:
+<a id="L828"></a><span class="ln">   828</span>				if len(value) &lt; len(std) {
+<a id="L829"></a><span class="ln">   829</span>					err = errBad
+<a id="L830"></a><span class="ln">   830</span>					break
+<a id="L831"></a><span class="ln">   831</span>				}
+<a id="L832"></a><span class="ln">   832</span>				if len(std) &gt;= 2 &amp;&amp; std[0:2] == &#34;.0&#34; {
+<a id="L833"></a><span class="ln">   833</span>					nsec, rangeErrString, err = parseNanoseconds(value, len(std))
+<a id="L834"></a><span class="ln">   834</span>					value = value[len(std):]
+<a id="L835"></a><span class="ln">   835</span>				}
+<a id="L836"></a><span class="ln">   836</span>			}
+<a id="L837"></a><span class="ln">   837</span>			if rangeErrString != &#34;&#34; {
+<a id="L838"></a><span class="ln">   838</span>				return Time{}, &amp;ParseError{alayout, avalue, std, value, &#34;: &#34; + rangeErrString + &#34; out of range&#34;}
+<a id="L839"></a><span class="ln">   839</span>			}
+<a id="L840"></a><span class="ln">   840</span>			if err != nil {
+<a id="L841"></a><span class="ln">   841</span>				return Time{}, &amp;ParseError{alayout, avalue, std, value, &#34;&#34;}
+<a id="L842"></a><span class="ln">   842</span>			}
+<a id="L843"></a><span class="ln">   843</span>		}
+<a id="L844"></a><span class="ln">   844</span>		if pmSet &amp;&amp; hour &lt; 12 {
+<a id="L845"></a><span class="ln">   845</span>			hour += 12
+<a id="L846"></a><span class="ln">   846</span>		} else if amSet &amp;&amp; hour == 12 {
+<a id="L847"></a><span class="ln">   847</span>			hour = 0
+<a id="L848"></a><span class="ln">   848</span>		}
+<a id="L849"></a><span class="ln">   849</span>	
+<a id="L850"></a><span class="ln">   850</span>		<span class="comment">// TODO: be more aggressive checking day?</span>
+<a id="L851"></a><span class="ln">   851</span>		if z != nil {
+<a id="L852"></a><span class="ln">   852</span>			return Date(year, Month(month), day, hour, min, sec, nsec, z), nil
+<a id="L853"></a><span class="ln">   853</span>		}
+<a id="L854"></a><span class="ln">   854</span>	
+<a id="L855"></a><span class="ln">   855</span>		t := Date(year, Month(month), day, hour, min, sec, nsec, UTC)
+<a id="L856"></a><span class="ln">   856</span>		if zoneOffset != -1 {
+<a id="L857"></a><span class="ln">   857</span>			t.sec -= int64(zoneOffset)
+<a id="L858"></a><span class="ln">   858</span>	
+<a id="L859"></a><span class="ln">   859</span>			<span class="comment">// Look for local zone with the given offset.</span>
+<a id="L860"></a><span class="ln">   860</span>			<span class="comment">// If that zone was in effect at the given time, use it.</span>
+<a id="L861"></a><span class="ln">   861</span>			name, offset, _, _, _ := Local.lookup(t.sec + internalToUnix)
+<a id="L862"></a><span class="ln">   862</span>			if offset == zoneOffset &amp;&amp; (zoneName == &#34;&#34; || name == zoneName) {
+<a id="L863"></a><span class="ln">   863</span>				t.loc = Local
+<a id="L864"></a><span class="ln">   864</span>				return t, nil
+<a id="L865"></a><span class="ln">   865</span>			}
+<a id="L866"></a><span class="ln">   866</span>	
+<a id="L867"></a><span class="ln">   867</span>			<span class="comment">// Otherwise create fake zone to record offset.</span>
+<a id="L868"></a><span class="ln">   868</span>			t.loc = FixedZone(zoneName, zoneOffset)
+<a id="L869"></a><span class="ln">   869</span>			return t, nil
+<a id="L870"></a><span class="ln">   870</span>		}
+<a id="L871"></a><span class="ln">   871</span>	
+<a id="L872"></a><span class="ln">   872</span>		if zoneName != &#34;&#34; {
+<a id="L873"></a><span class="ln">   873</span>			<span class="comment">// Look for local zone with the given offset.</span>
+<a id="L874"></a><span class="ln">   874</span>			<span class="comment">// If that zone was in effect at the given time, use it.</span>
+<a id="L875"></a><span class="ln">   875</span>			offset, _, ok := Local.lookupName(zoneName)
+<a id="L876"></a><span class="ln">   876</span>			if ok {
+<a id="L877"></a><span class="ln">   877</span>				name, off, _, _, _ := Local.lookup(t.sec + internalToUnix - int64(offset))
+<a id="L878"></a><span class="ln">   878</span>				if name == zoneName &amp;&amp; off == offset {
+<a id="L879"></a><span class="ln">   879</span>					t.sec -= int64(offset)
+<a id="L880"></a><span class="ln">   880</span>					t.loc = Local
+<a id="L881"></a><span class="ln">   881</span>					return t, nil
+<a id="L882"></a><span class="ln">   882</span>				}
+<a id="L883"></a><span class="ln">   883</span>			}
+<a id="L884"></a><span class="ln">   884</span>	
+<a id="L885"></a><span class="ln">   885</span>			<span class="comment">// Otherwise, create fake zone with unknown offset.</span>
+<a id="L886"></a><span class="ln">   886</span>			t.loc = FixedZone(zoneName, 0)
+<a id="L887"></a><span class="ln">   887</span>			return t, nil
+<a id="L888"></a><span class="ln">   888</span>		}
+<a id="L889"></a><span class="ln">   889</span>	
+<a id="L890"></a><span class="ln">   890</span>		<span class="comment">// Otherwise, fall back to UTC.</span>
+<a id="L891"></a><span class="ln">   891</span>		return t, nil
+<a id="L892"></a><span class="ln">   892</span>	}
+<a id="L893"></a><span class="ln">   893</span>	
+<a id="L894"></a><span class="ln">   894</span>	func parseNanoseconds(value string, nbytes int) (ns int, rangeErrString string, err error) {
+<a id="L895"></a><span class="ln">   895</span>		if value[0] != &#39;.&#39; {
+<a id="L896"></a><span class="ln">   896</span>			err = errBad
+<a id="L897"></a><span class="ln">   897</span>			return
+<a id="L898"></a><span class="ln">   898</span>		}
+<a id="L899"></a><span class="ln">   899</span>		ns, err = atoi(value[1:nbytes])
+<a id="L900"></a><span class="ln">   900</span>		if err != nil {
+<a id="L901"></a><span class="ln">   901</span>			return
+<a id="L902"></a><span class="ln">   902</span>		}
+<a id="L903"></a><span class="ln">   903</span>		if ns &lt; 0 || 1e9 &lt;= ns {
+<a id="L904"></a><span class="ln">   904</span>			rangeErrString = &#34;fractional second&#34;
+<a id="L905"></a><span class="ln">   905</span>			return
+<a id="L906"></a><span class="ln">   906</span>		}
+<a id="L907"></a><span class="ln">   907</span>		<span class="comment">// We need nanoseconds, which means scaling by the number</span>
+<a id="L908"></a><span class="ln">   908</span>		<span class="comment">// of missing digits in the format, maximum length 10. If it&#39;s</span>
+<a id="L909"></a><span class="ln">   909</span>		<span class="comment">// longer than 10, we won&#39;t scale.</span>
+<a id="L910"></a><span class="ln">   910</span>		scaleDigits := 10 - nbytes
+<a id="L911"></a><span class="ln">   911</span>		for i := 0; i &lt; scaleDigits; i++ {
+<a id="L912"></a><span class="ln">   912</span>			ns *= 10
+<a id="L913"></a><span class="ln">   913</span>		}
+<a id="L914"></a><span class="ln">   914</span>		return
+<a id="L915"></a><span class="ln">   915</span>	}
+<a id="L916"></a><span class="ln">   916</span>	
+<a id="L917"></a><span class="ln">   917</span>	var errLeadingInt = errors.New(&#34;time: bad [0-9]*&#34;) <span class="comment">// never printed</span>
+<a id="L918"></a><span class="ln">   918</span>	
+<a id="L919"></a><span class="ln">   919</span>	<span class="comment">// leadingInt consumes the leading [0-9]* from s.</span>
+<a id="L920"></a><span class="ln">   920</span>	func leadingInt(s string) (x int, rem string, err error) {
+<a id="L921"></a><span class="ln">   921</span>		i := 0
+<a id="L922"></a><span class="ln">   922</span>		for ; i &lt; len(s); i++ {
+<a id="L923"></a><span class="ln">   923</span>			c := s[i]
+<a id="L924"></a><span class="ln">   924</span>			if c &lt; &#39;0&#39; || c &gt; &#39;9&#39; {
+<a id="L925"></a><span class="ln">   925</span>				break
+<a id="L926"></a><span class="ln">   926</span>			}
+<a id="L927"></a><span class="ln">   927</span>			if x &gt;= (1&lt;&lt;31-10)/10 {
+<a id="L928"></a><span class="ln">   928</span>				<span class="comment">// overflow</span>
+<a id="L929"></a><span class="ln">   929</span>				return 0, &#34;&#34;, errLeadingInt
+<a id="L930"></a><span class="ln">   930</span>			}
+<a id="L931"></a><span class="ln">   931</span>			x = x*10 + int(c) - &#39;0&#39;
+<a id="L932"></a><span class="ln">   932</span>		}
+<a id="L933"></a><span class="ln">   933</span>		return x, s[i:], nil
+<a id="L934"></a><span class="ln">   934</span>	}
+<a id="L935"></a><span class="ln">   935</span>	
+<a id="L936"></a><span class="ln">   936</span>	var unitMap = map[string]float64{
+<a id="L937"></a><span class="ln">   937</span>		&#34;ns&#34;: float64(Nanosecond),
+<a id="L938"></a><span class="ln">   938</span>		&#34;us&#34;: float64(Microsecond),
+<a id="L939"></a><span class="ln">   939</span>		&#34;µs&#34;: float64(Microsecond), <span class="comment">// U+00B5 = micro symbol</span>
+<a id="L940"></a><span class="ln">   940</span>		&#34;μs&#34;: float64(Microsecond), <span class="comment">// U+03BC = Greek letter mu</span>
+<a id="L941"></a><span class="ln">   941</span>		&#34;ms&#34;: float64(Millisecond),
+<a id="L942"></a><span class="ln">   942</span>		&#34;s&#34;:  float64(Second),
+<a id="L943"></a><span class="ln">   943</span>		&#34;m&#34;:  float64(Minute),
+<a id="L944"></a><span class="ln">   944</span>		&#34;h&#34;:  float64(Hour),
+<a id="L945"></a><span class="ln">   945</span>	}
+<a id="L946"></a><span class="ln">   946</span>	
+<a id="L947"></a><span class="ln">   947</span>	<span class="comment">// ParseDuration parses a duration string.</span>
+<a id="L948"></a><span class="ln">   948</span>	<span class="comment">// A duration string is a possibly signed sequence of</span>
+<a id="L949"></a><span class="ln">   949</span>	<span class="comment">// decimal numbers, each with optional fraction and a unit suffix,</span>
+<a id="L950"></a><span class="ln">   950</span>	<span class="comment">// such as &#34;300ms&#34;, &#34;-1.5h&#34; or &#34;2h45m&#34;.</span>
+<a id="L951"></a><span class="ln">   951</span>	<span class="comment">// Valid time units are &#34;ns&#34;, &#34;us&#34; (or &#34;µs&#34;), &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;.</span>
+<a id="L952"></a><span class="ln">   952</span>	func ParseDuration(s string) (Duration, error) {
+<a id="L953"></a><span class="ln">   953</span>		<span class="comment">// [-+]?([0-9]*(\.[0-9]*)?[a-z]+)+</span>
+<a id="L954"></a><span class="ln">   954</span>		orig := s
+<a id="L955"></a><span class="ln">   955</span>		f := float64(0)
+<a id="L956"></a><span class="ln">   956</span>		neg := false
+<a id="L957"></a><span class="ln">   957</span>	
+<a id="L958"></a><span class="ln">   958</span>		<span class="comment">// Consume [-+]?</span>
+<a id="L959"></a><span class="ln">   959</span>		if s != &#34;&#34; {
+<a id="L960"></a><span class="ln">   960</span>			c := s[0]
+<a id="L961"></a><span class="ln">   961</span>			if c == &#39;-&#39; || c == &#39;+&#39; {
+<a id="L962"></a><span class="ln">   962</span>				neg = c == &#39;-&#39;
+<a id="L963"></a><span class="ln">   963</span>				s = s[1:]
+<a id="L964"></a><span class="ln">   964</span>			}
+<a id="L965"></a><span class="ln">   965</span>		}
+<a id="L966"></a><span class="ln">   966</span>		<span class="comment">// Special case: if all that is left is &#34;0&#34;, this is zero.</span>
+<a id="L967"></a><span class="ln">   967</span>		if s == &#34;0&#34; {
+<a id="L968"></a><span class="ln">   968</span>			return 0, nil
+<a id="L969"></a><span class="ln">   969</span>		}
+<a id="L970"></a><span class="ln">   970</span>		if s == &#34;&#34; {
+<a id="L971"></a><span class="ln">   971</span>			return 0, errors.New(&#34;time: invalid duration &#34; + orig)
+<a id="L972"></a><span class="ln">   972</span>		}
+<a id="L973"></a><span class="ln">   973</span>		for s != &#34;&#34; {
+<a id="L974"></a><span class="ln">   974</span>			g := float64(0) <span class="comment">// this element of the sequence</span>
+<a id="L975"></a><span class="ln">   975</span>	
+<a id="L976"></a><span class="ln">   976</span>			var x int
+<a id="L977"></a><span class="ln">   977</span>			var err error
+<a id="L978"></a><span class="ln">   978</span>	
+<a id="L979"></a><span class="ln">   979</span>			<span class="comment">// The next character must be [0-9.]</span>
+<a id="L980"></a><span class="ln">   980</span>			if !(s[0] == &#39;.&#39; || (&#39;0&#39; &lt;= s[0] &amp;&amp; s[0] &lt;= &#39;9&#39;)) {
+<a id="L981"></a><span class="ln">   981</span>				return 0, errors.New(&#34;time: invalid duration &#34; + orig)
+<a id="L982"></a><span class="ln">   982</span>			}
+<a id="L983"></a><span class="ln">   983</span>			<span class="comment">// Consume [0-9]*</span>
+<a id="L984"></a><span class="ln">   984</span>			pl := len(s)
+<a id="L985"></a><span class="ln">   985</span>			x, s, err = leadingInt(s)
+<a id="L986"></a><span class="ln">   986</span>			if err != nil {
+<a id="L987"></a><span class="ln">   987</span>				return 0, errors.New(&#34;time: invalid duration &#34; + orig)
+<a id="L988"></a><span class="ln">   988</span>			}
+<a id="L989"></a><span class="ln">   989</span>			g = float64(x)
+<a id="L990"></a><span class="ln">   990</span>			pre := pl != len(s) <span class="comment">// whether we consumed anything before a period</span>
+<a id="L991"></a><span class="ln">   991</span>	
+<a id="L992"></a><span class="ln">   992</span>			<span class="comment">// Consume (\.[0-9]*)?</span>
+<a id="L993"></a><span class="ln">   993</span>			post := false
+<a id="L994"></a><span class="ln">   994</span>			if s != &#34;&#34; &amp;&amp; s[0] == &#39;.&#39; {
+<a id="L995"></a><span class="ln">   995</span>				s = s[1:]
+<a id="L996"></a><span class="ln">   996</span>				pl := len(s)
+<a id="L997"></a><span class="ln">   997</span>				x, s, err = leadingInt(s)
+<a id="L998"></a><span class="ln">   998</span>				if err != nil {
+<a id="L999"></a><span class="ln">   999</span>					return 0, errors.New(&#34;time: invalid duration &#34; + orig)
+<a id="L1000"></a><span class="ln">  1000</span>				}
+<a id="L1001"></a><span class="ln">  1001</span>				scale := 1
+<a id="L1002"></a><span class="ln">  1002</span>				for n := pl - len(s); n &gt; 0; n-- {
+<a id="L1003"></a><span class="ln">  1003</span>					scale *= 10
+<a id="L1004"></a><span class="ln">  1004</span>				}
+<a id="L1005"></a><span class="ln">  1005</span>				g += float64(x) / float64(scale)
+<a id="L1006"></a><span class="ln">  1006</span>				post = pl != len(s)
+<a id="L1007"></a><span class="ln">  1007</span>			}
+<a id="L1008"></a><span class="ln">  1008</span>			if !pre &amp;&amp; !post {
+<a id="L1009"></a><span class="ln">  1009</span>				<span class="comment">// no digits (e.g. &#34;.s&#34; or &#34;-.s&#34;)</span>
+<a id="L1010"></a><span class="ln">  1010</span>				return 0, errors.New(&#34;time: invalid duration &#34; + orig)
+<a id="L1011"></a><span class="ln">  1011</span>			}
+<a id="L1012"></a><span class="ln">  1012</span>	
+<a id="L1013"></a><span class="ln">  1013</span>			<span class="comment">// Consume unit.</span>
+<a id="L1014"></a><span class="ln">  1014</span>			i := 0
+<a id="L1015"></a><span class="ln">  1015</span>			for ; i &lt; len(s); i++ {
+<a id="L1016"></a><span class="ln">  1016</span>				c := s[i]
+<a id="L1017"></a><span class="ln">  1017</span>				if c == &#39;.&#39; || (&#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;) {
+<a id="L1018"></a><span class="ln">  1018</span>					break
+<a id="L1019"></a><span class="ln">  1019</span>				}
+<a id="L1020"></a><span class="ln">  1020</span>			}
+<a id="L1021"></a><span class="ln">  1021</span>			if i == 0 {
+<a id="L1022"></a><span class="ln">  1022</span>				return 0, errors.New(&#34;time: missing unit in duration &#34; + orig)
+<a id="L1023"></a><span class="ln">  1023</span>			}
+<a id="L1024"></a><span class="ln">  1024</span>			u := s[:i]
+<a id="L1025"></a><span class="ln">  1025</span>			s = s[i:]
+<a id="L1026"></a><span class="ln">  1026</span>			unit, ok := unitMap[u]
+<a id="L1027"></a><span class="ln">  1027</span>			if !ok {
+<a id="L1028"></a><span class="ln">  1028</span>				return 0, errors.New(&#34;time: unknown unit &#34; + u + &#34; in duration &#34; + orig)
+<a id="L1029"></a><span class="ln">  1029</span>			}
+<a id="L1030"></a><span class="ln">  1030</span>	
+<a id="L1031"></a><span class="ln">  1031</span>			f += g * unit
+<a id="L1032"></a><span class="ln">  1032</span>		}
+<a id="L1033"></a><span class="ln">  1033</span>	
+<a id="L1034"></a><span class="ln">  1034</span>		if neg {
+<a id="L1035"></a><span class="ln">  1035</span>			f = -f
+<a id="L1036"></a><span class="ln">  1036</span>		}
+<a id="L1037"></a><span class="ln">  1037</span>		return Duration(f), nil
+<a id="L1038"></a><span class="ln">  1038</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

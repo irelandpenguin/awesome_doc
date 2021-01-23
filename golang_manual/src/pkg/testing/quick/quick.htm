@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/testing/quick/quick.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/testing/quick/quick.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package quick implements utility functions to help with black box testing.</span>
+<a id="L6"></a><span class="ln">     6</span>	package quick
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;flag&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;fmt&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;math&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;math/rand&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;reflect&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;strings&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	var defaultMaxCount *int = flag.Int(&#34;quickchecks&#34;, 100, &#34;The default number of iterations for each check&#34;)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// A Generator can generate random values of its own type.</span>
+<a id="L20"></a><span class="ln">    20</span>	type Generator interface {
+<a id="L21"></a><span class="ln">    21</span>		<span class="comment">// Generate returns a random instance of the type on which it is a</span>
+<a id="L22"></a><span class="ln">    22</span>		<span class="comment">// method using the size as a size hint.</span>
+<a id="L23"></a><span class="ln">    23</span>		Generate(rand *rand.Rand, size int) reflect.Value
+<a id="L24"></a><span class="ln">    24</span>	}
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// randFloat32 generates a random float taking the full range of a float32.</span>
+<a id="L27"></a><span class="ln">    27</span>	func randFloat32(rand *rand.Rand) float32 {
+<a id="L28"></a><span class="ln">    28</span>		f := rand.Float64() * math.MaxFloat32
+<a id="L29"></a><span class="ln">    29</span>		if rand.Int()&amp;1 == 1 {
+<a id="L30"></a><span class="ln">    30</span>			f = -f
+<a id="L31"></a><span class="ln">    31</span>		}
+<a id="L32"></a><span class="ln">    32</span>		return float32(f)
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// randFloat64 generates a random float taking the full range of a float64.</span>
+<a id="L36"></a><span class="ln">    36</span>	func randFloat64(rand *rand.Rand) float64 {
+<a id="L37"></a><span class="ln">    37</span>		f := rand.Float64()
+<a id="L38"></a><span class="ln">    38</span>		if rand.Int()&amp;1 == 1 {
+<a id="L39"></a><span class="ln">    39</span>			f = -f
+<a id="L40"></a><span class="ln">    40</span>		}
+<a id="L41"></a><span class="ln">    41</span>		return f
+<a id="L42"></a><span class="ln">    42</span>	}
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// randInt64 returns a random integer taking half the range of an int64.</span>
+<a id="L45"></a><span class="ln">    45</span>	func randInt64(rand *rand.Rand) int64 { return rand.Int63() - 1&lt;&lt;62 }
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// complexSize is the maximum length of arbitrary values that contain other</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// values.</span>
+<a id="L49"></a><span class="ln">    49</span>	const complexSize = 50
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// Value returns an arbitrary value of the given type.</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// If the type implements the Generator interface, that will be used.</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// Note: To create arbitrary values for structs, all the fields must be exported.</span>
+<a id="L54"></a><span class="ln">    54</span>	func Value(t reflect.Type, rand *rand.Rand) (value reflect.Value, ok bool) {
+<a id="L55"></a><span class="ln">    55</span>		if m, ok := reflect.Zero(t).Interface().(Generator); ok {
+<a id="L56"></a><span class="ln">    56</span>			return m.Generate(rand, complexSize), true
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>		switch concrete := t; concrete.Kind() {
+<a id="L60"></a><span class="ln">    60</span>		case reflect.Bool:
+<a id="L61"></a><span class="ln">    61</span>			return reflect.ValueOf(rand.Int()&amp;1 == 0), true
+<a id="L62"></a><span class="ln">    62</span>		case reflect.Float32:
+<a id="L63"></a><span class="ln">    63</span>			return reflect.ValueOf(randFloat32(rand)), true
+<a id="L64"></a><span class="ln">    64</span>		case reflect.Float64:
+<a id="L65"></a><span class="ln">    65</span>			return reflect.ValueOf(randFloat64(rand)), true
+<a id="L66"></a><span class="ln">    66</span>		case reflect.Complex64:
+<a id="L67"></a><span class="ln">    67</span>			return reflect.ValueOf(complex(randFloat32(rand), randFloat32(rand))), true
+<a id="L68"></a><span class="ln">    68</span>		case reflect.Complex128:
+<a id="L69"></a><span class="ln">    69</span>			return reflect.ValueOf(complex(randFloat64(rand), randFloat64(rand))), true
+<a id="L70"></a><span class="ln">    70</span>		case reflect.Int16:
+<a id="L71"></a><span class="ln">    71</span>			return reflect.ValueOf(int16(randInt64(rand))), true
+<a id="L72"></a><span class="ln">    72</span>		case reflect.Int32:
+<a id="L73"></a><span class="ln">    73</span>			return reflect.ValueOf(int32(randInt64(rand))), true
+<a id="L74"></a><span class="ln">    74</span>		case reflect.Int64:
+<a id="L75"></a><span class="ln">    75</span>			return reflect.ValueOf(randInt64(rand)), true
+<a id="L76"></a><span class="ln">    76</span>		case reflect.Int8:
+<a id="L77"></a><span class="ln">    77</span>			return reflect.ValueOf(int8(randInt64(rand))), true
+<a id="L78"></a><span class="ln">    78</span>		case reflect.Int:
+<a id="L79"></a><span class="ln">    79</span>			return reflect.ValueOf(int(randInt64(rand))), true
+<a id="L80"></a><span class="ln">    80</span>		case reflect.Uint16:
+<a id="L81"></a><span class="ln">    81</span>			return reflect.ValueOf(uint16(randInt64(rand))), true
+<a id="L82"></a><span class="ln">    82</span>		case reflect.Uint32:
+<a id="L83"></a><span class="ln">    83</span>			return reflect.ValueOf(uint32(randInt64(rand))), true
+<a id="L84"></a><span class="ln">    84</span>		case reflect.Uint64:
+<a id="L85"></a><span class="ln">    85</span>			return reflect.ValueOf(uint64(randInt64(rand))), true
+<a id="L86"></a><span class="ln">    86</span>		case reflect.Uint8:
+<a id="L87"></a><span class="ln">    87</span>			return reflect.ValueOf(uint8(randInt64(rand))), true
+<a id="L88"></a><span class="ln">    88</span>		case reflect.Uint:
+<a id="L89"></a><span class="ln">    89</span>			return reflect.ValueOf(uint(randInt64(rand))), true
+<a id="L90"></a><span class="ln">    90</span>		case reflect.Uintptr:
+<a id="L91"></a><span class="ln">    91</span>			return reflect.ValueOf(uintptr(randInt64(rand))), true
+<a id="L92"></a><span class="ln">    92</span>		case reflect.Map:
+<a id="L93"></a><span class="ln">    93</span>			numElems := rand.Intn(complexSize)
+<a id="L94"></a><span class="ln">    94</span>			m := reflect.MakeMap(concrete)
+<a id="L95"></a><span class="ln">    95</span>			for i := 0; i &lt; numElems; i++ {
+<a id="L96"></a><span class="ln">    96</span>				key, ok1 := Value(concrete.Key(), rand)
+<a id="L97"></a><span class="ln">    97</span>				value, ok2 := Value(concrete.Elem(), rand)
+<a id="L98"></a><span class="ln">    98</span>				if !ok1 || !ok2 {
+<a id="L99"></a><span class="ln">    99</span>					return reflect.Value{}, false
+<a id="L100"></a><span class="ln">   100</span>				}
+<a id="L101"></a><span class="ln">   101</span>				m.SetMapIndex(key, value)
+<a id="L102"></a><span class="ln">   102</span>			}
+<a id="L103"></a><span class="ln">   103</span>			return m, true
+<a id="L104"></a><span class="ln">   104</span>		case reflect.Ptr:
+<a id="L105"></a><span class="ln">   105</span>			v, ok := Value(concrete.Elem(), rand)
+<a id="L106"></a><span class="ln">   106</span>			if !ok {
+<a id="L107"></a><span class="ln">   107</span>				return reflect.Value{}, false
+<a id="L108"></a><span class="ln">   108</span>			}
+<a id="L109"></a><span class="ln">   109</span>			p := reflect.New(concrete.Elem())
+<a id="L110"></a><span class="ln">   110</span>			p.Elem().Set(v)
+<a id="L111"></a><span class="ln">   111</span>			return p, true
+<a id="L112"></a><span class="ln">   112</span>		case reflect.Slice:
+<a id="L113"></a><span class="ln">   113</span>			numElems := rand.Intn(complexSize)
+<a id="L114"></a><span class="ln">   114</span>			s := reflect.MakeSlice(concrete, numElems, numElems)
+<a id="L115"></a><span class="ln">   115</span>			for i := 0; i &lt; numElems; i++ {
+<a id="L116"></a><span class="ln">   116</span>				v, ok := Value(concrete.Elem(), rand)
+<a id="L117"></a><span class="ln">   117</span>				if !ok {
+<a id="L118"></a><span class="ln">   118</span>					return reflect.Value{}, false
+<a id="L119"></a><span class="ln">   119</span>				}
+<a id="L120"></a><span class="ln">   120</span>				s.Index(i).Set(v)
+<a id="L121"></a><span class="ln">   121</span>			}
+<a id="L122"></a><span class="ln">   122</span>			return s, true
+<a id="L123"></a><span class="ln">   123</span>		case reflect.String:
+<a id="L124"></a><span class="ln">   124</span>			numChars := rand.Intn(complexSize)
+<a id="L125"></a><span class="ln">   125</span>			codePoints := make([]rune, numChars)
+<a id="L126"></a><span class="ln">   126</span>			for i := 0; i &lt; numChars; i++ {
+<a id="L127"></a><span class="ln">   127</span>				codePoints[i] = rune(rand.Intn(0x10ffff))
+<a id="L128"></a><span class="ln">   128</span>			}
+<a id="L129"></a><span class="ln">   129</span>			return reflect.ValueOf(string(codePoints)), true
+<a id="L130"></a><span class="ln">   130</span>		case reflect.Struct:
+<a id="L131"></a><span class="ln">   131</span>			s := reflect.New(t).Elem()
+<a id="L132"></a><span class="ln">   132</span>			for i := 0; i &lt; s.NumField(); i++ {
+<a id="L133"></a><span class="ln">   133</span>				v, ok := Value(concrete.Field(i).Type, rand)
+<a id="L134"></a><span class="ln">   134</span>				if !ok {
+<a id="L135"></a><span class="ln">   135</span>					return reflect.Value{}, false
+<a id="L136"></a><span class="ln">   136</span>				}
+<a id="L137"></a><span class="ln">   137</span>				s.Field(i).Set(v)
+<a id="L138"></a><span class="ln">   138</span>			}
+<a id="L139"></a><span class="ln">   139</span>			return s, true
+<a id="L140"></a><span class="ln">   140</span>		default:
+<a id="L141"></a><span class="ln">   141</span>			return reflect.Value{}, false
+<a id="L142"></a><span class="ln">   142</span>		}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>		return
+<a id="L145"></a><span class="ln">   145</span>	}
+<a id="L146"></a><span class="ln">   146</span>	
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// A Config structure contains options for running a test.</span>
+<a id="L148"></a><span class="ln">   148</span>	type Config struct {
+<a id="L149"></a><span class="ln">   149</span>		<span class="comment">// MaxCount sets the maximum number of iterations. If zero,</span>
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// MaxCountScale is used.</span>
+<a id="L151"></a><span class="ln">   151</span>		MaxCount int
+<a id="L152"></a><span class="ln">   152</span>		<span class="comment">// MaxCountScale is a non-negative scale factor applied to the default</span>
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">// maximum. If zero, the default is unchanged.</span>
+<a id="L154"></a><span class="ln">   154</span>		MaxCountScale float64
+<a id="L155"></a><span class="ln">   155</span>		<span class="comment">// If non-nil, rand is a source of random numbers. Otherwise a default</span>
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// pseudo-random source will be used.</span>
+<a id="L157"></a><span class="ln">   157</span>		Rand *rand.Rand
+<a id="L158"></a><span class="ln">   158</span>		<span class="comment">// If non-nil, the Values function generates a slice of arbitrary</span>
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// reflect.Values that are congruent with the arguments to the function</span>
+<a id="L160"></a><span class="ln">   160</span>		<span class="comment">// being tested. Otherwise, the top-level Values function is used</span>
+<a id="L161"></a><span class="ln">   161</span>		<span class="comment">// to generate them.</span>
+<a id="L162"></a><span class="ln">   162</span>		Values func([]reflect.Value, *rand.Rand)
+<a id="L163"></a><span class="ln">   163</span>	}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>	var defaultConfig Config
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// getRand returns the *rand.Rand to use for a given Config.</span>
+<a id="L168"></a><span class="ln">   168</span>	func (c *Config) getRand() *rand.Rand {
+<a id="L169"></a><span class="ln">   169</span>		if c.Rand == nil {
+<a id="L170"></a><span class="ln">   170</span>			return rand.New(rand.NewSource(0))
+<a id="L171"></a><span class="ln">   171</span>		}
+<a id="L172"></a><span class="ln">   172</span>		return c.Rand
+<a id="L173"></a><span class="ln">   173</span>	}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// getMaxCount returns the maximum number of iterations to run for a given</span>
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// Config.</span>
+<a id="L177"></a><span class="ln">   177</span>	func (c *Config) getMaxCount() (maxCount int) {
+<a id="L178"></a><span class="ln">   178</span>		maxCount = c.MaxCount
+<a id="L179"></a><span class="ln">   179</span>		if maxCount == 0 {
+<a id="L180"></a><span class="ln">   180</span>			if c.MaxCountScale != 0 {
+<a id="L181"></a><span class="ln">   181</span>				maxCount = int(c.MaxCountScale * float64(*defaultMaxCount))
+<a id="L182"></a><span class="ln">   182</span>			} else {
+<a id="L183"></a><span class="ln">   183</span>				maxCount = *defaultMaxCount
+<a id="L184"></a><span class="ln">   184</span>			}
+<a id="L185"></a><span class="ln">   185</span>		}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>		return
+<a id="L188"></a><span class="ln">   188</span>	}
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// A SetupError is the result of an error in the way that check is being</span>
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// used, independent of the functions being tested.</span>
+<a id="L192"></a><span class="ln">   192</span>	type SetupError string
+<a id="L193"></a><span class="ln">   193</span>	
+<a id="L194"></a><span class="ln">   194</span>	func (s SetupError) Error() string { return string(s) }
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// A CheckError is the result of Check finding an error.</span>
+<a id="L197"></a><span class="ln">   197</span>	type CheckError struct {
+<a id="L198"></a><span class="ln">   198</span>		Count int
+<a id="L199"></a><span class="ln">   199</span>		In    []interface{}
+<a id="L200"></a><span class="ln">   200</span>	}
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	func (s *CheckError) Error() string {
+<a id="L203"></a><span class="ln">   203</span>		return fmt.Sprintf(&#34;#%d: failed on input %s&#34;, s.Count, toString(s.In))
+<a id="L204"></a><span class="ln">   204</span>	}
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>	<span class="comment">// A CheckEqualError is the result CheckEqual finding an error.</span>
+<a id="L207"></a><span class="ln">   207</span>	type CheckEqualError struct {
+<a id="L208"></a><span class="ln">   208</span>		CheckError
+<a id="L209"></a><span class="ln">   209</span>		Out1 []interface{}
+<a id="L210"></a><span class="ln">   210</span>		Out2 []interface{}
+<a id="L211"></a><span class="ln">   211</span>	}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	func (s *CheckEqualError) Error() string {
+<a id="L214"></a><span class="ln">   214</span>		return fmt.Sprintf(&#34;#%d: failed on input %s. Output 1: %s. Output 2: %s&#34;, s.Count, toString(s.In), toString(s.Out1), toString(s.Out2))
+<a id="L215"></a><span class="ln">   215</span>	}
+<a id="L216"></a><span class="ln">   216</span>	
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// Check looks for an input to f, any function that returns bool,</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// such that f returns false.  It calls f repeatedly, with arbitrary</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// values for each argument.  If f returns false on a given input,</span>
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">// Check returns that input as a *CheckError.</span>
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// For example:</span>
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">//</span>
+<a id="L223"></a><span class="ln">   223</span>	<span class="comment">// 	func TestOddMultipleOfThree(t *testing.T) {</span>
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// 		f := func(x int) bool {</span>
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">// 			y := OddMultipleOfThree(x)</span>
+<a id="L226"></a><span class="ln">   226</span>	<span class="comment">// 			return y%2 == 1 &amp;&amp; y%3 == 0</span>
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">// 		}</span>
+<a id="L228"></a><span class="ln">   228</span>	<span class="comment">// 		if err := quick.Check(f, nil); err != nil {</span>
+<a id="L229"></a><span class="ln">   229</span>	<span class="comment">// 			t.Error(err)</span>
+<a id="L230"></a><span class="ln">   230</span>	<span class="comment">// 		}</span>
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// 	}</span>
+<a id="L232"></a><span class="ln">   232</span>	func Check(function interface{}, config *Config) (err error) {
+<a id="L233"></a><span class="ln">   233</span>		if config == nil {
+<a id="L234"></a><span class="ln">   234</span>			config = &amp;defaultConfig
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>	
+<a id="L237"></a><span class="ln">   237</span>		f, fType, ok := functionAndType(function)
+<a id="L238"></a><span class="ln">   238</span>		if !ok {
+<a id="L239"></a><span class="ln">   239</span>			err = SetupError(&#34;argument is not a function&#34;)
+<a id="L240"></a><span class="ln">   240</span>			return
+<a id="L241"></a><span class="ln">   241</span>		}
+<a id="L242"></a><span class="ln">   242</span>	
+<a id="L243"></a><span class="ln">   243</span>		if fType.NumOut() != 1 {
+<a id="L244"></a><span class="ln">   244</span>			err = SetupError(&#34;function returns more than one value.&#34;)
+<a id="L245"></a><span class="ln">   245</span>			return
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		if fType.Out(0).Kind() != reflect.Bool {
+<a id="L248"></a><span class="ln">   248</span>			err = SetupError(&#34;function does not return a bool&#34;)
+<a id="L249"></a><span class="ln">   249</span>			return
+<a id="L250"></a><span class="ln">   250</span>		}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>		arguments := make([]reflect.Value, fType.NumIn())
+<a id="L253"></a><span class="ln">   253</span>		rand := config.getRand()
+<a id="L254"></a><span class="ln">   254</span>		maxCount := config.getMaxCount()
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>		for i := 0; i &lt; maxCount; i++ {
+<a id="L257"></a><span class="ln">   257</span>			err = arbitraryValues(arguments, fType, config, rand)
+<a id="L258"></a><span class="ln">   258</span>			if err != nil {
+<a id="L259"></a><span class="ln">   259</span>				return
+<a id="L260"></a><span class="ln">   260</span>			}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>			if !f.Call(arguments)[0].Bool() {
+<a id="L263"></a><span class="ln">   263</span>				err = &amp;CheckError{i + 1, toInterfaces(arguments)}
+<a id="L264"></a><span class="ln">   264</span>				return
+<a id="L265"></a><span class="ln">   265</span>			}
+<a id="L266"></a><span class="ln">   266</span>		}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>		return
+<a id="L269"></a><span class="ln">   269</span>	}
+<a id="L270"></a><span class="ln">   270</span>	
+<a id="L271"></a><span class="ln">   271</span>	<span class="comment">// CheckEqual looks for an input on which f and g return different results.</span>
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// It calls f and g repeatedly with arbitrary values for each argument.</span>
+<a id="L273"></a><span class="ln">   273</span>	<span class="comment">// If f and g return different answers, CheckEqual returns a *CheckEqualError</span>
+<a id="L274"></a><span class="ln">   274</span>	<span class="comment">// describing the input and the outputs.</span>
+<a id="L275"></a><span class="ln">   275</span>	func CheckEqual(f, g interface{}, config *Config) (err error) {
+<a id="L276"></a><span class="ln">   276</span>		if config == nil {
+<a id="L277"></a><span class="ln">   277</span>			config = &amp;defaultConfig
+<a id="L278"></a><span class="ln">   278</span>		}
+<a id="L279"></a><span class="ln">   279</span>	
+<a id="L280"></a><span class="ln">   280</span>		x, xType, ok := functionAndType(f)
+<a id="L281"></a><span class="ln">   281</span>		if !ok {
+<a id="L282"></a><span class="ln">   282</span>			err = SetupError(&#34;f is not a function&#34;)
+<a id="L283"></a><span class="ln">   283</span>			return
+<a id="L284"></a><span class="ln">   284</span>		}
+<a id="L285"></a><span class="ln">   285</span>		y, yType, ok := functionAndType(g)
+<a id="L286"></a><span class="ln">   286</span>		if !ok {
+<a id="L287"></a><span class="ln">   287</span>			err = SetupError(&#34;g is not a function&#34;)
+<a id="L288"></a><span class="ln">   288</span>			return
+<a id="L289"></a><span class="ln">   289</span>		}
+<a id="L290"></a><span class="ln">   290</span>	
+<a id="L291"></a><span class="ln">   291</span>		if xType != yType {
+<a id="L292"></a><span class="ln">   292</span>			err = SetupError(&#34;functions have different types&#34;)
+<a id="L293"></a><span class="ln">   293</span>			return
+<a id="L294"></a><span class="ln">   294</span>		}
+<a id="L295"></a><span class="ln">   295</span>	
+<a id="L296"></a><span class="ln">   296</span>		arguments := make([]reflect.Value, xType.NumIn())
+<a id="L297"></a><span class="ln">   297</span>		rand := config.getRand()
+<a id="L298"></a><span class="ln">   298</span>		maxCount := config.getMaxCount()
+<a id="L299"></a><span class="ln">   299</span>	
+<a id="L300"></a><span class="ln">   300</span>		for i := 0; i &lt; maxCount; i++ {
+<a id="L301"></a><span class="ln">   301</span>			err = arbitraryValues(arguments, xType, config, rand)
+<a id="L302"></a><span class="ln">   302</span>			if err != nil {
+<a id="L303"></a><span class="ln">   303</span>				return
+<a id="L304"></a><span class="ln">   304</span>			}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>			xOut := toInterfaces(x.Call(arguments))
+<a id="L307"></a><span class="ln">   307</span>			yOut := toInterfaces(y.Call(arguments))
+<a id="L308"></a><span class="ln">   308</span>	
+<a id="L309"></a><span class="ln">   309</span>			if !reflect.DeepEqual(xOut, yOut) {
+<a id="L310"></a><span class="ln">   310</span>				err = &amp;CheckEqualError{CheckError{i + 1, toInterfaces(arguments)}, xOut, yOut}
+<a id="L311"></a><span class="ln">   311</span>				return
+<a id="L312"></a><span class="ln">   312</span>			}
+<a id="L313"></a><span class="ln">   313</span>		}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>		return
+<a id="L316"></a><span class="ln">   316</span>	}
+<a id="L317"></a><span class="ln">   317</span>	
+<a id="L318"></a><span class="ln">   318</span>	<span class="comment">// arbitraryValues writes Values to args such that args contains Values</span>
+<a id="L319"></a><span class="ln">   319</span>	<span class="comment">// suitable for calling f.</span>
+<a id="L320"></a><span class="ln">   320</span>	func arbitraryValues(args []reflect.Value, f reflect.Type, config *Config, rand *rand.Rand) (err error) {
+<a id="L321"></a><span class="ln">   321</span>		if config.Values != nil {
+<a id="L322"></a><span class="ln">   322</span>			config.Values(args, rand)
+<a id="L323"></a><span class="ln">   323</span>			return
+<a id="L324"></a><span class="ln">   324</span>		}
+<a id="L325"></a><span class="ln">   325</span>	
+<a id="L326"></a><span class="ln">   326</span>		for j := 0; j &lt; len(args); j++ {
+<a id="L327"></a><span class="ln">   327</span>			var ok bool
+<a id="L328"></a><span class="ln">   328</span>			args[j], ok = Value(f.In(j), rand)
+<a id="L329"></a><span class="ln">   329</span>			if !ok {
+<a id="L330"></a><span class="ln">   330</span>				err = SetupError(fmt.Sprintf(&#34;cannot create arbitrary value of type %s for argument %d&#34;, f.In(j), j))
+<a id="L331"></a><span class="ln">   331</span>				return
+<a id="L332"></a><span class="ln">   332</span>			}
+<a id="L333"></a><span class="ln">   333</span>		}
+<a id="L334"></a><span class="ln">   334</span>	
+<a id="L335"></a><span class="ln">   335</span>		return
+<a id="L336"></a><span class="ln">   336</span>	}
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>	func functionAndType(f interface{}) (v reflect.Value, t reflect.Type, ok bool) {
+<a id="L339"></a><span class="ln">   339</span>		v = reflect.ValueOf(f)
+<a id="L340"></a><span class="ln">   340</span>		ok = v.Kind() == reflect.Func
+<a id="L341"></a><span class="ln">   341</span>		if !ok {
+<a id="L342"></a><span class="ln">   342</span>			return
+<a id="L343"></a><span class="ln">   343</span>		}
+<a id="L344"></a><span class="ln">   344</span>		t = v.Type()
+<a id="L345"></a><span class="ln">   345</span>		return
+<a id="L346"></a><span class="ln">   346</span>	}
+<a id="L347"></a><span class="ln">   347</span>	
+<a id="L348"></a><span class="ln">   348</span>	func toInterfaces(values []reflect.Value) []interface{} {
+<a id="L349"></a><span class="ln">   349</span>		ret := make([]interface{}, len(values))
+<a id="L350"></a><span class="ln">   350</span>		for i, v := range values {
+<a id="L351"></a><span class="ln">   351</span>			ret[i] = v.Interface()
+<a id="L352"></a><span class="ln">   352</span>		}
+<a id="L353"></a><span class="ln">   353</span>		return ret
+<a id="L354"></a><span class="ln">   354</span>	}
+<a id="L355"></a><span class="ln">   355</span>	
+<a id="L356"></a><span class="ln">   356</span>	func toString(interfaces []interface{}) string {
+<a id="L357"></a><span class="ln">   357</span>		s := make([]string, len(interfaces))
+<a id="L358"></a><span class="ln">   358</span>		for i, v := range interfaces {
+<a id="L359"></a><span class="ln">   359</span>			s[i] = fmt.Sprintf(&#34;%#v&#34;, v)
+<a id="L360"></a><span class="ln">   360</span>		}
+<a id="L361"></a><span class="ln">   361</span>		return strings.Join(s, &#34;, &#34;)
+<a id="L362"></a><span class="ln">   362</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

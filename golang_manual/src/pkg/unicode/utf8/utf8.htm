@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/unicode/utf8/utf8.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/unicode/utf8/utf8.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package utf8 implements functions and constants to support text encoded in</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// UTF-8. It includes functions to translate between runes and UTF-8 byte sequences.</span>
+<a id="L7"></a><span class="ln">     7</span>	package utf8
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// The conditions RuneError==unicode.ReplacementChar and</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// MaxRune==unicode.MaxRune are verified in the tests.</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// Defining them locally avoids this package depending on package unicode.</span>
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// Numbers fundamental to the encoding.</span>
+<a id="L14"></a><span class="ln">    14</span>	const (
+<a id="L15"></a><span class="ln">    15</span>		RuneError = &#39;\uFFFD&#39;     <span class="comment">// the &#34;error&#34; Rune or &#34;Unicode replacement character&#34;</span>
+<a id="L16"></a><span class="ln">    16</span>		RuneSelf  = 0x80         <span class="comment">// characters below Runeself are represented as themselves in a single byte.</span>
+<a id="L17"></a><span class="ln">    17</span>		MaxRune   = &#39;\U0010FFFF&#39; <span class="comment">// Maximum valid Unicode code point.</span>
+<a id="L18"></a><span class="ln">    18</span>		UTFMax    = 4            <span class="comment">// maximum number of bytes of a UTF-8 encoded Unicode character.</span>
+<a id="L19"></a><span class="ln">    19</span>	)
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	const (
+<a id="L22"></a><span class="ln">    22</span>		t1 = 0x00 <span class="comment">// 0000 0000</span>
+<a id="L23"></a><span class="ln">    23</span>		tx = 0x80 <span class="comment">// 1000 0000</span>
+<a id="L24"></a><span class="ln">    24</span>		t2 = 0xC0 <span class="comment">// 1100 0000</span>
+<a id="L25"></a><span class="ln">    25</span>		t3 = 0xE0 <span class="comment">// 1110 0000</span>
+<a id="L26"></a><span class="ln">    26</span>		t4 = 0xF0 <span class="comment">// 1111 0000</span>
+<a id="L27"></a><span class="ln">    27</span>		t5 = 0xF8 <span class="comment">// 1111 1000</span>
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>		maskx = 0x3F <span class="comment">// 0011 1111</span>
+<a id="L30"></a><span class="ln">    30</span>		mask2 = 0x1F <span class="comment">// 0001 1111</span>
+<a id="L31"></a><span class="ln">    31</span>		mask3 = 0x0F <span class="comment">// 0000 1111</span>
+<a id="L32"></a><span class="ln">    32</span>		mask4 = 0x07 <span class="comment">// 0000 0111</span>
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>		rune1Max = 1&lt;&lt;7 - 1
+<a id="L35"></a><span class="ln">    35</span>		rune2Max = 1&lt;&lt;11 - 1
+<a id="L36"></a><span class="ln">    36</span>		rune3Max = 1&lt;&lt;16 - 1
+<a id="L37"></a><span class="ln">    37</span>		rune4Max = 1&lt;&lt;21 - 1
+<a id="L38"></a><span class="ln">    38</span>	)
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>	func decodeRuneInternal(p []byte) (r rune, size int, short bool) {
+<a id="L41"></a><span class="ln">    41</span>		n := len(p)
+<a id="L42"></a><span class="ln">    42</span>		if n &lt; 1 {
+<a id="L43"></a><span class="ln">    43</span>			return RuneError, 0, true
+<a id="L44"></a><span class="ln">    44</span>		}
+<a id="L45"></a><span class="ln">    45</span>		c0 := p[0]
+<a id="L46"></a><span class="ln">    46</span>	
+<a id="L47"></a><span class="ln">    47</span>		<span class="comment">// 1-byte, 7-bit sequence?</span>
+<a id="L48"></a><span class="ln">    48</span>		if c0 &lt; tx {
+<a id="L49"></a><span class="ln">    49</span>			return rune(c0), 1, false
+<a id="L50"></a><span class="ln">    50</span>		}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>		<span class="comment">// unexpected continuation byte?</span>
+<a id="L53"></a><span class="ln">    53</span>		if c0 &lt; t2 {
+<a id="L54"></a><span class="ln">    54</span>			return RuneError, 1, false
+<a id="L55"></a><span class="ln">    55</span>		}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>		<span class="comment">// need first continuation byte</span>
+<a id="L58"></a><span class="ln">    58</span>		if n &lt; 2 {
+<a id="L59"></a><span class="ln">    59</span>			return RuneError, 1, true
+<a id="L60"></a><span class="ln">    60</span>		}
+<a id="L61"></a><span class="ln">    61</span>		c1 := p[1]
+<a id="L62"></a><span class="ln">    62</span>		if c1 &lt; tx || t2 &lt;= c1 {
+<a id="L63"></a><span class="ln">    63</span>			return RuneError, 1, false
+<a id="L64"></a><span class="ln">    64</span>		}
+<a id="L65"></a><span class="ln">    65</span>	
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">// 2-byte, 11-bit sequence?</span>
+<a id="L67"></a><span class="ln">    67</span>		if c0 &lt; t3 {
+<a id="L68"></a><span class="ln">    68</span>			r = rune(c0&amp;mask2)&lt;&lt;6 | rune(c1&amp;maskx)
+<a id="L69"></a><span class="ln">    69</span>			if r &lt;= rune1Max {
+<a id="L70"></a><span class="ln">    70</span>				return RuneError, 1, false
+<a id="L71"></a><span class="ln">    71</span>			}
+<a id="L72"></a><span class="ln">    72</span>			return r, 2, false
+<a id="L73"></a><span class="ln">    73</span>		}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>		<span class="comment">// need second continuation byte</span>
+<a id="L76"></a><span class="ln">    76</span>		if n &lt; 3 {
+<a id="L77"></a><span class="ln">    77</span>			return RuneError, 1, true
+<a id="L78"></a><span class="ln">    78</span>		}
+<a id="L79"></a><span class="ln">    79</span>		c2 := p[2]
+<a id="L80"></a><span class="ln">    80</span>		if c2 &lt; tx || t2 &lt;= c2 {
+<a id="L81"></a><span class="ln">    81</span>			return RuneError, 1, false
+<a id="L82"></a><span class="ln">    82</span>		}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>		<span class="comment">// 3-byte, 16-bit sequence?</span>
+<a id="L85"></a><span class="ln">    85</span>		if c0 &lt; t4 {
+<a id="L86"></a><span class="ln">    86</span>			r = rune(c0&amp;mask3)&lt;&lt;12 | rune(c1&amp;maskx)&lt;&lt;6 | rune(c2&amp;maskx)
+<a id="L87"></a><span class="ln">    87</span>			if r &lt;= rune2Max {
+<a id="L88"></a><span class="ln">    88</span>				return RuneError, 1, false
+<a id="L89"></a><span class="ln">    89</span>			}
+<a id="L90"></a><span class="ln">    90</span>			return r, 3, false
+<a id="L91"></a><span class="ln">    91</span>		}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>		<span class="comment">// need third continuation byte</span>
+<a id="L94"></a><span class="ln">    94</span>		if n &lt; 4 {
+<a id="L95"></a><span class="ln">    95</span>			return RuneError, 1, true
+<a id="L96"></a><span class="ln">    96</span>		}
+<a id="L97"></a><span class="ln">    97</span>		c3 := p[3]
+<a id="L98"></a><span class="ln">    98</span>		if c3 &lt; tx || t2 &lt;= c3 {
+<a id="L99"></a><span class="ln">    99</span>			return RuneError, 1, false
+<a id="L100"></a><span class="ln">   100</span>		}
+<a id="L101"></a><span class="ln">   101</span>	
+<a id="L102"></a><span class="ln">   102</span>		<span class="comment">// 4-byte, 21-bit sequence?</span>
+<a id="L103"></a><span class="ln">   103</span>		if c0 &lt; t5 {
+<a id="L104"></a><span class="ln">   104</span>			r = rune(c0&amp;mask4)&lt;&lt;18 | rune(c1&amp;maskx)&lt;&lt;12 | rune(c2&amp;maskx)&lt;&lt;6 | rune(c3&amp;maskx)
+<a id="L105"></a><span class="ln">   105</span>			if r &lt;= rune3Max {
+<a id="L106"></a><span class="ln">   106</span>				return RuneError, 1, false
+<a id="L107"></a><span class="ln">   107</span>			}
+<a id="L108"></a><span class="ln">   108</span>			return r, 4, false
+<a id="L109"></a><span class="ln">   109</span>		}
+<a id="L110"></a><span class="ln">   110</span>	
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">// error</span>
+<a id="L112"></a><span class="ln">   112</span>		return RuneError, 1, false
+<a id="L113"></a><span class="ln">   113</span>	}
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>	func decodeRuneInStringInternal(s string) (r rune, size int, short bool) {
+<a id="L116"></a><span class="ln">   116</span>		n := len(s)
+<a id="L117"></a><span class="ln">   117</span>		if n &lt; 1 {
+<a id="L118"></a><span class="ln">   118</span>			return RuneError, 0, true
+<a id="L119"></a><span class="ln">   119</span>		}
+<a id="L120"></a><span class="ln">   120</span>		c0 := s[0]
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>		<span class="comment">// 1-byte, 7-bit sequence?</span>
+<a id="L123"></a><span class="ln">   123</span>		if c0 &lt; tx {
+<a id="L124"></a><span class="ln">   124</span>			return rune(c0), 1, false
+<a id="L125"></a><span class="ln">   125</span>		}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>		<span class="comment">// unexpected continuation byte?</span>
+<a id="L128"></a><span class="ln">   128</span>		if c0 &lt; t2 {
+<a id="L129"></a><span class="ln">   129</span>			return RuneError, 1, false
+<a id="L130"></a><span class="ln">   130</span>		}
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>		<span class="comment">// need first continuation byte</span>
+<a id="L133"></a><span class="ln">   133</span>		if n &lt; 2 {
+<a id="L134"></a><span class="ln">   134</span>			return RuneError, 1, true
+<a id="L135"></a><span class="ln">   135</span>		}
+<a id="L136"></a><span class="ln">   136</span>		c1 := s[1]
+<a id="L137"></a><span class="ln">   137</span>		if c1 &lt; tx || t2 &lt;= c1 {
+<a id="L138"></a><span class="ln">   138</span>			return RuneError, 1, false
+<a id="L139"></a><span class="ln">   139</span>		}
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>		<span class="comment">// 2-byte, 11-bit sequence?</span>
+<a id="L142"></a><span class="ln">   142</span>		if c0 &lt; t3 {
+<a id="L143"></a><span class="ln">   143</span>			r = rune(c0&amp;mask2)&lt;&lt;6 | rune(c1&amp;maskx)
+<a id="L144"></a><span class="ln">   144</span>			if r &lt;= rune1Max {
+<a id="L145"></a><span class="ln">   145</span>				return RuneError, 1, false
+<a id="L146"></a><span class="ln">   146</span>			}
+<a id="L147"></a><span class="ln">   147</span>			return r, 2, false
+<a id="L148"></a><span class="ln">   148</span>		}
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>		<span class="comment">// need second continuation byte</span>
+<a id="L151"></a><span class="ln">   151</span>		if n &lt; 3 {
+<a id="L152"></a><span class="ln">   152</span>			return RuneError, 1, true
+<a id="L153"></a><span class="ln">   153</span>		}
+<a id="L154"></a><span class="ln">   154</span>		c2 := s[2]
+<a id="L155"></a><span class="ln">   155</span>		if c2 &lt; tx || t2 &lt;= c2 {
+<a id="L156"></a><span class="ln">   156</span>			return RuneError, 1, false
+<a id="L157"></a><span class="ln">   157</span>		}
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>		<span class="comment">// 3-byte, 16-bit sequence?</span>
+<a id="L160"></a><span class="ln">   160</span>		if c0 &lt; t4 {
+<a id="L161"></a><span class="ln">   161</span>			r = rune(c0&amp;mask3)&lt;&lt;12 | rune(c1&amp;maskx)&lt;&lt;6 | rune(c2&amp;maskx)
+<a id="L162"></a><span class="ln">   162</span>			if r &lt;= rune2Max {
+<a id="L163"></a><span class="ln">   163</span>				return RuneError, 1, false
+<a id="L164"></a><span class="ln">   164</span>			}
+<a id="L165"></a><span class="ln">   165</span>			return r, 3, false
+<a id="L166"></a><span class="ln">   166</span>		}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>		<span class="comment">// need third continuation byte</span>
+<a id="L169"></a><span class="ln">   169</span>		if n &lt; 4 {
+<a id="L170"></a><span class="ln">   170</span>			return RuneError, 1, true
+<a id="L171"></a><span class="ln">   171</span>		}
+<a id="L172"></a><span class="ln">   172</span>		c3 := s[3]
+<a id="L173"></a><span class="ln">   173</span>		if c3 &lt; tx || t2 &lt;= c3 {
+<a id="L174"></a><span class="ln">   174</span>			return RuneError, 1, false
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>		<span class="comment">// 4-byte, 21-bit sequence?</span>
+<a id="L178"></a><span class="ln">   178</span>		if c0 &lt; t5 {
+<a id="L179"></a><span class="ln">   179</span>			r = rune(c0&amp;mask4)&lt;&lt;18 | rune(c1&amp;maskx)&lt;&lt;12 | rune(c2&amp;maskx)&lt;&lt;6 | rune(c3&amp;maskx)
+<a id="L180"></a><span class="ln">   180</span>			if r &lt;= rune3Max {
+<a id="L181"></a><span class="ln">   181</span>				return RuneError, 1, false
+<a id="L182"></a><span class="ln">   182</span>			}
+<a id="L183"></a><span class="ln">   183</span>			return r, 4, false
+<a id="L184"></a><span class="ln">   184</span>		}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>		<span class="comment">// error</span>
+<a id="L187"></a><span class="ln">   187</span>		return RuneError, 1, false
+<a id="L188"></a><span class="ln">   188</span>	}
+<a id="L189"></a><span class="ln">   189</span>	
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// FullRune reports whether the bytes in p begin with a full UTF-8 encoding of a rune.</span>
+<a id="L191"></a><span class="ln">   191</span>	<span class="comment">// An invalid encoding is considered a full Rune since it will convert as a width-1 error rune.</span>
+<a id="L192"></a><span class="ln">   192</span>	func FullRune(p []byte) bool {
+<a id="L193"></a><span class="ln">   193</span>		_, _, short := decodeRuneInternal(p)
+<a id="L194"></a><span class="ln">   194</span>		return !short
+<a id="L195"></a><span class="ln">   195</span>	}
+<a id="L196"></a><span class="ln">   196</span>	
+<a id="L197"></a><span class="ln">   197</span>	<span class="comment">// FullRuneInString is like FullRune but its input is a string.</span>
+<a id="L198"></a><span class="ln">   198</span>	func FullRuneInString(s string) bool {
+<a id="L199"></a><span class="ln">   199</span>		_, _, short := decodeRuneInStringInternal(s)
+<a id="L200"></a><span class="ln">   200</span>		return !short
+<a id="L201"></a><span class="ln">   201</span>	}
+<a id="L202"></a><span class="ln">   202</span>	
+<a id="L203"></a><span class="ln">   203</span>	<span class="comment">// DecodeRune unpacks the first UTF-8 encoding in p and returns the rune and its width in bytes.</span>
+<a id="L204"></a><span class="ln">   204</span>	<span class="comment">// If the encoding is invalid, it returns (RuneError, 1), an impossible result for correct UTF-8.</span>
+<a id="L205"></a><span class="ln">   205</span>	func DecodeRune(p []byte) (r rune, size int) {
+<a id="L206"></a><span class="ln">   206</span>		r, size, _ = decodeRuneInternal(p)
+<a id="L207"></a><span class="ln">   207</span>		return
+<a id="L208"></a><span class="ln">   208</span>	}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// DecodeRuneInString is like DecodeRune but its input is a string.</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// If the encoding is invalid, it returns (RuneError, 1), an impossible result for correct UTF-8.</span>
+<a id="L212"></a><span class="ln">   212</span>	func DecodeRuneInString(s string) (r rune, size int) {
+<a id="L213"></a><span class="ln">   213</span>		r, size, _ = decodeRuneInStringInternal(s)
+<a id="L214"></a><span class="ln">   214</span>		return
+<a id="L215"></a><span class="ln">   215</span>	}
+<a id="L216"></a><span class="ln">   216</span>	
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// DecodeLastRune unpacks the last UTF-8 encoding in p and returns the rune and its width in bytes.</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">// If the encoding is invalid, it returns (RuneError, 1), an impossible result for correct UTF-8.</span>
+<a id="L219"></a><span class="ln">   219</span>	func DecodeLastRune(p []byte) (r rune, size int) {
+<a id="L220"></a><span class="ln">   220</span>		end := len(p)
+<a id="L221"></a><span class="ln">   221</span>		if end == 0 {
+<a id="L222"></a><span class="ln">   222</span>			return RuneError, 0
+<a id="L223"></a><span class="ln">   223</span>		}
+<a id="L224"></a><span class="ln">   224</span>		start := end - 1
+<a id="L225"></a><span class="ln">   225</span>		r = rune(p[start])
+<a id="L226"></a><span class="ln">   226</span>		if r &lt; RuneSelf {
+<a id="L227"></a><span class="ln">   227</span>			return r, 1
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>		<span class="comment">// guard against O(n^2) behavior when traversing</span>
+<a id="L230"></a><span class="ln">   230</span>		<span class="comment">// backwards through strings with long sequences of</span>
+<a id="L231"></a><span class="ln">   231</span>		<span class="comment">// invalid UTF-8.</span>
+<a id="L232"></a><span class="ln">   232</span>		lim := end - UTFMax
+<a id="L233"></a><span class="ln">   233</span>		if lim &lt; 0 {
+<a id="L234"></a><span class="ln">   234</span>			lim = 0
+<a id="L235"></a><span class="ln">   235</span>		}
+<a id="L236"></a><span class="ln">   236</span>		for start--; start &gt;= lim; start-- {
+<a id="L237"></a><span class="ln">   237</span>			if RuneStart(p[start]) {
+<a id="L238"></a><span class="ln">   238</span>				break
+<a id="L239"></a><span class="ln">   239</span>			}
+<a id="L240"></a><span class="ln">   240</span>		}
+<a id="L241"></a><span class="ln">   241</span>		if start &lt; 0 {
+<a id="L242"></a><span class="ln">   242</span>			start = 0
+<a id="L243"></a><span class="ln">   243</span>		}
+<a id="L244"></a><span class="ln">   244</span>		r, size = DecodeRune(p[start:end])
+<a id="L245"></a><span class="ln">   245</span>		if start+size != end {
+<a id="L246"></a><span class="ln">   246</span>			return RuneError, 1
+<a id="L247"></a><span class="ln">   247</span>		}
+<a id="L248"></a><span class="ln">   248</span>		return r, size
+<a id="L249"></a><span class="ln">   249</span>	}
+<a id="L250"></a><span class="ln">   250</span>	
+<a id="L251"></a><span class="ln">   251</span>	<span class="comment">// DecodeLastRuneInString is like DecodeLastRune but its input is a string.</span>
+<a id="L252"></a><span class="ln">   252</span>	<span class="comment">// If the encoding is invalid, it returns (RuneError, 1), an impossible result for correct UTF-8.</span>
+<a id="L253"></a><span class="ln">   253</span>	func DecodeLastRuneInString(s string) (r rune, size int) {
+<a id="L254"></a><span class="ln">   254</span>		end := len(s)
+<a id="L255"></a><span class="ln">   255</span>		if end == 0 {
+<a id="L256"></a><span class="ln">   256</span>			return RuneError, 0
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>		start := end - 1
+<a id="L259"></a><span class="ln">   259</span>		r = rune(s[start])
+<a id="L260"></a><span class="ln">   260</span>		if r &lt; RuneSelf {
+<a id="L261"></a><span class="ln">   261</span>			return r, 1
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>		<span class="comment">// guard against O(n^2) behavior when traversing</span>
+<a id="L264"></a><span class="ln">   264</span>		<span class="comment">// backwards through strings with long sequences of</span>
+<a id="L265"></a><span class="ln">   265</span>		<span class="comment">// invalid UTF-8.</span>
+<a id="L266"></a><span class="ln">   266</span>		lim := end - UTFMax
+<a id="L267"></a><span class="ln">   267</span>		if lim &lt; 0 {
+<a id="L268"></a><span class="ln">   268</span>			lim = 0
+<a id="L269"></a><span class="ln">   269</span>		}
+<a id="L270"></a><span class="ln">   270</span>		for start--; start &gt;= lim; start-- {
+<a id="L271"></a><span class="ln">   271</span>			if RuneStart(s[start]) {
+<a id="L272"></a><span class="ln">   272</span>				break
+<a id="L273"></a><span class="ln">   273</span>			}
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>		if start &lt; 0 {
+<a id="L276"></a><span class="ln">   276</span>			start = 0
+<a id="L277"></a><span class="ln">   277</span>		}
+<a id="L278"></a><span class="ln">   278</span>		r, size = DecodeRuneInString(s[start:end])
+<a id="L279"></a><span class="ln">   279</span>		if start+size != end {
+<a id="L280"></a><span class="ln">   280</span>			return RuneError, 1
+<a id="L281"></a><span class="ln">   281</span>		}
+<a id="L282"></a><span class="ln">   282</span>		return r, size
+<a id="L283"></a><span class="ln">   283</span>	}
+<a id="L284"></a><span class="ln">   284</span>	
+<a id="L285"></a><span class="ln">   285</span>	<span class="comment">// RuneLen returns the number of bytes required to encode the rune.</span>
+<a id="L286"></a><span class="ln">   286</span>	func RuneLen(r rune) int {
+<a id="L287"></a><span class="ln">   287</span>		switch {
+<a id="L288"></a><span class="ln">   288</span>		case r &lt;= rune1Max:
+<a id="L289"></a><span class="ln">   289</span>			return 1
+<a id="L290"></a><span class="ln">   290</span>		case r &lt;= rune2Max:
+<a id="L291"></a><span class="ln">   291</span>			return 2
+<a id="L292"></a><span class="ln">   292</span>		case r &lt;= rune3Max:
+<a id="L293"></a><span class="ln">   293</span>			return 3
+<a id="L294"></a><span class="ln">   294</span>		case r &lt;= rune4Max:
+<a id="L295"></a><span class="ln">   295</span>			return 4
+<a id="L296"></a><span class="ln">   296</span>		}
+<a id="L297"></a><span class="ln">   297</span>		return -1
+<a id="L298"></a><span class="ln">   298</span>	}
+<a id="L299"></a><span class="ln">   299</span>	
+<a id="L300"></a><span class="ln">   300</span>	<span class="comment">// EncodeRune writes into p (which must be large enough) the UTF-8 encoding of the rune.</span>
+<a id="L301"></a><span class="ln">   301</span>	<span class="comment">// It returns the number of bytes written.</span>
+<a id="L302"></a><span class="ln">   302</span>	func EncodeRune(p []byte, r rune) int {
+<a id="L303"></a><span class="ln">   303</span>		<span class="comment">// Negative values are erroneous.  Making it unsigned addresses the problem.</span>
+<a id="L304"></a><span class="ln">   304</span>		if uint32(r) &lt;= rune1Max {
+<a id="L305"></a><span class="ln">   305</span>			p[0] = byte(r)
+<a id="L306"></a><span class="ln">   306</span>			return 1
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>	
+<a id="L309"></a><span class="ln">   309</span>		if uint32(r) &lt;= rune2Max {
+<a id="L310"></a><span class="ln">   310</span>			p[0] = t2 | byte(r&gt;&gt;6)
+<a id="L311"></a><span class="ln">   311</span>			p[1] = tx | byte(r)&amp;maskx
+<a id="L312"></a><span class="ln">   312</span>			return 2
+<a id="L313"></a><span class="ln">   313</span>		}
+<a id="L314"></a><span class="ln">   314</span>	
+<a id="L315"></a><span class="ln">   315</span>		if uint32(r) &gt; MaxRune {
+<a id="L316"></a><span class="ln">   316</span>			r = RuneError
+<a id="L317"></a><span class="ln">   317</span>		}
+<a id="L318"></a><span class="ln">   318</span>	
+<a id="L319"></a><span class="ln">   319</span>		if uint32(r) &lt;= rune3Max {
+<a id="L320"></a><span class="ln">   320</span>			p[0] = t3 | byte(r&gt;&gt;12)
+<a id="L321"></a><span class="ln">   321</span>			p[1] = tx | byte(r&gt;&gt;6)&amp;maskx
+<a id="L322"></a><span class="ln">   322</span>			p[2] = tx | byte(r)&amp;maskx
+<a id="L323"></a><span class="ln">   323</span>			return 3
+<a id="L324"></a><span class="ln">   324</span>		}
+<a id="L325"></a><span class="ln">   325</span>	
+<a id="L326"></a><span class="ln">   326</span>		p[0] = t4 | byte(r&gt;&gt;18)
+<a id="L327"></a><span class="ln">   327</span>		p[1] = tx | byte(r&gt;&gt;12)&amp;maskx
+<a id="L328"></a><span class="ln">   328</span>		p[2] = tx | byte(r&gt;&gt;6)&amp;maskx
+<a id="L329"></a><span class="ln">   329</span>		p[3] = tx | byte(r)&amp;maskx
+<a id="L330"></a><span class="ln">   330</span>		return 4
+<a id="L331"></a><span class="ln">   331</span>	}
+<a id="L332"></a><span class="ln">   332</span>	
+<a id="L333"></a><span class="ln">   333</span>	<span class="comment">// RuneCount returns the number of runes in p.  Erroneous and short</span>
+<a id="L334"></a><span class="ln">   334</span>	<span class="comment">// encodings are treated as single runes of width 1 byte.</span>
+<a id="L335"></a><span class="ln">   335</span>	func RuneCount(p []byte) int {
+<a id="L336"></a><span class="ln">   336</span>		i := 0
+<a id="L337"></a><span class="ln">   337</span>		var n int
+<a id="L338"></a><span class="ln">   338</span>		for n = 0; i &lt; len(p); n++ {
+<a id="L339"></a><span class="ln">   339</span>			if p[i] &lt; RuneSelf {
+<a id="L340"></a><span class="ln">   340</span>				i++
+<a id="L341"></a><span class="ln">   341</span>			} else {
+<a id="L342"></a><span class="ln">   342</span>				_, size := DecodeRune(p[i:])
+<a id="L343"></a><span class="ln">   343</span>				i += size
+<a id="L344"></a><span class="ln">   344</span>			}
+<a id="L345"></a><span class="ln">   345</span>		}
+<a id="L346"></a><span class="ln">   346</span>		return n
+<a id="L347"></a><span class="ln">   347</span>	}
+<a id="L348"></a><span class="ln">   348</span>	
+<a id="L349"></a><span class="ln">   349</span>	<span class="comment">// RuneCountInString is like RuneCount but its input is a string.</span>
+<a id="L350"></a><span class="ln">   350</span>	func RuneCountInString(s string) (n int) {
+<a id="L351"></a><span class="ln">   351</span>		for _ = range s {
+<a id="L352"></a><span class="ln">   352</span>			n++
+<a id="L353"></a><span class="ln">   353</span>		}
+<a id="L354"></a><span class="ln">   354</span>		return
+<a id="L355"></a><span class="ln">   355</span>	}
+<a id="L356"></a><span class="ln">   356</span>	
+<a id="L357"></a><span class="ln">   357</span>	<span class="comment">// RuneStart reports whether the byte could be the first byte of</span>
+<a id="L358"></a><span class="ln">   358</span>	<span class="comment">// an encoded rune.  Second and subsequent bytes always have the top</span>
+<a id="L359"></a><span class="ln">   359</span>	<span class="comment">// two bits set to 10.</span>
+<a id="L360"></a><span class="ln">   360</span>	func RuneStart(b byte) bool { return b&amp;0xC0 != 0x80 }
+<a id="L361"></a><span class="ln">   361</span>	
+<a id="L362"></a><span class="ln">   362</span>	<span class="comment">// Valid reports whether p consists entirely of valid UTF-8-encoded runes.</span>
+<a id="L363"></a><span class="ln">   363</span>	func Valid(p []byte) bool {
+<a id="L364"></a><span class="ln">   364</span>		i := 0
+<a id="L365"></a><span class="ln">   365</span>		for i &lt; len(p) {
+<a id="L366"></a><span class="ln">   366</span>			if p[i] &lt; RuneSelf {
+<a id="L367"></a><span class="ln">   367</span>				i++
+<a id="L368"></a><span class="ln">   368</span>			} else {
+<a id="L369"></a><span class="ln">   369</span>				_, size := DecodeRune(p[i:])
+<a id="L370"></a><span class="ln">   370</span>				if size == 1 {
+<a id="L371"></a><span class="ln">   371</span>					<span class="comment">// All valid runes of size of 1 (those</span>
+<a id="L372"></a><span class="ln">   372</span>					<span class="comment">// below RuneSelf) were handled above.</span>
+<a id="L373"></a><span class="ln">   373</span>					<span class="comment">// This must be a RuneError.</span>
+<a id="L374"></a><span class="ln">   374</span>					return false
+<a id="L375"></a><span class="ln">   375</span>				}
+<a id="L376"></a><span class="ln">   376</span>				i += size
+<a id="L377"></a><span class="ln">   377</span>			}
+<a id="L378"></a><span class="ln">   378</span>		}
+<a id="L379"></a><span class="ln">   379</span>		return true
+<a id="L380"></a><span class="ln">   380</span>	}
+<a id="L381"></a><span class="ln">   381</span>	
+<a id="L382"></a><span class="ln">   382</span>	<span class="comment">// ValidString reports whether s consists entirely of valid UTF-8-encoded runes.</span>
+<a id="L383"></a><span class="ln">   383</span>	func ValidString(s string) bool {
+<a id="L384"></a><span class="ln">   384</span>		for i, r := range s {
+<a id="L385"></a><span class="ln">   385</span>			if r == RuneError {
+<a id="L386"></a><span class="ln">   386</span>				<span class="comment">// The RuneError value can be an error</span>
+<a id="L387"></a><span class="ln">   387</span>				<span class="comment">// sentinel value (if it&#39;s size 1) or the same</span>
+<a id="L388"></a><span class="ln">   388</span>				<span class="comment">// value encoded properly. Decode it to see if</span>
+<a id="L389"></a><span class="ln">   389</span>				<span class="comment">// it&#39;s the 1 byte sentinel value.</span>
+<a id="L390"></a><span class="ln">   390</span>				_, size := DecodeRuneInString(s[i:])
+<a id="L391"></a><span class="ln">   391</span>				if size == 1 {
+<a id="L392"></a><span class="ln">   392</span>					return false
+<a id="L393"></a><span class="ln">   393</span>				}
+<a id="L394"></a><span class="ln">   394</span>			}
+<a id="L395"></a><span class="ln">   395</span>		}
+<a id="L396"></a><span class="ln">   396</span>		return true
+<a id="L397"></a><span class="ln">   397</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

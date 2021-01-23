@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/os/user/lookup_unix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/os/user/lookup_unix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// +build cgo</span>
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	package user
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;runtime&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;strconv&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;strings&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;syscall&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;unsafe&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">/*
+</span><a id="L20"></a><span class="ln">    20</span>	<span class="comment">#include &lt;unistd.h&gt;
+</span><a id="L21"></a><span class="ln">    21</span>	<span class="comment">#include &lt;sys/types.h&gt;
+</span><a id="L22"></a><span class="ln">    22</span>	<span class="comment">#include &lt;pwd.h&gt;
+</span><a id="L23"></a><span class="ln">    23</span>	<span class="comment">#include &lt;stdlib.h&gt;
+</span><a id="L24"></a><span class="ln">    24</span>	<span class="comment">
+</span><a id="L25"></a><span class="ln">    25</span>	<span class="comment">static int mygetpwuid_r(int uid, struct passwd *pwd,
+</span><a id="L26"></a><span class="ln">    26</span>	<span class="comment">	char *buf, size_t buflen, struct passwd **result) {
+</span><a id="L27"></a><span class="ln">    27</span>	<span class="comment"> return getpwuid_r(uid, pwd, buf, buflen, result);
+</span><a id="L28"></a><span class="ln">    28</span>	<span class="comment">}
+</span><a id="L29"></a><span class="ln">    29</span>	<span class="comment">*/</span>
+<a id="L30"></a><span class="ln">    30</span>	import &#34;C&#34;
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// Current returns the current user. </span>
+<a id="L33"></a><span class="ln">    33</span>	func Current() (*User, error) {
+<a id="L34"></a><span class="ln">    34</span>		return lookup(syscall.Getuid(), &#34;&#34;, false)
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// Lookup looks up a user by username. If the user cannot be found,</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// the returned error is of type UnknownUserError.</span>
+<a id="L39"></a><span class="ln">    39</span>	func Lookup(username string) (*User, error) {
+<a id="L40"></a><span class="ln">    40</span>		return lookup(-1, username, true)
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// LookupId looks up a user by userid. If the user cannot be found,</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// the returned error is of type UnknownUserIdError.</span>
+<a id="L45"></a><span class="ln">    45</span>	func LookupId(uid string) (*User, error) {
+<a id="L46"></a><span class="ln">    46</span>		i, e := strconv.Atoi(uid)
+<a id="L47"></a><span class="ln">    47</span>		if e != nil {
+<a id="L48"></a><span class="ln">    48</span>			return nil, e
+<a id="L49"></a><span class="ln">    49</span>		}
+<a id="L50"></a><span class="ln">    50</span>		return lookup(i, &#34;&#34;, false)
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	func lookup(uid int, username string, lookupByName bool) (*User, error) {
+<a id="L54"></a><span class="ln">    54</span>		var pwd C.struct_passwd
+<a id="L55"></a><span class="ln">    55</span>		var result *C.struct_passwd
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>		var bufSize C.long
+<a id="L58"></a><span class="ln">    58</span>		if runtime.GOOS == &#34;freebsd&#34; {
+<a id="L59"></a><span class="ln">    59</span>			<span class="comment">// FreeBSD doesn&#39;t have _SC_GETPW_R_SIZE_MAX</span>
+<a id="L60"></a><span class="ln">    60</span>			<span class="comment">// and just returns -1.  So just use the same</span>
+<a id="L61"></a><span class="ln">    61</span>			<span class="comment">// size that Linux returns</span>
+<a id="L62"></a><span class="ln">    62</span>			bufSize = 1024
+<a id="L63"></a><span class="ln">    63</span>		} else {
+<a id="L64"></a><span class="ln">    64</span>			bufSize = C.sysconf(C._SC_GETPW_R_SIZE_MAX)
+<a id="L65"></a><span class="ln">    65</span>			if bufSize &lt;= 0 || bufSize &gt; 1&lt;&lt;20 {
+<a id="L66"></a><span class="ln">    66</span>				return nil, fmt.Errorf(&#34;user: unreasonable _SC_GETPW_R_SIZE_MAX of %d&#34;, bufSize)
+<a id="L67"></a><span class="ln">    67</span>			}
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		buf := C.malloc(C.size_t(bufSize))
+<a id="L70"></a><span class="ln">    70</span>		defer C.free(buf)
+<a id="L71"></a><span class="ln">    71</span>		var rv C.int
+<a id="L72"></a><span class="ln">    72</span>		if lookupByName {
+<a id="L73"></a><span class="ln">    73</span>			nameC := C.CString(username)
+<a id="L74"></a><span class="ln">    74</span>			defer C.free(unsafe.Pointer(nameC))
+<a id="L75"></a><span class="ln">    75</span>			rv = C.getpwnam_r(nameC,
+<a id="L76"></a><span class="ln">    76</span>				&amp;pwd,
+<a id="L77"></a><span class="ln">    77</span>				(*C.char)(buf),
+<a id="L78"></a><span class="ln">    78</span>				C.size_t(bufSize),
+<a id="L79"></a><span class="ln">    79</span>				&amp;result)
+<a id="L80"></a><span class="ln">    80</span>			if rv != 0 {
+<a id="L81"></a><span class="ln">    81</span>				return nil, fmt.Errorf(&#34;user: lookup username %s: %s&#34;, username, syscall.Errno(rv))
+<a id="L82"></a><span class="ln">    82</span>			}
+<a id="L83"></a><span class="ln">    83</span>			if result == nil {
+<a id="L84"></a><span class="ln">    84</span>				return nil, UnknownUserError(username)
+<a id="L85"></a><span class="ln">    85</span>			}
+<a id="L86"></a><span class="ln">    86</span>		} else {
+<a id="L87"></a><span class="ln">    87</span>			<span class="comment">// mygetpwuid_r is a wrapper around getpwuid_r to</span>
+<a id="L88"></a><span class="ln">    88</span>			<span class="comment">// to avoid using uid_t because C.uid_t(uid) for</span>
+<a id="L89"></a><span class="ln">    89</span>			<span class="comment">// unknown reasons doesn&#39;t work on linux.</span>
+<a id="L90"></a><span class="ln">    90</span>			rv = C.mygetpwuid_r(C.int(uid),
+<a id="L91"></a><span class="ln">    91</span>				&amp;pwd,
+<a id="L92"></a><span class="ln">    92</span>				(*C.char)(buf),
+<a id="L93"></a><span class="ln">    93</span>				C.size_t(bufSize),
+<a id="L94"></a><span class="ln">    94</span>				&amp;result)
+<a id="L95"></a><span class="ln">    95</span>			if rv != 0 {
+<a id="L96"></a><span class="ln">    96</span>				return nil, fmt.Errorf(&#34;user: lookup userid %d: %s&#34;, uid, syscall.Errno(rv))
+<a id="L97"></a><span class="ln">    97</span>			}
+<a id="L98"></a><span class="ln">    98</span>			if result == nil {
+<a id="L99"></a><span class="ln">    99</span>				return nil, UnknownUserIdError(uid)
+<a id="L100"></a><span class="ln">   100</span>			}
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>		u := &amp;User{
+<a id="L103"></a><span class="ln">   103</span>			Uid:      strconv.Itoa(int(pwd.pw_uid)),
+<a id="L104"></a><span class="ln">   104</span>			Gid:      strconv.Itoa(int(pwd.pw_gid)),
+<a id="L105"></a><span class="ln">   105</span>			Username: C.GoString(pwd.pw_name),
+<a id="L106"></a><span class="ln">   106</span>			Name:     C.GoString(pwd.pw_gecos),
+<a id="L107"></a><span class="ln">   107</span>			HomeDir:  C.GoString(pwd.pw_dir),
+<a id="L108"></a><span class="ln">   108</span>		}
+<a id="L109"></a><span class="ln">   109</span>		<span class="comment">// The pw_gecos field isn&#39;t quite standardized.  Some docs</span>
+<a id="L110"></a><span class="ln">   110</span>		<span class="comment">// say: &#34;It is expected to be a comma separated list of</span>
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">// personal data where the first item is the full name of the</span>
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">// user.&#34;</span>
+<a id="L113"></a><span class="ln">   113</span>		if i := strings.Index(u.Name, &#34;,&#34;); i &gt;= 0 {
+<a id="L114"></a><span class="ln">   114</span>			u.Name = u.Name[:i]
+<a id="L115"></a><span class="ln">   115</span>		}
+<a id="L116"></a><span class="ln">   116</span>		return u, nil
+<a id="L117"></a><span class="ln">   117</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

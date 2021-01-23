@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/image/ycbcr.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/image/ycbcr.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package image
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;image/color&#34;
+<a id="L9"></a><span class="ln">     9</span>	)
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// YCbCrSubsampleRatio is the chroma subsample ratio used in a YCbCr image.</span>
+<a id="L12"></a><span class="ln">    12</span>	type YCbCrSubsampleRatio int
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	const (
+<a id="L15"></a><span class="ln">    15</span>		YCbCrSubsampleRatio444 YCbCrSubsampleRatio = iota
+<a id="L16"></a><span class="ln">    16</span>		YCbCrSubsampleRatio422
+<a id="L17"></a><span class="ln">    17</span>		YCbCrSubsampleRatio420
+<a id="L18"></a><span class="ln">    18</span>	)
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	func (s YCbCrSubsampleRatio) String() string {
+<a id="L21"></a><span class="ln">    21</span>		switch s {
+<a id="L22"></a><span class="ln">    22</span>		case YCbCrSubsampleRatio444:
+<a id="L23"></a><span class="ln">    23</span>			return &#34;YCbCrSubsampleRatio444&#34;
+<a id="L24"></a><span class="ln">    24</span>		case YCbCrSubsampleRatio422:
+<a id="L25"></a><span class="ln">    25</span>			return &#34;YCbCrSubsampleRatio422&#34;
+<a id="L26"></a><span class="ln">    26</span>		case YCbCrSubsampleRatio420:
+<a id="L27"></a><span class="ln">    27</span>			return &#34;YCbCrSubsampleRatio420&#34;
+<a id="L28"></a><span class="ln">    28</span>		}
+<a id="L29"></a><span class="ln">    29</span>		return &#34;YCbCrSubsampleRatioUnknown&#34;
+<a id="L30"></a><span class="ln">    30</span>	}
+<a id="L31"></a><span class="ln">    31</span>	
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// YCbCr is an in-memory image of Y&#39;CbCr colors. There is one Y sample per</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// pixel, but each Cb and Cr sample can span one or more pixels.</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// YStride is the Y slice index delta between vertically adjacent pixels.</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// CStride is the Cb and Cr slice index delta between vertically adjacent pixels</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// that map to separate chroma samples.</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// It is not an absolute requirement, but YStride and len(Y) are typically</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// multiples of 8, and:</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//	For 4:4:4, CStride == YStride/1 &amp;&amp; len(Cb) == len(Cr) == len(Y)/1.</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//	For 4:2:2, CStride == YStride/2 &amp;&amp; len(Cb) == len(Cr) == len(Y)/2.</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//	For 4:2:0, CStride == YStride/2 &amp;&amp; len(Cb) == len(Cr) == len(Y)/4.</span>
+<a id="L42"></a><span class="ln">    42</span>	type YCbCr struct {
+<a id="L43"></a><span class="ln">    43</span>		Y, Cb, Cr      []uint8
+<a id="L44"></a><span class="ln">    44</span>		YStride        int
+<a id="L45"></a><span class="ln">    45</span>		CStride        int
+<a id="L46"></a><span class="ln">    46</span>		SubsampleRatio YCbCrSubsampleRatio
+<a id="L47"></a><span class="ln">    47</span>		Rect           Rectangle
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	func (p *YCbCr) ColorModel() color.Model {
+<a id="L51"></a><span class="ln">    51</span>		return color.YCbCrModel
+<a id="L52"></a><span class="ln">    52</span>	}
+<a id="L53"></a><span class="ln">    53</span>	
+<a id="L54"></a><span class="ln">    54</span>	func (p *YCbCr) Bounds() Rectangle {
+<a id="L55"></a><span class="ln">    55</span>		return p.Rect
+<a id="L56"></a><span class="ln">    56</span>	}
+<a id="L57"></a><span class="ln">    57</span>	
+<a id="L58"></a><span class="ln">    58</span>	func (p *YCbCr) At(x, y int) color.Color {
+<a id="L59"></a><span class="ln">    59</span>		if !(Point{x, y}.In(p.Rect)) {
+<a id="L60"></a><span class="ln">    60</span>			return color.YCbCr{}
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		yi := p.YOffset(x, y)
+<a id="L63"></a><span class="ln">    63</span>		ci := p.COffset(x, y)
+<a id="L64"></a><span class="ln">    64</span>		return color.YCbCr{
+<a id="L65"></a><span class="ln">    65</span>			p.Y[yi],
+<a id="L66"></a><span class="ln">    66</span>			p.Cb[ci],
+<a id="L67"></a><span class="ln">    67</span>			p.Cr[ci],
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>	}
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>	<span class="comment">// YOffset returns the index of the first element of Y that corresponds to</span>
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// the pixel at (x, y).</span>
+<a id="L73"></a><span class="ln">    73</span>	func (p *YCbCr) YOffset(x, y int) int {
+<a id="L74"></a><span class="ln">    74</span>		return (y-p.Rect.Min.Y)*p.YStride + (x - p.Rect.Min.X)
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// COffset returns the index of the first element of Cb or Cr that corresponds</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// to the pixel at (x, y).</span>
+<a id="L79"></a><span class="ln">    79</span>	func (p *YCbCr) COffset(x, y int) int {
+<a id="L80"></a><span class="ln">    80</span>		switch p.SubsampleRatio {
+<a id="L81"></a><span class="ln">    81</span>		case YCbCrSubsampleRatio422:
+<a id="L82"></a><span class="ln">    82</span>			return (y-p.Rect.Min.Y)*p.CStride + (x/2 - p.Rect.Min.X/2)
+<a id="L83"></a><span class="ln">    83</span>		case YCbCrSubsampleRatio420:
+<a id="L84"></a><span class="ln">    84</span>			return (y/2-p.Rect.Min.Y/2)*p.CStride + (x/2 - p.Rect.Min.X/2)
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>		<span class="comment">// Default to 4:4:4 subsampling.</span>
+<a id="L87"></a><span class="ln">    87</span>		return (y-p.Rect.Min.Y)*p.CStride + (x - p.Rect.Min.X)
+<a id="L88"></a><span class="ln">    88</span>	}
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// SubImage returns an image representing the portion of the image p visible</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// through r. The returned value shares pixels with the original image.</span>
+<a id="L92"></a><span class="ln">    92</span>	func (p *YCbCr) SubImage(r Rectangle) Image {
+<a id="L93"></a><span class="ln">    93</span>		r = r.Intersect(p.Rect)
+<a id="L94"></a><span class="ln">    94</span>		<span class="comment">// If r1 and r2 are Rectangles, r1.Intersect(r2) is not guaranteed to be inside</span>
+<a id="L95"></a><span class="ln">    95</span>		<span class="comment">// either r1 or r2 if the intersection is empty. Without explicitly checking for</span>
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// this, the Pix[i:] expression below can panic.</span>
+<a id="L97"></a><span class="ln">    97</span>		if r.Empty() {
+<a id="L98"></a><span class="ln">    98</span>			return &amp;YCbCr{
+<a id="L99"></a><span class="ln">    99</span>				SubsampleRatio: p.SubsampleRatio,
+<a id="L100"></a><span class="ln">   100</span>			}
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>		yi := p.YOffset(r.Min.X, r.Min.Y)
+<a id="L103"></a><span class="ln">   103</span>		ci := p.COffset(r.Min.X, r.Min.Y)
+<a id="L104"></a><span class="ln">   104</span>		return &amp;YCbCr{
+<a id="L105"></a><span class="ln">   105</span>			Y:              p.Y[yi:],
+<a id="L106"></a><span class="ln">   106</span>			Cb:             p.Cb[ci:],
+<a id="L107"></a><span class="ln">   107</span>			Cr:             p.Cr[ci:],
+<a id="L108"></a><span class="ln">   108</span>			SubsampleRatio: p.SubsampleRatio,
+<a id="L109"></a><span class="ln">   109</span>			YStride:        p.YStride,
+<a id="L110"></a><span class="ln">   110</span>			CStride:        p.CStride,
+<a id="L111"></a><span class="ln">   111</span>			Rect:           r,
+<a id="L112"></a><span class="ln">   112</span>		}
+<a id="L113"></a><span class="ln">   113</span>	}
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>	func (p *YCbCr) Opaque() bool {
+<a id="L116"></a><span class="ln">   116</span>		return true
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// NewYCbCr returns a new YCbCr with the given bounds and subsample ratio.</span>
+<a id="L120"></a><span class="ln">   120</span>	func NewYCbCr(r Rectangle, subsampleRatio YCbCrSubsampleRatio) *YCbCr {
+<a id="L121"></a><span class="ln">   121</span>		w, h, cw, ch := r.Dx(), r.Dy(), 0, 0
+<a id="L122"></a><span class="ln">   122</span>		switch subsampleRatio {
+<a id="L123"></a><span class="ln">   123</span>		case YCbCrSubsampleRatio422:
+<a id="L124"></a><span class="ln">   124</span>			cw = (r.Max.X+1)/2 - r.Min.X/2
+<a id="L125"></a><span class="ln">   125</span>			ch = h
+<a id="L126"></a><span class="ln">   126</span>		case YCbCrSubsampleRatio420:
+<a id="L127"></a><span class="ln">   127</span>			cw = (r.Max.X+1)/2 - r.Min.X/2
+<a id="L128"></a><span class="ln">   128</span>			ch = (r.Max.Y+1)/2 - r.Min.Y/2
+<a id="L129"></a><span class="ln">   129</span>		default:
+<a id="L130"></a><span class="ln">   130</span>			<span class="comment">// Default to 4:4:4 subsampling.</span>
+<a id="L131"></a><span class="ln">   131</span>			cw = w
+<a id="L132"></a><span class="ln">   132</span>			ch = h
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>		b := make([]byte, w*h+2*cw*ch)
+<a id="L135"></a><span class="ln">   135</span>		return &amp;YCbCr{
+<a id="L136"></a><span class="ln">   136</span>			Y:              b[:w*h],
+<a id="L137"></a><span class="ln">   137</span>			Cb:             b[w*h+0*cw*ch : w*h+1*cw*ch],
+<a id="L138"></a><span class="ln">   138</span>			Cr:             b[w*h+1*cw*ch : w*h+2*cw*ch],
+<a id="L139"></a><span class="ln">   139</span>			SubsampleRatio: subsampleRatio,
+<a id="L140"></a><span class="ln">   140</span>			YStride:        w,
+<a id="L141"></a><span class="ln">   141</span>			CStride:        cw,
+<a id="L142"></a><span class="ln">   142</span>			Rect:           r,
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

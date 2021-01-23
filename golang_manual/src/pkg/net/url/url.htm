@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/url/url.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/url/url.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package url parses URLs and implements query escaping.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// See RFC 3986.</span>
+<a id="L7"></a><span class="ln">     7</span>	package url
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;strconv&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;strings&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// Error reports an error and the operation and URL that caused it.</span>
+<a id="L16"></a><span class="ln">    16</span>	type Error struct {
+<a id="L17"></a><span class="ln">    17</span>		Op  string
+<a id="L18"></a><span class="ln">    18</span>		URL string
+<a id="L19"></a><span class="ln">    19</span>		Err error
+<a id="L20"></a><span class="ln">    20</span>	}
+<a id="L21"></a><span class="ln">    21</span>	
+<a id="L22"></a><span class="ln">    22</span>	func (e *Error) Error() string { return e.Op + &#34; &#34; + e.URL + &#34;: &#34; + e.Err.Error() }
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	func ishex(c byte) bool {
+<a id="L25"></a><span class="ln">    25</span>		switch {
+<a id="L26"></a><span class="ln">    26</span>		case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L27"></a><span class="ln">    27</span>			return true
+<a id="L28"></a><span class="ln">    28</span>		case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L29"></a><span class="ln">    29</span>			return true
+<a id="L30"></a><span class="ln">    30</span>		case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L31"></a><span class="ln">    31</span>			return true
+<a id="L32"></a><span class="ln">    32</span>		}
+<a id="L33"></a><span class="ln">    33</span>		return false
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	func unhex(c byte) byte {
+<a id="L37"></a><span class="ln">    37</span>		switch {
+<a id="L38"></a><span class="ln">    38</span>		case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39;:
+<a id="L39"></a><span class="ln">    39</span>			return c - &#39;0&#39;
+<a id="L40"></a><span class="ln">    40</span>		case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;f&#39;:
+<a id="L41"></a><span class="ln">    41</span>			return c - &#39;a&#39; + 10
+<a id="L42"></a><span class="ln">    42</span>		case &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;F&#39;:
+<a id="L43"></a><span class="ln">    43</span>			return c - &#39;A&#39; + 10
+<a id="L44"></a><span class="ln">    44</span>		}
+<a id="L45"></a><span class="ln">    45</span>		return 0
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	type encoding int
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	const (
+<a id="L51"></a><span class="ln">    51</span>		encodePath encoding = 1 + iota
+<a id="L52"></a><span class="ln">    52</span>		encodeUserPassword
+<a id="L53"></a><span class="ln">    53</span>		encodeQueryComponent
+<a id="L54"></a><span class="ln">    54</span>		encodeFragment
+<a id="L55"></a><span class="ln">    55</span>	)
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	type EscapeError string
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>	func (e EscapeError) Error() string {
+<a id="L60"></a><span class="ln">    60</span>		return &#34;invalid URL escape &#34; + strconv.Quote(string(e))
+<a id="L61"></a><span class="ln">    61</span>	}
+<a id="L62"></a><span class="ln">    62</span>	
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// Return true if the specified character should be escaped when</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// appearing in a URL string, according to RFC 3986.</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// When &#39;all&#39; is true the full range of reserved characters are matched.</span>
+<a id="L66"></a><span class="ln">    66</span>	func shouldEscape(c byte, mode encoding) bool {
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// §2.3 Unreserved characters (alphanum)</span>
+<a id="L68"></a><span class="ln">    68</span>		if &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;Z&#39; || &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;z&#39; || &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; {
+<a id="L69"></a><span class="ln">    69</span>			return false
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>		switch c {
+<a id="L73"></a><span class="ln">    73</span>		case &#39;-&#39;, &#39;_&#39;, &#39;.&#39;, &#39;~&#39;: <span class="comment">// §2.3 Unreserved characters (mark)</span>
+<a id="L74"></a><span class="ln">    74</span>			return false
+<a id="L75"></a><span class="ln">    75</span>	
+<a id="L76"></a><span class="ln">    76</span>		case &#39;$&#39;, &#39;&amp;&#39;, &#39;+&#39;, &#39;,&#39;, &#39;/&#39;, &#39;:&#39;, &#39;;&#39;, &#39;=&#39;, &#39;?&#39;, &#39;@&#39;: <span class="comment">// §2.2 Reserved characters (reserved)</span>
+<a id="L77"></a><span class="ln">    77</span>			<span class="comment">// Different sections of the URL allow a few of</span>
+<a id="L78"></a><span class="ln">    78</span>			<span class="comment">// the reserved characters to appear unescaped.</span>
+<a id="L79"></a><span class="ln">    79</span>			switch mode {
+<a id="L80"></a><span class="ln">    80</span>			case encodePath: <span class="comment">// §3.3</span>
+<a id="L81"></a><span class="ln">    81</span>				<span class="comment">// The RFC allows : @ &amp; = + $ but saves / ; , for assigning</span>
+<a id="L82"></a><span class="ln">    82</span>				<span class="comment">// meaning to individual path segments. This package</span>
+<a id="L83"></a><span class="ln">    83</span>				<span class="comment">// only manipulates the path as a whole, so we allow those</span>
+<a id="L84"></a><span class="ln">    84</span>				<span class="comment">// last two as well. That leaves only ? to escape.</span>
+<a id="L85"></a><span class="ln">    85</span>				return c == &#39;?&#39;
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>			case encodeUserPassword: <span class="comment">// §3.2.2</span>
+<a id="L88"></a><span class="ln">    88</span>				<span class="comment">// The RFC allows ; : &amp; = + $ , in userinfo, so we must escape only @ and /.</span>
+<a id="L89"></a><span class="ln">    89</span>				<span class="comment">// The parsing of userinfo treats : as special so we must escape that too.</span>
+<a id="L90"></a><span class="ln">    90</span>				return c == &#39;@&#39; || c == &#39;/&#39; || c == &#39;:&#39;
+<a id="L91"></a><span class="ln">    91</span>	
+<a id="L92"></a><span class="ln">    92</span>			case encodeQueryComponent: <span class="comment">// §3.4</span>
+<a id="L93"></a><span class="ln">    93</span>				<span class="comment">// The RFC reserves (so we must escape) everything.</span>
+<a id="L94"></a><span class="ln">    94</span>				return true
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>			case encodeFragment: <span class="comment">// §4.1</span>
+<a id="L97"></a><span class="ln">    97</span>				<span class="comment">// The RFC text is silent but the grammar allows</span>
+<a id="L98"></a><span class="ln">    98</span>				<span class="comment">// everything, so escape nothing.</span>
+<a id="L99"></a><span class="ln">    99</span>				return false
+<a id="L100"></a><span class="ln">   100</span>			}
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>	
+<a id="L103"></a><span class="ln">   103</span>		<span class="comment">// Everything else must be escaped.</span>
+<a id="L104"></a><span class="ln">   104</span>		return true
+<a id="L105"></a><span class="ln">   105</span>	}
+<a id="L106"></a><span class="ln">   106</span>	
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// QueryUnescape does the inverse transformation of QueryEscape, converting</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// %AB into the byte 0xAB and &#39;+&#39; into &#39; &#39; (space). It returns an error if</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// any % is not followed by two hexadecimal digits.</span>
+<a id="L110"></a><span class="ln">   110</span>	func QueryUnescape(s string) (string, error) {
+<a id="L111"></a><span class="ln">   111</span>		return unescape(s, encodeQueryComponent)
+<a id="L112"></a><span class="ln">   112</span>	}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// unescape unescapes a string; the mode specifies</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// which section of the URL string is being unescaped.</span>
+<a id="L116"></a><span class="ln">   116</span>	func unescape(s string, mode encoding) (string, error) {
+<a id="L117"></a><span class="ln">   117</span>		<span class="comment">// Count %, check that they&#39;re well-formed.</span>
+<a id="L118"></a><span class="ln">   118</span>		n := 0
+<a id="L119"></a><span class="ln">   119</span>		hasPlus := false
+<a id="L120"></a><span class="ln">   120</span>		for i := 0; i &lt; len(s); {
+<a id="L121"></a><span class="ln">   121</span>			switch s[i] {
+<a id="L122"></a><span class="ln">   122</span>			case &#39;%&#39;:
+<a id="L123"></a><span class="ln">   123</span>				n++
+<a id="L124"></a><span class="ln">   124</span>				if i+2 &gt;= len(s) || !ishex(s[i+1]) || !ishex(s[i+2]) {
+<a id="L125"></a><span class="ln">   125</span>					s = s[i:]
+<a id="L126"></a><span class="ln">   126</span>					if len(s) &gt; 3 {
+<a id="L127"></a><span class="ln">   127</span>						s = s[0:3]
+<a id="L128"></a><span class="ln">   128</span>					}
+<a id="L129"></a><span class="ln">   129</span>					return &#34;&#34;, EscapeError(s)
+<a id="L130"></a><span class="ln">   130</span>				}
+<a id="L131"></a><span class="ln">   131</span>				i += 3
+<a id="L132"></a><span class="ln">   132</span>			case &#39;+&#39;:
+<a id="L133"></a><span class="ln">   133</span>				hasPlus = mode == encodeQueryComponent
+<a id="L134"></a><span class="ln">   134</span>				i++
+<a id="L135"></a><span class="ln">   135</span>			default:
+<a id="L136"></a><span class="ln">   136</span>				i++
+<a id="L137"></a><span class="ln">   137</span>			}
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>		if n == 0 &amp;&amp; !hasPlus {
+<a id="L141"></a><span class="ln">   141</span>			return s, nil
+<a id="L142"></a><span class="ln">   142</span>		}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>		t := make([]byte, len(s)-2*n)
+<a id="L145"></a><span class="ln">   145</span>		j := 0
+<a id="L146"></a><span class="ln">   146</span>		for i := 0; i &lt; len(s); {
+<a id="L147"></a><span class="ln">   147</span>			switch s[i] {
+<a id="L148"></a><span class="ln">   148</span>			case &#39;%&#39;:
+<a id="L149"></a><span class="ln">   149</span>				t[j] = unhex(s[i+1])&lt;&lt;4 | unhex(s[i+2])
+<a id="L150"></a><span class="ln">   150</span>				j++
+<a id="L151"></a><span class="ln">   151</span>				i += 3
+<a id="L152"></a><span class="ln">   152</span>			case &#39;+&#39;:
+<a id="L153"></a><span class="ln">   153</span>				if mode == encodeQueryComponent {
+<a id="L154"></a><span class="ln">   154</span>					t[j] = &#39; &#39;
+<a id="L155"></a><span class="ln">   155</span>				} else {
+<a id="L156"></a><span class="ln">   156</span>					t[j] = &#39;+&#39;
+<a id="L157"></a><span class="ln">   157</span>				}
+<a id="L158"></a><span class="ln">   158</span>				j++
+<a id="L159"></a><span class="ln">   159</span>				i++
+<a id="L160"></a><span class="ln">   160</span>			default:
+<a id="L161"></a><span class="ln">   161</span>				t[j] = s[i]
+<a id="L162"></a><span class="ln">   162</span>				j++
+<a id="L163"></a><span class="ln">   163</span>				i++
+<a id="L164"></a><span class="ln">   164</span>			}
+<a id="L165"></a><span class="ln">   165</span>		}
+<a id="L166"></a><span class="ln">   166</span>		return string(t), nil
+<a id="L167"></a><span class="ln">   167</span>	}
+<a id="L168"></a><span class="ln">   168</span>	
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// QueryEscape escapes the string so it can be safely placed</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// inside a URL query.</span>
+<a id="L171"></a><span class="ln">   171</span>	func QueryEscape(s string) string {
+<a id="L172"></a><span class="ln">   172</span>		return escape(s, encodeQueryComponent)
+<a id="L173"></a><span class="ln">   173</span>	}
+<a id="L174"></a><span class="ln">   174</span>	
+<a id="L175"></a><span class="ln">   175</span>	func escape(s string, mode encoding) string {
+<a id="L176"></a><span class="ln">   176</span>		spaceCount, hexCount := 0, 0
+<a id="L177"></a><span class="ln">   177</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L178"></a><span class="ln">   178</span>			c := s[i]
+<a id="L179"></a><span class="ln">   179</span>			if shouldEscape(c, mode) {
+<a id="L180"></a><span class="ln">   180</span>				if c == &#39; &#39; &amp;&amp; mode == encodeQueryComponent {
+<a id="L181"></a><span class="ln">   181</span>					spaceCount++
+<a id="L182"></a><span class="ln">   182</span>				} else {
+<a id="L183"></a><span class="ln">   183</span>					hexCount++
+<a id="L184"></a><span class="ln">   184</span>				}
+<a id="L185"></a><span class="ln">   185</span>			}
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>	
+<a id="L188"></a><span class="ln">   188</span>		if spaceCount == 0 &amp;&amp; hexCount == 0 {
+<a id="L189"></a><span class="ln">   189</span>			return s
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>	
+<a id="L192"></a><span class="ln">   192</span>		t := make([]byte, len(s)+2*hexCount)
+<a id="L193"></a><span class="ln">   193</span>		j := 0
+<a id="L194"></a><span class="ln">   194</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L195"></a><span class="ln">   195</span>			switch c := s[i]; {
+<a id="L196"></a><span class="ln">   196</span>			case c == &#39; &#39; &amp;&amp; mode == encodeQueryComponent:
+<a id="L197"></a><span class="ln">   197</span>				t[j] = &#39;+&#39;
+<a id="L198"></a><span class="ln">   198</span>				j++
+<a id="L199"></a><span class="ln">   199</span>			case shouldEscape(c, mode):
+<a id="L200"></a><span class="ln">   200</span>				t[j] = &#39;%&#39;
+<a id="L201"></a><span class="ln">   201</span>				t[j+1] = &#34;0123456789ABCDEF&#34;[c&gt;&gt;4]
+<a id="L202"></a><span class="ln">   202</span>				t[j+2] = &#34;0123456789ABCDEF&#34;[c&amp;15]
+<a id="L203"></a><span class="ln">   203</span>				j += 3
+<a id="L204"></a><span class="ln">   204</span>			default:
+<a id="L205"></a><span class="ln">   205</span>				t[j] = s[i]
+<a id="L206"></a><span class="ln">   206</span>				j++
+<a id="L207"></a><span class="ln">   207</span>			}
+<a id="L208"></a><span class="ln">   208</span>		}
+<a id="L209"></a><span class="ln">   209</span>		return string(t)
+<a id="L210"></a><span class="ln">   210</span>	}
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// A URL represents a parsed URL (technically, a URI reference).</span>
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// The general form represented is:</span>
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">//</span>
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">//	scheme://[userinfo@]host/path[?query][#fragment]</span>
+<a id="L216"></a><span class="ln">   216</span>	<span class="comment">//</span>
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// URLs that do not start with a slash after the scheme are interpreted as:</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">//</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">//	scheme:opaque[?query][#fragment]</span>
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">//</span>
+<a id="L221"></a><span class="ln">   221</span>	type URL struct {
+<a id="L222"></a><span class="ln">   222</span>		Scheme   string
+<a id="L223"></a><span class="ln">   223</span>		Opaque   string    <span class="comment">// encoded opaque data</span>
+<a id="L224"></a><span class="ln">   224</span>		User     *Userinfo <span class="comment">// username and password information</span>
+<a id="L225"></a><span class="ln">   225</span>		Host     string
+<a id="L226"></a><span class="ln">   226</span>		Path     string
+<a id="L227"></a><span class="ln">   227</span>		RawQuery string <span class="comment">// encoded query values, without &#39;?&#39;</span>
+<a id="L228"></a><span class="ln">   228</span>		Fragment string <span class="comment">// fragment for references, without &#39;#&#39;</span>
+<a id="L229"></a><span class="ln">   229</span>	}
+<a id="L230"></a><span class="ln">   230</span>	
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// User returns a Userinfo containing the provided username</span>
+<a id="L232"></a><span class="ln">   232</span>	<span class="comment">// and no password set.</span>
+<a id="L233"></a><span class="ln">   233</span>	func User(username string) *Userinfo {
+<a id="L234"></a><span class="ln">   234</span>		return &amp;Userinfo{username, &#34;&#34;, false}
+<a id="L235"></a><span class="ln">   235</span>	}
+<a id="L236"></a><span class="ln">   236</span>	
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">// UserPassword returns a Userinfo containing the provided username</span>
+<a id="L238"></a><span class="ln">   238</span>	<span class="comment">// and password.</span>
+<a id="L239"></a><span class="ln">   239</span>	<span class="comment">// This functionality should only be used with legacy web sites.</span>
+<a id="L240"></a><span class="ln">   240</span>	<span class="comment">// RFC 2396 warns that interpreting Userinfo this way</span>
+<a id="L241"></a><span class="ln">   241</span>	<span class="comment">// ``is NOT RECOMMENDED, because the passing of authentication</span>
+<a id="L242"></a><span class="ln">   242</span>	<span class="comment">// information in clear text (such as URI) has proven to be a</span>
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// security risk in almost every case where it has been used.&#39;&#39;</span>
+<a id="L244"></a><span class="ln">   244</span>	func UserPassword(username, password string) *Userinfo {
+<a id="L245"></a><span class="ln">   245</span>		return &amp;Userinfo{username, password, true}
+<a id="L246"></a><span class="ln">   246</span>	}
+<a id="L247"></a><span class="ln">   247</span>	
+<a id="L248"></a><span class="ln">   248</span>	<span class="comment">// The Userinfo type is an immutable encapsulation of username and</span>
+<a id="L249"></a><span class="ln">   249</span>	<span class="comment">// password details for a URL. An existing Userinfo value is guaranteed</span>
+<a id="L250"></a><span class="ln">   250</span>	<span class="comment">// to have a username set (potentially empty, as allowed by RFC 2396),</span>
+<a id="L251"></a><span class="ln">   251</span>	<span class="comment">// and optionally a password.</span>
+<a id="L252"></a><span class="ln">   252</span>	type Userinfo struct {
+<a id="L253"></a><span class="ln">   253</span>		username    string
+<a id="L254"></a><span class="ln">   254</span>		password    string
+<a id="L255"></a><span class="ln">   255</span>		passwordSet bool
+<a id="L256"></a><span class="ln">   256</span>	}
+<a id="L257"></a><span class="ln">   257</span>	
+<a id="L258"></a><span class="ln">   258</span>	<span class="comment">// Username returns the username.</span>
+<a id="L259"></a><span class="ln">   259</span>	func (u *Userinfo) Username() string {
+<a id="L260"></a><span class="ln">   260</span>		return u.username
+<a id="L261"></a><span class="ln">   261</span>	}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>	<span class="comment">// Password returns the password in case it is set, and whether it is set.</span>
+<a id="L264"></a><span class="ln">   264</span>	func (u *Userinfo) Password() (string, bool) {
+<a id="L265"></a><span class="ln">   265</span>		if u.passwordSet {
+<a id="L266"></a><span class="ln">   266</span>			return u.password, true
+<a id="L267"></a><span class="ln">   267</span>		}
+<a id="L268"></a><span class="ln">   268</span>		return &#34;&#34;, false
+<a id="L269"></a><span class="ln">   269</span>	}
+<a id="L270"></a><span class="ln">   270</span>	
+<a id="L271"></a><span class="ln">   271</span>	<span class="comment">// String returns the encoded userinfo information in the standard form</span>
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// of &#34;username[:password]&#34;.</span>
+<a id="L273"></a><span class="ln">   273</span>	func (u *Userinfo) String() string {
+<a id="L274"></a><span class="ln">   274</span>		s := escape(u.username, encodeUserPassword)
+<a id="L275"></a><span class="ln">   275</span>		if u.passwordSet {
+<a id="L276"></a><span class="ln">   276</span>			s += &#34;:&#34; + escape(u.password, encodeUserPassword)
+<a id="L277"></a><span class="ln">   277</span>		}
+<a id="L278"></a><span class="ln">   278</span>		return s
+<a id="L279"></a><span class="ln">   279</span>	}
+<a id="L280"></a><span class="ln">   280</span>	
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">// Maybe rawurl is of the form scheme:path.</span>
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// (Scheme must be [a-zA-Z][a-zA-Z0-9+-.]*)</span>
+<a id="L283"></a><span class="ln">   283</span>	<span class="comment">// If so, return scheme, path; else return &#34;&#34;, rawurl.</span>
+<a id="L284"></a><span class="ln">   284</span>	func getscheme(rawurl string) (scheme, path string, err error) {
+<a id="L285"></a><span class="ln">   285</span>		for i := 0; i &lt; len(rawurl); i++ {
+<a id="L286"></a><span class="ln">   286</span>			c := rawurl[i]
+<a id="L287"></a><span class="ln">   287</span>			switch {
+<a id="L288"></a><span class="ln">   288</span>			case &#39;a&#39; &lt;= c &amp;&amp; c &lt;= &#39;z&#39; || &#39;A&#39; &lt;= c &amp;&amp; c &lt;= &#39;Z&#39;:
+<a id="L289"></a><span class="ln">   289</span>			<span class="comment">// do nothing</span>
+<a id="L290"></a><span class="ln">   290</span>			case &#39;0&#39; &lt;= c &amp;&amp; c &lt;= &#39;9&#39; || c == &#39;+&#39; || c == &#39;-&#39; || c == &#39;.&#39;:
+<a id="L291"></a><span class="ln">   291</span>				if i == 0 {
+<a id="L292"></a><span class="ln">   292</span>					return &#34;&#34;, rawurl, nil
+<a id="L293"></a><span class="ln">   293</span>				}
+<a id="L294"></a><span class="ln">   294</span>			case c == &#39;:&#39;:
+<a id="L295"></a><span class="ln">   295</span>				if i == 0 {
+<a id="L296"></a><span class="ln">   296</span>					return &#34;&#34;, &#34;&#34;, errors.New(&#34;missing protocol scheme&#34;)
+<a id="L297"></a><span class="ln">   297</span>				}
+<a id="L298"></a><span class="ln">   298</span>				return rawurl[0:i], rawurl[i+1:], nil
+<a id="L299"></a><span class="ln">   299</span>			default:
+<a id="L300"></a><span class="ln">   300</span>				<span class="comment">// we have encountered an invalid character,</span>
+<a id="L301"></a><span class="ln">   301</span>				<span class="comment">// so there is no valid scheme</span>
+<a id="L302"></a><span class="ln">   302</span>				return &#34;&#34;, rawurl, nil
+<a id="L303"></a><span class="ln">   303</span>			}
+<a id="L304"></a><span class="ln">   304</span>		}
+<a id="L305"></a><span class="ln">   305</span>		return &#34;&#34;, rawurl, nil
+<a id="L306"></a><span class="ln">   306</span>	}
+<a id="L307"></a><span class="ln">   307</span>	
+<a id="L308"></a><span class="ln">   308</span>	<span class="comment">// Maybe s is of the form t c u.</span>
+<a id="L309"></a><span class="ln">   309</span>	<span class="comment">// If so, return t, c u (or t, u if cutc == true).</span>
+<a id="L310"></a><span class="ln">   310</span>	<span class="comment">// If not, return s, &#34;&#34;.</span>
+<a id="L311"></a><span class="ln">   311</span>	func split(s string, c byte, cutc bool) (string, string) {
+<a id="L312"></a><span class="ln">   312</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L313"></a><span class="ln">   313</span>			if s[i] == c {
+<a id="L314"></a><span class="ln">   314</span>				if cutc {
+<a id="L315"></a><span class="ln">   315</span>					return s[0:i], s[i+1:]
+<a id="L316"></a><span class="ln">   316</span>				}
+<a id="L317"></a><span class="ln">   317</span>				return s[0:i], s[i:]
+<a id="L318"></a><span class="ln">   318</span>			}
+<a id="L319"></a><span class="ln">   319</span>		}
+<a id="L320"></a><span class="ln">   320</span>		return s, &#34;&#34;
+<a id="L321"></a><span class="ln">   321</span>	}
+<a id="L322"></a><span class="ln">   322</span>	
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// Parse parses rawurl into a URL structure.</span>
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">// The rawurl may be relative or absolute.</span>
+<a id="L325"></a><span class="ln">   325</span>	func Parse(rawurl string) (url *URL, err error) {
+<a id="L326"></a><span class="ln">   326</span>		<span class="comment">// Cut off #frag</span>
+<a id="L327"></a><span class="ln">   327</span>		u, frag := split(rawurl, &#39;#&#39;, true)
+<a id="L328"></a><span class="ln">   328</span>		if url, err = parse(u, false); err != nil {
+<a id="L329"></a><span class="ln">   329</span>			return nil, err
+<a id="L330"></a><span class="ln">   330</span>		}
+<a id="L331"></a><span class="ln">   331</span>		if frag == &#34;&#34; {
+<a id="L332"></a><span class="ln">   332</span>			return url, nil
+<a id="L333"></a><span class="ln">   333</span>		}
+<a id="L334"></a><span class="ln">   334</span>		if url.Fragment, err = unescape(frag, encodeFragment); err != nil {
+<a id="L335"></a><span class="ln">   335</span>			return nil, &amp;Error{&#34;parse&#34;, rawurl, err}
+<a id="L336"></a><span class="ln">   336</span>		}
+<a id="L337"></a><span class="ln">   337</span>		return url, nil
+<a id="L338"></a><span class="ln">   338</span>	}
+<a id="L339"></a><span class="ln">   339</span>	
+<a id="L340"></a><span class="ln">   340</span>	<span class="comment">// ParseRequestURI parses rawurl into a URL structure.  It assumes that</span>
+<a id="L341"></a><span class="ln">   341</span>	<span class="comment">// rawurl was received in an HTTP request, so the rawurl is interpreted</span>
+<a id="L342"></a><span class="ln">   342</span>	<span class="comment">// only as an absolute URI or an absolute path.</span>
+<a id="L343"></a><span class="ln">   343</span>	<span class="comment">// The string rawurl is assumed not to have a #fragment suffix.</span>
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// (Web browsers strip #fragment before sending the URL to a web server.)</span>
+<a id="L345"></a><span class="ln">   345</span>	func ParseRequestURI(rawurl string) (url *URL, err error) {
+<a id="L346"></a><span class="ln">   346</span>		return parse(rawurl, true)
+<a id="L347"></a><span class="ln">   347</span>	}
+<a id="L348"></a><span class="ln">   348</span>	
+<a id="L349"></a><span class="ln">   349</span>	<span class="comment">// parse parses a URL from a string in one of two contexts.  If</span>
+<a id="L350"></a><span class="ln">   350</span>	<span class="comment">// viaRequest is true, the URL is assumed to have arrived via an HTTP request,</span>
+<a id="L351"></a><span class="ln">   351</span>	<span class="comment">// in which case only absolute URLs or path-absolute relative URLs are allowed.</span>
+<a id="L352"></a><span class="ln">   352</span>	<span class="comment">// If viaRequest is false, all forms of relative URLs are allowed.</span>
+<a id="L353"></a><span class="ln">   353</span>	func parse(rawurl string, viaRequest bool) (url *URL, err error) {
+<a id="L354"></a><span class="ln">   354</span>		var rest string
+<a id="L355"></a><span class="ln">   355</span>	
+<a id="L356"></a><span class="ln">   356</span>		if rawurl == &#34;&#34; {
+<a id="L357"></a><span class="ln">   357</span>			err = errors.New(&#34;empty url&#34;)
+<a id="L358"></a><span class="ln">   358</span>			goto Error
+<a id="L359"></a><span class="ln">   359</span>		}
+<a id="L360"></a><span class="ln">   360</span>		url = new(URL)
+<a id="L361"></a><span class="ln">   361</span>	
+<a id="L362"></a><span class="ln">   362</span>		<span class="comment">// Split off possible leading &#34;http:&#34;, &#34;mailto:&#34;, etc.</span>
+<a id="L363"></a><span class="ln">   363</span>		<span class="comment">// Cannot contain escaped characters.</span>
+<a id="L364"></a><span class="ln">   364</span>		if url.Scheme, rest, err = getscheme(rawurl); err != nil {
+<a id="L365"></a><span class="ln">   365</span>			goto Error
+<a id="L366"></a><span class="ln">   366</span>		}
+<a id="L367"></a><span class="ln">   367</span>	
+<a id="L368"></a><span class="ln">   368</span>		rest, url.RawQuery = split(rest, &#39;?&#39;, true)
+<a id="L369"></a><span class="ln">   369</span>	
+<a id="L370"></a><span class="ln">   370</span>		if !strings.HasPrefix(rest, &#34;/&#34;) {
+<a id="L371"></a><span class="ln">   371</span>			if url.Scheme != &#34;&#34; {
+<a id="L372"></a><span class="ln">   372</span>				<span class="comment">// We consider rootless paths per RFC 3986 as opaque.</span>
+<a id="L373"></a><span class="ln">   373</span>				url.Opaque = rest
+<a id="L374"></a><span class="ln">   374</span>				return url, nil
+<a id="L375"></a><span class="ln">   375</span>			}
+<a id="L376"></a><span class="ln">   376</span>			if viaRequest {
+<a id="L377"></a><span class="ln">   377</span>				err = errors.New(&#34;invalid URI for request&#34;)
+<a id="L378"></a><span class="ln">   378</span>				goto Error
+<a id="L379"></a><span class="ln">   379</span>			}
+<a id="L380"></a><span class="ln">   380</span>		}
+<a id="L381"></a><span class="ln">   381</span>	
+<a id="L382"></a><span class="ln">   382</span>		if (url.Scheme != &#34;&#34; || !viaRequest) &amp;&amp; strings.HasPrefix(rest, &#34;//&#34;) &amp;&amp; !strings.HasPrefix(rest, &#34;///&#34;) {
+<a id="L383"></a><span class="ln">   383</span>			var authority string
+<a id="L384"></a><span class="ln">   384</span>			authority, rest = split(rest[2:], &#39;/&#39;, false)
+<a id="L385"></a><span class="ln">   385</span>			url.User, url.Host, err = parseAuthority(authority)
+<a id="L386"></a><span class="ln">   386</span>			if err != nil {
+<a id="L387"></a><span class="ln">   387</span>				goto Error
+<a id="L388"></a><span class="ln">   388</span>			}
+<a id="L389"></a><span class="ln">   389</span>			if strings.Contains(url.Host, &#34;%&#34;) {
+<a id="L390"></a><span class="ln">   390</span>				err = errors.New(&#34;hexadecimal escape in host&#34;)
+<a id="L391"></a><span class="ln">   391</span>				goto Error
+<a id="L392"></a><span class="ln">   392</span>			}
+<a id="L393"></a><span class="ln">   393</span>		}
+<a id="L394"></a><span class="ln">   394</span>		if url.Path, err = unescape(rest, encodePath); err != nil {
+<a id="L395"></a><span class="ln">   395</span>			goto Error
+<a id="L396"></a><span class="ln">   396</span>		}
+<a id="L397"></a><span class="ln">   397</span>		return url, nil
+<a id="L398"></a><span class="ln">   398</span>	
+<a id="L399"></a><span class="ln">   399</span>	Error:
+<a id="L400"></a><span class="ln">   400</span>		return nil, &amp;Error{&#34;parse&#34;, rawurl, err}
+<a id="L401"></a><span class="ln">   401</span>	}
+<a id="L402"></a><span class="ln">   402</span>	
+<a id="L403"></a><span class="ln">   403</span>	func parseAuthority(authority string) (user *Userinfo, host string, err error) {
+<a id="L404"></a><span class="ln">   404</span>		if strings.Index(authority, &#34;@&#34;) &lt; 0 {
+<a id="L405"></a><span class="ln">   405</span>			host = authority
+<a id="L406"></a><span class="ln">   406</span>			return
+<a id="L407"></a><span class="ln">   407</span>		}
+<a id="L408"></a><span class="ln">   408</span>		userinfo, host := split(authority, &#39;@&#39;, true)
+<a id="L409"></a><span class="ln">   409</span>		if strings.Index(userinfo, &#34;:&#34;) &lt; 0 {
+<a id="L410"></a><span class="ln">   410</span>			if userinfo, err = unescape(userinfo, encodeUserPassword); err != nil {
+<a id="L411"></a><span class="ln">   411</span>				return
+<a id="L412"></a><span class="ln">   412</span>			}
+<a id="L413"></a><span class="ln">   413</span>			user = User(userinfo)
+<a id="L414"></a><span class="ln">   414</span>		} else {
+<a id="L415"></a><span class="ln">   415</span>			username, password := split(userinfo, &#39;:&#39;, true)
+<a id="L416"></a><span class="ln">   416</span>			if username, err = unescape(username, encodeUserPassword); err != nil {
+<a id="L417"></a><span class="ln">   417</span>				return
+<a id="L418"></a><span class="ln">   418</span>			}
+<a id="L419"></a><span class="ln">   419</span>			if password, err = unescape(password, encodeUserPassword); err != nil {
+<a id="L420"></a><span class="ln">   420</span>				return
+<a id="L421"></a><span class="ln">   421</span>			}
+<a id="L422"></a><span class="ln">   422</span>			user = UserPassword(username, password)
+<a id="L423"></a><span class="ln">   423</span>		}
+<a id="L424"></a><span class="ln">   424</span>		return
+<a id="L425"></a><span class="ln">   425</span>	}
+<a id="L426"></a><span class="ln">   426</span>	
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">// String reassembles the URL into a valid URL string.</span>
+<a id="L428"></a><span class="ln">   428</span>	func (u *URL) String() string {
+<a id="L429"></a><span class="ln">   429</span>		<span class="comment">// TODO: Rewrite to use bytes.Buffer</span>
+<a id="L430"></a><span class="ln">   430</span>		result := &#34;&#34;
+<a id="L431"></a><span class="ln">   431</span>		if u.Scheme != &#34;&#34; {
+<a id="L432"></a><span class="ln">   432</span>			result += u.Scheme + &#34;:&#34;
+<a id="L433"></a><span class="ln">   433</span>		}
+<a id="L434"></a><span class="ln">   434</span>		if u.Opaque != &#34;&#34; {
+<a id="L435"></a><span class="ln">   435</span>			result += u.Opaque
+<a id="L436"></a><span class="ln">   436</span>		} else {
+<a id="L437"></a><span class="ln">   437</span>			if u.Host != &#34;&#34; || u.User != nil {
+<a id="L438"></a><span class="ln">   438</span>				result += &#34;//&#34;
+<a id="L439"></a><span class="ln">   439</span>				if u := u.User; u != nil {
+<a id="L440"></a><span class="ln">   440</span>					result += u.String() + &#34;@&#34;
+<a id="L441"></a><span class="ln">   441</span>				}
+<a id="L442"></a><span class="ln">   442</span>				result += u.Host
+<a id="L443"></a><span class="ln">   443</span>			}
+<a id="L444"></a><span class="ln">   444</span>			result += escape(u.Path, encodePath)
+<a id="L445"></a><span class="ln">   445</span>		}
+<a id="L446"></a><span class="ln">   446</span>		if u.RawQuery != &#34;&#34; {
+<a id="L447"></a><span class="ln">   447</span>			result += &#34;?&#34; + u.RawQuery
+<a id="L448"></a><span class="ln">   448</span>		}
+<a id="L449"></a><span class="ln">   449</span>		if u.Fragment != &#34;&#34; {
+<a id="L450"></a><span class="ln">   450</span>			result += &#34;#&#34; + escape(u.Fragment, encodeFragment)
+<a id="L451"></a><span class="ln">   451</span>		}
+<a id="L452"></a><span class="ln">   452</span>		return result
+<a id="L453"></a><span class="ln">   453</span>	}
+<a id="L454"></a><span class="ln">   454</span>	
+<a id="L455"></a><span class="ln">   455</span>	<span class="comment">// Values maps a string key to a list of values.</span>
+<a id="L456"></a><span class="ln">   456</span>	<span class="comment">// It is typically used for query parameters and form values.</span>
+<a id="L457"></a><span class="ln">   457</span>	<span class="comment">// Unlike in the http.Header map, the keys in a Values map</span>
+<a id="L458"></a><span class="ln">   458</span>	<span class="comment">// are case-sensitive.</span>
+<a id="L459"></a><span class="ln">   459</span>	type Values map[string][]string
+<a id="L460"></a><span class="ln">   460</span>	
+<a id="L461"></a><span class="ln">   461</span>	<span class="comment">// Get gets the first value associated with the given key.</span>
+<a id="L462"></a><span class="ln">   462</span>	<span class="comment">// If there are no values associated with the key, Get returns</span>
+<a id="L463"></a><span class="ln">   463</span>	<span class="comment">// the empty string. To access multiple values, use the map</span>
+<a id="L464"></a><span class="ln">   464</span>	<span class="comment">// directly.</span>
+<a id="L465"></a><span class="ln">   465</span>	func (v Values) Get(key string) string {
+<a id="L466"></a><span class="ln">   466</span>		if v == nil {
+<a id="L467"></a><span class="ln">   467</span>			return &#34;&#34;
+<a id="L468"></a><span class="ln">   468</span>		}
+<a id="L469"></a><span class="ln">   469</span>		vs, ok := v[key]
+<a id="L470"></a><span class="ln">   470</span>		if !ok || len(vs) == 0 {
+<a id="L471"></a><span class="ln">   471</span>			return &#34;&#34;
+<a id="L472"></a><span class="ln">   472</span>		}
+<a id="L473"></a><span class="ln">   473</span>		return vs[0]
+<a id="L474"></a><span class="ln">   474</span>	}
+<a id="L475"></a><span class="ln">   475</span>	
+<a id="L476"></a><span class="ln">   476</span>	<span class="comment">// Set sets the key to value. It replaces any existing</span>
+<a id="L477"></a><span class="ln">   477</span>	<span class="comment">// values.</span>
+<a id="L478"></a><span class="ln">   478</span>	func (v Values) Set(key, value string) {
+<a id="L479"></a><span class="ln">   479</span>		v[key] = []string{value}
+<a id="L480"></a><span class="ln">   480</span>	}
+<a id="L481"></a><span class="ln">   481</span>	
+<a id="L482"></a><span class="ln">   482</span>	<span class="comment">// Add adds the key to value. It appends to any existing</span>
+<a id="L483"></a><span class="ln">   483</span>	<span class="comment">// values associated with key.</span>
+<a id="L484"></a><span class="ln">   484</span>	func (v Values) Add(key, value string) {
+<a id="L485"></a><span class="ln">   485</span>		v[key] = append(v[key], value)
+<a id="L486"></a><span class="ln">   486</span>	}
+<a id="L487"></a><span class="ln">   487</span>	
+<a id="L488"></a><span class="ln">   488</span>	<span class="comment">// Del deletes the values associated with key.</span>
+<a id="L489"></a><span class="ln">   489</span>	func (v Values) Del(key string) {
+<a id="L490"></a><span class="ln">   490</span>		delete(v, key)
+<a id="L491"></a><span class="ln">   491</span>	}
+<a id="L492"></a><span class="ln">   492</span>	
+<a id="L493"></a><span class="ln">   493</span>	<span class="comment">// ParseQuery parses the URL-encoded query string and returns</span>
+<a id="L494"></a><span class="ln">   494</span>	<span class="comment">// a map listing the values specified for each key.</span>
+<a id="L495"></a><span class="ln">   495</span>	<span class="comment">// ParseQuery always returns a non-nil map containing all the</span>
+<a id="L496"></a><span class="ln">   496</span>	<span class="comment">// valid query parameters found; err describes the first decoding error</span>
+<a id="L497"></a><span class="ln">   497</span>	<span class="comment">// encountered, if any.</span>
+<a id="L498"></a><span class="ln">   498</span>	func ParseQuery(query string) (m Values, err error) {
+<a id="L499"></a><span class="ln">   499</span>		m = make(Values)
+<a id="L500"></a><span class="ln">   500</span>		err = parseQuery(m, query)
+<a id="L501"></a><span class="ln">   501</span>		return
+<a id="L502"></a><span class="ln">   502</span>	}
+<a id="L503"></a><span class="ln">   503</span>	
+<a id="L504"></a><span class="ln">   504</span>	func parseQuery(m Values, query string) (err error) {
+<a id="L505"></a><span class="ln">   505</span>		for query != &#34;&#34; {
+<a id="L506"></a><span class="ln">   506</span>			key := query
+<a id="L507"></a><span class="ln">   507</span>			if i := strings.IndexAny(key, &#34;&amp;;&#34;); i &gt;= 0 {
+<a id="L508"></a><span class="ln">   508</span>				key, query = key[:i], key[i+1:]
+<a id="L509"></a><span class="ln">   509</span>			} else {
+<a id="L510"></a><span class="ln">   510</span>				query = &#34;&#34;
+<a id="L511"></a><span class="ln">   511</span>			}
+<a id="L512"></a><span class="ln">   512</span>			if key == &#34;&#34; {
+<a id="L513"></a><span class="ln">   513</span>				continue
+<a id="L514"></a><span class="ln">   514</span>			}
+<a id="L515"></a><span class="ln">   515</span>			value := &#34;&#34;
+<a id="L516"></a><span class="ln">   516</span>			if i := strings.Index(key, &#34;=&#34;); i &gt;= 0 {
+<a id="L517"></a><span class="ln">   517</span>				key, value = key[:i], key[i+1:]
+<a id="L518"></a><span class="ln">   518</span>			}
+<a id="L519"></a><span class="ln">   519</span>			key, err1 := QueryUnescape(key)
+<a id="L520"></a><span class="ln">   520</span>			if err1 != nil {
+<a id="L521"></a><span class="ln">   521</span>				err = err1
+<a id="L522"></a><span class="ln">   522</span>				continue
+<a id="L523"></a><span class="ln">   523</span>			}
+<a id="L524"></a><span class="ln">   524</span>			value, err1 = QueryUnescape(value)
+<a id="L525"></a><span class="ln">   525</span>			if err1 != nil {
+<a id="L526"></a><span class="ln">   526</span>				err = err1
+<a id="L527"></a><span class="ln">   527</span>				continue
+<a id="L528"></a><span class="ln">   528</span>			}
+<a id="L529"></a><span class="ln">   529</span>			m[key] = append(m[key], value)
+<a id="L530"></a><span class="ln">   530</span>		}
+<a id="L531"></a><span class="ln">   531</span>		return err
+<a id="L532"></a><span class="ln">   532</span>	}
+<a id="L533"></a><span class="ln">   533</span>	
+<a id="L534"></a><span class="ln">   534</span>	<span class="comment">// Encode encodes the values into ``URL encoded&#39;&#39; form.</span>
+<a id="L535"></a><span class="ln">   535</span>	<span class="comment">// e.g. &#34;foo=bar&amp;bar=baz&#34;</span>
+<a id="L536"></a><span class="ln">   536</span>	func (v Values) Encode() string {
+<a id="L537"></a><span class="ln">   537</span>		if v == nil {
+<a id="L538"></a><span class="ln">   538</span>			return &#34;&#34;
+<a id="L539"></a><span class="ln">   539</span>		}
+<a id="L540"></a><span class="ln">   540</span>		parts := make([]string, 0, len(v)) <span class="comment">// will be large enough for most uses</span>
+<a id="L541"></a><span class="ln">   541</span>		for k, vs := range v {
+<a id="L542"></a><span class="ln">   542</span>			prefix := QueryEscape(k) + &#34;=&#34;
+<a id="L543"></a><span class="ln">   543</span>			for _, v := range vs {
+<a id="L544"></a><span class="ln">   544</span>				parts = append(parts, prefix+QueryEscape(v))
+<a id="L545"></a><span class="ln">   545</span>			}
+<a id="L546"></a><span class="ln">   546</span>		}
+<a id="L547"></a><span class="ln">   547</span>		return strings.Join(parts, &#34;&amp;&#34;)
+<a id="L548"></a><span class="ln">   548</span>	}
+<a id="L549"></a><span class="ln">   549</span>	
+<a id="L550"></a><span class="ln">   550</span>	<span class="comment">// resolvePath applies special path segments from refs and applies</span>
+<a id="L551"></a><span class="ln">   551</span>	<span class="comment">// them to base, per RFC 2396.</span>
+<a id="L552"></a><span class="ln">   552</span>	func resolvePath(basepath string, refpath string) string {
+<a id="L553"></a><span class="ln">   553</span>		base := strings.Split(basepath, &#34;/&#34;)
+<a id="L554"></a><span class="ln">   554</span>		refs := strings.Split(refpath, &#34;/&#34;)
+<a id="L555"></a><span class="ln">   555</span>		if len(base) == 0 {
+<a id="L556"></a><span class="ln">   556</span>			base = []string{&#34;&#34;}
+<a id="L557"></a><span class="ln">   557</span>		}
+<a id="L558"></a><span class="ln">   558</span>		for idx, ref := range refs {
+<a id="L559"></a><span class="ln">   559</span>			switch {
+<a id="L560"></a><span class="ln">   560</span>			case ref == &#34;.&#34;:
+<a id="L561"></a><span class="ln">   561</span>				base[len(base)-1] = &#34;&#34;
+<a id="L562"></a><span class="ln">   562</span>			case ref == &#34;..&#34;:
+<a id="L563"></a><span class="ln">   563</span>				newLen := len(base) - 1
+<a id="L564"></a><span class="ln">   564</span>				if newLen &lt; 1 {
+<a id="L565"></a><span class="ln">   565</span>					newLen = 1
+<a id="L566"></a><span class="ln">   566</span>				}
+<a id="L567"></a><span class="ln">   567</span>				base = base[0:newLen]
+<a id="L568"></a><span class="ln">   568</span>				base[len(base)-1] = &#34;&#34;
+<a id="L569"></a><span class="ln">   569</span>			default:
+<a id="L570"></a><span class="ln">   570</span>				if idx == 0 || base[len(base)-1] == &#34;&#34; {
+<a id="L571"></a><span class="ln">   571</span>					base[len(base)-1] = ref
+<a id="L572"></a><span class="ln">   572</span>				} else {
+<a id="L573"></a><span class="ln">   573</span>					base = append(base, ref)
+<a id="L574"></a><span class="ln">   574</span>				}
+<a id="L575"></a><span class="ln">   575</span>			}
+<a id="L576"></a><span class="ln">   576</span>		}
+<a id="L577"></a><span class="ln">   577</span>		return strings.Join(base, &#34;/&#34;)
+<a id="L578"></a><span class="ln">   578</span>	}
+<a id="L579"></a><span class="ln">   579</span>	
+<a id="L580"></a><span class="ln">   580</span>	<span class="comment">// IsAbs returns true if the URL is absolute.</span>
+<a id="L581"></a><span class="ln">   581</span>	func (u *URL) IsAbs() bool {
+<a id="L582"></a><span class="ln">   582</span>		return u.Scheme != &#34;&#34;
+<a id="L583"></a><span class="ln">   583</span>	}
+<a id="L584"></a><span class="ln">   584</span>	
+<a id="L585"></a><span class="ln">   585</span>	<span class="comment">// Parse parses a URL in the context of the receiver.  The provided URL</span>
+<a id="L586"></a><span class="ln">   586</span>	<span class="comment">// may be relative or absolute.  Parse returns nil, err on parse</span>
+<a id="L587"></a><span class="ln">   587</span>	<span class="comment">// failure, otherwise its return value is the same as ResolveReference.</span>
+<a id="L588"></a><span class="ln">   588</span>	func (u *URL) Parse(ref string) (*URL, error) {
+<a id="L589"></a><span class="ln">   589</span>		refurl, err := Parse(ref)
+<a id="L590"></a><span class="ln">   590</span>		if err != nil {
+<a id="L591"></a><span class="ln">   591</span>			return nil, err
+<a id="L592"></a><span class="ln">   592</span>		}
+<a id="L593"></a><span class="ln">   593</span>		return u.ResolveReference(refurl), nil
+<a id="L594"></a><span class="ln">   594</span>	}
+<a id="L595"></a><span class="ln">   595</span>	
+<a id="L596"></a><span class="ln">   596</span>	<span class="comment">// ResolveReference resolves a URI reference to an absolute URI from</span>
+<a id="L597"></a><span class="ln">   597</span>	<span class="comment">// an absolute base URI, per RFC 2396 Section 5.2.  The URI reference</span>
+<a id="L598"></a><span class="ln">   598</span>	<span class="comment">// may be relative or absolute.  ResolveReference always returns a new</span>
+<a id="L599"></a><span class="ln">   599</span>	<span class="comment">// URL instance, even if the returned URL is identical to either the</span>
+<a id="L600"></a><span class="ln">   600</span>	<span class="comment">// base or reference. If ref is an absolute URL, then ResolveReference</span>
+<a id="L601"></a><span class="ln">   601</span>	<span class="comment">// ignores base and returns a copy of ref.</span>
+<a id="L602"></a><span class="ln">   602</span>	func (u *URL) ResolveReference(ref *URL) *URL {
+<a id="L603"></a><span class="ln">   603</span>		if ref.IsAbs() {
+<a id="L604"></a><span class="ln">   604</span>			url := *ref
+<a id="L605"></a><span class="ln">   605</span>			return &amp;url
+<a id="L606"></a><span class="ln">   606</span>		}
+<a id="L607"></a><span class="ln">   607</span>		<span class="comment">// relativeURI = ( net_path | abs_path | rel_path ) [ &#34;?&#34; query ]</span>
+<a id="L608"></a><span class="ln">   608</span>		url := *u
+<a id="L609"></a><span class="ln">   609</span>		url.RawQuery = ref.RawQuery
+<a id="L610"></a><span class="ln">   610</span>		url.Fragment = ref.Fragment
+<a id="L611"></a><span class="ln">   611</span>		if ref.Opaque != &#34;&#34; {
+<a id="L612"></a><span class="ln">   612</span>			url.Opaque = ref.Opaque
+<a id="L613"></a><span class="ln">   613</span>			url.User = nil
+<a id="L614"></a><span class="ln">   614</span>			url.Host = &#34;&#34;
+<a id="L615"></a><span class="ln">   615</span>			url.Path = &#34;&#34;
+<a id="L616"></a><span class="ln">   616</span>			return &amp;url
+<a id="L617"></a><span class="ln">   617</span>		}
+<a id="L618"></a><span class="ln">   618</span>		if ref.Host != &#34;&#34; || ref.User != nil {
+<a id="L619"></a><span class="ln">   619</span>			<span class="comment">// The &#34;net_path&#34; case.</span>
+<a id="L620"></a><span class="ln">   620</span>			url.Host = ref.Host
+<a id="L621"></a><span class="ln">   621</span>			url.User = ref.User
+<a id="L622"></a><span class="ln">   622</span>		}
+<a id="L623"></a><span class="ln">   623</span>		if strings.HasPrefix(ref.Path, &#34;/&#34;) {
+<a id="L624"></a><span class="ln">   624</span>			<span class="comment">// The &#34;abs_path&#34; case.</span>
+<a id="L625"></a><span class="ln">   625</span>			url.Path = ref.Path
+<a id="L626"></a><span class="ln">   626</span>		} else {
+<a id="L627"></a><span class="ln">   627</span>			<span class="comment">// The &#34;rel_path&#34; case.</span>
+<a id="L628"></a><span class="ln">   628</span>			path := resolvePath(u.Path, ref.Path)
+<a id="L629"></a><span class="ln">   629</span>			if !strings.HasPrefix(path, &#34;/&#34;) {
+<a id="L630"></a><span class="ln">   630</span>				path = &#34;/&#34; + path
+<a id="L631"></a><span class="ln">   631</span>			}
+<a id="L632"></a><span class="ln">   632</span>			url.Path = path
+<a id="L633"></a><span class="ln">   633</span>		}
+<a id="L634"></a><span class="ln">   634</span>		return &amp;url
+<a id="L635"></a><span class="ln">   635</span>	}
+<a id="L636"></a><span class="ln">   636</span>	
+<a id="L637"></a><span class="ln">   637</span>	<span class="comment">// Query parses RawQuery and returns the corresponding values.</span>
+<a id="L638"></a><span class="ln">   638</span>	func (u *URL) Query() Values {
+<a id="L639"></a><span class="ln">   639</span>		v, _ := ParseQuery(u.RawQuery)
+<a id="L640"></a><span class="ln">   640</span>		return v
+<a id="L641"></a><span class="ln">   641</span>	}
+<a id="L642"></a><span class="ln">   642</span>	
+<a id="L643"></a><span class="ln">   643</span>	<span class="comment">// RequestURI returns the encoded path?query or opaque?query</span>
+<a id="L644"></a><span class="ln">   644</span>	<span class="comment">// string that would be used in an HTTP request for u.</span>
+<a id="L645"></a><span class="ln">   645</span>	func (u *URL) RequestURI() string {
+<a id="L646"></a><span class="ln">   646</span>		result := u.Opaque
+<a id="L647"></a><span class="ln">   647</span>		if result == &#34;&#34; {
+<a id="L648"></a><span class="ln">   648</span>			result = escape(u.Path, encodePath)
+<a id="L649"></a><span class="ln">   649</span>			if result == &#34;&#34; {
+<a id="L650"></a><span class="ln">   650</span>				result = &#34;/&#34;
+<a id="L651"></a><span class="ln">   651</span>			}
+<a id="L652"></a><span class="ln">   652</span>		}
+<a id="L653"></a><span class="ln">   653</span>		if u.RawQuery != &#34;&#34; {
+<a id="L654"></a><span class="ln">   654</span>			result += &#34;?&#34; + u.RawQuery
+<a id="L655"></a><span class="ln">   655</span>		}
+<a id="L656"></a><span class="ln">   656</span>		return result
+<a id="L657"></a><span class="ln">   657</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

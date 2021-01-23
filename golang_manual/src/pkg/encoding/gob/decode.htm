@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/gob/decode.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/gob/decode.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package gob
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// TODO(rsc): When garbage collector changes, revisit</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// the allocations in this file that use unsafe.Pointer.</span>
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	import (
+<a id="L11"></a><span class="ln">    11</span>		&#34;bytes&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;errors&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;io&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;math&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;reflect&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;unsafe&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	var (
+<a id="L20"></a><span class="ln">    20</span>		errBadUint = errors.New(&#34;gob: encoded unsigned integer out of range&#34;)
+<a id="L21"></a><span class="ln">    21</span>		errBadType = errors.New(&#34;gob: unknown type id or corrupted data&#34;)
+<a id="L22"></a><span class="ln">    22</span>		errRange   = errors.New(&#34;gob: bad data: field numbers out of bounds&#34;)
+<a id="L23"></a><span class="ln">    23</span>	)
+<a id="L24"></a><span class="ln">    24</span>	
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// decoderState is the execution state of an instance of the decoder. A new state</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// is created for nested objects.</span>
+<a id="L27"></a><span class="ln">    27</span>	type decoderState struct {
+<a id="L28"></a><span class="ln">    28</span>		dec *Decoder
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// The buffer is stored with an extra indirection because it may be replaced</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// if we load a type during decode (when reading an interface value).</span>
+<a id="L31"></a><span class="ln">    31</span>		b        *bytes.Buffer
+<a id="L32"></a><span class="ln">    32</span>		fieldnum int <span class="comment">// the last field number read.</span>
+<a id="L33"></a><span class="ln">    33</span>		buf      []byte
+<a id="L34"></a><span class="ln">    34</span>		next     *decoderState <span class="comment">// for free list</span>
+<a id="L35"></a><span class="ln">    35</span>	}
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// We pass the bytes.Buffer separately for easier testing of the infrastructure</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">// without requiring a full Decoder.</span>
+<a id="L39"></a><span class="ln">    39</span>	func (dec *Decoder) newDecoderState(buf *bytes.Buffer) *decoderState {
+<a id="L40"></a><span class="ln">    40</span>		d := dec.freeList
+<a id="L41"></a><span class="ln">    41</span>		if d == nil {
+<a id="L42"></a><span class="ln">    42</span>			d = new(decoderState)
+<a id="L43"></a><span class="ln">    43</span>			d.dec = dec
+<a id="L44"></a><span class="ln">    44</span>			d.buf = make([]byte, uint64Size)
+<a id="L45"></a><span class="ln">    45</span>		} else {
+<a id="L46"></a><span class="ln">    46</span>			dec.freeList = d.next
+<a id="L47"></a><span class="ln">    47</span>		}
+<a id="L48"></a><span class="ln">    48</span>		d.b = buf
+<a id="L49"></a><span class="ln">    49</span>		return d
+<a id="L50"></a><span class="ln">    50</span>	}
+<a id="L51"></a><span class="ln">    51</span>	
+<a id="L52"></a><span class="ln">    52</span>	func (dec *Decoder) freeDecoderState(d *decoderState) {
+<a id="L53"></a><span class="ln">    53</span>		d.next = dec.freeList
+<a id="L54"></a><span class="ln">    54</span>		dec.freeList = d
+<a id="L55"></a><span class="ln">    55</span>	}
+<a id="L56"></a><span class="ln">    56</span>	
+<a id="L57"></a><span class="ln">    57</span>	func overflow(name string) error {
+<a id="L58"></a><span class="ln">    58</span>		return errors.New(`value for &#34;` + name + `&#34; out of range`)
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// decodeUintReader reads an encoded unsigned integer from an io.Reader.</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// Used only by the Decoder to read the message length.</span>
+<a id="L63"></a><span class="ln">    63</span>	func decodeUintReader(r io.Reader, buf []byte) (x uint64, width int, err error) {
+<a id="L64"></a><span class="ln">    64</span>		width = 1
+<a id="L65"></a><span class="ln">    65</span>		_, err = r.Read(buf[0:width])
+<a id="L66"></a><span class="ln">    66</span>		if err != nil {
+<a id="L67"></a><span class="ln">    67</span>			return
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		b := buf[0]
+<a id="L70"></a><span class="ln">    70</span>		if b &lt;= 0x7f {
+<a id="L71"></a><span class="ln">    71</span>			return uint64(b), width, nil
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		n := -int(int8(b))
+<a id="L74"></a><span class="ln">    74</span>		if n &gt; uint64Size {
+<a id="L75"></a><span class="ln">    75</span>			err = errBadUint
+<a id="L76"></a><span class="ln">    76</span>			return
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		width, err = io.ReadFull(r, buf[0:n])
+<a id="L79"></a><span class="ln">    79</span>		if err != nil {
+<a id="L80"></a><span class="ln">    80</span>			if err == io.EOF {
+<a id="L81"></a><span class="ln">    81</span>				err = io.ErrUnexpectedEOF
+<a id="L82"></a><span class="ln">    82</span>			}
+<a id="L83"></a><span class="ln">    83</span>			return
+<a id="L84"></a><span class="ln">    84</span>		}
+<a id="L85"></a><span class="ln">    85</span>		<span class="comment">// Could check that the high byte is zero but it&#39;s not worth it.</span>
+<a id="L86"></a><span class="ln">    86</span>		for _, b := range buf[0:width] {
+<a id="L87"></a><span class="ln">    87</span>			x = x&lt;&lt;8 | uint64(b)
+<a id="L88"></a><span class="ln">    88</span>		}
+<a id="L89"></a><span class="ln">    89</span>		width++ <span class="comment">// +1 for length byte</span>
+<a id="L90"></a><span class="ln">    90</span>		return
+<a id="L91"></a><span class="ln">    91</span>	}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// decodeUint reads an encoded unsigned integer from state.r.</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// Does not check for overflow.</span>
+<a id="L95"></a><span class="ln">    95</span>	func (state *decoderState) decodeUint() (x uint64) {
+<a id="L96"></a><span class="ln">    96</span>		b, err := state.b.ReadByte()
+<a id="L97"></a><span class="ln">    97</span>		if err != nil {
+<a id="L98"></a><span class="ln">    98</span>			error_(err)
+<a id="L99"></a><span class="ln">    99</span>		}
+<a id="L100"></a><span class="ln">   100</span>		if b &lt;= 0x7f {
+<a id="L101"></a><span class="ln">   101</span>			return uint64(b)
+<a id="L102"></a><span class="ln">   102</span>		}
+<a id="L103"></a><span class="ln">   103</span>		n := -int(int8(b))
+<a id="L104"></a><span class="ln">   104</span>		if n &gt; uint64Size {
+<a id="L105"></a><span class="ln">   105</span>			error_(errBadUint)
+<a id="L106"></a><span class="ln">   106</span>		}
+<a id="L107"></a><span class="ln">   107</span>		width, err := state.b.Read(state.buf[0:n])
+<a id="L108"></a><span class="ln">   108</span>		if err != nil {
+<a id="L109"></a><span class="ln">   109</span>			error_(err)
+<a id="L110"></a><span class="ln">   110</span>		}
+<a id="L111"></a><span class="ln">   111</span>		<span class="comment">// Don&#39;t need to check error; it&#39;s safe to loop regardless.</span>
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">// Could check that the high byte is zero but it&#39;s not worth it.</span>
+<a id="L113"></a><span class="ln">   113</span>		for _, b := range state.buf[0:width] {
+<a id="L114"></a><span class="ln">   114</span>			x = x&lt;&lt;8 | uint64(b)
+<a id="L115"></a><span class="ln">   115</span>		}
+<a id="L116"></a><span class="ln">   116</span>		return x
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// decodeInt reads an encoded signed integer from state.r.</span>
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">// Does not check for overflow.</span>
+<a id="L121"></a><span class="ln">   121</span>	func (state *decoderState) decodeInt() int64 {
+<a id="L122"></a><span class="ln">   122</span>		x := state.decodeUint()
+<a id="L123"></a><span class="ln">   123</span>		if x&amp;1 != 0 {
+<a id="L124"></a><span class="ln">   124</span>			return ^int64(x &gt;&gt; 1)
+<a id="L125"></a><span class="ln">   125</span>		}
+<a id="L126"></a><span class="ln">   126</span>		return int64(x &gt;&gt; 1)
+<a id="L127"></a><span class="ln">   127</span>	}
+<a id="L128"></a><span class="ln">   128</span>	
+<a id="L129"></a><span class="ln">   129</span>	<span class="comment">// decOp is the signature of a decoding operator for a given type.</span>
+<a id="L130"></a><span class="ln">   130</span>	type decOp func(i *decInstr, state *decoderState, p unsafe.Pointer)
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>	<span class="comment">// The &#39;instructions&#39; of the decoding machine</span>
+<a id="L133"></a><span class="ln">   133</span>	type decInstr struct {
+<a id="L134"></a><span class="ln">   134</span>		op     decOp
+<a id="L135"></a><span class="ln">   135</span>		field  int     <span class="comment">// field number of the wire type</span>
+<a id="L136"></a><span class="ln">   136</span>		indir  int     <span class="comment">// how many pointer indirections to reach the value in the struct</span>
+<a id="L137"></a><span class="ln">   137</span>		offset uintptr <span class="comment">// offset in the structure of the field to encode</span>
+<a id="L138"></a><span class="ln">   138</span>		ovfl   error   <span class="comment">// error message for overflow/underflow (for arrays, of the elements)</span>
+<a id="L139"></a><span class="ln">   139</span>	}
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// Since the encoder writes no zeros, if we arrive at a decoder we have</span>
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// a value to extract and store.  The field number has already been read</span>
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">// (it&#39;s how we knew to call this decoder).</span>
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// Each decoder is responsible for handling any indirections associated</span>
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// with the data structure.  If any pointer so reached is nil, allocation must</span>
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">// be done.</span>
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// Walk the pointer hierarchy, allocating if we find a nil.  Stop one before the end.</span>
+<a id="L149"></a><span class="ln">   149</span>	func decIndirect(p unsafe.Pointer, indir int) unsafe.Pointer {
+<a id="L150"></a><span class="ln">   150</span>		for ; indir &gt; 1; indir-- {
+<a id="L151"></a><span class="ln">   151</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L152"></a><span class="ln">   152</span>				<span class="comment">// Allocation required</span>
+<a id="L153"></a><span class="ln">   153</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(unsafe.Pointer))
+<a id="L154"></a><span class="ln">   154</span>			}
+<a id="L155"></a><span class="ln">   155</span>			p = *(*unsafe.Pointer)(p)
+<a id="L156"></a><span class="ln">   156</span>		}
+<a id="L157"></a><span class="ln">   157</span>		return p
+<a id="L158"></a><span class="ln">   158</span>	}
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">// ignoreUint discards a uint value with no destination.</span>
+<a id="L161"></a><span class="ln">   161</span>	func ignoreUint(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L162"></a><span class="ln">   162</span>		state.decodeUint()
+<a id="L163"></a><span class="ln">   163</span>	}
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// ignoreTwoUints discards a uint value with no destination. It&#39;s used to skip</span>
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// complex values.</span>
+<a id="L167"></a><span class="ln">   167</span>	func ignoreTwoUints(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L168"></a><span class="ln">   168</span>		state.decodeUint()
+<a id="L169"></a><span class="ln">   169</span>		state.decodeUint()
+<a id="L170"></a><span class="ln">   170</span>	}
+<a id="L171"></a><span class="ln">   171</span>	
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// decBool decodes a uint and stores it as a boolean through p.</span>
+<a id="L173"></a><span class="ln">   173</span>	func decBool(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L174"></a><span class="ln">   174</span>		if i.indir &gt; 0 {
+<a id="L175"></a><span class="ln">   175</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L176"></a><span class="ln">   176</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(bool))
+<a id="L177"></a><span class="ln">   177</span>			}
+<a id="L178"></a><span class="ln">   178</span>			p = *(*unsafe.Pointer)(p)
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>		*(*bool)(p) = state.decodeUint() != 0
+<a id="L181"></a><span class="ln">   181</span>	}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>	<span class="comment">// decInt8 decodes an integer and stores it as an int8 through p.</span>
+<a id="L184"></a><span class="ln">   184</span>	func decInt8(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L185"></a><span class="ln">   185</span>		if i.indir &gt; 0 {
+<a id="L186"></a><span class="ln">   186</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L187"></a><span class="ln">   187</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(int8))
+<a id="L188"></a><span class="ln">   188</span>			}
+<a id="L189"></a><span class="ln">   189</span>			p = *(*unsafe.Pointer)(p)
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>		v := state.decodeInt()
+<a id="L192"></a><span class="ln">   192</span>		if v &lt; math.MinInt8 || math.MaxInt8 &lt; v {
+<a id="L193"></a><span class="ln">   193</span>			error_(i.ovfl)
+<a id="L194"></a><span class="ln">   194</span>		} else {
+<a id="L195"></a><span class="ln">   195</span>			*(*int8)(p) = int8(v)
+<a id="L196"></a><span class="ln">   196</span>		}
+<a id="L197"></a><span class="ln">   197</span>	}
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// decUint8 decodes an unsigned integer and stores it as a uint8 through p.</span>
+<a id="L200"></a><span class="ln">   200</span>	func decUint8(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L201"></a><span class="ln">   201</span>		if i.indir &gt; 0 {
+<a id="L202"></a><span class="ln">   202</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L203"></a><span class="ln">   203</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(uint8))
+<a id="L204"></a><span class="ln">   204</span>			}
+<a id="L205"></a><span class="ln">   205</span>			p = *(*unsafe.Pointer)(p)
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>		v := state.decodeUint()
+<a id="L208"></a><span class="ln">   208</span>		if math.MaxUint8 &lt; v {
+<a id="L209"></a><span class="ln">   209</span>			error_(i.ovfl)
+<a id="L210"></a><span class="ln">   210</span>		} else {
+<a id="L211"></a><span class="ln">   211</span>			*(*uint8)(p) = uint8(v)
+<a id="L212"></a><span class="ln">   212</span>		}
+<a id="L213"></a><span class="ln">   213</span>	}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// decInt16 decodes an integer and stores it as an int16 through p.</span>
+<a id="L216"></a><span class="ln">   216</span>	func decInt16(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L217"></a><span class="ln">   217</span>		if i.indir &gt; 0 {
+<a id="L218"></a><span class="ln">   218</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L219"></a><span class="ln">   219</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(int16))
+<a id="L220"></a><span class="ln">   220</span>			}
+<a id="L221"></a><span class="ln">   221</span>			p = *(*unsafe.Pointer)(p)
+<a id="L222"></a><span class="ln">   222</span>		}
+<a id="L223"></a><span class="ln">   223</span>		v := state.decodeInt()
+<a id="L224"></a><span class="ln">   224</span>		if v &lt; math.MinInt16 || math.MaxInt16 &lt; v {
+<a id="L225"></a><span class="ln">   225</span>			error_(i.ovfl)
+<a id="L226"></a><span class="ln">   226</span>		} else {
+<a id="L227"></a><span class="ln">   227</span>			*(*int16)(p) = int16(v)
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>	}
+<a id="L230"></a><span class="ln">   230</span>	
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// decUint16 decodes an unsigned integer and stores it as a uint16 through p.</span>
+<a id="L232"></a><span class="ln">   232</span>	func decUint16(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L233"></a><span class="ln">   233</span>		if i.indir &gt; 0 {
+<a id="L234"></a><span class="ln">   234</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L235"></a><span class="ln">   235</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(uint16))
+<a id="L236"></a><span class="ln">   236</span>			}
+<a id="L237"></a><span class="ln">   237</span>			p = *(*unsafe.Pointer)(p)
+<a id="L238"></a><span class="ln">   238</span>		}
+<a id="L239"></a><span class="ln">   239</span>		v := state.decodeUint()
+<a id="L240"></a><span class="ln">   240</span>		if math.MaxUint16 &lt; v {
+<a id="L241"></a><span class="ln">   241</span>			error_(i.ovfl)
+<a id="L242"></a><span class="ln">   242</span>		} else {
+<a id="L243"></a><span class="ln">   243</span>			*(*uint16)(p) = uint16(v)
+<a id="L244"></a><span class="ln">   244</span>		}
+<a id="L245"></a><span class="ln">   245</span>	}
+<a id="L246"></a><span class="ln">   246</span>	
+<a id="L247"></a><span class="ln">   247</span>	<span class="comment">// decInt32 decodes an integer and stores it as an int32 through p.</span>
+<a id="L248"></a><span class="ln">   248</span>	func decInt32(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L249"></a><span class="ln">   249</span>		if i.indir &gt; 0 {
+<a id="L250"></a><span class="ln">   250</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L251"></a><span class="ln">   251</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(int32))
+<a id="L252"></a><span class="ln">   252</span>			}
+<a id="L253"></a><span class="ln">   253</span>			p = *(*unsafe.Pointer)(p)
+<a id="L254"></a><span class="ln">   254</span>		}
+<a id="L255"></a><span class="ln">   255</span>		v := state.decodeInt()
+<a id="L256"></a><span class="ln">   256</span>		if v &lt; math.MinInt32 || math.MaxInt32 &lt; v {
+<a id="L257"></a><span class="ln">   257</span>			error_(i.ovfl)
+<a id="L258"></a><span class="ln">   258</span>		} else {
+<a id="L259"></a><span class="ln">   259</span>			*(*int32)(p) = int32(v)
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>	}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>	<span class="comment">// decUint32 decodes an unsigned integer and stores it as a uint32 through p.</span>
+<a id="L264"></a><span class="ln">   264</span>	func decUint32(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L265"></a><span class="ln">   265</span>		if i.indir &gt; 0 {
+<a id="L266"></a><span class="ln">   266</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L267"></a><span class="ln">   267</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(uint32))
+<a id="L268"></a><span class="ln">   268</span>			}
+<a id="L269"></a><span class="ln">   269</span>			p = *(*unsafe.Pointer)(p)
+<a id="L270"></a><span class="ln">   270</span>		}
+<a id="L271"></a><span class="ln">   271</span>		v := state.decodeUint()
+<a id="L272"></a><span class="ln">   272</span>		if math.MaxUint32 &lt; v {
+<a id="L273"></a><span class="ln">   273</span>			error_(i.ovfl)
+<a id="L274"></a><span class="ln">   274</span>		} else {
+<a id="L275"></a><span class="ln">   275</span>			*(*uint32)(p) = uint32(v)
+<a id="L276"></a><span class="ln">   276</span>		}
+<a id="L277"></a><span class="ln">   277</span>	}
+<a id="L278"></a><span class="ln">   278</span>	
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// decInt64 decodes an integer and stores it as an int64 through p.</span>
+<a id="L280"></a><span class="ln">   280</span>	func decInt64(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L281"></a><span class="ln">   281</span>		if i.indir &gt; 0 {
+<a id="L282"></a><span class="ln">   282</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L283"></a><span class="ln">   283</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(int64))
+<a id="L284"></a><span class="ln">   284</span>			}
+<a id="L285"></a><span class="ln">   285</span>			p = *(*unsafe.Pointer)(p)
+<a id="L286"></a><span class="ln">   286</span>		}
+<a id="L287"></a><span class="ln">   287</span>		*(*int64)(p) = int64(state.decodeInt())
+<a id="L288"></a><span class="ln">   288</span>	}
+<a id="L289"></a><span class="ln">   289</span>	
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">// decUint64 decodes an unsigned integer and stores it as a uint64 through p.</span>
+<a id="L291"></a><span class="ln">   291</span>	func decUint64(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L292"></a><span class="ln">   292</span>		if i.indir &gt; 0 {
+<a id="L293"></a><span class="ln">   293</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L294"></a><span class="ln">   294</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(uint64))
+<a id="L295"></a><span class="ln">   295</span>			}
+<a id="L296"></a><span class="ln">   296</span>			p = *(*unsafe.Pointer)(p)
+<a id="L297"></a><span class="ln">   297</span>		}
+<a id="L298"></a><span class="ln">   298</span>		*(*uint64)(p) = uint64(state.decodeUint())
+<a id="L299"></a><span class="ln">   299</span>	}
+<a id="L300"></a><span class="ln">   300</span>	
+<a id="L301"></a><span class="ln">   301</span>	<span class="comment">// Floating-point numbers are transmitted as uint64s holding the bits</span>
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">// of the underlying representation.  They are sent byte-reversed, with</span>
+<a id="L303"></a><span class="ln">   303</span>	<span class="comment">// the exponent end coming out first, so integer floating point numbers</span>
+<a id="L304"></a><span class="ln">   304</span>	<span class="comment">// (for example) transmit more compactly.  This routine does the</span>
+<a id="L305"></a><span class="ln">   305</span>	<span class="comment">// unswizzling.</span>
+<a id="L306"></a><span class="ln">   306</span>	func floatFromBits(u uint64) float64 {
+<a id="L307"></a><span class="ln">   307</span>		var v uint64
+<a id="L308"></a><span class="ln">   308</span>		for i := 0; i &lt; 8; i++ {
+<a id="L309"></a><span class="ln">   309</span>			v &lt;&lt;= 8
+<a id="L310"></a><span class="ln">   310</span>			v |= u &amp; 0xFF
+<a id="L311"></a><span class="ln">   311</span>			u &gt;&gt;= 8
+<a id="L312"></a><span class="ln">   312</span>		}
+<a id="L313"></a><span class="ln">   313</span>		return math.Float64frombits(v)
+<a id="L314"></a><span class="ln">   314</span>	}
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>	<span class="comment">// storeFloat32 decodes an unsigned integer, treats it as a 32-bit floating-point</span>
+<a id="L317"></a><span class="ln">   317</span>	<span class="comment">// number, and stores it through p. It&#39;s a helper function for float32 and complex64.</span>
+<a id="L318"></a><span class="ln">   318</span>	func storeFloat32(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L319"></a><span class="ln">   319</span>		v := floatFromBits(state.decodeUint())
+<a id="L320"></a><span class="ln">   320</span>		av := v
+<a id="L321"></a><span class="ln">   321</span>		if av &lt; 0 {
+<a id="L322"></a><span class="ln">   322</span>			av = -av
+<a id="L323"></a><span class="ln">   323</span>		}
+<a id="L324"></a><span class="ln">   324</span>		<span class="comment">// +Inf is OK in both 32- and 64-bit floats.  Underflow is always OK.</span>
+<a id="L325"></a><span class="ln">   325</span>		if math.MaxFloat32 &lt; av &amp;&amp; av &lt;= math.MaxFloat64 {
+<a id="L326"></a><span class="ln">   326</span>			error_(i.ovfl)
+<a id="L327"></a><span class="ln">   327</span>		} else {
+<a id="L328"></a><span class="ln">   328</span>			*(*float32)(p) = float32(v)
+<a id="L329"></a><span class="ln">   329</span>		}
+<a id="L330"></a><span class="ln">   330</span>	}
+<a id="L331"></a><span class="ln">   331</span>	
+<a id="L332"></a><span class="ln">   332</span>	<span class="comment">// decFloat32 decodes an unsigned integer, treats it as a 32-bit floating-point</span>
+<a id="L333"></a><span class="ln">   333</span>	<span class="comment">// number, and stores it through p.</span>
+<a id="L334"></a><span class="ln">   334</span>	func decFloat32(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L335"></a><span class="ln">   335</span>		if i.indir &gt; 0 {
+<a id="L336"></a><span class="ln">   336</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L337"></a><span class="ln">   337</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(float32))
+<a id="L338"></a><span class="ln">   338</span>			}
+<a id="L339"></a><span class="ln">   339</span>			p = *(*unsafe.Pointer)(p)
+<a id="L340"></a><span class="ln">   340</span>		}
+<a id="L341"></a><span class="ln">   341</span>		storeFloat32(i, state, p)
+<a id="L342"></a><span class="ln">   342</span>	}
+<a id="L343"></a><span class="ln">   343</span>	
+<a id="L344"></a><span class="ln">   344</span>	<span class="comment">// decFloat64 decodes an unsigned integer, treats it as a 64-bit floating-point</span>
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// number, and stores it through p.</span>
+<a id="L346"></a><span class="ln">   346</span>	func decFloat64(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L347"></a><span class="ln">   347</span>		if i.indir &gt; 0 {
+<a id="L348"></a><span class="ln">   348</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L349"></a><span class="ln">   349</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(float64))
+<a id="L350"></a><span class="ln">   350</span>			}
+<a id="L351"></a><span class="ln">   351</span>			p = *(*unsafe.Pointer)(p)
+<a id="L352"></a><span class="ln">   352</span>		}
+<a id="L353"></a><span class="ln">   353</span>		*(*float64)(p) = floatFromBits(uint64(state.decodeUint()))
+<a id="L354"></a><span class="ln">   354</span>	}
+<a id="L355"></a><span class="ln">   355</span>	
+<a id="L356"></a><span class="ln">   356</span>	<span class="comment">// decComplex64 decodes a pair of unsigned integers, treats them as a</span>
+<a id="L357"></a><span class="ln">   357</span>	<span class="comment">// pair of floating point numbers, and stores them as a complex64 through p.</span>
+<a id="L358"></a><span class="ln">   358</span>	<span class="comment">// The real part comes first.</span>
+<a id="L359"></a><span class="ln">   359</span>	func decComplex64(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L360"></a><span class="ln">   360</span>		if i.indir &gt; 0 {
+<a id="L361"></a><span class="ln">   361</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L362"></a><span class="ln">   362</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(complex64))
+<a id="L363"></a><span class="ln">   363</span>			}
+<a id="L364"></a><span class="ln">   364</span>			p = *(*unsafe.Pointer)(p)
+<a id="L365"></a><span class="ln">   365</span>		}
+<a id="L366"></a><span class="ln">   366</span>		storeFloat32(i, state, p)
+<a id="L367"></a><span class="ln">   367</span>		storeFloat32(i, state, unsafe.Pointer(uintptr(p)+unsafe.Sizeof(float32(0))))
+<a id="L368"></a><span class="ln">   368</span>	}
+<a id="L369"></a><span class="ln">   369</span>	
+<a id="L370"></a><span class="ln">   370</span>	<span class="comment">// decComplex128 decodes a pair of unsigned integers, treats them as a</span>
+<a id="L371"></a><span class="ln">   371</span>	<span class="comment">// pair of floating point numbers, and stores them as a complex128 through p.</span>
+<a id="L372"></a><span class="ln">   372</span>	<span class="comment">// The real part comes first.</span>
+<a id="L373"></a><span class="ln">   373</span>	func decComplex128(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L374"></a><span class="ln">   374</span>		if i.indir &gt; 0 {
+<a id="L375"></a><span class="ln">   375</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L376"></a><span class="ln">   376</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(complex128))
+<a id="L377"></a><span class="ln">   377</span>			}
+<a id="L378"></a><span class="ln">   378</span>			p = *(*unsafe.Pointer)(p)
+<a id="L379"></a><span class="ln">   379</span>		}
+<a id="L380"></a><span class="ln">   380</span>		real := floatFromBits(uint64(state.decodeUint()))
+<a id="L381"></a><span class="ln">   381</span>		imag := floatFromBits(uint64(state.decodeUint()))
+<a id="L382"></a><span class="ln">   382</span>		*(*complex128)(p) = complex(real, imag)
+<a id="L383"></a><span class="ln">   383</span>	}
+<a id="L384"></a><span class="ln">   384</span>	
+<a id="L385"></a><span class="ln">   385</span>	<span class="comment">// decUint8Slice decodes a byte slice and stores through p a slice header</span>
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// describing the data.</span>
+<a id="L387"></a><span class="ln">   387</span>	<span class="comment">// uint8 slices are encoded as an unsigned count followed by the raw bytes.</span>
+<a id="L388"></a><span class="ln">   388</span>	func decUint8Slice(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L389"></a><span class="ln">   389</span>		if i.indir &gt; 0 {
+<a id="L390"></a><span class="ln">   390</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L391"></a><span class="ln">   391</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new([]uint8))
+<a id="L392"></a><span class="ln">   392</span>			}
+<a id="L393"></a><span class="ln">   393</span>			p = *(*unsafe.Pointer)(p)
+<a id="L394"></a><span class="ln">   394</span>		}
+<a id="L395"></a><span class="ln">   395</span>		n := state.decodeUint()
+<a id="L396"></a><span class="ln">   396</span>		if n &gt; uint64(state.b.Len()) {
+<a id="L397"></a><span class="ln">   397</span>			errorf(&#34;length of []byte exceeds input size (%d bytes)&#34;, n)
+<a id="L398"></a><span class="ln">   398</span>		}
+<a id="L399"></a><span class="ln">   399</span>		slice := (*[]uint8)(p)
+<a id="L400"></a><span class="ln">   400</span>		if uint64(cap(*slice)) &lt; n {
+<a id="L401"></a><span class="ln">   401</span>			*slice = make([]uint8, n)
+<a id="L402"></a><span class="ln">   402</span>		} else {
+<a id="L403"></a><span class="ln">   403</span>			*slice = (*slice)[0:n]
+<a id="L404"></a><span class="ln">   404</span>		}
+<a id="L405"></a><span class="ln">   405</span>		if _, err := state.b.Read(*slice); err != nil {
+<a id="L406"></a><span class="ln">   406</span>			errorf(&#34;error decoding []byte: %s&#34;, err)
+<a id="L407"></a><span class="ln">   407</span>		}
+<a id="L408"></a><span class="ln">   408</span>	}
+<a id="L409"></a><span class="ln">   409</span>	
+<a id="L410"></a><span class="ln">   410</span>	<span class="comment">// decString decodes byte array and stores through p a string header</span>
+<a id="L411"></a><span class="ln">   411</span>	<span class="comment">// describing the data.</span>
+<a id="L412"></a><span class="ln">   412</span>	<span class="comment">// Strings are encoded as an unsigned count followed by the raw bytes.</span>
+<a id="L413"></a><span class="ln">   413</span>	func decString(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L414"></a><span class="ln">   414</span>		if i.indir &gt; 0 {
+<a id="L415"></a><span class="ln">   415</span>			if *(*unsafe.Pointer)(p) == nil {
+<a id="L416"></a><span class="ln">   416</span>				*(*unsafe.Pointer)(p) = unsafe.Pointer(new(string))
+<a id="L417"></a><span class="ln">   417</span>			}
+<a id="L418"></a><span class="ln">   418</span>			p = *(*unsafe.Pointer)(p)
+<a id="L419"></a><span class="ln">   419</span>		}
+<a id="L420"></a><span class="ln">   420</span>		n := state.decodeUint()
+<a id="L421"></a><span class="ln">   421</span>		if n &gt; uint64(state.b.Len()) {
+<a id="L422"></a><span class="ln">   422</span>			errorf(&#34;string length exceeds input size (%d bytes)&#34;, n)
+<a id="L423"></a><span class="ln">   423</span>		}
+<a id="L424"></a><span class="ln">   424</span>		b := make([]byte, n)
+<a id="L425"></a><span class="ln">   425</span>		state.b.Read(b)
+<a id="L426"></a><span class="ln">   426</span>		<span class="comment">// It would be a shame to do the obvious thing here,</span>
+<a id="L427"></a><span class="ln">   427</span>		<span class="comment">//	*(*string)(p) = string(b)</span>
+<a id="L428"></a><span class="ln">   428</span>		<span class="comment">// because we&#39;ve already allocated the storage and this would</span>
+<a id="L429"></a><span class="ln">   429</span>		<span class="comment">// allocate again and copy.  So we do this ugly hack, which is even</span>
+<a id="L430"></a><span class="ln">   430</span>		<span class="comment">// even more unsafe than it looks as it depends the memory</span>
+<a id="L431"></a><span class="ln">   431</span>		<span class="comment">// representation of a string matching the beginning of the memory</span>
+<a id="L432"></a><span class="ln">   432</span>		<span class="comment">// representation of a byte slice (a byte slice is longer).</span>
+<a id="L433"></a><span class="ln">   433</span>		*(*string)(p) = *(*string)(unsafe.Pointer(&amp;b))
+<a id="L434"></a><span class="ln">   434</span>	}
+<a id="L435"></a><span class="ln">   435</span>	
+<a id="L436"></a><span class="ln">   436</span>	<span class="comment">// ignoreUint8Array skips over the data for a byte slice value with no destination.</span>
+<a id="L437"></a><span class="ln">   437</span>	func ignoreUint8Array(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L438"></a><span class="ln">   438</span>		b := make([]byte, state.decodeUint())
+<a id="L439"></a><span class="ln">   439</span>		state.b.Read(b)
+<a id="L440"></a><span class="ln">   440</span>	}
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>	<span class="comment">// Execution engine</span>
+<a id="L443"></a><span class="ln">   443</span>	
+<a id="L444"></a><span class="ln">   444</span>	<span class="comment">// The encoder engine is an array of instructions indexed by field number of the incoming</span>
+<a id="L445"></a><span class="ln">   445</span>	<span class="comment">// decoder.  It is executed with random access according to field number.</span>
+<a id="L446"></a><span class="ln">   446</span>	type decEngine struct {
+<a id="L447"></a><span class="ln">   447</span>		instr    []decInstr
+<a id="L448"></a><span class="ln">   448</span>		numInstr int <span class="comment">// the number of active instructions</span>
+<a id="L449"></a><span class="ln">   449</span>	}
+<a id="L450"></a><span class="ln">   450</span>	
+<a id="L451"></a><span class="ln">   451</span>	<span class="comment">// allocate makes sure storage is available for an object of underlying type rtyp</span>
+<a id="L452"></a><span class="ln">   452</span>	<span class="comment">// that is indir levels of indirection through p.</span>
+<a id="L453"></a><span class="ln">   453</span>	func allocate(rtyp reflect.Type, p uintptr, indir int) uintptr {
+<a id="L454"></a><span class="ln">   454</span>		if indir == 0 {
+<a id="L455"></a><span class="ln">   455</span>			return p
+<a id="L456"></a><span class="ln">   456</span>		}
+<a id="L457"></a><span class="ln">   457</span>		up := unsafe.Pointer(p)
+<a id="L458"></a><span class="ln">   458</span>		if indir &gt; 1 {
+<a id="L459"></a><span class="ln">   459</span>			up = decIndirect(up, indir)
+<a id="L460"></a><span class="ln">   460</span>		}
+<a id="L461"></a><span class="ln">   461</span>		if *(*unsafe.Pointer)(up) == nil {
+<a id="L462"></a><span class="ln">   462</span>			<span class="comment">// Allocate object.</span>
+<a id="L463"></a><span class="ln">   463</span>			*(*unsafe.Pointer)(up) = unsafe.Pointer(reflect.New(rtyp).Pointer())
+<a id="L464"></a><span class="ln">   464</span>		}
+<a id="L465"></a><span class="ln">   465</span>		return *(*uintptr)(up)
+<a id="L466"></a><span class="ln">   466</span>	}
+<a id="L467"></a><span class="ln">   467</span>	
+<a id="L468"></a><span class="ln">   468</span>	<span class="comment">// decodeSingle decodes a top-level value that is not a struct and stores it through p.</span>
+<a id="L469"></a><span class="ln">   469</span>	<span class="comment">// Such values are preceded by a zero, making them have the memory layout of a</span>
+<a id="L470"></a><span class="ln">   470</span>	<span class="comment">// struct field (although with an illegal field number).</span>
+<a id="L471"></a><span class="ln">   471</span>	func (dec *Decoder) decodeSingle(engine *decEngine, ut *userTypeInfo, basep uintptr) {
+<a id="L472"></a><span class="ln">   472</span>		state := dec.newDecoderState(&amp;dec.buf)
+<a id="L473"></a><span class="ln">   473</span>		state.fieldnum = singletonField
+<a id="L474"></a><span class="ln">   474</span>		delta := int(state.decodeUint())
+<a id="L475"></a><span class="ln">   475</span>		if delta != 0 {
+<a id="L476"></a><span class="ln">   476</span>			errorf(&#34;decode: corrupted data: non-zero delta for singleton&#34;)
+<a id="L477"></a><span class="ln">   477</span>		}
+<a id="L478"></a><span class="ln">   478</span>		instr := &amp;engine.instr[singletonField]
+<a id="L479"></a><span class="ln">   479</span>		if instr.indir != ut.indir {
+<a id="L480"></a><span class="ln">   480</span>			errorf(&#34;internal error: inconsistent indirection instr %d ut %d&#34;, instr.indir, ut.indir)
+<a id="L481"></a><span class="ln">   481</span>		}
+<a id="L482"></a><span class="ln">   482</span>		ptr := unsafe.Pointer(basep) <span class="comment">// offset will be zero</span>
+<a id="L483"></a><span class="ln">   483</span>		if instr.indir &gt; 1 {
+<a id="L484"></a><span class="ln">   484</span>			ptr = decIndirect(ptr, instr.indir)
+<a id="L485"></a><span class="ln">   485</span>		}
+<a id="L486"></a><span class="ln">   486</span>		instr.op(instr, state, ptr)
+<a id="L487"></a><span class="ln">   487</span>		dec.freeDecoderState(state)
+<a id="L488"></a><span class="ln">   488</span>	}
+<a id="L489"></a><span class="ln">   489</span>	
+<a id="L490"></a><span class="ln">   490</span>	<span class="comment">// decodeStruct decodes a top-level struct and stores it through p.</span>
+<a id="L491"></a><span class="ln">   491</span>	<span class="comment">// Indir is for the value, not the type.  At the time of the call it may</span>
+<a id="L492"></a><span class="ln">   492</span>	<span class="comment">// differ from ut.indir, which was computed when the engine was built.</span>
+<a id="L493"></a><span class="ln">   493</span>	<span class="comment">// This state cannot arise for decodeSingle, which is called directly</span>
+<a id="L494"></a><span class="ln">   494</span>	<span class="comment">// from the user&#39;s value, not from the innards of an engine.</span>
+<a id="L495"></a><span class="ln">   495</span>	func (dec *Decoder) decodeStruct(engine *decEngine, ut *userTypeInfo, p uintptr, indir int) {
+<a id="L496"></a><span class="ln">   496</span>		p = allocate(ut.base, p, indir)
+<a id="L497"></a><span class="ln">   497</span>		state := dec.newDecoderState(&amp;dec.buf)
+<a id="L498"></a><span class="ln">   498</span>		state.fieldnum = -1
+<a id="L499"></a><span class="ln">   499</span>		basep := p
+<a id="L500"></a><span class="ln">   500</span>		for state.b.Len() &gt; 0 {
+<a id="L501"></a><span class="ln">   501</span>			delta := int(state.decodeUint())
+<a id="L502"></a><span class="ln">   502</span>			if delta &lt; 0 {
+<a id="L503"></a><span class="ln">   503</span>				errorf(&#34;decode: corrupted data: negative delta&#34;)
+<a id="L504"></a><span class="ln">   504</span>			}
+<a id="L505"></a><span class="ln">   505</span>			if delta == 0 { <span class="comment">// struct terminator is zero delta fieldnum</span>
+<a id="L506"></a><span class="ln">   506</span>				break
+<a id="L507"></a><span class="ln">   507</span>			}
+<a id="L508"></a><span class="ln">   508</span>			fieldnum := state.fieldnum + delta
+<a id="L509"></a><span class="ln">   509</span>			if fieldnum &gt;= len(engine.instr) {
+<a id="L510"></a><span class="ln">   510</span>				error_(errRange)
+<a id="L511"></a><span class="ln">   511</span>				break
+<a id="L512"></a><span class="ln">   512</span>			}
+<a id="L513"></a><span class="ln">   513</span>			instr := &amp;engine.instr[fieldnum]
+<a id="L514"></a><span class="ln">   514</span>			p := unsafe.Pointer(basep + instr.offset)
+<a id="L515"></a><span class="ln">   515</span>			if instr.indir &gt; 1 {
+<a id="L516"></a><span class="ln">   516</span>				p = decIndirect(p, instr.indir)
+<a id="L517"></a><span class="ln">   517</span>			}
+<a id="L518"></a><span class="ln">   518</span>			instr.op(instr, state, p)
+<a id="L519"></a><span class="ln">   519</span>			state.fieldnum = fieldnum
+<a id="L520"></a><span class="ln">   520</span>		}
+<a id="L521"></a><span class="ln">   521</span>		dec.freeDecoderState(state)
+<a id="L522"></a><span class="ln">   522</span>	}
+<a id="L523"></a><span class="ln">   523</span>	
+<a id="L524"></a><span class="ln">   524</span>	<span class="comment">// ignoreStruct discards the data for a struct with no destination.</span>
+<a id="L525"></a><span class="ln">   525</span>	func (dec *Decoder) ignoreStruct(engine *decEngine) {
+<a id="L526"></a><span class="ln">   526</span>		state := dec.newDecoderState(&amp;dec.buf)
+<a id="L527"></a><span class="ln">   527</span>		state.fieldnum = -1
+<a id="L528"></a><span class="ln">   528</span>		for state.b.Len() &gt; 0 {
+<a id="L529"></a><span class="ln">   529</span>			delta := int(state.decodeUint())
+<a id="L530"></a><span class="ln">   530</span>			if delta &lt; 0 {
+<a id="L531"></a><span class="ln">   531</span>				errorf(&#34;ignore decode: corrupted data: negative delta&#34;)
+<a id="L532"></a><span class="ln">   532</span>			}
+<a id="L533"></a><span class="ln">   533</span>			if delta == 0 { <span class="comment">// struct terminator is zero delta fieldnum</span>
+<a id="L534"></a><span class="ln">   534</span>				break
+<a id="L535"></a><span class="ln">   535</span>			}
+<a id="L536"></a><span class="ln">   536</span>			fieldnum := state.fieldnum + delta
+<a id="L537"></a><span class="ln">   537</span>			if fieldnum &gt;= len(engine.instr) {
+<a id="L538"></a><span class="ln">   538</span>				error_(errRange)
+<a id="L539"></a><span class="ln">   539</span>			}
+<a id="L540"></a><span class="ln">   540</span>			instr := &amp;engine.instr[fieldnum]
+<a id="L541"></a><span class="ln">   541</span>			instr.op(instr, state, unsafe.Pointer(nil))
+<a id="L542"></a><span class="ln">   542</span>			state.fieldnum = fieldnum
+<a id="L543"></a><span class="ln">   543</span>		}
+<a id="L544"></a><span class="ln">   544</span>		dec.freeDecoderState(state)
+<a id="L545"></a><span class="ln">   545</span>	}
+<a id="L546"></a><span class="ln">   546</span>	
+<a id="L547"></a><span class="ln">   547</span>	<span class="comment">// ignoreSingle discards the data for a top-level non-struct value with no</span>
+<a id="L548"></a><span class="ln">   548</span>	<span class="comment">// destination. It&#39;s used when calling Decode with a nil value.</span>
+<a id="L549"></a><span class="ln">   549</span>	func (dec *Decoder) ignoreSingle(engine *decEngine) {
+<a id="L550"></a><span class="ln">   550</span>		state := dec.newDecoderState(&amp;dec.buf)
+<a id="L551"></a><span class="ln">   551</span>		state.fieldnum = singletonField
+<a id="L552"></a><span class="ln">   552</span>		delta := int(state.decodeUint())
+<a id="L553"></a><span class="ln">   553</span>		if delta != 0 {
+<a id="L554"></a><span class="ln">   554</span>			errorf(&#34;decode: corrupted data: non-zero delta for singleton&#34;)
+<a id="L555"></a><span class="ln">   555</span>		}
+<a id="L556"></a><span class="ln">   556</span>		instr := &amp;engine.instr[singletonField]
+<a id="L557"></a><span class="ln">   557</span>		instr.op(instr, state, unsafe.Pointer(nil))
+<a id="L558"></a><span class="ln">   558</span>		dec.freeDecoderState(state)
+<a id="L559"></a><span class="ln">   559</span>	}
+<a id="L560"></a><span class="ln">   560</span>	
+<a id="L561"></a><span class="ln">   561</span>	<span class="comment">// decodeArrayHelper does the work for decoding arrays and slices.</span>
+<a id="L562"></a><span class="ln">   562</span>	func (dec *Decoder) decodeArrayHelper(state *decoderState, p uintptr, elemOp decOp, elemWid uintptr, length, elemIndir int, ovfl error) {
+<a id="L563"></a><span class="ln">   563</span>		instr := &amp;decInstr{elemOp, 0, elemIndir, 0, ovfl}
+<a id="L564"></a><span class="ln">   564</span>		for i := 0; i &lt; length; i++ {
+<a id="L565"></a><span class="ln">   565</span>			up := unsafe.Pointer(p)
+<a id="L566"></a><span class="ln">   566</span>			if elemIndir &gt; 1 {
+<a id="L567"></a><span class="ln">   567</span>				up = decIndirect(up, elemIndir)
+<a id="L568"></a><span class="ln">   568</span>			}
+<a id="L569"></a><span class="ln">   569</span>			elemOp(instr, state, up)
+<a id="L570"></a><span class="ln">   570</span>			p += uintptr(elemWid)
+<a id="L571"></a><span class="ln">   571</span>		}
+<a id="L572"></a><span class="ln">   572</span>	}
+<a id="L573"></a><span class="ln">   573</span>	
+<a id="L574"></a><span class="ln">   574</span>	<span class="comment">// decodeArray decodes an array and stores it through p, that is, p points to the zeroth element.</span>
+<a id="L575"></a><span class="ln">   575</span>	<span class="comment">// The length is an unsigned integer preceding the elements.  Even though the length is redundant</span>
+<a id="L576"></a><span class="ln">   576</span>	<span class="comment">// (it&#39;s part of the type), it&#39;s a useful check and is included in the encoding.</span>
+<a id="L577"></a><span class="ln">   577</span>	func (dec *Decoder) decodeArray(atyp reflect.Type, state *decoderState, p uintptr, elemOp decOp, elemWid uintptr, length, indir, elemIndir int, ovfl error) {
+<a id="L578"></a><span class="ln">   578</span>		if indir &gt; 0 {
+<a id="L579"></a><span class="ln">   579</span>			p = allocate(atyp, p, 1) <span class="comment">// All but the last level has been allocated by dec.Indirect</span>
+<a id="L580"></a><span class="ln">   580</span>		}
+<a id="L581"></a><span class="ln">   581</span>		if n := state.decodeUint(); n != uint64(length) {
+<a id="L582"></a><span class="ln">   582</span>			errorf(&#34;length mismatch in decodeArray&#34;)
+<a id="L583"></a><span class="ln">   583</span>		}
+<a id="L584"></a><span class="ln">   584</span>		dec.decodeArrayHelper(state, p, elemOp, elemWid, length, elemIndir, ovfl)
+<a id="L585"></a><span class="ln">   585</span>	}
+<a id="L586"></a><span class="ln">   586</span>	
+<a id="L587"></a><span class="ln">   587</span>	<span class="comment">// decodeIntoValue is a helper for map decoding.  Since maps are decoded using reflection,</span>
+<a id="L588"></a><span class="ln">   588</span>	<span class="comment">// unlike the other items we can&#39;t use a pointer directly.</span>
+<a id="L589"></a><span class="ln">   589</span>	func decodeIntoValue(state *decoderState, op decOp, indir int, v reflect.Value, ovfl error) reflect.Value {
+<a id="L590"></a><span class="ln">   590</span>		instr := &amp;decInstr{op, 0, indir, 0, ovfl}
+<a id="L591"></a><span class="ln">   591</span>		up := unsafe.Pointer(unsafeAddr(v))
+<a id="L592"></a><span class="ln">   592</span>		if indir &gt; 1 {
+<a id="L593"></a><span class="ln">   593</span>			up = decIndirect(up, indir)
+<a id="L594"></a><span class="ln">   594</span>		}
+<a id="L595"></a><span class="ln">   595</span>		op(instr, state, up)
+<a id="L596"></a><span class="ln">   596</span>		return v
+<a id="L597"></a><span class="ln">   597</span>	}
+<a id="L598"></a><span class="ln">   598</span>	
+<a id="L599"></a><span class="ln">   599</span>	<span class="comment">// decodeMap decodes a map and stores its header through p.</span>
+<a id="L600"></a><span class="ln">   600</span>	<span class="comment">// Maps are encoded as a length followed by key:value pairs.</span>
+<a id="L601"></a><span class="ln">   601</span>	<span class="comment">// Because the internals of maps are not visible to us, we must</span>
+<a id="L602"></a><span class="ln">   602</span>	<span class="comment">// use reflection rather than pointer magic.</span>
+<a id="L603"></a><span class="ln">   603</span>	func (dec *Decoder) decodeMap(mtyp reflect.Type, state *decoderState, p uintptr, keyOp, elemOp decOp, indir, keyIndir, elemIndir int, ovfl error) {
+<a id="L604"></a><span class="ln">   604</span>		if indir &gt; 0 {
+<a id="L605"></a><span class="ln">   605</span>			p = allocate(mtyp, p, 1) <span class="comment">// All but the last level has been allocated by dec.Indirect</span>
+<a id="L606"></a><span class="ln">   606</span>		}
+<a id="L607"></a><span class="ln">   607</span>		up := unsafe.Pointer(p)
+<a id="L608"></a><span class="ln">   608</span>		if *(*unsafe.Pointer)(up) == nil { <span class="comment">// maps are represented as a pointer in the runtime</span>
+<a id="L609"></a><span class="ln">   609</span>			<span class="comment">// Allocate map.</span>
+<a id="L610"></a><span class="ln">   610</span>			*(*unsafe.Pointer)(up) = unsafe.Pointer(reflect.MakeMap(mtyp).Pointer())
+<a id="L611"></a><span class="ln">   611</span>		}
+<a id="L612"></a><span class="ln">   612</span>		<span class="comment">// Maps cannot be accessed by moving addresses around the way</span>
+<a id="L613"></a><span class="ln">   613</span>		<span class="comment">// that slices etc. can.  We must recover a full reflection value for</span>
+<a id="L614"></a><span class="ln">   614</span>		<span class="comment">// the iteration.</span>
+<a id="L615"></a><span class="ln">   615</span>		v := reflect.NewAt(mtyp, unsafe.Pointer(p)).Elem()
+<a id="L616"></a><span class="ln">   616</span>		n := int(state.decodeUint())
+<a id="L617"></a><span class="ln">   617</span>		for i := 0; i &lt; n; i++ {
+<a id="L618"></a><span class="ln">   618</span>			key := decodeIntoValue(state, keyOp, keyIndir, allocValue(mtyp.Key()), ovfl)
+<a id="L619"></a><span class="ln">   619</span>			elem := decodeIntoValue(state, elemOp, elemIndir, allocValue(mtyp.Elem()), ovfl)
+<a id="L620"></a><span class="ln">   620</span>			v.SetMapIndex(key, elem)
+<a id="L621"></a><span class="ln">   621</span>		}
+<a id="L622"></a><span class="ln">   622</span>	}
+<a id="L623"></a><span class="ln">   623</span>	
+<a id="L624"></a><span class="ln">   624</span>	<span class="comment">// ignoreArrayHelper does the work for discarding arrays and slices.</span>
+<a id="L625"></a><span class="ln">   625</span>	func (dec *Decoder) ignoreArrayHelper(state *decoderState, elemOp decOp, length int) {
+<a id="L626"></a><span class="ln">   626</span>		instr := &amp;decInstr{elemOp, 0, 0, 0, errors.New(&#34;no error&#34;)}
+<a id="L627"></a><span class="ln">   627</span>		for i := 0; i &lt; length; i++ {
+<a id="L628"></a><span class="ln">   628</span>			elemOp(instr, state, nil)
+<a id="L629"></a><span class="ln">   629</span>		}
+<a id="L630"></a><span class="ln">   630</span>	}
+<a id="L631"></a><span class="ln">   631</span>	
+<a id="L632"></a><span class="ln">   632</span>	<span class="comment">// ignoreArray discards the data for an array value with no destination.</span>
+<a id="L633"></a><span class="ln">   633</span>	func (dec *Decoder) ignoreArray(state *decoderState, elemOp decOp, length int) {
+<a id="L634"></a><span class="ln">   634</span>		if n := state.decodeUint(); n != uint64(length) {
+<a id="L635"></a><span class="ln">   635</span>			errorf(&#34;length mismatch in ignoreArray&#34;)
+<a id="L636"></a><span class="ln">   636</span>		}
+<a id="L637"></a><span class="ln">   637</span>		dec.ignoreArrayHelper(state, elemOp, length)
+<a id="L638"></a><span class="ln">   638</span>	}
+<a id="L639"></a><span class="ln">   639</span>	
+<a id="L640"></a><span class="ln">   640</span>	<span class="comment">// ignoreMap discards the data for a map value with no destination.</span>
+<a id="L641"></a><span class="ln">   641</span>	func (dec *Decoder) ignoreMap(state *decoderState, keyOp, elemOp decOp) {
+<a id="L642"></a><span class="ln">   642</span>		n := int(state.decodeUint())
+<a id="L643"></a><span class="ln">   643</span>		keyInstr := &amp;decInstr{keyOp, 0, 0, 0, errors.New(&#34;no error&#34;)}
+<a id="L644"></a><span class="ln">   644</span>		elemInstr := &amp;decInstr{elemOp, 0, 0, 0, errors.New(&#34;no error&#34;)}
+<a id="L645"></a><span class="ln">   645</span>		for i := 0; i &lt; n; i++ {
+<a id="L646"></a><span class="ln">   646</span>			keyOp(keyInstr, state, nil)
+<a id="L647"></a><span class="ln">   647</span>			elemOp(elemInstr, state, nil)
+<a id="L648"></a><span class="ln">   648</span>		}
+<a id="L649"></a><span class="ln">   649</span>	}
+<a id="L650"></a><span class="ln">   650</span>	
+<a id="L651"></a><span class="ln">   651</span>	<span class="comment">// decodeSlice decodes a slice and stores the slice header through p.</span>
+<a id="L652"></a><span class="ln">   652</span>	<span class="comment">// Slices are encoded as an unsigned length followed by the elements.</span>
+<a id="L653"></a><span class="ln">   653</span>	func (dec *Decoder) decodeSlice(atyp reflect.Type, state *decoderState, p uintptr, elemOp decOp, elemWid uintptr, indir, elemIndir int, ovfl error) {
+<a id="L654"></a><span class="ln">   654</span>		nr := state.decodeUint()
+<a id="L655"></a><span class="ln">   655</span>		if nr &gt; uint64(state.b.Len()) {
+<a id="L656"></a><span class="ln">   656</span>			errorf(&#34;length of slice exceeds input size (%d elements)&#34;, nr)
+<a id="L657"></a><span class="ln">   657</span>		}
+<a id="L658"></a><span class="ln">   658</span>		n := int(nr)
+<a id="L659"></a><span class="ln">   659</span>		if indir &gt; 0 {
+<a id="L660"></a><span class="ln">   660</span>			up := unsafe.Pointer(p)
+<a id="L661"></a><span class="ln">   661</span>			if *(*unsafe.Pointer)(up) == nil {
+<a id="L662"></a><span class="ln">   662</span>				<span class="comment">// Allocate the slice header.</span>
+<a id="L663"></a><span class="ln">   663</span>				*(*unsafe.Pointer)(up) = unsafe.Pointer(new([]unsafe.Pointer))
+<a id="L664"></a><span class="ln">   664</span>			}
+<a id="L665"></a><span class="ln">   665</span>			p = *(*uintptr)(up)
+<a id="L666"></a><span class="ln">   666</span>		}
+<a id="L667"></a><span class="ln">   667</span>		<span class="comment">// Allocate storage for the slice elements, that is, the underlying array,</span>
+<a id="L668"></a><span class="ln">   668</span>		<span class="comment">// if the existing slice does not have the capacity.</span>
+<a id="L669"></a><span class="ln">   669</span>		<span class="comment">// Always write a header at p.</span>
+<a id="L670"></a><span class="ln">   670</span>		hdrp := (*reflect.SliceHeader)(unsafe.Pointer(p))
+<a id="L671"></a><span class="ln">   671</span>		if hdrp.Cap &lt; n {
+<a id="L672"></a><span class="ln">   672</span>			hdrp.Data = reflect.MakeSlice(atyp, n, n).Pointer()
+<a id="L673"></a><span class="ln">   673</span>			hdrp.Cap = n
+<a id="L674"></a><span class="ln">   674</span>		}
+<a id="L675"></a><span class="ln">   675</span>		hdrp.Len = n
+<a id="L676"></a><span class="ln">   676</span>		dec.decodeArrayHelper(state, hdrp.Data, elemOp, elemWid, n, elemIndir, ovfl)
+<a id="L677"></a><span class="ln">   677</span>	}
+<a id="L678"></a><span class="ln">   678</span>	
+<a id="L679"></a><span class="ln">   679</span>	<span class="comment">// ignoreSlice skips over the data for a slice value with no destination.</span>
+<a id="L680"></a><span class="ln">   680</span>	func (dec *Decoder) ignoreSlice(state *decoderState, elemOp decOp) {
+<a id="L681"></a><span class="ln">   681</span>		dec.ignoreArrayHelper(state, elemOp, int(state.decodeUint()))
+<a id="L682"></a><span class="ln">   682</span>	}
+<a id="L683"></a><span class="ln">   683</span>	
+<a id="L684"></a><span class="ln">   684</span>	<span class="comment">// setInterfaceValue sets an interface value to a concrete value,</span>
+<a id="L685"></a><span class="ln">   685</span>	<span class="comment">// but first it checks that the assignment will succeed.</span>
+<a id="L686"></a><span class="ln">   686</span>	func setInterfaceValue(ivalue reflect.Value, value reflect.Value) {
+<a id="L687"></a><span class="ln">   687</span>		if !value.Type().AssignableTo(ivalue.Type()) {
+<a id="L688"></a><span class="ln">   688</span>			errorf(&#34;cannot assign value of type %s to %s&#34;, value.Type(), ivalue.Type())
+<a id="L689"></a><span class="ln">   689</span>		}
+<a id="L690"></a><span class="ln">   690</span>		ivalue.Set(value)
+<a id="L691"></a><span class="ln">   691</span>	}
+<a id="L692"></a><span class="ln">   692</span>	
+<a id="L693"></a><span class="ln">   693</span>	<span class="comment">// decodeInterface decodes an interface value and stores it through p.</span>
+<a id="L694"></a><span class="ln">   694</span>	<span class="comment">// Interfaces are encoded as the name of a concrete type followed by a value.</span>
+<a id="L695"></a><span class="ln">   695</span>	<span class="comment">// If the name is empty, the value is nil and no value is sent.</span>
+<a id="L696"></a><span class="ln">   696</span>	func (dec *Decoder) decodeInterface(ityp reflect.Type, state *decoderState, p uintptr, indir int) {
+<a id="L697"></a><span class="ln">   697</span>		<span class="comment">// Create a writable interface reflect.Value.  We need one even for the nil case.</span>
+<a id="L698"></a><span class="ln">   698</span>		ivalue := allocValue(ityp)
+<a id="L699"></a><span class="ln">   699</span>		<span class="comment">// Read the name of the concrete type.</span>
+<a id="L700"></a><span class="ln">   700</span>		nr := state.decodeUint()
+<a id="L701"></a><span class="ln">   701</span>		if nr &lt; 0 || nr &gt; 1&lt;&lt;31 { <span class="comment">// zero is permissible for anonymous types</span>
+<a id="L702"></a><span class="ln">   702</span>			errorf(&#34;invalid type name length %d&#34;, nr)
+<a id="L703"></a><span class="ln">   703</span>		}
+<a id="L704"></a><span class="ln">   704</span>		b := make([]byte, nr)
+<a id="L705"></a><span class="ln">   705</span>		state.b.Read(b)
+<a id="L706"></a><span class="ln">   706</span>		name := string(b)
+<a id="L707"></a><span class="ln">   707</span>		if name == &#34;&#34; {
+<a id="L708"></a><span class="ln">   708</span>			<span class="comment">// Copy the representation of the nil interface value to the target.</span>
+<a id="L709"></a><span class="ln">   709</span>			<span class="comment">// This is horribly unsafe and special.</span>
+<a id="L710"></a><span class="ln">   710</span>			if indir &gt; 0 {
+<a id="L711"></a><span class="ln">   711</span>				p = allocate(ityp, p, 1) <span class="comment">// All but the last level has been allocated by dec.Indirect</span>
+<a id="L712"></a><span class="ln">   712</span>			}
+<a id="L713"></a><span class="ln">   713</span>			*(*[2]uintptr)(unsafe.Pointer(p)) = ivalue.InterfaceData()
+<a id="L714"></a><span class="ln">   714</span>			return
+<a id="L715"></a><span class="ln">   715</span>		}
+<a id="L716"></a><span class="ln">   716</span>		if len(name) &gt; 1024 {
+<a id="L717"></a><span class="ln">   717</span>			errorf(&#34;name too long (%d bytes): %.20q...&#34;, len(name), name)
+<a id="L718"></a><span class="ln">   718</span>		}
+<a id="L719"></a><span class="ln">   719</span>		<span class="comment">// The concrete type must be registered.</span>
+<a id="L720"></a><span class="ln">   720</span>		typ, ok := nameToConcreteType[name]
+<a id="L721"></a><span class="ln">   721</span>		if !ok {
+<a id="L722"></a><span class="ln">   722</span>			errorf(&#34;name not registered for interface: %q&#34;, name)
+<a id="L723"></a><span class="ln">   723</span>		}
+<a id="L724"></a><span class="ln">   724</span>		<span class="comment">// Read the type id of the concrete value.</span>
+<a id="L725"></a><span class="ln">   725</span>		concreteId := dec.decodeTypeSequence(true)
+<a id="L726"></a><span class="ln">   726</span>		if concreteId &lt; 0 {
+<a id="L727"></a><span class="ln">   727</span>			error_(dec.err)
+<a id="L728"></a><span class="ln">   728</span>		}
+<a id="L729"></a><span class="ln">   729</span>		<span class="comment">// Byte count of value is next; we don&#39;t care what it is (it&#39;s there</span>
+<a id="L730"></a><span class="ln">   730</span>		<span class="comment">// in case we want to ignore the value by skipping it completely).</span>
+<a id="L731"></a><span class="ln">   731</span>		state.decodeUint()
+<a id="L732"></a><span class="ln">   732</span>		<span class="comment">// Read the concrete value.</span>
+<a id="L733"></a><span class="ln">   733</span>		value := allocValue(typ)
+<a id="L734"></a><span class="ln">   734</span>		dec.decodeValue(concreteId, value)
+<a id="L735"></a><span class="ln">   735</span>		if dec.err != nil {
+<a id="L736"></a><span class="ln">   736</span>			error_(dec.err)
+<a id="L737"></a><span class="ln">   737</span>		}
+<a id="L738"></a><span class="ln">   738</span>		<span class="comment">// Allocate the destination interface value.</span>
+<a id="L739"></a><span class="ln">   739</span>		if indir &gt; 0 {
+<a id="L740"></a><span class="ln">   740</span>			p = allocate(ityp, p, 1) <span class="comment">// All but the last level has been allocated by dec.Indirect</span>
+<a id="L741"></a><span class="ln">   741</span>		}
+<a id="L742"></a><span class="ln">   742</span>		<span class="comment">// Assign the concrete value to the interface.</span>
+<a id="L743"></a><span class="ln">   743</span>		<span class="comment">// Tread carefully; it might not satisfy the interface.</span>
+<a id="L744"></a><span class="ln">   744</span>		setInterfaceValue(ivalue, value)
+<a id="L745"></a><span class="ln">   745</span>		<span class="comment">// Copy the representation of the interface value to the target.</span>
+<a id="L746"></a><span class="ln">   746</span>		<span class="comment">// This is horribly unsafe and special.</span>
+<a id="L747"></a><span class="ln">   747</span>		*(*[2]uintptr)(unsafe.Pointer(p)) = ivalue.InterfaceData()
+<a id="L748"></a><span class="ln">   748</span>	}
+<a id="L749"></a><span class="ln">   749</span>	
+<a id="L750"></a><span class="ln">   750</span>	<span class="comment">// ignoreInterface discards the data for an interface value with no destination.</span>
+<a id="L751"></a><span class="ln">   751</span>	func (dec *Decoder) ignoreInterface(state *decoderState) {
+<a id="L752"></a><span class="ln">   752</span>		<span class="comment">// Read the name of the concrete type.</span>
+<a id="L753"></a><span class="ln">   753</span>		b := make([]byte, state.decodeUint())
+<a id="L754"></a><span class="ln">   754</span>		_, err := state.b.Read(b)
+<a id="L755"></a><span class="ln">   755</span>		if err != nil {
+<a id="L756"></a><span class="ln">   756</span>			error_(err)
+<a id="L757"></a><span class="ln">   757</span>		}
+<a id="L758"></a><span class="ln">   758</span>		id := dec.decodeTypeSequence(true)
+<a id="L759"></a><span class="ln">   759</span>		if id &lt; 0 {
+<a id="L760"></a><span class="ln">   760</span>			error_(dec.err)
+<a id="L761"></a><span class="ln">   761</span>		}
+<a id="L762"></a><span class="ln">   762</span>		<span class="comment">// At this point, the decoder buffer contains a delimited value. Just toss it.</span>
+<a id="L763"></a><span class="ln">   763</span>		state.b.Next(int(state.decodeUint()))
+<a id="L764"></a><span class="ln">   764</span>	}
+<a id="L765"></a><span class="ln">   765</span>	
+<a id="L766"></a><span class="ln">   766</span>	<span class="comment">// decodeGobDecoder decodes something implementing the GobDecoder interface.</span>
+<a id="L767"></a><span class="ln">   767</span>	<span class="comment">// The data is encoded as a byte slice.</span>
+<a id="L768"></a><span class="ln">   768</span>	func (dec *Decoder) decodeGobDecoder(state *decoderState, v reflect.Value) {
+<a id="L769"></a><span class="ln">   769</span>		<span class="comment">// Read the bytes for the value.</span>
+<a id="L770"></a><span class="ln">   770</span>		b := make([]byte, state.decodeUint())
+<a id="L771"></a><span class="ln">   771</span>		_, err := state.b.Read(b)
+<a id="L772"></a><span class="ln">   772</span>		if err != nil {
+<a id="L773"></a><span class="ln">   773</span>			error_(err)
+<a id="L774"></a><span class="ln">   774</span>		}
+<a id="L775"></a><span class="ln">   775</span>		<span class="comment">// We know it&#39;s a GobDecoder, so just call the method directly.</span>
+<a id="L776"></a><span class="ln">   776</span>		err = v.Interface().(GobDecoder).GobDecode(b)
+<a id="L777"></a><span class="ln">   777</span>		if err != nil {
+<a id="L778"></a><span class="ln">   778</span>			error_(err)
+<a id="L779"></a><span class="ln">   779</span>		}
+<a id="L780"></a><span class="ln">   780</span>	}
+<a id="L781"></a><span class="ln">   781</span>	
+<a id="L782"></a><span class="ln">   782</span>	<span class="comment">// ignoreGobDecoder discards the data for a GobDecoder value with no destination.</span>
+<a id="L783"></a><span class="ln">   783</span>	func (dec *Decoder) ignoreGobDecoder(state *decoderState) {
+<a id="L784"></a><span class="ln">   784</span>		<span class="comment">// Read the bytes for the value.</span>
+<a id="L785"></a><span class="ln">   785</span>		b := make([]byte, state.decodeUint())
+<a id="L786"></a><span class="ln">   786</span>		_, err := state.b.Read(b)
+<a id="L787"></a><span class="ln">   787</span>		if err != nil {
+<a id="L788"></a><span class="ln">   788</span>			error_(err)
+<a id="L789"></a><span class="ln">   789</span>		}
+<a id="L790"></a><span class="ln">   790</span>	}
+<a id="L791"></a><span class="ln">   791</span>	
+<a id="L792"></a><span class="ln">   792</span>	<span class="comment">// Index by Go types.</span>
+<a id="L793"></a><span class="ln">   793</span>	var decOpTable = [...]decOp{
+<a id="L794"></a><span class="ln">   794</span>		reflect.Bool:       decBool,
+<a id="L795"></a><span class="ln">   795</span>		reflect.Int8:       decInt8,
+<a id="L796"></a><span class="ln">   796</span>		reflect.Int16:      decInt16,
+<a id="L797"></a><span class="ln">   797</span>		reflect.Int32:      decInt32,
+<a id="L798"></a><span class="ln">   798</span>		reflect.Int64:      decInt64,
+<a id="L799"></a><span class="ln">   799</span>		reflect.Uint8:      decUint8,
+<a id="L800"></a><span class="ln">   800</span>		reflect.Uint16:     decUint16,
+<a id="L801"></a><span class="ln">   801</span>		reflect.Uint32:     decUint32,
+<a id="L802"></a><span class="ln">   802</span>		reflect.Uint64:     decUint64,
+<a id="L803"></a><span class="ln">   803</span>		reflect.Float32:    decFloat32,
+<a id="L804"></a><span class="ln">   804</span>		reflect.Float64:    decFloat64,
+<a id="L805"></a><span class="ln">   805</span>		reflect.Complex64:  decComplex64,
+<a id="L806"></a><span class="ln">   806</span>		reflect.Complex128: decComplex128,
+<a id="L807"></a><span class="ln">   807</span>		reflect.String:     decString,
+<a id="L808"></a><span class="ln">   808</span>	}
+<a id="L809"></a><span class="ln">   809</span>	
+<a id="L810"></a><span class="ln">   810</span>	<span class="comment">// Indexed by gob types.  tComplex will be added during type.init().</span>
+<a id="L811"></a><span class="ln">   811</span>	var decIgnoreOpMap = map[typeId]decOp{
+<a id="L812"></a><span class="ln">   812</span>		tBool:    ignoreUint,
+<a id="L813"></a><span class="ln">   813</span>		tInt:     ignoreUint,
+<a id="L814"></a><span class="ln">   814</span>		tUint:    ignoreUint,
+<a id="L815"></a><span class="ln">   815</span>		tFloat:   ignoreUint,
+<a id="L816"></a><span class="ln">   816</span>		tBytes:   ignoreUint8Array,
+<a id="L817"></a><span class="ln">   817</span>		tString:  ignoreUint8Array,
+<a id="L818"></a><span class="ln">   818</span>		tComplex: ignoreTwoUints,
+<a id="L819"></a><span class="ln">   819</span>	}
+<a id="L820"></a><span class="ln">   820</span>	
+<a id="L821"></a><span class="ln">   821</span>	<span class="comment">// decOpFor returns the decoding op for the base type under rt and</span>
+<a id="L822"></a><span class="ln">   822</span>	<span class="comment">// the indirection count to reach it.</span>
+<a id="L823"></a><span class="ln">   823</span>	func (dec *Decoder) decOpFor(wireId typeId, rt reflect.Type, name string, inProgress map[reflect.Type]*decOp) (*decOp, int) {
+<a id="L824"></a><span class="ln">   824</span>		ut := userType(rt)
+<a id="L825"></a><span class="ln">   825</span>		<span class="comment">// If the type implements GobEncoder, we handle it without further processing.</span>
+<a id="L826"></a><span class="ln">   826</span>		if ut.isGobDecoder {
+<a id="L827"></a><span class="ln">   827</span>			return dec.gobDecodeOpFor(ut)
+<a id="L828"></a><span class="ln">   828</span>		}
+<a id="L829"></a><span class="ln">   829</span>		<span class="comment">// If this type is already in progress, it&#39;s a recursive type (e.g. map[string]*T).</span>
+<a id="L830"></a><span class="ln">   830</span>		<span class="comment">// Return the pointer to the op we&#39;re already building.</span>
+<a id="L831"></a><span class="ln">   831</span>		if opPtr := inProgress[rt]; opPtr != nil {
+<a id="L832"></a><span class="ln">   832</span>			return opPtr, ut.indir
+<a id="L833"></a><span class="ln">   833</span>		}
+<a id="L834"></a><span class="ln">   834</span>		typ := ut.base
+<a id="L835"></a><span class="ln">   835</span>		indir := ut.indir
+<a id="L836"></a><span class="ln">   836</span>		var op decOp
+<a id="L837"></a><span class="ln">   837</span>		k := typ.Kind()
+<a id="L838"></a><span class="ln">   838</span>		if int(k) &lt; len(decOpTable) {
+<a id="L839"></a><span class="ln">   839</span>			op = decOpTable[k]
+<a id="L840"></a><span class="ln">   840</span>		}
+<a id="L841"></a><span class="ln">   841</span>		if op == nil {
+<a id="L842"></a><span class="ln">   842</span>			inProgress[rt] = &amp;op
+<a id="L843"></a><span class="ln">   843</span>			<span class="comment">// Special cases</span>
+<a id="L844"></a><span class="ln">   844</span>			switch t := typ; t.Kind() {
+<a id="L845"></a><span class="ln">   845</span>			case reflect.Array:
+<a id="L846"></a><span class="ln">   846</span>				name = &#34;element of &#34; + name
+<a id="L847"></a><span class="ln">   847</span>				elemId := dec.wireType[wireId].ArrayT.Elem
+<a id="L848"></a><span class="ln">   848</span>				elemOp, elemIndir := dec.decOpFor(elemId, t.Elem(), name, inProgress)
+<a id="L849"></a><span class="ln">   849</span>				ovfl := overflow(name)
+<a id="L850"></a><span class="ln">   850</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L851"></a><span class="ln">   851</span>					state.dec.decodeArray(t, state, uintptr(p), *elemOp, t.Elem().Size(), t.Len(), i.indir, elemIndir, ovfl)
+<a id="L852"></a><span class="ln">   852</span>				}
+<a id="L853"></a><span class="ln">   853</span>	
+<a id="L854"></a><span class="ln">   854</span>			case reflect.Map:
+<a id="L855"></a><span class="ln">   855</span>				keyId := dec.wireType[wireId].MapT.Key
+<a id="L856"></a><span class="ln">   856</span>				elemId := dec.wireType[wireId].MapT.Elem
+<a id="L857"></a><span class="ln">   857</span>				keyOp, keyIndir := dec.decOpFor(keyId, t.Key(), &#34;key of &#34;+name, inProgress)
+<a id="L858"></a><span class="ln">   858</span>				elemOp, elemIndir := dec.decOpFor(elemId, t.Elem(), &#34;element of &#34;+name, inProgress)
+<a id="L859"></a><span class="ln">   859</span>				ovfl := overflow(name)
+<a id="L860"></a><span class="ln">   860</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L861"></a><span class="ln">   861</span>					up := unsafe.Pointer(p)
+<a id="L862"></a><span class="ln">   862</span>					state.dec.decodeMap(t, state, uintptr(up), *keyOp, *elemOp, i.indir, keyIndir, elemIndir, ovfl)
+<a id="L863"></a><span class="ln">   863</span>				}
+<a id="L864"></a><span class="ln">   864</span>	
+<a id="L865"></a><span class="ln">   865</span>			case reflect.Slice:
+<a id="L866"></a><span class="ln">   866</span>				name = &#34;element of &#34; + name
+<a id="L867"></a><span class="ln">   867</span>				if t.Elem().Kind() == reflect.Uint8 {
+<a id="L868"></a><span class="ln">   868</span>					op = decUint8Slice
+<a id="L869"></a><span class="ln">   869</span>					break
+<a id="L870"></a><span class="ln">   870</span>				}
+<a id="L871"></a><span class="ln">   871</span>				var elemId typeId
+<a id="L872"></a><span class="ln">   872</span>				if tt, ok := builtinIdToType[wireId]; ok {
+<a id="L873"></a><span class="ln">   873</span>					elemId = tt.(*sliceType).Elem
+<a id="L874"></a><span class="ln">   874</span>				} else {
+<a id="L875"></a><span class="ln">   875</span>					elemId = dec.wireType[wireId].SliceT.Elem
+<a id="L876"></a><span class="ln">   876</span>				}
+<a id="L877"></a><span class="ln">   877</span>				elemOp, elemIndir := dec.decOpFor(elemId, t.Elem(), name, inProgress)
+<a id="L878"></a><span class="ln">   878</span>				ovfl := overflow(name)
+<a id="L879"></a><span class="ln">   879</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L880"></a><span class="ln">   880</span>					state.dec.decodeSlice(t, state, uintptr(p), *elemOp, t.Elem().Size(), i.indir, elemIndir, ovfl)
+<a id="L881"></a><span class="ln">   881</span>				}
+<a id="L882"></a><span class="ln">   882</span>	
+<a id="L883"></a><span class="ln">   883</span>			case reflect.Struct:
+<a id="L884"></a><span class="ln">   884</span>				<span class="comment">// Generate a closure that calls out to the engine for the nested type.</span>
+<a id="L885"></a><span class="ln">   885</span>				enginePtr, err := dec.getDecEnginePtr(wireId, userType(typ))
+<a id="L886"></a><span class="ln">   886</span>				if err != nil {
+<a id="L887"></a><span class="ln">   887</span>					error_(err)
+<a id="L888"></a><span class="ln">   888</span>				}
+<a id="L889"></a><span class="ln">   889</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L890"></a><span class="ln">   890</span>					<span class="comment">// indirect through enginePtr to delay evaluation for recursive structs.</span>
+<a id="L891"></a><span class="ln">   891</span>					dec.decodeStruct(*enginePtr, userType(typ), uintptr(p), i.indir)
+<a id="L892"></a><span class="ln">   892</span>				}
+<a id="L893"></a><span class="ln">   893</span>			case reflect.Interface:
+<a id="L894"></a><span class="ln">   894</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L895"></a><span class="ln">   895</span>					state.dec.decodeInterface(t, state, uintptr(p), i.indir)
+<a id="L896"></a><span class="ln">   896</span>				}
+<a id="L897"></a><span class="ln">   897</span>			}
+<a id="L898"></a><span class="ln">   898</span>		}
+<a id="L899"></a><span class="ln">   899</span>		if op == nil {
+<a id="L900"></a><span class="ln">   900</span>			errorf(&#34;decode can&#39;t handle type %s&#34;, rt)
+<a id="L901"></a><span class="ln">   901</span>		}
+<a id="L902"></a><span class="ln">   902</span>		return &amp;op, indir
+<a id="L903"></a><span class="ln">   903</span>	}
+<a id="L904"></a><span class="ln">   904</span>	
+<a id="L905"></a><span class="ln">   905</span>	<span class="comment">// decIgnoreOpFor returns the decoding op for a field that has no destination.</span>
+<a id="L906"></a><span class="ln">   906</span>	func (dec *Decoder) decIgnoreOpFor(wireId typeId) decOp {
+<a id="L907"></a><span class="ln">   907</span>		op, ok := decIgnoreOpMap[wireId]
+<a id="L908"></a><span class="ln">   908</span>		if !ok {
+<a id="L909"></a><span class="ln">   909</span>			if wireId == tInterface {
+<a id="L910"></a><span class="ln">   910</span>				<span class="comment">// Special case because it&#39;s a method: the ignored item might</span>
+<a id="L911"></a><span class="ln">   911</span>				<span class="comment">// define types and we need to record their state in the decoder.</span>
+<a id="L912"></a><span class="ln">   912</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L913"></a><span class="ln">   913</span>					state.dec.ignoreInterface(state)
+<a id="L914"></a><span class="ln">   914</span>				}
+<a id="L915"></a><span class="ln">   915</span>				return op
+<a id="L916"></a><span class="ln">   916</span>			}
+<a id="L917"></a><span class="ln">   917</span>			<span class="comment">// Special cases</span>
+<a id="L918"></a><span class="ln">   918</span>			wire := dec.wireType[wireId]
+<a id="L919"></a><span class="ln">   919</span>			switch {
+<a id="L920"></a><span class="ln">   920</span>			case wire == nil:
+<a id="L921"></a><span class="ln">   921</span>				errorf(&#34;bad data: undefined type %s&#34;, wireId.string())
+<a id="L922"></a><span class="ln">   922</span>			case wire.ArrayT != nil:
+<a id="L923"></a><span class="ln">   923</span>				elemId := wire.ArrayT.Elem
+<a id="L924"></a><span class="ln">   924</span>				elemOp := dec.decIgnoreOpFor(elemId)
+<a id="L925"></a><span class="ln">   925</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L926"></a><span class="ln">   926</span>					state.dec.ignoreArray(state, elemOp, wire.ArrayT.Len)
+<a id="L927"></a><span class="ln">   927</span>				}
+<a id="L928"></a><span class="ln">   928</span>	
+<a id="L929"></a><span class="ln">   929</span>			case wire.MapT != nil:
+<a id="L930"></a><span class="ln">   930</span>				keyId := dec.wireType[wireId].MapT.Key
+<a id="L931"></a><span class="ln">   931</span>				elemId := dec.wireType[wireId].MapT.Elem
+<a id="L932"></a><span class="ln">   932</span>				keyOp := dec.decIgnoreOpFor(keyId)
+<a id="L933"></a><span class="ln">   933</span>				elemOp := dec.decIgnoreOpFor(elemId)
+<a id="L934"></a><span class="ln">   934</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L935"></a><span class="ln">   935</span>					state.dec.ignoreMap(state, keyOp, elemOp)
+<a id="L936"></a><span class="ln">   936</span>				}
+<a id="L937"></a><span class="ln">   937</span>	
+<a id="L938"></a><span class="ln">   938</span>			case wire.SliceT != nil:
+<a id="L939"></a><span class="ln">   939</span>				elemId := wire.SliceT.Elem
+<a id="L940"></a><span class="ln">   940</span>				elemOp := dec.decIgnoreOpFor(elemId)
+<a id="L941"></a><span class="ln">   941</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L942"></a><span class="ln">   942</span>					state.dec.ignoreSlice(state, elemOp)
+<a id="L943"></a><span class="ln">   943</span>				}
+<a id="L944"></a><span class="ln">   944</span>	
+<a id="L945"></a><span class="ln">   945</span>			case wire.StructT != nil:
+<a id="L946"></a><span class="ln">   946</span>				<span class="comment">// Generate a closure that calls out to the engine for the nested type.</span>
+<a id="L947"></a><span class="ln">   947</span>				enginePtr, err := dec.getIgnoreEnginePtr(wireId)
+<a id="L948"></a><span class="ln">   948</span>				if err != nil {
+<a id="L949"></a><span class="ln">   949</span>					error_(err)
+<a id="L950"></a><span class="ln">   950</span>				}
+<a id="L951"></a><span class="ln">   951</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L952"></a><span class="ln">   952</span>					<span class="comment">// indirect through enginePtr to delay evaluation for recursive structs</span>
+<a id="L953"></a><span class="ln">   953</span>					state.dec.ignoreStruct(*enginePtr)
+<a id="L954"></a><span class="ln">   954</span>				}
+<a id="L955"></a><span class="ln">   955</span>	
+<a id="L956"></a><span class="ln">   956</span>			case wire.GobEncoderT != nil:
+<a id="L957"></a><span class="ln">   957</span>				op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L958"></a><span class="ln">   958</span>					state.dec.ignoreGobDecoder(state)
+<a id="L959"></a><span class="ln">   959</span>				}
+<a id="L960"></a><span class="ln">   960</span>			}
+<a id="L961"></a><span class="ln">   961</span>		}
+<a id="L962"></a><span class="ln">   962</span>		if op == nil {
+<a id="L963"></a><span class="ln">   963</span>			errorf(&#34;bad data: ignore can&#39;t handle type %s&#34;, wireId.string())
+<a id="L964"></a><span class="ln">   964</span>		}
+<a id="L965"></a><span class="ln">   965</span>		return op
+<a id="L966"></a><span class="ln">   966</span>	}
+<a id="L967"></a><span class="ln">   967</span>	
+<a id="L968"></a><span class="ln">   968</span>	<span class="comment">// gobDecodeOpFor returns the op for a type that is known to implement</span>
+<a id="L969"></a><span class="ln">   969</span>	<span class="comment">// GobDecoder.</span>
+<a id="L970"></a><span class="ln">   970</span>	func (dec *Decoder) gobDecodeOpFor(ut *userTypeInfo) (*decOp, int) {
+<a id="L971"></a><span class="ln">   971</span>		rcvrType := ut.user
+<a id="L972"></a><span class="ln">   972</span>		if ut.decIndir == -1 {
+<a id="L973"></a><span class="ln">   973</span>			rcvrType = reflect.PtrTo(rcvrType)
+<a id="L974"></a><span class="ln">   974</span>		} else if ut.decIndir &gt; 0 {
+<a id="L975"></a><span class="ln">   975</span>			for i := int8(0); i &lt; ut.decIndir; i++ {
+<a id="L976"></a><span class="ln">   976</span>				rcvrType = rcvrType.Elem()
+<a id="L977"></a><span class="ln">   977</span>			}
+<a id="L978"></a><span class="ln">   978</span>		}
+<a id="L979"></a><span class="ln">   979</span>		var op decOp
+<a id="L980"></a><span class="ln">   980</span>		op = func(i *decInstr, state *decoderState, p unsafe.Pointer) {
+<a id="L981"></a><span class="ln">   981</span>			<span class="comment">// Caller has gotten us to within one indirection of our value.</span>
+<a id="L982"></a><span class="ln">   982</span>			if i.indir &gt; 0 {
+<a id="L983"></a><span class="ln">   983</span>				if *(*unsafe.Pointer)(p) == nil {
+<a id="L984"></a><span class="ln">   984</span>					*(*unsafe.Pointer)(p) = unsafe.Pointer(reflect.New(ut.base).Pointer())
+<a id="L985"></a><span class="ln">   985</span>				}
+<a id="L986"></a><span class="ln">   986</span>			}
+<a id="L987"></a><span class="ln">   987</span>			<span class="comment">// Now p is a pointer to the base type.  Do we need to climb out to</span>
+<a id="L988"></a><span class="ln">   988</span>			<span class="comment">// get to the receiver type?</span>
+<a id="L989"></a><span class="ln">   989</span>			var v reflect.Value
+<a id="L990"></a><span class="ln">   990</span>			if ut.decIndir == -1 {
+<a id="L991"></a><span class="ln">   991</span>				v = reflect.NewAt(rcvrType, unsafe.Pointer(&amp;p)).Elem()
+<a id="L992"></a><span class="ln">   992</span>			} else {
+<a id="L993"></a><span class="ln">   993</span>				v = reflect.NewAt(rcvrType, p).Elem()
+<a id="L994"></a><span class="ln">   994</span>			}
+<a id="L995"></a><span class="ln">   995</span>			state.dec.decodeGobDecoder(state, v)
+<a id="L996"></a><span class="ln">   996</span>		}
+<a id="L997"></a><span class="ln">   997</span>		return &amp;op, int(ut.indir)
+<a id="L998"></a><span class="ln">   998</span>	
+<a id="L999"></a><span class="ln">   999</span>	}
+<a id="L1000"></a><span class="ln">  1000</span>	
+<a id="L1001"></a><span class="ln">  1001</span>	<span class="comment">// compatibleType asks: Are these two gob Types compatible?</span>
+<a id="L1002"></a><span class="ln">  1002</span>	<span class="comment">// Answers the question for basic types, arrays, maps and slices, plus</span>
+<a id="L1003"></a><span class="ln">  1003</span>	<span class="comment">// GobEncoder/Decoder pairs.</span>
+<a id="L1004"></a><span class="ln">  1004</span>	<span class="comment">// Structs are considered ok; fields will be checked later.</span>
+<a id="L1005"></a><span class="ln">  1005</span>	func (dec *Decoder) compatibleType(fr reflect.Type, fw typeId, inProgress map[reflect.Type]typeId) bool {
+<a id="L1006"></a><span class="ln">  1006</span>		if rhs, ok := inProgress[fr]; ok {
+<a id="L1007"></a><span class="ln">  1007</span>			return rhs == fw
+<a id="L1008"></a><span class="ln">  1008</span>		}
+<a id="L1009"></a><span class="ln">  1009</span>		inProgress[fr] = fw
+<a id="L1010"></a><span class="ln">  1010</span>		ut := userType(fr)
+<a id="L1011"></a><span class="ln">  1011</span>		wire, ok := dec.wireType[fw]
+<a id="L1012"></a><span class="ln">  1012</span>		<span class="comment">// If fr is a GobDecoder, the wire type must be GobEncoder.</span>
+<a id="L1013"></a><span class="ln">  1013</span>		<span class="comment">// And if fr is not a GobDecoder, the wire type must not be either.</span>
+<a id="L1014"></a><span class="ln">  1014</span>		if ut.isGobDecoder != (ok &amp;&amp; wire.GobEncoderT != nil) { <span class="comment">// the parentheses look odd but are correct.</span>
+<a id="L1015"></a><span class="ln">  1015</span>			return false
+<a id="L1016"></a><span class="ln">  1016</span>		}
+<a id="L1017"></a><span class="ln">  1017</span>		if ut.isGobDecoder { <span class="comment">// This test trumps all others.</span>
+<a id="L1018"></a><span class="ln">  1018</span>			return true
+<a id="L1019"></a><span class="ln">  1019</span>		}
+<a id="L1020"></a><span class="ln">  1020</span>		switch t := ut.base; t.Kind() {
+<a id="L1021"></a><span class="ln">  1021</span>		default:
+<a id="L1022"></a><span class="ln">  1022</span>			<span class="comment">// chan, etc: cannot handle.</span>
+<a id="L1023"></a><span class="ln">  1023</span>			return false
+<a id="L1024"></a><span class="ln">  1024</span>		case reflect.Bool:
+<a id="L1025"></a><span class="ln">  1025</span>			return fw == tBool
+<a id="L1026"></a><span class="ln">  1026</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L1027"></a><span class="ln">  1027</span>			return fw == tInt
+<a id="L1028"></a><span class="ln">  1028</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L1029"></a><span class="ln">  1029</span>			return fw == tUint
+<a id="L1030"></a><span class="ln">  1030</span>		case reflect.Float32, reflect.Float64:
+<a id="L1031"></a><span class="ln">  1031</span>			return fw == tFloat
+<a id="L1032"></a><span class="ln">  1032</span>		case reflect.Complex64, reflect.Complex128:
+<a id="L1033"></a><span class="ln">  1033</span>			return fw == tComplex
+<a id="L1034"></a><span class="ln">  1034</span>		case reflect.String:
+<a id="L1035"></a><span class="ln">  1035</span>			return fw == tString
+<a id="L1036"></a><span class="ln">  1036</span>		case reflect.Interface:
+<a id="L1037"></a><span class="ln">  1037</span>			return fw == tInterface
+<a id="L1038"></a><span class="ln">  1038</span>		case reflect.Array:
+<a id="L1039"></a><span class="ln">  1039</span>			if !ok || wire.ArrayT == nil {
+<a id="L1040"></a><span class="ln">  1040</span>				return false
+<a id="L1041"></a><span class="ln">  1041</span>			}
+<a id="L1042"></a><span class="ln">  1042</span>			array := wire.ArrayT
+<a id="L1043"></a><span class="ln">  1043</span>			return t.Len() == array.Len &amp;&amp; dec.compatibleType(t.Elem(), array.Elem, inProgress)
+<a id="L1044"></a><span class="ln">  1044</span>		case reflect.Map:
+<a id="L1045"></a><span class="ln">  1045</span>			if !ok || wire.MapT == nil {
+<a id="L1046"></a><span class="ln">  1046</span>				return false
+<a id="L1047"></a><span class="ln">  1047</span>			}
+<a id="L1048"></a><span class="ln">  1048</span>			MapType := wire.MapT
+<a id="L1049"></a><span class="ln">  1049</span>			return dec.compatibleType(t.Key(), MapType.Key, inProgress) &amp;&amp; dec.compatibleType(t.Elem(), MapType.Elem, inProgress)
+<a id="L1050"></a><span class="ln">  1050</span>		case reflect.Slice:
+<a id="L1051"></a><span class="ln">  1051</span>			<span class="comment">// Is it an array of bytes?</span>
+<a id="L1052"></a><span class="ln">  1052</span>			if t.Elem().Kind() == reflect.Uint8 {
+<a id="L1053"></a><span class="ln">  1053</span>				return fw == tBytes
+<a id="L1054"></a><span class="ln">  1054</span>			}
+<a id="L1055"></a><span class="ln">  1055</span>			<span class="comment">// Extract and compare element types.</span>
+<a id="L1056"></a><span class="ln">  1056</span>			var sw *sliceType
+<a id="L1057"></a><span class="ln">  1057</span>			if tt, ok := builtinIdToType[fw]; ok {
+<a id="L1058"></a><span class="ln">  1058</span>				sw, _ = tt.(*sliceType)
+<a id="L1059"></a><span class="ln">  1059</span>			} else if wire != nil {
+<a id="L1060"></a><span class="ln">  1060</span>				sw = wire.SliceT
+<a id="L1061"></a><span class="ln">  1061</span>			}
+<a id="L1062"></a><span class="ln">  1062</span>			elem := userType(t.Elem()).base
+<a id="L1063"></a><span class="ln">  1063</span>			return sw != nil &amp;&amp; dec.compatibleType(elem, sw.Elem, inProgress)
+<a id="L1064"></a><span class="ln">  1064</span>		case reflect.Struct:
+<a id="L1065"></a><span class="ln">  1065</span>			return true
+<a id="L1066"></a><span class="ln">  1066</span>		}
+<a id="L1067"></a><span class="ln">  1067</span>		return true
+<a id="L1068"></a><span class="ln">  1068</span>	}
+<a id="L1069"></a><span class="ln">  1069</span>	
+<a id="L1070"></a><span class="ln">  1070</span>	<span class="comment">// typeString returns a human-readable description of the type identified by remoteId.</span>
+<a id="L1071"></a><span class="ln">  1071</span>	func (dec *Decoder) typeString(remoteId typeId) string {
+<a id="L1072"></a><span class="ln">  1072</span>		if t := idToType[remoteId]; t != nil {
+<a id="L1073"></a><span class="ln">  1073</span>			<span class="comment">// globally known type.</span>
+<a id="L1074"></a><span class="ln">  1074</span>			return t.string()
+<a id="L1075"></a><span class="ln">  1075</span>		}
+<a id="L1076"></a><span class="ln">  1076</span>		return dec.wireType[remoteId].string()
+<a id="L1077"></a><span class="ln">  1077</span>	}
+<a id="L1078"></a><span class="ln">  1078</span>	
+<a id="L1079"></a><span class="ln">  1079</span>	<span class="comment">// compileSingle compiles the decoder engine for a non-struct top-level value, including</span>
+<a id="L1080"></a><span class="ln">  1080</span>	<span class="comment">// GobDecoders.</span>
+<a id="L1081"></a><span class="ln">  1081</span>	func (dec *Decoder) compileSingle(remoteId typeId, ut *userTypeInfo) (engine *decEngine, err error) {
+<a id="L1082"></a><span class="ln">  1082</span>		rt := ut.user
+<a id="L1083"></a><span class="ln">  1083</span>		engine = new(decEngine)
+<a id="L1084"></a><span class="ln">  1084</span>		engine.instr = make([]decInstr, 1) <span class="comment">// one item</span>
+<a id="L1085"></a><span class="ln">  1085</span>		name := rt.String()                <span class="comment">// best we can do</span>
+<a id="L1086"></a><span class="ln">  1086</span>		if !dec.compatibleType(rt, remoteId, make(map[reflect.Type]typeId)) {
+<a id="L1087"></a><span class="ln">  1087</span>			remoteType := dec.typeString(remoteId)
+<a id="L1088"></a><span class="ln">  1088</span>			<span class="comment">// Common confusing case: local interface type, remote concrete type.</span>
+<a id="L1089"></a><span class="ln">  1089</span>			if ut.base.Kind() == reflect.Interface &amp;&amp; remoteId != tInterface {
+<a id="L1090"></a><span class="ln">  1090</span>				return nil, errors.New(&#34;gob: local interface type &#34; + name + &#34; can only be decoded from remote interface type; received concrete type &#34; + remoteType)
+<a id="L1091"></a><span class="ln">  1091</span>			}
+<a id="L1092"></a><span class="ln">  1092</span>			return nil, errors.New(&#34;gob: decoding into local type &#34; + name + &#34;, received remote type &#34; + remoteType)
+<a id="L1093"></a><span class="ln">  1093</span>		}
+<a id="L1094"></a><span class="ln">  1094</span>		op, indir := dec.decOpFor(remoteId, rt, name, make(map[reflect.Type]*decOp))
+<a id="L1095"></a><span class="ln">  1095</span>		ovfl := errors.New(`value for &#34;` + name + `&#34; out of range`)
+<a id="L1096"></a><span class="ln">  1096</span>		engine.instr[singletonField] = decInstr{*op, singletonField, indir, 0, ovfl}
+<a id="L1097"></a><span class="ln">  1097</span>		engine.numInstr = 1
+<a id="L1098"></a><span class="ln">  1098</span>		return
+<a id="L1099"></a><span class="ln">  1099</span>	}
+<a id="L1100"></a><span class="ln">  1100</span>	
+<a id="L1101"></a><span class="ln">  1101</span>	<span class="comment">// compileIgnoreSingle compiles the decoder engine for a non-struct top-level value that will be discarded.</span>
+<a id="L1102"></a><span class="ln">  1102</span>	func (dec *Decoder) compileIgnoreSingle(remoteId typeId) (engine *decEngine, err error) {
+<a id="L1103"></a><span class="ln">  1103</span>		engine = new(decEngine)
+<a id="L1104"></a><span class="ln">  1104</span>		engine.instr = make([]decInstr, 1) <span class="comment">// one item</span>
+<a id="L1105"></a><span class="ln">  1105</span>		op := dec.decIgnoreOpFor(remoteId)
+<a id="L1106"></a><span class="ln">  1106</span>		ovfl := overflow(dec.typeString(remoteId))
+<a id="L1107"></a><span class="ln">  1107</span>		engine.instr[0] = decInstr{op, 0, 0, 0, ovfl}
+<a id="L1108"></a><span class="ln">  1108</span>		engine.numInstr = 1
+<a id="L1109"></a><span class="ln">  1109</span>		return
+<a id="L1110"></a><span class="ln">  1110</span>	}
+<a id="L1111"></a><span class="ln">  1111</span>	
+<a id="L1112"></a><span class="ln">  1112</span>	<span class="comment">// compileDec compiles the decoder engine for a value.  If the value is not a struct,</span>
+<a id="L1113"></a><span class="ln">  1113</span>	<span class="comment">// it calls out to compileSingle.</span>
+<a id="L1114"></a><span class="ln">  1114</span>	func (dec *Decoder) compileDec(remoteId typeId, ut *userTypeInfo) (engine *decEngine, err error) {
+<a id="L1115"></a><span class="ln">  1115</span>		rt := ut.base
+<a id="L1116"></a><span class="ln">  1116</span>		srt := rt
+<a id="L1117"></a><span class="ln">  1117</span>		if srt.Kind() != reflect.Struct ||
+<a id="L1118"></a><span class="ln">  1118</span>			ut.isGobDecoder {
+<a id="L1119"></a><span class="ln">  1119</span>			return dec.compileSingle(remoteId, ut)
+<a id="L1120"></a><span class="ln">  1120</span>		}
+<a id="L1121"></a><span class="ln">  1121</span>		var wireStruct *structType
+<a id="L1122"></a><span class="ln">  1122</span>		<span class="comment">// Builtin types can come from global pool; the rest must be defined by the decoder.</span>
+<a id="L1123"></a><span class="ln">  1123</span>		<span class="comment">// Also we know we&#39;re decoding a struct now, so the client must have sent one.</span>
+<a id="L1124"></a><span class="ln">  1124</span>		if t, ok := builtinIdToType[remoteId]; ok {
+<a id="L1125"></a><span class="ln">  1125</span>			wireStruct, _ = t.(*structType)
+<a id="L1126"></a><span class="ln">  1126</span>		} else {
+<a id="L1127"></a><span class="ln">  1127</span>			wire := dec.wireType[remoteId]
+<a id="L1128"></a><span class="ln">  1128</span>			if wire == nil {
+<a id="L1129"></a><span class="ln">  1129</span>				error_(errBadType)
+<a id="L1130"></a><span class="ln">  1130</span>			}
+<a id="L1131"></a><span class="ln">  1131</span>			wireStruct = wire.StructT
+<a id="L1132"></a><span class="ln">  1132</span>		}
+<a id="L1133"></a><span class="ln">  1133</span>		if wireStruct == nil {
+<a id="L1134"></a><span class="ln">  1134</span>			errorf(&#34;type mismatch in decoder: want struct type %s; got non-struct&#34;, rt)
+<a id="L1135"></a><span class="ln">  1135</span>		}
+<a id="L1136"></a><span class="ln">  1136</span>		engine = new(decEngine)
+<a id="L1137"></a><span class="ln">  1137</span>		engine.instr = make([]decInstr, len(wireStruct.Field))
+<a id="L1138"></a><span class="ln">  1138</span>		seen := make(map[reflect.Type]*decOp)
+<a id="L1139"></a><span class="ln">  1139</span>		<span class="comment">// Loop over the fields of the wire type.</span>
+<a id="L1140"></a><span class="ln">  1140</span>		for fieldnum := 0; fieldnum &lt; len(wireStruct.Field); fieldnum++ {
+<a id="L1141"></a><span class="ln">  1141</span>			wireField := wireStruct.Field[fieldnum]
+<a id="L1142"></a><span class="ln">  1142</span>			if wireField.Name == &#34;&#34; {
+<a id="L1143"></a><span class="ln">  1143</span>				errorf(&#34;empty name for remote field of type %s&#34;, wireStruct.Name)
+<a id="L1144"></a><span class="ln">  1144</span>			}
+<a id="L1145"></a><span class="ln">  1145</span>			ovfl := overflow(wireField.Name)
+<a id="L1146"></a><span class="ln">  1146</span>			<span class="comment">// Find the field of the local type with the same name.</span>
+<a id="L1147"></a><span class="ln">  1147</span>			localField, present := srt.FieldByName(wireField.Name)
+<a id="L1148"></a><span class="ln">  1148</span>			<span class="comment">// TODO(r): anonymous names</span>
+<a id="L1149"></a><span class="ln">  1149</span>			if !present || !isExported(wireField.Name) {
+<a id="L1150"></a><span class="ln">  1150</span>				op := dec.decIgnoreOpFor(wireField.Id)
+<a id="L1151"></a><span class="ln">  1151</span>				engine.instr[fieldnum] = decInstr{op, fieldnum, 0, 0, ovfl}
+<a id="L1152"></a><span class="ln">  1152</span>				continue
+<a id="L1153"></a><span class="ln">  1153</span>			}
+<a id="L1154"></a><span class="ln">  1154</span>			if !dec.compatibleType(localField.Type, wireField.Id, make(map[reflect.Type]typeId)) {
+<a id="L1155"></a><span class="ln">  1155</span>				errorf(&#34;wrong type (%s) for received field %s.%s&#34;, localField.Type, wireStruct.Name, wireField.Name)
+<a id="L1156"></a><span class="ln">  1156</span>			}
+<a id="L1157"></a><span class="ln">  1157</span>			op, indir := dec.decOpFor(wireField.Id, localField.Type, localField.Name, seen)
+<a id="L1158"></a><span class="ln">  1158</span>			engine.instr[fieldnum] = decInstr{*op, fieldnum, indir, uintptr(localField.Offset), ovfl}
+<a id="L1159"></a><span class="ln">  1159</span>			engine.numInstr++
+<a id="L1160"></a><span class="ln">  1160</span>		}
+<a id="L1161"></a><span class="ln">  1161</span>		return
+<a id="L1162"></a><span class="ln">  1162</span>	}
+<a id="L1163"></a><span class="ln">  1163</span>	
+<a id="L1164"></a><span class="ln">  1164</span>	<span class="comment">// getDecEnginePtr returns the engine for the specified type.</span>
+<a id="L1165"></a><span class="ln">  1165</span>	func (dec *Decoder) getDecEnginePtr(remoteId typeId, ut *userTypeInfo) (enginePtr **decEngine, err error) {
+<a id="L1166"></a><span class="ln">  1166</span>		rt := ut.user
+<a id="L1167"></a><span class="ln">  1167</span>		decoderMap, ok := dec.decoderCache[rt]
+<a id="L1168"></a><span class="ln">  1168</span>		if !ok {
+<a id="L1169"></a><span class="ln">  1169</span>			decoderMap = make(map[typeId]**decEngine)
+<a id="L1170"></a><span class="ln">  1170</span>			dec.decoderCache[rt] = decoderMap
+<a id="L1171"></a><span class="ln">  1171</span>		}
+<a id="L1172"></a><span class="ln">  1172</span>		if enginePtr, ok = decoderMap[remoteId]; !ok {
+<a id="L1173"></a><span class="ln">  1173</span>			<span class="comment">// To handle recursive types, mark this engine as underway before compiling.</span>
+<a id="L1174"></a><span class="ln">  1174</span>			enginePtr = new(*decEngine)
+<a id="L1175"></a><span class="ln">  1175</span>			decoderMap[remoteId] = enginePtr
+<a id="L1176"></a><span class="ln">  1176</span>			*enginePtr, err = dec.compileDec(remoteId, ut)
+<a id="L1177"></a><span class="ln">  1177</span>			if err != nil {
+<a id="L1178"></a><span class="ln">  1178</span>				delete(decoderMap, remoteId)
+<a id="L1179"></a><span class="ln">  1179</span>			}
+<a id="L1180"></a><span class="ln">  1180</span>		}
+<a id="L1181"></a><span class="ln">  1181</span>		return
+<a id="L1182"></a><span class="ln">  1182</span>	}
+<a id="L1183"></a><span class="ln">  1183</span>	
+<a id="L1184"></a><span class="ln">  1184</span>	<span class="comment">// emptyStruct is the type we compile into when ignoring a struct value.</span>
+<a id="L1185"></a><span class="ln">  1185</span>	type emptyStruct struct{}
+<a id="L1186"></a><span class="ln">  1186</span>	
+<a id="L1187"></a><span class="ln">  1187</span>	var emptyStructType = reflect.TypeOf(emptyStruct{})
+<a id="L1188"></a><span class="ln">  1188</span>	
+<a id="L1189"></a><span class="ln">  1189</span>	<span class="comment">// getDecEnginePtr returns the engine for the specified type when the value is to be discarded.</span>
+<a id="L1190"></a><span class="ln">  1190</span>	func (dec *Decoder) getIgnoreEnginePtr(wireId typeId) (enginePtr **decEngine, err error) {
+<a id="L1191"></a><span class="ln">  1191</span>		var ok bool
+<a id="L1192"></a><span class="ln">  1192</span>		if enginePtr, ok = dec.ignorerCache[wireId]; !ok {
+<a id="L1193"></a><span class="ln">  1193</span>			<span class="comment">// To handle recursive types, mark this engine as underway before compiling.</span>
+<a id="L1194"></a><span class="ln">  1194</span>			enginePtr = new(*decEngine)
+<a id="L1195"></a><span class="ln">  1195</span>			dec.ignorerCache[wireId] = enginePtr
+<a id="L1196"></a><span class="ln">  1196</span>			wire := dec.wireType[wireId]
+<a id="L1197"></a><span class="ln">  1197</span>			if wire != nil &amp;&amp; wire.StructT != nil {
+<a id="L1198"></a><span class="ln">  1198</span>				*enginePtr, err = dec.compileDec(wireId, userType(emptyStructType))
+<a id="L1199"></a><span class="ln">  1199</span>			} else {
+<a id="L1200"></a><span class="ln">  1200</span>				*enginePtr, err = dec.compileIgnoreSingle(wireId)
+<a id="L1201"></a><span class="ln">  1201</span>			}
+<a id="L1202"></a><span class="ln">  1202</span>			if err != nil {
+<a id="L1203"></a><span class="ln">  1203</span>				delete(dec.ignorerCache, wireId)
+<a id="L1204"></a><span class="ln">  1204</span>			}
+<a id="L1205"></a><span class="ln">  1205</span>		}
+<a id="L1206"></a><span class="ln">  1206</span>		return
+<a id="L1207"></a><span class="ln">  1207</span>	}
+<a id="L1208"></a><span class="ln">  1208</span>	
+<a id="L1209"></a><span class="ln">  1209</span>	<span class="comment">// decodeValue decodes the data stream representing a value and stores it in val.</span>
+<a id="L1210"></a><span class="ln">  1210</span>	func (dec *Decoder) decodeValue(wireId typeId, val reflect.Value) {
+<a id="L1211"></a><span class="ln">  1211</span>		defer catchError(&amp;dec.err)
+<a id="L1212"></a><span class="ln">  1212</span>		<span class="comment">// If the value is nil, it means we should just ignore this item.</span>
+<a id="L1213"></a><span class="ln">  1213</span>		if !val.IsValid() {
+<a id="L1214"></a><span class="ln">  1214</span>			dec.decodeIgnoredValue(wireId)
+<a id="L1215"></a><span class="ln">  1215</span>			return
+<a id="L1216"></a><span class="ln">  1216</span>		}
+<a id="L1217"></a><span class="ln">  1217</span>		<span class="comment">// Dereference down to the underlying type.</span>
+<a id="L1218"></a><span class="ln">  1218</span>		ut := userType(val.Type())
+<a id="L1219"></a><span class="ln">  1219</span>		base := ut.base
+<a id="L1220"></a><span class="ln">  1220</span>		var enginePtr **decEngine
+<a id="L1221"></a><span class="ln">  1221</span>		enginePtr, dec.err = dec.getDecEnginePtr(wireId, ut)
+<a id="L1222"></a><span class="ln">  1222</span>		if dec.err != nil {
+<a id="L1223"></a><span class="ln">  1223</span>			return
+<a id="L1224"></a><span class="ln">  1224</span>		}
+<a id="L1225"></a><span class="ln">  1225</span>		engine := *enginePtr
+<a id="L1226"></a><span class="ln">  1226</span>		if st := base; st.Kind() == reflect.Struct &amp;&amp; !ut.isGobDecoder {
+<a id="L1227"></a><span class="ln">  1227</span>			if engine.numInstr == 0 &amp;&amp; st.NumField() &gt; 0 &amp;&amp; len(dec.wireType[wireId].StructT.Field) &gt; 0 {
+<a id="L1228"></a><span class="ln">  1228</span>				name := base.Name()
+<a id="L1229"></a><span class="ln">  1229</span>				errorf(&#34;type mismatch: no fields matched compiling decoder for %s&#34;, name)
+<a id="L1230"></a><span class="ln">  1230</span>			}
+<a id="L1231"></a><span class="ln">  1231</span>			dec.decodeStruct(engine, ut, uintptr(unsafeAddr(val)), ut.indir)
+<a id="L1232"></a><span class="ln">  1232</span>		} else {
+<a id="L1233"></a><span class="ln">  1233</span>			dec.decodeSingle(engine, ut, uintptr(unsafeAddr(val)))
+<a id="L1234"></a><span class="ln">  1234</span>		}
+<a id="L1235"></a><span class="ln">  1235</span>	}
+<a id="L1236"></a><span class="ln">  1236</span>	
+<a id="L1237"></a><span class="ln">  1237</span>	<span class="comment">// decodeIgnoredValue decodes the data stream representing a value of the specified type and discards it.</span>
+<a id="L1238"></a><span class="ln">  1238</span>	func (dec *Decoder) decodeIgnoredValue(wireId typeId) {
+<a id="L1239"></a><span class="ln">  1239</span>		var enginePtr **decEngine
+<a id="L1240"></a><span class="ln">  1240</span>		enginePtr, dec.err = dec.getIgnoreEnginePtr(wireId)
+<a id="L1241"></a><span class="ln">  1241</span>		if dec.err != nil {
+<a id="L1242"></a><span class="ln">  1242</span>			return
+<a id="L1243"></a><span class="ln">  1243</span>		}
+<a id="L1244"></a><span class="ln">  1244</span>		wire := dec.wireType[wireId]
+<a id="L1245"></a><span class="ln">  1245</span>		if wire != nil &amp;&amp; wire.StructT != nil {
+<a id="L1246"></a><span class="ln">  1246</span>			dec.ignoreStruct(*enginePtr)
+<a id="L1247"></a><span class="ln">  1247</span>		} else {
+<a id="L1248"></a><span class="ln">  1248</span>			dec.ignoreSingle(*enginePtr)
+<a id="L1249"></a><span class="ln">  1249</span>		}
+<a id="L1250"></a><span class="ln">  1250</span>	}
+<a id="L1251"></a><span class="ln">  1251</span>	
+<a id="L1252"></a><span class="ln">  1252</span>	func init() {
+<a id="L1253"></a><span class="ln">  1253</span>		var iop, uop decOp
+<a id="L1254"></a><span class="ln">  1254</span>		switch reflect.TypeOf(int(0)).Bits() {
+<a id="L1255"></a><span class="ln">  1255</span>		case 32:
+<a id="L1256"></a><span class="ln">  1256</span>			iop = decInt32
+<a id="L1257"></a><span class="ln">  1257</span>			uop = decUint32
+<a id="L1258"></a><span class="ln">  1258</span>		case 64:
+<a id="L1259"></a><span class="ln">  1259</span>			iop = decInt64
+<a id="L1260"></a><span class="ln">  1260</span>			uop = decUint64
+<a id="L1261"></a><span class="ln">  1261</span>		default:
+<a id="L1262"></a><span class="ln">  1262</span>			panic(&#34;gob: unknown size of int/uint&#34;)
+<a id="L1263"></a><span class="ln">  1263</span>		}
+<a id="L1264"></a><span class="ln">  1264</span>		decOpTable[reflect.Int] = iop
+<a id="L1265"></a><span class="ln">  1265</span>		decOpTable[reflect.Uint] = uop
+<a id="L1266"></a><span class="ln">  1266</span>	
+<a id="L1267"></a><span class="ln">  1267</span>		<span class="comment">// Finally uintptr</span>
+<a id="L1268"></a><span class="ln">  1268</span>		switch reflect.TypeOf(uintptr(0)).Bits() {
+<a id="L1269"></a><span class="ln">  1269</span>		case 32:
+<a id="L1270"></a><span class="ln">  1270</span>			uop = decUint32
+<a id="L1271"></a><span class="ln">  1271</span>		case 64:
+<a id="L1272"></a><span class="ln">  1272</span>			uop = decUint64
+<a id="L1273"></a><span class="ln">  1273</span>		default:
+<a id="L1274"></a><span class="ln">  1274</span>			panic(&#34;gob: unknown size of uintptr&#34;)
+<a id="L1275"></a><span class="ln">  1275</span>		}
+<a id="L1276"></a><span class="ln">  1276</span>		decOpTable[reflect.Uintptr] = uop
+<a id="L1277"></a><span class="ln">  1277</span>	}
+<a id="L1278"></a><span class="ln">  1278</span>	
+<a id="L1279"></a><span class="ln">  1279</span>	<span class="comment">// Gob assumes it can call UnsafeAddr on any Value</span>
+<a id="L1280"></a><span class="ln">  1280</span>	<span class="comment">// in order to get a pointer it can copy data from.</span>
+<a id="L1281"></a><span class="ln">  1281</span>	<span class="comment">// Values that have just been created and do not point</span>
+<a id="L1282"></a><span class="ln">  1282</span>	<span class="comment">// into existing structs or slices cannot be addressed,</span>
+<a id="L1283"></a><span class="ln">  1283</span>	<span class="comment">// so simulate it by returning a pointer to a copy.</span>
+<a id="L1284"></a><span class="ln">  1284</span>	<span class="comment">// Each call allocates once.</span>
+<a id="L1285"></a><span class="ln">  1285</span>	func unsafeAddr(v reflect.Value) uintptr {
+<a id="L1286"></a><span class="ln">  1286</span>		if v.CanAddr() {
+<a id="L1287"></a><span class="ln">  1287</span>			return v.UnsafeAddr()
+<a id="L1288"></a><span class="ln">  1288</span>		}
+<a id="L1289"></a><span class="ln">  1289</span>		x := reflect.New(v.Type()).Elem()
+<a id="L1290"></a><span class="ln">  1290</span>		x.Set(v)
+<a id="L1291"></a><span class="ln">  1291</span>		return x.UnsafeAddr()
+<a id="L1292"></a><span class="ln">  1292</span>	}
+<a id="L1293"></a><span class="ln">  1293</span>	
+<a id="L1294"></a><span class="ln">  1294</span>	<span class="comment">// Gob depends on being able to take the address</span>
+<a id="L1295"></a><span class="ln">  1295</span>	<span class="comment">// of zeroed Values it creates, so use this wrapper instead</span>
+<a id="L1296"></a><span class="ln">  1296</span>	<span class="comment">// of the standard reflect.Zero.</span>
+<a id="L1297"></a><span class="ln">  1297</span>	<span class="comment">// Each call allocates once.</span>
+<a id="L1298"></a><span class="ln">  1298</span>	func allocValue(t reflect.Type) reflect.Value {
+<a id="L1299"></a><span class="ln">  1299</span>		return reflect.New(t).Elem()
+<a id="L1300"></a><span class="ln">  1300</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/crypto/tls/prf.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/crypto/tls/prf.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package tls
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;crypto/hmac&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;crypto/md5&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;crypto/sha1&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;hash&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// Split a premaster secret in two as specified in RFC 4346, section 5.</span>
+<a id="L15"></a><span class="ln">    15</span>	func splitPreMasterSecret(secret []byte) (s1, s2 []byte) {
+<a id="L16"></a><span class="ln">    16</span>		s1 = secret[0 : (len(secret)+1)/2]
+<a id="L17"></a><span class="ln">    17</span>		s2 = secret[len(secret)/2:]
+<a id="L18"></a><span class="ln">    18</span>		return
+<a id="L19"></a><span class="ln">    19</span>	}
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// pHash implements the P_hash function, as defined in RFC 4346, section 5.</span>
+<a id="L22"></a><span class="ln">    22</span>	func pHash(result, secret, seed []byte, hash func() hash.Hash) {
+<a id="L23"></a><span class="ln">    23</span>		h := hmac.New(hash, secret)
+<a id="L24"></a><span class="ln">    24</span>		h.Write(seed)
+<a id="L25"></a><span class="ln">    25</span>		a := h.Sum(nil)
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>		j := 0
+<a id="L28"></a><span class="ln">    28</span>		for j &lt; len(result) {
+<a id="L29"></a><span class="ln">    29</span>			h.Reset()
+<a id="L30"></a><span class="ln">    30</span>			h.Write(a)
+<a id="L31"></a><span class="ln">    31</span>			h.Write(seed)
+<a id="L32"></a><span class="ln">    32</span>			b := h.Sum(nil)
+<a id="L33"></a><span class="ln">    33</span>			todo := len(b)
+<a id="L34"></a><span class="ln">    34</span>			if j+todo &gt; len(result) {
+<a id="L35"></a><span class="ln">    35</span>				todo = len(result) - j
+<a id="L36"></a><span class="ln">    36</span>			}
+<a id="L37"></a><span class="ln">    37</span>			copy(result[j:j+todo], b)
+<a id="L38"></a><span class="ln">    38</span>			j += todo
+<a id="L39"></a><span class="ln">    39</span>	
+<a id="L40"></a><span class="ln">    40</span>			h.Reset()
+<a id="L41"></a><span class="ln">    41</span>			h.Write(a)
+<a id="L42"></a><span class="ln">    42</span>			a = h.Sum(nil)
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>	}
+<a id="L45"></a><span class="ln">    45</span>	
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// pRF10 implements the TLS 1.0 pseudo-random function, as defined in RFC 2246, section 5.</span>
+<a id="L47"></a><span class="ln">    47</span>	func pRF10(result, secret, label, seed []byte) {
+<a id="L48"></a><span class="ln">    48</span>		hashSHA1 := sha1.New
+<a id="L49"></a><span class="ln">    49</span>		hashMD5 := md5.New
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>		labelAndSeed := make([]byte, len(label)+len(seed))
+<a id="L52"></a><span class="ln">    52</span>		copy(labelAndSeed, label)
+<a id="L53"></a><span class="ln">    53</span>		copy(labelAndSeed[len(label):], seed)
+<a id="L54"></a><span class="ln">    54</span>	
+<a id="L55"></a><span class="ln">    55</span>		s1, s2 := splitPreMasterSecret(secret)
+<a id="L56"></a><span class="ln">    56</span>		pHash(result, s1, labelAndSeed, hashMD5)
+<a id="L57"></a><span class="ln">    57</span>		result2 := make([]byte, len(result))
+<a id="L58"></a><span class="ln">    58</span>		pHash(result2, s2, labelAndSeed, hashSHA1)
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>		for i, b := range result2 {
+<a id="L61"></a><span class="ln">    61</span>			result[i] ^= b
+<a id="L62"></a><span class="ln">    62</span>		}
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// pRF30 implements the SSL 3.0 pseudo-random function, as defined in</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// www.mozilla.org/projects/security/pki/nss/ssl/draft302.txt section 6.</span>
+<a id="L67"></a><span class="ln">    67</span>	func pRF30(result, secret, label, seed []byte) {
+<a id="L68"></a><span class="ln">    68</span>		hashSHA1 := sha1.New()
+<a id="L69"></a><span class="ln">    69</span>		hashMD5 := md5.New()
+<a id="L70"></a><span class="ln">    70</span>	
+<a id="L71"></a><span class="ln">    71</span>		done := 0
+<a id="L72"></a><span class="ln">    72</span>		i := 0
+<a id="L73"></a><span class="ln">    73</span>		<span class="comment">// RFC5246 section 6.3 says that the largest PRF output needed is 128</span>
+<a id="L74"></a><span class="ln">    74</span>		<span class="comment">// bytes. Since no more ciphersuites will be added to SSLv3, this will</span>
+<a id="L75"></a><span class="ln">    75</span>		<span class="comment">// remain true. Each iteration gives us 16 bytes so 10 iterations will</span>
+<a id="L76"></a><span class="ln">    76</span>		<span class="comment">// be sufficient.</span>
+<a id="L77"></a><span class="ln">    77</span>		var b [11]byte
+<a id="L78"></a><span class="ln">    78</span>		for done &lt; len(result) {
+<a id="L79"></a><span class="ln">    79</span>			for j := 0; j &lt;= i; j++ {
+<a id="L80"></a><span class="ln">    80</span>				b[j] = &#39;A&#39; + byte(i)
+<a id="L81"></a><span class="ln">    81</span>			}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>			hashSHA1.Reset()
+<a id="L84"></a><span class="ln">    84</span>			hashSHA1.Write(b[:i+1])
+<a id="L85"></a><span class="ln">    85</span>			hashSHA1.Write(secret)
+<a id="L86"></a><span class="ln">    86</span>			hashSHA1.Write(seed)
+<a id="L87"></a><span class="ln">    87</span>			digest := hashSHA1.Sum(nil)
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>			hashMD5.Reset()
+<a id="L90"></a><span class="ln">    90</span>			hashMD5.Write(secret)
+<a id="L91"></a><span class="ln">    91</span>			hashMD5.Write(digest)
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>			done += copy(result[done:], hashMD5.Sum(nil))
+<a id="L94"></a><span class="ln">    94</span>			i++
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>	}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	const (
+<a id="L99"></a><span class="ln">    99</span>		tlsRandomLength      = 32 <span class="comment">// Length of a random nonce in TLS 1.1.</span>
+<a id="L100"></a><span class="ln">   100</span>		masterSecretLength   = 48 <span class="comment">// Length of a master secret in TLS 1.1.</span>
+<a id="L101"></a><span class="ln">   101</span>		finishedVerifyLength = 12 <span class="comment">// Length of verify_data in a Finished message.</span>
+<a id="L102"></a><span class="ln">   102</span>	)
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	var masterSecretLabel = []byte(&#34;master secret&#34;)
+<a id="L105"></a><span class="ln">   105</span>	var keyExpansionLabel = []byte(&#34;key expansion&#34;)
+<a id="L106"></a><span class="ln">   106</span>	var clientFinishedLabel = []byte(&#34;client finished&#34;)
+<a id="L107"></a><span class="ln">   107</span>	var serverFinishedLabel = []byte(&#34;server finished&#34;)
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// keysFromPreMasterSecret generates the connection keys from the pre master</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// secret, given the lengths of the MAC key, cipher key and IV, as defined in</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// RFC 2246, section 6.3.</span>
+<a id="L112"></a><span class="ln">   112</span>	func keysFromPreMasterSecret(version uint16, preMasterSecret, clientRandom, serverRandom []byte, macLen, keyLen, ivLen int) (masterSecret, clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV []byte) {
+<a id="L113"></a><span class="ln">   113</span>		prf := pRF10
+<a id="L114"></a><span class="ln">   114</span>		if version == versionSSL30 {
+<a id="L115"></a><span class="ln">   115</span>			prf = pRF30
+<a id="L116"></a><span class="ln">   116</span>		}
+<a id="L117"></a><span class="ln">   117</span>	
+<a id="L118"></a><span class="ln">   118</span>		var seed [tlsRandomLength * 2]byte
+<a id="L119"></a><span class="ln">   119</span>		copy(seed[0:len(clientRandom)], clientRandom)
+<a id="L120"></a><span class="ln">   120</span>		copy(seed[len(clientRandom):], serverRandom)
+<a id="L121"></a><span class="ln">   121</span>		masterSecret = make([]byte, masterSecretLength)
+<a id="L122"></a><span class="ln">   122</span>		prf(masterSecret, preMasterSecret, masterSecretLabel, seed[0:])
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>		copy(seed[0:len(clientRandom)], serverRandom)
+<a id="L125"></a><span class="ln">   125</span>		copy(seed[len(serverRandom):], clientRandom)
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>		n := 2*macLen + 2*keyLen + 2*ivLen
+<a id="L128"></a><span class="ln">   128</span>		keyMaterial := make([]byte, n)
+<a id="L129"></a><span class="ln">   129</span>		prf(keyMaterial, masterSecret, keyExpansionLabel, seed[0:])
+<a id="L130"></a><span class="ln">   130</span>		clientMAC = keyMaterial[:macLen]
+<a id="L131"></a><span class="ln">   131</span>		keyMaterial = keyMaterial[macLen:]
+<a id="L132"></a><span class="ln">   132</span>		serverMAC = keyMaterial[:macLen]
+<a id="L133"></a><span class="ln">   133</span>		keyMaterial = keyMaterial[macLen:]
+<a id="L134"></a><span class="ln">   134</span>		clientKey = keyMaterial[:keyLen]
+<a id="L135"></a><span class="ln">   135</span>		keyMaterial = keyMaterial[keyLen:]
+<a id="L136"></a><span class="ln">   136</span>		serverKey = keyMaterial[:keyLen]
+<a id="L137"></a><span class="ln">   137</span>		keyMaterial = keyMaterial[keyLen:]
+<a id="L138"></a><span class="ln">   138</span>		clientIV = keyMaterial[:ivLen]
+<a id="L139"></a><span class="ln">   139</span>		keyMaterial = keyMaterial[ivLen:]
+<a id="L140"></a><span class="ln">   140</span>		serverIV = keyMaterial[:ivLen]
+<a id="L141"></a><span class="ln">   141</span>		return
+<a id="L142"></a><span class="ln">   142</span>	}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>	func newFinishedHash(version uint16) finishedHash {
+<a id="L145"></a><span class="ln">   145</span>		return finishedHash{md5.New(), sha1.New(), md5.New(), sha1.New(), version}
+<a id="L146"></a><span class="ln">   146</span>	}
+<a id="L147"></a><span class="ln">   147</span>	
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// A finishedHash calculates the hash of a set of handshake messages suitable</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// for including in a Finished message.</span>
+<a id="L150"></a><span class="ln">   150</span>	type finishedHash struct {
+<a id="L151"></a><span class="ln">   151</span>		clientMD5  hash.Hash
+<a id="L152"></a><span class="ln">   152</span>		clientSHA1 hash.Hash
+<a id="L153"></a><span class="ln">   153</span>		serverMD5  hash.Hash
+<a id="L154"></a><span class="ln">   154</span>		serverSHA1 hash.Hash
+<a id="L155"></a><span class="ln">   155</span>		version    uint16
+<a id="L156"></a><span class="ln">   156</span>	}
+<a id="L157"></a><span class="ln">   157</span>	
+<a id="L158"></a><span class="ln">   158</span>	func (h finishedHash) Write(msg []byte) (n int, err error) {
+<a id="L159"></a><span class="ln">   159</span>		h.clientMD5.Write(msg)
+<a id="L160"></a><span class="ln">   160</span>		h.clientSHA1.Write(msg)
+<a id="L161"></a><span class="ln">   161</span>		h.serverMD5.Write(msg)
+<a id="L162"></a><span class="ln">   162</span>		h.serverSHA1.Write(msg)
+<a id="L163"></a><span class="ln">   163</span>		return len(msg), nil
+<a id="L164"></a><span class="ln">   164</span>	}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// finishedSum10 calculates the contents of the verify_data member of a TLSv1</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// Finished message given the MD5 and SHA1 hashes of a set of handshake</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// messages.</span>
+<a id="L169"></a><span class="ln">   169</span>	func finishedSum10(md5, sha1, label, masterSecret []byte) []byte {
+<a id="L170"></a><span class="ln">   170</span>		seed := make([]byte, len(md5)+len(sha1))
+<a id="L171"></a><span class="ln">   171</span>		copy(seed, md5)
+<a id="L172"></a><span class="ln">   172</span>		copy(seed[len(md5):], sha1)
+<a id="L173"></a><span class="ln">   173</span>		out := make([]byte, finishedVerifyLength)
+<a id="L174"></a><span class="ln">   174</span>		pRF10(out, masterSecret, label, seed)
+<a id="L175"></a><span class="ln">   175</span>		return out
+<a id="L176"></a><span class="ln">   176</span>	}
+<a id="L177"></a><span class="ln">   177</span>	
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// finishedSum30 calculates the contents of the verify_data member of a SSLv3</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// Finished message given the MD5 and SHA1 hashes of a set of handshake</span>
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">// messages.</span>
+<a id="L181"></a><span class="ln">   181</span>	func finishedSum30(md5, sha1 hash.Hash, masterSecret []byte, magic [4]byte) []byte {
+<a id="L182"></a><span class="ln">   182</span>		md5.Write(magic[:])
+<a id="L183"></a><span class="ln">   183</span>		md5.Write(masterSecret)
+<a id="L184"></a><span class="ln">   184</span>		md5.Write(ssl30Pad1[:])
+<a id="L185"></a><span class="ln">   185</span>		md5Digest := md5.Sum(nil)
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>		md5.Reset()
+<a id="L188"></a><span class="ln">   188</span>		md5.Write(masterSecret)
+<a id="L189"></a><span class="ln">   189</span>		md5.Write(ssl30Pad2[:])
+<a id="L190"></a><span class="ln">   190</span>		md5.Write(md5Digest)
+<a id="L191"></a><span class="ln">   191</span>		md5Digest = md5.Sum(nil)
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>		sha1.Write(magic[:])
+<a id="L194"></a><span class="ln">   194</span>		sha1.Write(masterSecret)
+<a id="L195"></a><span class="ln">   195</span>		sha1.Write(ssl30Pad1[:40])
+<a id="L196"></a><span class="ln">   196</span>		sha1Digest := sha1.Sum(nil)
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>		sha1.Reset()
+<a id="L199"></a><span class="ln">   199</span>		sha1.Write(masterSecret)
+<a id="L200"></a><span class="ln">   200</span>		sha1.Write(ssl30Pad2[:40])
+<a id="L201"></a><span class="ln">   201</span>		sha1.Write(sha1Digest)
+<a id="L202"></a><span class="ln">   202</span>		sha1Digest = sha1.Sum(nil)
+<a id="L203"></a><span class="ln">   203</span>	
+<a id="L204"></a><span class="ln">   204</span>		ret := make([]byte, len(md5Digest)+len(sha1Digest))
+<a id="L205"></a><span class="ln">   205</span>		copy(ret, md5Digest)
+<a id="L206"></a><span class="ln">   206</span>		copy(ret[len(md5Digest):], sha1Digest)
+<a id="L207"></a><span class="ln">   207</span>		return ret
+<a id="L208"></a><span class="ln">   208</span>	}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>	var ssl3ClientFinishedMagic = [4]byte{0x43, 0x4c, 0x4e, 0x54}
+<a id="L211"></a><span class="ln">   211</span>	var ssl3ServerFinishedMagic = [4]byte{0x53, 0x52, 0x56, 0x52}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// clientSum returns the contents of the verify_data member of a client&#39;s</span>
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// Finished message.</span>
+<a id="L215"></a><span class="ln">   215</span>	func (h finishedHash) clientSum(masterSecret []byte) []byte {
+<a id="L216"></a><span class="ln">   216</span>		if h.version == versionSSL30 {
+<a id="L217"></a><span class="ln">   217</span>			return finishedSum30(h.clientMD5, h.clientSHA1, masterSecret, ssl3ClientFinishedMagic)
+<a id="L218"></a><span class="ln">   218</span>		}
+<a id="L219"></a><span class="ln">   219</span>	
+<a id="L220"></a><span class="ln">   220</span>		md5 := h.clientMD5.Sum(nil)
+<a id="L221"></a><span class="ln">   221</span>		sha1 := h.clientSHA1.Sum(nil)
+<a id="L222"></a><span class="ln">   222</span>		return finishedSum10(md5, sha1, clientFinishedLabel, masterSecret)
+<a id="L223"></a><span class="ln">   223</span>	}
+<a id="L224"></a><span class="ln">   224</span>	
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">// serverSum returns the contents of the verify_data member of a server&#39;s</span>
+<a id="L226"></a><span class="ln">   226</span>	<span class="comment">// Finished message.</span>
+<a id="L227"></a><span class="ln">   227</span>	func (h finishedHash) serverSum(masterSecret []byte) []byte {
+<a id="L228"></a><span class="ln">   228</span>		if h.version == versionSSL30 {
+<a id="L229"></a><span class="ln">   229</span>			return finishedSum30(h.serverMD5, h.serverSHA1, masterSecret, ssl3ServerFinishedMagic)
+<a id="L230"></a><span class="ln">   230</span>		}
+<a id="L231"></a><span class="ln">   231</span>	
+<a id="L232"></a><span class="ln">   232</span>		md5 := h.serverMD5.Sum(nil)
+<a id="L233"></a><span class="ln">   233</span>		sha1 := h.serverSHA1.Sum(nil)
+<a id="L234"></a><span class="ln">   234</span>		return finishedSum10(md5, sha1, serverFinishedLabel, masterSecret)
+<a id="L235"></a><span class="ln">   235</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

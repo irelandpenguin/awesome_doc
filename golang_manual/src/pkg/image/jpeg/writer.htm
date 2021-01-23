@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/image/jpeg/writer.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/image/jpeg/writer.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package jpeg
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bufio&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;errors&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;image&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;image/color&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io&#34;
+<a id="L13"></a><span class="ln">    13</span>	)
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// min returns the minimum of two integers.</span>
+<a id="L16"></a><span class="ln">    16</span>	func min(x, y int) int {
+<a id="L17"></a><span class="ln">    17</span>		if x &lt; y {
+<a id="L18"></a><span class="ln">    18</span>			return x
+<a id="L19"></a><span class="ln">    19</span>		}
+<a id="L20"></a><span class="ln">    20</span>		return y
+<a id="L21"></a><span class="ln">    21</span>	}
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// div returns a/b rounded to the nearest integer, instead of rounded to zero.</span>
+<a id="L24"></a><span class="ln">    24</span>	func div(a int, b int) int {
+<a id="L25"></a><span class="ln">    25</span>		if a &gt;= 0 {
+<a id="L26"></a><span class="ln">    26</span>			return (a + (b &gt;&gt; 1)) / b
+<a id="L27"></a><span class="ln">    27</span>		}
+<a id="L28"></a><span class="ln">    28</span>		return -((-a + (b &gt;&gt; 1)) / b)
+<a id="L29"></a><span class="ln">    29</span>	}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// bitCount counts the number of bits needed to hold an integer.</span>
+<a id="L32"></a><span class="ln">    32</span>	var bitCount = [256]byte{
+<a id="L33"></a><span class="ln">    33</span>		0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4,
+<a id="L34"></a><span class="ln">    34</span>		5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+<a id="L35"></a><span class="ln">    35</span>		6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+<a id="L36"></a><span class="ln">    36</span>		6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+<a id="L37"></a><span class="ln">    37</span>		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+<a id="L38"></a><span class="ln">    38</span>		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+<a id="L39"></a><span class="ln">    39</span>		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+<a id="L40"></a><span class="ln">    40</span>		7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+<a id="L41"></a><span class="ln">    41</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L42"></a><span class="ln">    42</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L43"></a><span class="ln">    43</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L44"></a><span class="ln">    44</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L45"></a><span class="ln">    45</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L46"></a><span class="ln">    46</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L47"></a><span class="ln">    47</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L48"></a><span class="ln">    48</span>		8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+<a id="L49"></a><span class="ln">    49</span>	}
+<a id="L50"></a><span class="ln">    50</span>	
+<a id="L51"></a><span class="ln">    51</span>	type quantIndex int
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	const (
+<a id="L54"></a><span class="ln">    54</span>		quantIndexLuminance quantIndex = iota
+<a id="L55"></a><span class="ln">    55</span>		quantIndexChrominance
+<a id="L56"></a><span class="ln">    56</span>		nQuantIndex
+<a id="L57"></a><span class="ln">    57</span>	)
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>	<span class="comment">// unscaledQuant are the unscaled quantization tables. Each encoder copies and</span>
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// scales the tables according to its quality parameter.</span>
+<a id="L61"></a><span class="ln">    61</span>	var unscaledQuant = [nQuantIndex][blockSize]byte{
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// Luminance.</span>
+<a id="L63"></a><span class="ln">    63</span>		{
+<a id="L64"></a><span class="ln">    64</span>			16, 11, 10, 16, 24, 40, 51, 61,
+<a id="L65"></a><span class="ln">    65</span>			12, 12, 14, 19, 26, 58, 60, 55,
+<a id="L66"></a><span class="ln">    66</span>			14, 13, 16, 24, 40, 57, 69, 56,
+<a id="L67"></a><span class="ln">    67</span>			14, 17, 22, 29, 51, 87, 80, 62,
+<a id="L68"></a><span class="ln">    68</span>			18, 22, 37, 56, 68, 109, 103, 77,
+<a id="L69"></a><span class="ln">    69</span>			24, 35, 55, 64, 81, 104, 113, 92,
+<a id="L70"></a><span class="ln">    70</span>			49, 64, 78, 87, 103, 121, 120, 101,
+<a id="L71"></a><span class="ln">    71</span>			72, 92, 95, 98, 112, 100, 103, 99,
+<a id="L72"></a><span class="ln">    72</span>		},
+<a id="L73"></a><span class="ln">    73</span>		<span class="comment">// Chrominance.</span>
+<a id="L74"></a><span class="ln">    74</span>		{
+<a id="L75"></a><span class="ln">    75</span>			17, 18, 24, 47, 99, 99, 99, 99,
+<a id="L76"></a><span class="ln">    76</span>			18, 21, 26, 66, 99, 99, 99, 99,
+<a id="L77"></a><span class="ln">    77</span>			24, 26, 56, 99, 99, 99, 99, 99,
+<a id="L78"></a><span class="ln">    78</span>			47, 66, 99, 99, 99, 99, 99, 99,
+<a id="L79"></a><span class="ln">    79</span>			99, 99, 99, 99, 99, 99, 99, 99,
+<a id="L80"></a><span class="ln">    80</span>			99, 99, 99, 99, 99, 99, 99, 99,
+<a id="L81"></a><span class="ln">    81</span>			99, 99, 99, 99, 99, 99, 99, 99,
+<a id="L82"></a><span class="ln">    82</span>			99, 99, 99, 99, 99, 99, 99, 99,
+<a id="L83"></a><span class="ln">    83</span>		},
+<a id="L84"></a><span class="ln">    84</span>	}
+<a id="L85"></a><span class="ln">    85</span>	
+<a id="L86"></a><span class="ln">    86</span>	type huffIndex int
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	const (
+<a id="L89"></a><span class="ln">    89</span>		huffIndexLuminanceDC huffIndex = iota
+<a id="L90"></a><span class="ln">    90</span>		huffIndexLuminanceAC
+<a id="L91"></a><span class="ln">    91</span>		huffIndexChrominanceDC
+<a id="L92"></a><span class="ln">    92</span>		huffIndexChrominanceAC
+<a id="L93"></a><span class="ln">    93</span>		nHuffIndex
+<a id="L94"></a><span class="ln">    94</span>	)
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">// huffmanSpec specifies a Huffman encoding.</span>
+<a id="L97"></a><span class="ln">    97</span>	type huffmanSpec struct {
+<a id="L98"></a><span class="ln">    98</span>		<span class="comment">// count[i] is the number of codes of length i bits.</span>
+<a id="L99"></a><span class="ln">    99</span>		count [16]byte
+<a id="L100"></a><span class="ln">   100</span>		<span class="comment">// value[i] is the decoded value of the i&#39;th codeword.</span>
+<a id="L101"></a><span class="ln">   101</span>		value []byte
+<a id="L102"></a><span class="ln">   102</span>	}
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// theHuffmanSpec is the Huffman encoding specifications.</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// This encoder uses the same Huffman encoding for all images.</span>
+<a id="L106"></a><span class="ln">   106</span>	var theHuffmanSpec = [nHuffIndex]huffmanSpec{
+<a id="L107"></a><span class="ln">   107</span>		<span class="comment">// Luminance DC.</span>
+<a id="L108"></a><span class="ln">   108</span>		{
+<a id="L109"></a><span class="ln">   109</span>			[16]byte{0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0},
+<a id="L110"></a><span class="ln">   110</span>			[]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+<a id="L111"></a><span class="ln">   111</span>		},
+<a id="L112"></a><span class="ln">   112</span>		<span class="comment">// Luminance AC.</span>
+<a id="L113"></a><span class="ln">   113</span>		{
+<a id="L114"></a><span class="ln">   114</span>			[16]byte{0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 125},
+<a id="L115"></a><span class="ln">   115</span>			[]byte{
+<a id="L116"></a><span class="ln">   116</span>				0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12,
+<a id="L117"></a><span class="ln">   117</span>				0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07,
+<a id="L118"></a><span class="ln">   118</span>				0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xa1, 0x08,
+<a id="L119"></a><span class="ln">   119</span>				0x23, 0x42, 0xb1, 0xc1, 0x15, 0x52, 0xd1, 0xf0,
+<a id="L120"></a><span class="ln">   120</span>				0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0a, 0x16,
+<a id="L121"></a><span class="ln">   121</span>				0x17, 0x18, 0x19, 0x1a, 0x25, 0x26, 0x27, 0x28,
+<a id="L122"></a><span class="ln">   122</span>				0x29, 0x2a, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+<a id="L123"></a><span class="ln">   123</span>				0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
+<a id="L124"></a><span class="ln">   124</span>				0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59,
+<a id="L125"></a><span class="ln">   125</span>				0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
+<a id="L126"></a><span class="ln">   126</span>				0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79,
+<a id="L127"></a><span class="ln">   127</span>				0x7a, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+<a id="L128"></a><span class="ln">   128</span>				0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98,
+<a id="L129"></a><span class="ln">   129</span>				0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+<a id="L130"></a><span class="ln">   130</span>				0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6,
+<a id="L131"></a><span class="ln">   131</span>				0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4, 0xc5,
+<a id="L132"></a><span class="ln">   132</span>				0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4,
+<a id="L133"></a><span class="ln">   133</span>				0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe1, 0xe2,
+<a id="L134"></a><span class="ln">   134</span>				0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea,
+<a id="L135"></a><span class="ln">   135</span>				0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+<a id="L136"></a><span class="ln">   136</span>				0xf9, 0xfa,
+<a id="L137"></a><span class="ln">   137</span>			},
+<a id="L138"></a><span class="ln">   138</span>		},
+<a id="L139"></a><span class="ln">   139</span>		<span class="comment">// Chrominance DC.</span>
+<a id="L140"></a><span class="ln">   140</span>		{
+<a id="L141"></a><span class="ln">   141</span>			[16]byte{0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0},
+<a id="L142"></a><span class="ln">   142</span>			[]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+<a id="L143"></a><span class="ln">   143</span>		},
+<a id="L144"></a><span class="ln">   144</span>		<span class="comment">// Chrominance AC.</span>
+<a id="L145"></a><span class="ln">   145</span>		{
+<a id="L146"></a><span class="ln">   146</span>			[16]byte{0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 119},
+<a id="L147"></a><span class="ln">   147</span>			[]byte{
+<a id="L148"></a><span class="ln">   148</span>				0x00, 0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x21,
+<a id="L149"></a><span class="ln">   149</span>				0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71,
+<a id="L150"></a><span class="ln">   150</span>				0x13, 0x22, 0x32, 0x81, 0x08, 0x14, 0x42, 0x91,
+<a id="L151"></a><span class="ln">   151</span>				0xa1, 0xb1, 0xc1, 0x09, 0x23, 0x33, 0x52, 0xf0,
+<a id="L152"></a><span class="ln">   152</span>				0x15, 0x62, 0x72, 0xd1, 0x0a, 0x16, 0x24, 0x34,
+<a id="L153"></a><span class="ln">   153</span>				0xe1, 0x25, 0xf1, 0x17, 0x18, 0x19, 0x1a, 0x26,
+<a id="L154"></a><span class="ln">   154</span>				0x27, 0x28, 0x29, 0x2a, 0x35, 0x36, 0x37, 0x38,
+<a id="L155"></a><span class="ln">   155</span>				0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+<a id="L156"></a><span class="ln">   156</span>				0x49, 0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58,
+<a id="L157"></a><span class="ln">   157</span>				0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
+<a id="L158"></a><span class="ln">   158</span>				0x69, 0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78,
+<a id="L159"></a><span class="ln">   159</span>				0x79, 0x7a, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+<a id="L160"></a><span class="ln">   160</span>				0x88, 0x89, 0x8a, 0x92, 0x93, 0x94, 0x95, 0x96,
+<a id="L161"></a><span class="ln">   161</span>				0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5,
+<a id="L162"></a><span class="ln">   162</span>				0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4,
+<a id="L163"></a><span class="ln">   163</span>				0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3,
+<a id="L164"></a><span class="ln">   164</span>				0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2,
+<a id="L165"></a><span class="ln">   165</span>				0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda,
+<a id="L166"></a><span class="ln">   166</span>				0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9,
+<a id="L167"></a><span class="ln">   167</span>				0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8,
+<a id="L168"></a><span class="ln">   168</span>				0xf9, 0xfa,
+<a id="L169"></a><span class="ln">   169</span>			},
+<a id="L170"></a><span class="ln">   170</span>		},
+<a id="L171"></a><span class="ln">   171</span>	}
+<a id="L172"></a><span class="ln">   172</span>	
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">// huffmanLUT is a compiled look-up table representation of a huffmanSpec.</span>
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">// Each value maps to a uint32 of which the 8 most significant bits hold the</span>
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// codeword size in bits and the 24 least significant bits hold the codeword.</span>
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// The maximum codeword size is 16 bits.</span>
+<a id="L177"></a><span class="ln">   177</span>	type huffmanLUT []uint32
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>	func (h *huffmanLUT) init(s huffmanSpec) {
+<a id="L180"></a><span class="ln">   180</span>		maxValue := 0
+<a id="L181"></a><span class="ln">   181</span>		for _, v := range s.value {
+<a id="L182"></a><span class="ln">   182</span>			if int(v) &gt; maxValue {
+<a id="L183"></a><span class="ln">   183</span>				maxValue = int(v)
+<a id="L184"></a><span class="ln">   184</span>			}
+<a id="L185"></a><span class="ln">   185</span>		}
+<a id="L186"></a><span class="ln">   186</span>		*h = make([]uint32, maxValue+1)
+<a id="L187"></a><span class="ln">   187</span>		code, k := uint32(0), 0
+<a id="L188"></a><span class="ln">   188</span>		for i := 0; i &lt; len(s.count); i++ {
+<a id="L189"></a><span class="ln">   189</span>			nBits := uint32(i+1) &lt;&lt; 24
+<a id="L190"></a><span class="ln">   190</span>			for j := uint8(0); j &lt; s.count[i]; j++ {
+<a id="L191"></a><span class="ln">   191</span>				(*h)[s.value[k]] = nBits | code
+<a id="L192"></a><span class="ln">   192</span>				code++
+<a id="L193"></a><span class="ln">   193</span>				k++
+<a id="L194"></a><span class="ln">   194</span>			}
+<a id="L195"></a><span class="ln">   195</span>			code &lt;&lt;= 1
+<a id="L196"></a><span class="ln">   196</span>		}
+<a id="L197"></a><span class="ln">   197</span>	}
+<a id="L198"></a><span class="ln">   198</span>	
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// theHuffmanLUT are compiled representations of theHuffmanSpec.</span>
+<a id="L200"></a><span class="ln">   200</span>	var theHuffmanLUT [4]huffmanLUT
+<a id="L201"></a><span class="ln">   201</span>	
+<a id="L202"></a><span class="ln">   202</span>	func init() {
+<a id="L203"></a><span class="ln">   203</span>		for i, s := range theHuffmanSpec {
+<a id="L204"></a><span class="ln">   204</span>			theHuffmanLUT[i].init(s)
+<a id="L205"></a><span class="ln">   205</span>		}
+<a id="L206"></a><span class="ln">   206</span>	}
+<a id="L207"></a><span class="ln">   207</span>	
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">// writer is a buffered writer.</span>
+<a id="L209"></a><span class="ln">   209</span>	type writer interface {
+<a id="L210"></a><span class="ln">   210</span>		Flush() error
+<a id="L211"></a><span class="ln">   211</span>		Write([]byte) (int, error)
+<a id="L212"></a><span class="ln">   212</span>		WriteByte(byte) error
+<a id="L213"></a><span class="ln">   213</span>	}
+<a id="L214"></a><span class="ln">   214</span>	
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// encoder encodes an image to the JPEG format.</span>
+<a id="L216"></a><span class="ln">   216</span>	type encoder struct {
+<a id="L217"></a><span class="ln">   217</span>		<span class="comment">// w is the writer to write to. err is the first error encountered during</span>
+<a id="L218"></a><span class="ln">   218</span>		<span class="comment">// writing. All attempted writes after the first error become no-ops.</span>
+<a id="L219"></a><span class="ln">   219</span>		w   writer
+<a id="L220"></a><span class="ln">   220</span>		err error
+<a id="L221"></a><span class="ln">   221</span>		<span class="comment">// buf is a scratch buffer.</span>
+<a id="L222"></a><span class="ln">   222</span>		buf [16]byte
+<a id="L223"></a><span class="ln">   223</span>		<span class="comment">// bits and nBits are accumulated bits to write to w.</span>
+<a id="L224"></a><span class="ln">   224</span>		bits, nBits uint32
+<a id="L225"></a><span class="ln">   225</span>		<span class="comment">// quant is the scaled quantization tables.</span>
+<a id="L226"></a><span class="ln">   226</span>		quant [nQuantIndex][blockSize]byte
+<a id="L227"></a><span class="ln">   227</span>	}
+<a id="L228"></a><span class="ln">   228</span>	
+<a id="L229"></a><span class="ln">   229</span>	func (e *encoder) flush() {
+<a id="L230"></a><span class="ln">   230</span>		if e.err != nil {
+<a id="L231"></a><span class="ln">   231</span>			return
+<a id="L232"></a><span class="ln">   232</span>		}
+<a id="L233"></a><span class="ln">   233</span>		e.err = e.w.Flush()
+<a id="L234"></a><span class="ln">   234</span>	}
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>	func (e *encoder) write(p []byte) {
+<a id="L237"></a><span class="ln">   237</span>		if e.err != nil {
+<a id="L238"></a><span class="ln">   238</span>			return
+<a id="L239"></a><span class="ln">   239</span>		}
+<a id="L240"></a><span class="ln">   240</span>		_, e.err = e.w.Write(p)
+<a id="L241"></a><span class="ln">   241</span>	}
+<a id="L242"></a><span class="ln">   242</span>	
+<a id="L243"></a><span class="ln">   243</span>	func (e *encoder) writeByte(b byte) {
+<a id="L244"></a><span class="ln">   244</span>		if e.err != nil {
+<a id="L245"></a><span class="ln">   245</span>			return
+<a id="L246"></a><span class="ln">   246</span>		}
+<a id="L247"></a><span class="ln">   247</span>		e.err = e.w.WriteByte(b)
+<a id="L248"></a><span class="ln">   248</span>	}
+<a id="L249"></a><span class="ln">   249</span>	
+<a id="L250"></a><span class="ln">   250</span>	<span class="comment">// emit emits the least significant nBits bits of bits to the bitstream.</span>
+<a id="L251"></a><span class="ln">   251</span>	<span class="comment">// The precondition is bits &lt; 1&lt;&lt;nBits &amp;&amp; nBits &lt;= 16.</span>
+<a id="L252"></a><span class="ln">   252</span>	func (e *encoder) emit(bits, nBits uint32) {
+<a id="L253"></a><span class="ln">   253</span>		nBits += e.nBits
+<a id="L254"></a><span class="ln">   254</span>		bits &lt;&lt;= 32 - nBits
+<a id="L255"></a><span class="ln">   255</span>		bits |= e.bits
+<a id="L256"></a><span class="ln">   256</span>		for nBits &gt;= 8 {
+<a id="L257"></a><span class="ln">   257</span>			b := uint8(bits &gt;&gt; 24)
+<a id="L258"></a><span class="ln">   258</span>			e.writeByte(b)
+<a id="L259"></a><span class="ln">   259</span>			if b == 0xff {
+<a id="L260"></a><span class="ln">   260</span>				e.writeByte(0x00)
+<a id="L261"></a><span class="ln">   261</span>			}
+<a id="L262"></a><span class="ln">   262</span>			bits &lt;&lt;= 8
+<a id="L263"></a><span class="ln">   263</span>			nBits -= 8
+<a id="L264"></a><span class="ln">   264</span>		}
+<a id="L265"></a><span class="ln">   265</span>		e.bits, e.nBits = bits, nBits
+<a id="L266"></a><span class="ln">   266</span>	}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// emitHuff emits the given value with the given Huffman encoder.</span>
+<a id="L269"></a><span class="ln">   269</span>	func (e *encoder) emitHuff(h huffIndex, value int) {
+<a id="L270"></a><span class="ln">   270</span>		x := theHuffmanLUT[h][value]
+<a id="L271"></a><span class="ln">   271</span>		e.emit(x&amp;(1&lt;&lt;24-1), x&gt;&gt;24)
+<a id="L272"></a><span class="ln">   272</span>	}
+<a id="L273"></a><span class="ln">   273</span>	
+<a id="L274"></a><span class="ln">   274</span>	<span class="comment">// emitHuffRLE emits a run of runLength copies of value encoded with the given</span>
+<a id="L275"></a><span class="ln">   275</span>	<span class="comment">// Huffman encoder.</span>
+<a id="L276"></a><span class="ln">   276</span>	func (e *encoder) emitHuffRLE(h huffIndex, runLength, value int) {
+<a id="L277"></a><span class="ln">   277</span>		a, b := value, value
+<a id="L278"></a><span class="ln">   278</span>		if a &lt; 0 {
+<a id="L279"></a><span class="ln">   279</span>			a, b = -value, value-1
+<a id="L280"></a><span class="ln">   280</span>		}
+<a id="L281"></a><span class="ln">   281</span>		var nBits uint32
+<a id="L282"></a><span class="ln">   282</span>		if a &lt; 0x100 {
+<a id="L283"></a><span class="ln">   283</span>			nBits = uint32(bitCount[a])
+<a id="L284"></a><span class="ln">   284</span>		} else {
+<a id="L285"></a><span class="ln">   285</span>			nBits = 8 + uint32(bitCount[a&gt;&gt;8])
+<a id="L286"></a><span class="ln">   286</span>		}
+<a id="L287"></a><span class="ln">   287</span>		e.emitHuff(h, runLength&lt;&lt;4|int(nBits))
+<a id="L288"></a><span class="ln">   288</span>		if nBits &gt; 0 {
+<a id="L289"></a><span class="ln">   289</span>			e.emit(uint32(b)&amp;(1&lt;&lt;nBits-1), nBits)
+<a id="L290"></a><span class="ln">   290</span>		}
+<a id="L291"></a><span class="ln">   291</span>	}
+<a id="L292"></a><span class="ln">   292</span>	
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// writeMarkerHeader writes the header for a marker with the given length.</span>
+<a id="L294"></a><span class="ln">   294</span>	func (e *encoder) writeMarkerHeader(marker uint8, markerlen int) {
+<a id="L295"></a><span class="ln">   295</span>		e.buf[0] = 0xff
+<a id="L296"></a><span class="ln">   296</span>		e.buf[1] = marker
+<a id="L297"></a><span class="ln">   297</span>		e.buf[2] = uint8(markerlen &gt;&gt; 8)
+<a id="L298"></a><span class="ln">   298</span>		e.buf[3] = uint8(markerlen &amp; 0xff)
+<a id="L299"></a><span class="ln">   299</span>		e.write(e.buf[:4])
+<a id="L300"></a><span class="ln">   300</span>	}
+<a id="L301"></a><span class="ln">   301</span>	
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">// writeDQT writes the Define Quantization Table marker.</span>
+<a id="L303"></a><span class="ln">   303</span>	func (e *encoder) writeDQT() {
+<a id="L304"></a><span class="ln">   304</span>		markerlen := 2 + int(nQuantIndex)*(1+blockSize)
+<a id="L305"></a><span class="ln">   305</span>		e.writeMarkerHeader(dqtMarker, markerlen)
+<a id="L306"></a><span class="ln">   306</span>		for i := range e.quant {
+<a id="L307"></a><span class="ln">   307</span>			e.writeByte(uint8(i))
+<a id="L308"></a><span class="ln">   308</span>			e.write(e.quant[i][:])
+<a id="L309"></a><span class="ln">   309</span>		}
+<a id="L310"></a><span class="ln">   310</span>	}
+<a id="L311"></a><span class="ln">   311</span>	
+<a id="L312"></a><span class="ln">   312</span>	<span class="comment">// writeSOF0 writes the Start Of Frame (Baseline) marker.</span>
+<a id="L313"></a><span class="ln">   313</span>	func (e *encoder) writeSOF0(size image.Point) {
+<a id="L314"></a><span class="ln">   314</span>		markerlen := 8 + 3*nColorComponent
+<a id="L315"></a><span class="ln">   315</span>		e.writeMarkerHeader(sof0Marker, markerlen)
+<a id="L316"></a><span class="ln">   316</span>		e.buf[0] = 8 <span class="comment">// 8-bit color.</span>
+<a id="L317"></a><span class="ln">   317</span>		e.buf[1] = uint8(size.Y &gt;&gt; 8)
+<a id="L318"></a><span class="ln">   318</span>		e.buf[2] = uint8(size.Y &amp; 0xff)
+<a id="L319"></a><span class="ln">   319</span>		e.buf[3] = uint8(size.X &gt;&gt; 8)
+<a id="L320"></a><span class="ln">   320</span>		e.buf[4] = uint8(size.X &amp; 0xff)
+<a id="L321"></a><span class="ln">   321</span>		e.buf[5] = nColorComponent
+<a id="L322"></a><span class="ln">   322</span>		for i := 0; i &lt; nColorComponent; i++ {
+<a id="L323"></a><span class="ln">   323</span>			e.buf[3*i+6] = uint8(i + 1)
+<a id="L324"></a><span class="ln">   324</span>			<span class="comment">// We use 4:2:0 chroma subsampling.</span>
+<a id="L325"></a><span class="ln">   325</span>			e.buf[3*i+7] = &#34;\x22\x11\x11&#34;[i]
+<a id="L326"></a><span class="ln">   326</span>			e.buf[3*i+8] = &#34;\x00\x01\x01&#34;[i]
+<a id="L327"></a><span class="ln">   327</span>		}
+<a id="L328"></a><span class="ln">   328</span>		e.write(e.buf[:3*(nColorComponent-1)+9])
+<a id="L329"></a><span class="ln">   329</span>	}
+<a id="L330"></a><span class="ln">   330</span>	
+<a id="L331"></a><span class="ln">   331</span>	<span class="comment">// writeDHT writes the Define Huffman Table marker.</span>
+<a id="L332"></a><span class="ln">   332</span>	func (e *encoder) writeDHT() {
+<a id="L333"></a><span class="ln">   333</span>		markerlen := 2
+<a id="L334"></a><span class="ln">   334</span>		for _, s := range theHuffmanSpec {
+<a id="L335"></a><span class="ln">   335</span>			markerlen += 1 + 16 + len(s.value)
+<a id="L336"></a><span class="ln">   336</span>		}
+<a id="L337"></a><span class="ln">   337</span>		e.writeMarkerHeader(dhtMarker, markerlen)
+<a id="L338"></a><span class="ln">   338</span>		for i, s := range theHuffmanSpec {
+<a id="L339"></a><span class="ln">   339</span>			e.writeByte(&#34;\x00\x10\x01\x11&#34;[i])
+<a id="L340"></a><span class="ln">   340</span>			e.write(s.count[:])
+<a id="L341"></a><span class="ln">   341</span>			e.write(s.value)
+<a id="L342"></a><span class="ln">   342</span>		}
+<a id="L343"></a><span class="ln">   343</span>	}
+<a id="L344"></a><span class="ln">   344</span>	
+<a id="L345"></a><span class="ln">   345</span>	<span class="comment">// writeBlock writes a block of pixel data using the given quantization table,</span>
+<a id="L346"></a><span class="ln">   346</span>	<span class="comment">// returning the post-quantized DC value of the DCT-transformed block.</span>
+<a id="L347"></a><span class="ln">   347</span>	func (e *encoder) writeBlock(b *block, q quantIndex, prevDC int) int {
+<a id="L348"></a><span class="ln">   348</span>		fdct(b)
+<a id="L349"></a><span class="ln">   349</span>		<span class="comment">// Emit the DC delta.</span>
+<a id="L350"></a><span class="ln">   350</span>		dc := div(b[0], (8 * int(e.quant[q][0])))
+<a id="L351"></a><span class="ln">   351</span>		e.emitHuffRLE(huffIndex(2*q+0), 0, dc-prevDC)
+<a id="L352"></a><span class="ln">   352</span>		<span class="comment">// Emit the AC components.</span>
+<a id="L353"></a><span class="ln">   353</span>		h, runLength := huffIndex(2*q+1), 0
+<a id="L354"></a><span class="ln">   354</span>		for k := 1; k &lt; blockSize; k++ {
+<a id="L355"></a><span class="ln">   355</span>			ac := div(b[unzig[k]], (8 * int(e.quant[q][k])))
+<a id="L356"></a><span class="ln">   356</span>			if ac == 0 {
+<a id="L357"></a><span class="ln">   357</span>				runLength++
+<a id="L358"></a><span class="ln">   358</span>			} else {
+<a id="L359"></a><span class="ln">   359</span>				for runLength &gt; 15 {
+<a id="L360"></a><span class="ln">   360</span>					e.emitHuff(h, 0xf0)
+<a id="L361"></a><span class="ln">   361</span>					runLength -= 16
+<a id="L362"></a><span class="ln">   362</span>				}
+<a id="L363"></a><span class="ln">   363</span>				e.emitHuffRLE(h, runLength, ac)
+<a id="L364"></a><span class="ln">   364</span>				runLength = 0
+<a id="L365"></a><span class="ln">   365</span>			}
+<a id="L366"></a><span class="ln">   366</span>		}
+<a id="L367"></a><span class="ln">   367</span>		if runLength &gt; 0 {
+<a id="L368"></a><span class="ln">   368</span>			e.emitHuff(h, 0x00)
+<a id="L369"></a><span class="ln">   369</span>		}
+<a id="L370"></a><span class="ln">   370</span>		return dc
+<a id="L371"></a><span class="ln">   371</span>	}
+<a id="L372"></a><span class="ln">   372</span>	
+<a id="L373"></a><span class="ln">   373</span>	<span class="comment">// toYCbCr converts the 8x8 region of m whose top-left corner is p to its</span>
+<a id="L374"></a><span class="ln">   374</span>	<span class="comment">// YCbCr values.</span>
+<a id="L375"></a><span class="ln">   375</span>	func toYCbCr(m image.Image, p image.Point, yBlock, cbBlock, crBlock *block) {
+<a id="L376"></a><span class="ln">   376</span>		b := m.Bounds()
+<a id="L377"></a><span class="ln">   377</span>		xmax := b.Max.X - 1
+<a id="L378"></a><span class="ln">   378</span>		ymax := b.Max.Y - 1
+<a id="L379"></a><span class="ln">   379</span>		for j := 0; j &lt; 8; j++ {
+<a id="L380"></a><span class="ln">   380</span>			for i := 0; i &lt; 8; i++ {
+<a id="L381"></a><span class="ln">   381</span>				r, g, b, _ := m.At(min(p.X+i, xmax), min(p.Y+j, ymax)).RGBA()
+<a id="L382"></a><span class="ln">   382</span>				yy, cb, cr := color.RGBToYCbCr(uint8(r&gt;&gt;8), uint8(g&gt;&gt;8), uint8(b&gt;&gt;8))
+<a id="L383"></a><span class="ln">   383</span>				yBlock[8*j+i] = int(yy)
+<a id="L384"></a><span class="ln">   384</span>				cbBlock[8*j+i] = int(cb)
+<a id="L385"></a><span class="ln">   385</span>				crBlock[8*j+i] = int(cr)
+<a id="L386"></a><span class="ln">   386</span>			}
+<a id="L387"></a><span class="ln">   387</span>		}
+<a id="L388"></a><span class="ln">   388</span>	}
+<a id="L389"></a><span class="ln">   389</span>	
+<a id="L390"></a><span class="ln">   390</span>	<span class="comment">// rgbaToYCbCr is a specialized version of toYCbCr for image.RGBA images.</span>
+<a id="L391"></a><span class="ln">   391</span>	func rgbaToYCbCr(m *image.RGBA, p image.Point, yBlock, cbBlock, crBlock *block) {
+<a id="L392"></a><span class="ln">   392</span>		b := m.Bounds()
+<a id="L393"></a><span class="ln">   393</span>		xmax := b.Max.X - 1
+<a id="L394"></a><span class="ln">   394</span>		ymax := b.Max.Y - 1
+<a id="L395"></a><span class="ln">   395</span>		for j := 0; j &lt; 8; j++ {
+<a id="L396"></a><span class="ln">   396</span>			sj := p.Y + j
+<a id="L397"></a><span class="ln">   397</span>			if sj &gt; ymax {
+<a id="L398"></a><span class="ln">   398</span>				sj = ymax
+<a id="L399"></a><span class="ln">   399</span>			}
+<a id="L400"></a><span class="ln">   400</span>			offset := (sj-b.Min.Y)*m.Stride - b.Min.X*4
+<a id="L401"></a><span class="ln">   401</span>			for i := 0; i &lt; 8; i++ {
+<a id="L402"></a><span class="ln">   402</span>				sx := p.X + i
+<a id="L403"></a><span class="ln">   403</span>				if sx &gt; xmax {
+<a id="L404"></a><span class="ln">   404</span>					sx = xmax
+<a id="L405"></a><span class="ln">   405</span>				}
+<a id="L406"></a><span class="ln">   406</span>				pix := m.Pix[offset+sx*4:]
+<a id="L407"></a><span class="ln">   407</span>				yy, cb, cr := color.RGBToYCbCr(pix[0], pix[1], pix[2])
+<a id="L408"></a><span class="ln">   408</span>				yBlock[8*j+i] = int(yy)
+<a id="L409"></a><span class="ln">   409</span>				cbBlock[8*j+i] = int(cb)
+<a id="L410"></a><span class="ln">   410</span>				crBlock[8*j+i] = int(cr)
+<a id="L411"></a><span class="ln">   411</span>			}
+<a id="L412"></a><span class="ln">   412</span>		}
+<a id="L413"></a><span class="ln">   413</span>	}
+<a id="L414"></a><span class="ln">   414</span>	
+<a id="L415"></a><span class="ln">   415</span>	<span class="comment">// scale scales the 16x16 region represented by the 4 src blocks to the 8x8</span>
+<a id="L416"></a><span class="ln">   416</span>	<span class="comment">// dst block.</span>
+<a id="L417"></a><span class="ln">   417</span>	func scale(dst *block, src *[4]block) {
+<a id="L418"></a><span class="ln">   418</span>		for i := 0; i &lt; 4; i++ {
+<a id="L419"></a><span class="ln">   419</span>			dstOff := (i&amp;2)&lt;&lt;4 | (i&amp;1)&lt;&lt;2
+<a id="L420"></a><span class="ln">   420</span>			for y := 0; y &lt; 4; y++ {
+<a id="L421"></a><span class="ln">   421</span>				for x := 0; x &lt; 4; x++ {
+<a id="L422"></a><span class="ln">   422</span>					j := 16*y + 2*x
+<a id="L423"></a><span class="ln">   423</span>					sum := src[i][j] + src[i][j+1] + src[i][j+8] + src[i][j+9]
+<a id="L424"></a><span class="ln">   424</span>					dst[8*y+x+dstOff] = (sum + 2) &gt;&gt; 2
+<a id="L425"></a><span class="ln">   425</span>				}
+<a id="L426"></a><span class="ln">   426</span>			}
+<a id="L427"></a><span class="ln">   427</span>		}
+<a id="L428"></a><span class="ln">   428</span>	}
+<a id="L429"></a><span class="ln">   429</span>	
+<a id="L430"></a><span class="ln">   430</span>	<span class="comment">// sosHeader is the SOS marker &#34;\xff\xda&#34; followed by 12 bytes:</span>
+<a id="L431"></a><span class="ln">   431</span>	<span class="comment">//	- the marker length &#34;\x00\x0c&#34;,</span>
+<a id="L432"></a><span class="ln">   432</span>	<span class="comment">//	- the number of components &#34;\x03&#34;,</span>
+<a id="L433"></a><span class="ln">   433</span>	<span class="comment">//	- component 1 uses DC table 0 and AC table 0 &#34;\x01\x00&#34;,</span>
+<a id="L434"></a><span class="ln">   434</span>	<span class="comment">//	- component 2 uses DC table 1 and AC table 1 &#34;\x02\x11&#34;,</span>
+<a id="L435"></a><span class="ln">   435</span>	<span class="comment">//	- component 3 uses DC table 1 and AC table 1 &#34;\x03\x11&#34;,</span>
+<a id="L436"></a><span class="ln">   436</span>	<span class="comment">//	- padding &#34;\x00\x00\x00&#34;.</span>
+<a id="L437"></a><span class="ln">   437</span>	var sosHeader = []byte{
+<a id="L438"></a><span class="ln">   438</span>		0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02,
+<a id="L439"></a><span class="ln">   439</span>		0x11, 0x03, 0x11, 0x00, 0x00, 0x00,
+<a id="L440"></a><span class="ln">   440</span>	}
+<a id="L441"></a><span class="ln">   441</span>	
+<a id="L442"></a><span class="ln">   442</span>	<span class="comment">// writeSOS writes the StartOfScan marker.</span>
+<a id="L443"></a><span class="ln">   443</span>	func (e *encoder) writeSOS(m image.Image) {
+<a id="L444"></a><span class="ln">   444</span>		e.write(sosHeader)
+<a id="L445"></a><span class="ln">   445</span>		var (
+<a id="L446"></a><span class="ln">   446</span>			<span class="comment">// Scratch buffers to hold the YCbCr values.</span>
+<a id="L447"></a><span class="ln">   447</span>			yBlock  block
+<a id="L448"></a><span class="ln">   448</span>			cbBlock [4]block
+<a id="L449"></a><span class="ln">   449</span>			crBlock [4]block
+<a id="L450"></a><span class="ln">   450</span>			cBlock  block
+<a id="L451"></a><span class="ln">   451</span>			<span class="comment">// DC components are delta-encoded.</span>
+<a id="L452"></a><span class="ln">   452</span>			prevDCY, prevDCCb, prevDCCr int
+<a id="L453"></a><span class="ln">   453</span>		)
+<a id="L454"></a><span class="ln">   454</span>		bounds := m.Bounds()
+<a id="L455"></a><span class="ln">   455</span>		rgba, _ := m.(*image.RGBA)
+<a id="L456"></a><span class="ln">   456</span>		for y := bounds.Min.Y; y &lt; bounds.Max.Y; y += 16 {
+<a id="L457"></a><span class="ln">   457</span>			for x := bounds.Min.X; x &lt; bounds.Max.X; x += 16 {
+<a id="L458"></a><span class="ln">   458</span>				for i := 0; i &lt; 4; i++ {
+<a id="L459"></a><span class="ln">   459</span>					xOff := (i &amp; 1) * 8
+<a id="L460"></a><span class="ln">   460</span>					yOff := (i &amp; 2) * 4
+<a id="L461"></a><span class="ln">   461</span>					p := image.Pt(x+xOff, y+yOff)
+<a id="L462"></a><span class="ln">   462</span>					if rgba != nil {
+<a id="L463"></a><span class="ln">   463</span>						rgbaToYCbCr(rgba, p, &amp;yBlock, &amp;cbBlock[i], &amp;crBlock[i])
+<a id="L464"></a><span class="ln">   464</span>					} else {
+<a id="L465"></a><span class="ln">   465</span>						toYCbCr(m, p, &amp;yBlock, &amp;cbBlock[i], &amp;crBlock[i])
+<a id="L466"></a><span class="ln">   466</span>					}
+<a id="L467"></a><span class="ln">   467</span>					prevDCY = e.writeBlock(&amp;yBlock, 0, prevDCY)
+<a id="L468"></a><span class="ln">   468</span>				}
+<a id="L469"></a><span class="ln">   469</span>				scale(&amp;cBlock, &amp;cbBlock)
+<a id="L470"></a><span class="ln">   470</span>				prevDCCb = e.writeBlock(&amp;cBlock, 1, prevDCCb)
+<a id="L471"></a><span class="ln">   471</span>				scale(&amp;cBlock, &amp;crBlock)
+<a id="L472"></a><span class="ln">   472</span>				prevDCCr = e.writeBlock(&amp;cBlock, 1, prevDCCr)
+<a id="L473"></a><span class="ln">   473</span>			}
+<a id="L474"></a><span class="ln">   474</span>		}
+<a id="L475"></a><span class="ln">   475</span>		<span class="comment">// Pad the last byte with 1&#39;s.</span>
+<a id="L476"></a><span class="ln">   476</span>		e.emit(0x7f, 7)
+<a id="L477"></a><span class="ln">   477</span>	}
+<a id="L478"></a><span class="ln">   478</span>	
+<a id="L479"></a><span class="ln">   479</span>	<span class="comment">// DefaultQuality is the default quality encoding parameter.</span>
+<a id="L480"></a><span class="ln">   480</span>	const DefaultQuality = 75
+<a id="L481"></a><span class="ln">   481</span>	
+<a id="L482"></a><span class="ln">   482</span>	<span class="comment">// Options are the encoding parameters.</span>
+<a id="L483"></a><span class="ln">   483</span>	<span class="comment">// Quality ranges from 1 to 100 inclusive, higher is better.</span>
+<a id="L484"></a><span class="ln">   484</span>	type Options struct {
+<a id="L485"></a><span class="ln">   485</span>		Quality int
+<a id="L486"></a><span class="ln">   486</span>	}
+<a id="L487"></a><span class="ln">   487</span>	
+<a id="L488"></a><span class="ln">   488</span>	<span class="comment">// Encode writes the Image m to w in JPEG 4:2:0 baseline format with the given</span>
+<a id="L489"></a><span class="ln">   489</span>	<span class="comment">// options. Default parameters are used if a nil *Options is passed.</span>
+<a id="L490"></a><span class="ln">   490</span>	func Encode(w io.Writer, m image.Image, o *Options) error {
+<a id="L491"></a><span class="ln">   491</span>		b := m.Bounds()
+<a id="L492"></a><span class="ln">   492</span>		if b.Dx() &gt;= 1&lt;&lt;16 || b.Dy() &gt;= 1&lt;&lt;16 {
+<a id="L493"></a><span class="ln">   493</span>			return errors.New(&#34;jpeg: image is too large to encode&#34;)
+<a id="L494"></a><span class="ln">   494</span>		}
+<a id="L495"></a><span class="ln">   495</span>		var e encoder
+<a id="L496"></a><span class="ln">   496</span>		if ww, ok := w.(writer); ok {
+<a id="L497"></a><span class="ln">   497</span>			e.w = ww
+<a id="L498"></a><span class="ln">   498</span>		} else {
+<a id="L499"></a><span class="ln">   499</span>			e.w = bufio.NewWriter(w)
+<a id="L500"></a><span class="ln">   500</span>		}
+<a id="L501"></a><span class="ln">   501</span>		<span class="comment">// Clip quality to [1, 100].</span>
+<a id="L502"></a><span class="ln">   502</span>		quality := DefaultQuality
+<a id="L503"></a><span class="ln">   503</span>		if o != nil {
+<a id="L504"></a><span class="ln">   504</span>			quality = o.Quality
+<a id="L505"></a><span class="ln">   505</span>			if quality &lt; 1 {
+<a id="L506"></a><span class="ln">   506</span>				quality = 1
+<a id="L507"></a><span class="ln">   507</span>			} else if quality &gt; 100 {
+<a id="L508"></a><span class="ln">   508</span>				quality = 100
+<a id="L509"></a><span class="ln">   509</span>			}
+<a id="L510"></a><span class="ln">   510</span>		}
+<a id="L511"></a><span class="ln">   511</span>		<span class="comment">// Convert from a quality rating to a scaling factor.</span>
+<a id="L512"></a><span class="ln">   512</span>		var scale int
+<a id="L513"></a><span class="ln">   513</span>		if quality &lt; 50 {
+<a id="L514"></a><span class="ln">   514</span>			scale = 5000 / quality
+<a id="L515"></a><span class="ln">   515</span>		} else {
+<a id="L516"></a><span class="ln">   516</span>			scale = 200 - quality*2
+<a id="L517"></a><span class="ln">   517</span>		}
+<a id="L518"></a><span class="ln">   518</span>		<span class="comment">// Initialize the quantization tables.</span>
+<a id="L519"></a><span class="ln">   519</span>		for i := range e.quant {
+<a id="L520"></a><span class="ln">   520</span>			for j := range e.quant[i] {
+<a id="L521"></a><span class="ln">   521</span>				x := int(unscaledQuant[i][j])
+<a id="L522"></a><span class="ln">   522</span>				x = (x*scale + 50) / 100
+<a id="L523"></a><span class="ln">   523</span>				if x &lt; 1 {
+<a id="L524"></a><span class="ln">   524</span>					x = 1
+<a id="L525"></a><span class="ln">   525</span>				} else if x &gt; 255 {
+<a id="L526"></a><span class="ln">   526</span>					x = 255
+<a id="L527"></a><span class="ln">   527</span>				}
+<a id="L528"></a><span class="ln">   528</span>				e.quant[i][j] = uint8(x)
+<a id="L529"></a><span class="ln">   529</span>			}
+<a id="L530"></a><span class="ln">   530</span>		}
+<a id="L531"></a><span class="ln">   531</span>		<span class="comment">// Write the Start Of Image marker.</span>
+<a id="L532"></a><span class="ln">   532</span>		e.buf[0] = 0xff
+<a id="L533"></a><span class="ln">   533</span>		e.buf[1] = 0xd8
+<a id="L534"></a><span class="ln">   534</span>		e.write(e.buf[:2])
+<a id="L535"></a><span class="ln">   535</span>		<span class="comment">// Write the quantization tables.</span>
+<a id="L536"></a><span class="ln">   536</span>		e.writeDQT()
+<a id="L537"></a><span class="ln">   537</span>		<span class="comment">// Write the image dimensions.</span>
+<a id="L538"></a><span class="ln">   538</span>		e.writeSOF0(b.Size())
+<a id="L539"></a><span class="ln">   539</span>		<span class="comment">// Write the Huffman tables.</span>
+<a id="L540"></a><span class="ln">   540</span>		e.writeDHT()
+<a id="L541"></a><span class="ln">   541</span>		<span class="comment">// Write the image data.</span>
+<a id="L542"></a><span class="ln">   542</span>		e.writeSOS(m)
+<a id="L543"></a><span class="ln">   543</span>		<span class="comment">// Write the End Of Image marker.</span>
+<a id="L544"></a><span class="ln">   544</span>		e.buf[0] = 0xff
+<a id="L545"></a><span class="ln">   545</span>		e.buf[1] = 0xd9
+<a id="L546"></a><span class="ln">   546</span>		e.write(e.buf[:2])
+<a id="L547"></a><span class="ln">   547</span>		e.flush()
+<a id="L548"></a><span class="ln">   548</span>		return e.err
+<a id="L549"></a><span class="ln">   549</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

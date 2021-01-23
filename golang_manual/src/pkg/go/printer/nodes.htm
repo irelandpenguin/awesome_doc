@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/go/printer/nodes.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/go/printer/nodes.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// This file implements printing of AST nodes; specifically</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// expressions, statements, declarations, and files. It uses</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// the print functionality implemented in printer.go.</span>
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	package printer
+<a id="L10"></a><span class="ln">    10</span>	
+<a id="L11"></a><span class="ln">    11</span>	import (
+<a id="L12"></a><span class="ln">    12</span>		&#34;bytes&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;go/ast&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;go/token&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;unicode/utf8&#34;
+<a id="L16"></a><span class="ln">    16</span>	)
+<a id="L17"></a><span class="ln">    17</span>	
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// Formatting issues:</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// - better comment formatting for /*-style comments at the end of a line (e.g. a declaration)</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">//   when the comment spans multiple lines; if such a comment is just two lines, formatting is</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">//   not idempotent</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// - formatting of expression lists</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// - should use blank instead of tab to separate one-line function bodies from</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">//   the function header unless there is a group of consecutive one-liners</span>
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Common AST nodes.</span>
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// Print as many newlines as necessary (but at least min newlines) to get to</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// the current line. ws is printed before the first line break. If newSection</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// is set, the first line break is printed as formfeed. Returns true if any</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// line break was printed; returns false otherwise.</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// TODO(gri): linebreak may add too many lines if the next statement at &#34;line&#34;</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">//            is preceded by comments because the computation of n assumes</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">//            the current position before the comment and the target position</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//            after the comment. Thus, after interspersing such comments, the</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//            space taken up by them is not considered to reduce the number of</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//            linebreaks. At the moment there is no easy way to know about</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//            future (not yet interspersed) comments in this function.</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//</span>
+<a id="L42"></a><span class="ln">    42</span>	func (p *printer) linebreak(line, min int, ws whiteSpace, newSection bool) (printedBreak bool) {
+<a id="L43"></a><span class="ln">    43</span>		n := nlimit(line - p.pos.Line)
+<a id="L44"></a><span class="ln">    44</span>		if n &lt; min {
+<a id="L45"></a><span class="ln">    45</span>			n = min
+<a id="L46"></a><span class="ln">    46</span>		}
+<a id="L47"></a><span class="ln">    47</span>		if n &gt; 0 {
+<a id="L48"></a><span class="ln">    48</span>			p.print(ws)
+<a id="L49"></a><span class="ln">    49</span>			if newSection {
+<a id="L50"></a><span class="ln">    50</span>				p.print(formfeed)
+<a id="L51"></a><span class="ln">    51</span>				n--
+<a id="L52"></a><span class="ln">    52</span>			}
+<a id="L53"></a><span class="ln">    53</span>			for ; n &gt; 0; n-- {
+<a id="L54"></a><span class="ln">    54</span>				p.print(newline)
+<a id="L55"></a><span class="ln">    55</span>			}
+<a id="L56"></a><span class="ln">    56</span>			printedBreak = true
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>		return
+<a id="L59"></a><span class="ln">    59</span>	}
+<a id="L60"></a><span class="ln">    60</span>	
+<a id="L61"></a><span class="ln">    61</span>	<span class="comment">// setComment sets g as the next comment if g != nil and if node comments</span>
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// are enabled - this mode is used when printing source code fragments such</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">// as exports only. It assumes that there are no other pending comments to</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// intersperse.</span>
+<a id="L65"></a><span class="ln">    65</span>	func (p *printer) setComment(g *ast.CommentGroup) {
+<a id="L66"></a><span class="ln">    66</span>		if g == nil || !p.useNodeComments {
+<a id="L67"></a><span class="ln">    67</span>			return
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		if p.comments == nil {
+<a id="L70"></a><span class="ln">    70</span>			<span class="comment">// initialize p.comments lazily</span>
+<a id="L71"></a><span class="ln">    71</span>			p.comments = make([]*ast.CommentGroup, 1)
+<a id="L72"></a><span class="ln">    72</span>		} else if p.cindex &lt; len(p.comments) {
+<a id="L73"></a><span class="ln">    73</span>			<span class="comment">// for some reason there are pending comments; this</span>
+<a id="L74"></a><span class="ln">    74</span>			<span class="comment">// should never happen - handle gracefully and flush</span>
+<a id="L75"></a><span class="ln">    75</span>			<span class="comment">// all comments up to g, ignore anything after that</span>
+<a id="L76"></a><span class="ln">    76</span>			p.flush(p.posFor(g.List[0].Pos()), token.ILLEGAL)
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>		p.comments[0] = g
+<a id="L79"></a><span class="ln">    79</span>		p.cindex = 0
+<a id="L80"></a><span class="ln">    80</span>		p.nextComment() <span class="comment">// get comment ready for use</span>
+<a id="L81"></a><span class="ln">    81</span>	}
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>	type exprListMode uint
+<a id="L84"></a><span class="ln">    84</span>	
+<a id="L85"></a><span class="ln">    85</span>	const (
+<a id="L86"></a><span class="ln">    86</span>		commaTerm exprListMode = 1 &lt;&lt; iota <span class="comment">// list is optionally terminated by a comma</span>
+<a id="L87"></a><span class="ln">    87</span>		noIndent                           <span class="comment">// no extra indentation in multi-line lists</span>
+<a id="L88"></a><span class="ln">    88</span>	)
+<a id="L89"></a><span class="ln">    89</span>	
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// If indent is set, a multi-line identifier list is indented after the</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// first linebreak encountered.</span>
+<a id="L92"></a><span class="ln">    92</span>	func (p *printer) identList(list []*ast.Ident, indent bool) {
+<a id="L93"></a><span class="ln">    93</span>		<span class="comment">// convert into an expression list so we can re-use exprList formatting</span>
+<a id="L94"></a><span class="ln">    94</span>		xlist := make([]ast.Expr, len(list))
+<a id="L95"></a><span class="ln">    95</span>		for i, x := range list {
+<a id="L96"></a><span class="ln">    96</span>			xlist[i] = x
+<a id="L97"></a><span class="ln">    97</span>		}
+<a id="L98"></a><span class="ln">    98</span>		var mode exprListMode
+<a id="L99"></a><span class="ln">    99</span>		if !indent {
+<a id="L100"></a><span class="ln">   100</span>			mode = noIndent
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>		p.exprList(token.NoPos, xlist, 1, mode, token.NoPos)
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// Print a list of expressions. If the list spans multiple</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// source lines, the original line breaks are respected between</span>
+<a id="L107"></a><span class="ln">   107</span>	<span class="comment">// expressions.</span>
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">//</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// TODO(gri) Consider rewriting this to be independent of []ast.Expr</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">//           so that we can use the algorithm for any kind of list</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">//           (e.g., pass list via a channel over which to range).</span>
+<a id="L112"></a><span class="ln">   112</span>	func (p *printer) exprList(prev0 token.Pos, list []ast.Expr, depth int, mode exprListMode, next0 token.Pos) {
+<a id="L113"></a><span class="ln">   113</span>		if len(list) == 0 {
+<a id="L114"></a><span class="ln">   114</span>			return
+<a id="L115"></a><span class="ln">   115</span>		}
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>		prev := p.posFor(prev0)
+<a id="L118"></a><span class="ln">   118</span>		next := p.posFor(next0)
+<a id="L119"></a><span class="ln">   119</span>		line := p.lineFor(list[0].Pos())
+<a id="L120"></a><span class="ln">   120</span>		endLine := p.lineFor(list[len(list)-1].End())
+<a id="L121"></a><span class="ln">   121</span>	
+<a id="L122"></a><span class="ln">   122</span>		if prev.IsValid() &amp;&amp; prev.Line == line &amp;&amp; line == endLine {
+<a id="L123"></a><span class="ln">   123</span>			<span class="comment">// all list entries on a single line</span>
+<a id="L124"></a><span class="ln">   124</span>			for i, x := range list {
+<a id="L125"></a><span class="ln">   125</span>				if i &gt; 0 {
+<a id="L126"></a><span class="ln">   126</span>					<span class="comment">// use position of expression following the comma as</span>
+<a id="L127"></a><span class="ln">   127</span>					<span class="comment">// comma position for correct comment placement</span>
+<a id="L128"></a><span class="ln">   128</span>					p.print(x.Pos(), token.COMMA, blank)
+<a id="L129"></a><span class="ln">   129</span>				}
+<a id="L130"></a><span class="ln">   130</span>				p.expr0(x, depth)
+<a id="L131"></a><span class="ln">   131</span>			}
+<a id="L132"></a><span class="ln">   132</span>			return
+<a id="L133"></a><span class="ln">   133</span>		}
+<a id="L134"></a><span class="ln">   134</span>	
+<a id="L135"></a><span class="ln">   135</span>		<span class="comment">// list entries span multiple lines;</span>
+<a id="L136"></a><span class="ln">   136</span>		<span class="comment">// use source code positions to guide line breaks</span>
+<a id="L137"></a><span class="ln">   137</span>	
+<a id="L138"></a><span class="ln">   138</span>		<span class="comment">// don&#39;t add extra indentation if noIndent is set;</span>
+<a id="L139"></a><span class="ln">   139</span>		<span class="comment">// i.e., pretend that the first line is already indented</span>
+<a id="L140"></a><span class="ln">   140</span>		ws := ignore
+<a id="L141"></a><span class="ln">   141</span>		if mode&amp;noIndent == 0 {
+<a id="L142"></a><span class="ln">   142</span>			ws = indent
+<a id="L143"></a><span class="ln">   143</span>		}
+<a id="L144"></a><span class="ln">   144</span>	
+<a id="L145"></a><span class="ln">   145</span>		<span class="comment">// the first linebreak is always a formfeed since this section must not</span>
+<a id="L146"></a><span class="ln">   146</span>		<span class="comment">// depend on any previous formatting</span>
+<a id="L147"></a><span class="ln">   147</span>		prevBreak := -1 <span class="comment">// index of last expression that was followed by a linebreak</span>
+<a id="L148"></a><span class="ln">   148</span>		if prev.IsValid() &amp;&amp; prev.Line &lt; line &amp;&amp; p.linebreak(line, 0, ws, true) {
+<a id="L149"></a><span class="ln">   149</span>			ws = ignore
+<a id="L150"></a><span class="ln">   150</span>			prevBreak = 0
+<a id="L151"></a><span class="ln">   151</span>		}
+<a id="L152"></a><span class="ln">   152</span>	
+<a id="L153"></a><span class="ln">   153</span>		<span class="comment">// initialize expression/key size: a zero value indicates expr/key doesn&#39;t fit on a single line</span>
+<a id="L154"></a><span class="ln">   154</span>		size := 0
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>		<span class="comment">// print all list elements</span>
+<a id="L157"></a><span class="ln">   157</span>		for i, x := range list {
+<a id="L158"></a><span class="ln">   158</span>			prevLine := line
+<a id="L159"></a><span class="ln">   159</span>			line = p.lineFor(x.Pos())
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>			<span class="comment">// determine if the next linebreak, if any, needs to use formfeed:</span>
+<a id="L162"></a><span class="ln">   162</span>			<span class="comment">// in general, use the entire node size to make the decision; for</span>
+<a id="L163"></a><span class="ln">   163</span>			<span class="comment">// key:value expressions, use the key size</span>
+<a id="L164"></a><span class="ln">   164</span>			<span class="comment">// TODO(gri) for a better result, should probably incorporate both</span>
+<a id="L165"></a><span class="ln">   165</span>			<span class="comment">//           the key and the node size into the decision process</span>
+<a id="L166"></a><span class="ln">   166</span>			useFF := true
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>			<span class="comment">// determine element size: all bets are off if we don&#39;t have</span>
+<a id="L169"></a><span class="ln">   169</span>			<span class="comment">// position information for the previous and next token (likely</span>
+<a id="L170"></a><span class="ln">   170</span>			<span class="comment">// generated code - simply ignore the size in this case by setting</span>
+<a id="L171"></a><span class="ln">   171</span>			<span class="comment">// it to 0)</span>
+<a id="L172"></a><span class="ln">   172</span>			prevSize := size
+<a id="L173"></a><span class="ln">   173</span>			const infinity = 1e6 <span class="comment">// larger than any source line</span>
+<a id="L174"></a><span class="ln">   174</span>			size = p.nodeSize(x, infinity)
+<a id="L175"></a><span class="ln">   175</span>			pair, isPair := x.(*ast.KeyValueExpr)
+<a id="L176"></a><span class="ln">   176</span>			if size &lt;= infinity &amp;&amp; prev.IsValid() &amp;&amp; next.IsValid() {
+<a id="L177"></a><span class="ln">   177</span>				<span class="comment">// x fits on a single line</span>
+<a id="L178"></a><span class="ln">   178</span>				if isPair {
+<a id="L179"></a><span class="ln">   179</span>					size = p.nodeSize(pair.Key, infinity) <span class="comment">// size &lt;= infinity</span>
+<a id="L180"></a><span class="ln">   180</span>				}
+<a id="L181"></a><span class="ln">   181</span>			} else {
+<a id="L182"></a><span class="ln">   182</span>				<span class="comment">// size too large or we don&#39;t have good layout information</span>
+<a id="L183"></a><span class="ln">   183</span>				size = 0
+<a id="L184"></a><span class="ln">   184</span>			}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>			<span class="comment">// if the previous line and the current line had single-</span>
+<a id="L187"></a><span class="ln">   187</span>			<span class="comment">// line-expressions and the key sizes are small or the</span>
+<a id="L188"></a><span class="ln">   188</span>			<span class="comment">// the ratio between the key sizes does not exceed a</span>
+<a id="L189"></a><span class="ln">   189</span>			<span class="comment">// threshold, align columns and do not use formfeed</span>
+<a id="L190"></a><span class="ln">   190</span>			if prevSize &gt; 0 &amp;&amp; size &gt; 0 {
+<a id="L191"></a><span class="ln">   191</span>				const smallSize = 20
+<a id="L192"></a><span class="ln">   192</span>				if prevSize &lt;= smallSize &amp;&amp; size &lt;= smallSize {
+<a id="L193"></a><span class="ln">   193</span>					useFF = false
+<a id="L194"></a><span class="ln">   194</span>				} else {
+<a id="L195"></a><span class="ln">   195</span>					const r = 4 <span class="comment">// threshold</span>
+<a id="L196"></a><span class="ln">   196</span>					ratio := float64(size) / float64(prevSize)
+<a id="L197"></a><span class="ln">   197</span>					useFF = ratio &lt;= 1/r || r &lt;= ratio
+<a id="L198"></a><span class="ln">   198</span>				}
+<a id="L199"></a><span class="ln">   199</span>			}
+<a id="L200"></a><span class="ln">   200</span>	
+<a id="L201"></a><span class="ln">   201</span>			if i &gt; 0 {
+<a id="L202"></a><span class="ln">   202</span>				needsLinebreak := prevLine &lt; line &amp;&amp; prevLine &gt; 0 &amp;&amp; line &gt; 0
+<a id="L203"></a><span class="ln">   203</span>				<span class="comment">// use position of expression following the comma as</span>
+<a id="L204"></a><span class="ln">   204</span>				<span class="comment">// comma position for correct comment placement, but</span>
+<a id="L205"></a><span class="ln">   205</span>				<span class="comment">// only if the expression is on the same line</span>
+<a id="L206"></a><span class="ln">   206</span>				if !needsLinebreak {
+<a id="L207"></a><span class="ln">   207</span>					p.print(x.Pos())
+<a id="L208"></a><span class="ln">   208</span>				}
+<a id="L209"></a><span class="ln">   209</span>				p.print(token.COMMA)
+<a id="L210"></a><span class="ln">   210</span>				needsBlank := true
+<a id="L211"></a><span class="ln">   211</span>				if needsLinebreak {
+<a id="L212"></a><span class="ln">   212</span>					<span class="comment">// lines are broken using newlines so comments remain aligned</span>
+<a id="L213"></a><span class="ln">   213</span>					<span class="comment">// unless forceFF is set or there are multiple expressions on</span>
+<a id="L214"></a><span class="ln">   214</span>					<span class="comment">// the same line in which case formfeed is used</span>
+<a id="L215"></a><span class="ln">   215</span>					if p.linebreak(line, 0, ws, useFF || prevBreak+1 &lt; i) {
+<a id="L216"></a><span class="ln">   216</span>						ws = ignore
+<a id="L217"></a><span class="ln">   217</span>						prevBreak = i
+<a id="L218"></a><span class="ln">   218</span>						needsBlank = false <span class="comment">// we got a line break instead</span>
+<a id="L219"></a><span class="ln">   219</span>					}
+<a id="L220"></a><span class="ln">   220</span>				}
+<a id="L221"></a><span class="ln">   221</span>				if needsBlank {
+<a id="L222"></a><span class="ln">   222</span>					p.print(blank)
+<a id="L223"></a><span class="ln">   223</span>				}
+<a id="L224"></a><span class="ln">   224</span>			}
+<a id="L225"></a><span class="ln">   225</span>	
+<a id="L226"></a><span class="ln">   226</span>			if isPair &amp;&amp; size &gt; 0 &amp;&amp; len(list) &gt; 1 {
+<a id="L227"></a><span class="ln">   227</span>				<span class="comment">// we have a key:value expression that fits onto one line and</span>
+<a id="L228"></a><span class="ln">   228</span>				<span class="comment">// is in a list with more then one entry: use a column for the</span>
+<a id="L229"></a><span class="ln">   229</span>				<span class="comment">// key such that consecutive entries can align if possible</span>
+<a id="L230"></a><span class="ln">   230</span>				p.expr(pair.Key)
+<a id="L231"></a><span class="ln">   231</span>				p.print(pair.Colon, token.COLON, vtab)
+<a id="L232"></a><span class="ln">   232</span>				p.expr(pair.Value)
+<a id="L233"></a><span class="ln">   233</span>			} else {
+<a id="L234"></a><span class="ln">   234</span>				p.expr0(x, depth)
+<a id="L235"></a><span class="ln">   235</span>			}
+<a id="L236"></a><span class="ln">   236</span>		}
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>		if mode&amp;commaTerm != 0 &amp;&amp; next.IsValid() &amp;&amp; p.pos.Line &lt; next.Line {
+<a id="L239"></a><span class="ln">   239</span>			<span class="comment">// print a terminating comma if the next token is on a new line</span>
+<a id="L240"></a><span class="ln">   240</span>			p.print(token.COMMA)
+<a id="L241"></a><span class="ln">   241</span>			if ws == ignore &amp;&amp; mode&amp;noIndent == 0 {
+<a id="L242"></a><span class="ln">   242</span>				<span class="comment">// unindent if we indented</span>
+<a id="L243"></a><span class="ln">   243</span>				p.print(unindent)
+<a id="L244"></a><span class="ln">   244</span>			}
+<a id="L245"></a><span class="ln">   245</span>			p.print(formfeed) <span class="comment">// terminating comma needs a line break to look good</span>
+<a id="L246"></a><span class="ln">   246</span>			return
+<a id="L247"></a><span class="ln">   247</span>		}
+<a id="L248"></a><span class="ln">   248</span>	
+<a id="L249"></a><span class="ln">   249</span>		if ws == ignore &amp;&amp; mode&amp;noIndent == 0 {
+<a id="L250"></a><span class="ln">   250</span>			<span class="comment">// unindent if we indented</span>
+<a id="L251"></a><span class="ln">   251</span>			p.print(unindent)
+<a id="L252"></a><span class="ln">   252</span>		}
+<a id="L253"></a><span class="ln">   253</span>	}
+<a id="L254"></a><span class="ln">   254</span>	
+<a id="L255"></a><span class="ln">   255</span>	func (p *printer) parameters(fields *ast.FieldList) {
+<a id="L256"></a><span class="ln">   256</span>		p.print(fields.Opening, token.LPAREN)
+<a id="L257"></a><span class="ln">   257</span>		if len(fields.List) &gt; 0 {
+<a id="L258"></a><span class="ln">   258</span>			prevLine := p.lineFor(fields.Opening)
+<a id="L259"></a><span class="ln">   259</span>			ws := indent
+<a id="L260"></a><span class="ln">   260</span>			for i, par := range fields.List {
+<a id="L261"></a><span class="ln">   261</span>				<span class="comment">// determine par begin and end line (may be different</span>
+<a id="L262"></a><span class="ln">   262</span>				<span class="comment">// if there are multiple parameter names for this par</span>
+<a id="L263"></a><span class="ln">   263</span>				<span class="comment">// or the type is on a separate line)</span>
+<a id="L264"></a><span class="ln">   264</span>				var parLineBeg int
+<a id="L265"></a><span class="ln">   265</span>				var parLineEnd = p.lineFor(par.Type.Pos())
+<a id="L266"></a><span class="ln">   266</span>				if len(par.Names) &gt; 0 {
+<a id="L267"></a><span class="ln">   267</span>					parLineBeg = p.lineFor(par.Names[0].Pos())
+<a id="L268"></a><span class="ln">   268</span>				} else {
+<a id="L269"></a><span class="ln">   269</span>					parLineBeg = parLineEnd
+<a id="L270"></a><span class="ln">   270</span>				}
+<a id="L271"></a><span class="ln">   271</span>				<span class="comment">// separating &#34;,&#34; if needed</span>
+<a id="L272"></a><span class="ln">   272</span>				needsLinebreak := 0 &lt; prevLine &amp;&amp; prevLine &lt; parLineBeg
+<a id="L273"></a><span class="ln">   273</span>				if i &gt; 0 {
+<a id="L274"></a><span class="ln">   274</span>					<span class="comment">// use position of parameter following the comma as</span>
+<a id="L275"></a><span class="ln">   275</span>					<span class="comment">// comma position for correct comma placement, but</span>
+<a id="L276"></a><span class="ln">   276</span>					<span class="comment">// only if the next parameter is on the same line</span>
+<a id="L277"></a><span class="ln">   277</span>					if !needsLinebreak {
+<a id="L278"></a><span class="ln">   278</span>						p.print(par.Pos())
+<a id="L279"></a><span class="ln">   279</span>					}
+<a id="L280"></a><span class="ln">   280</span>					p.print(token.COMMA)
+<a id="L281"></a><span class="ln">   281</span>				}
+<a id="L282"></a><span class="ln">   282</span>				<span class="comment">// separator if needed (linebreak or blank)</span>
+<a id="L283"></a><span class="ln">   283</span>				if needsLinebreak &amp;&amp; p.linebreak(parLineBeg, 0, ws, true) {
+<a id="L284"></a><span class="ln">   284</span>					<span class="comment">// break line if the opening &#34;(&#34; or previous parameter ended on a different line</span>
+<a id="L285"></a><span class="ln">   285</span>					ws = ignore
+<a id="L286"></a><span class="ln">   286</span>				} else if i &gt; 0 {
+<a id="L287"></a><span class="ln">   287</span>					p.print(blank)
+<a id="L288"></a><span class="ln">   288</span>				}
+<a id="L289"></a><span class="ln">   289</span>				<span class="comment">// parameter names</span>
+<a id="L290"></a><span class="ln">   290</span>				if len(par.Names) &gt; 0 {
+<a id="L291"></a><span class="ln">   291</span>					<span class="comment">// Very subtle: If we indented before (ws == ignore), identList</span>
+<a id="L292"></a><span class="ln">   292</span>					<span class="comment">// won&#39;t indent again. If we didn&#39;t (ws == indent), identList will</span>
+<a id="L293"></a><span class="ln">   293</span>					<span class="comment">// indent if the identList spans multiple lines, and it will outdent</span>
+<a id="L294"></a><span class="ln">   294</span>					<span class="comment">// again at the end (and still ws == indent). Thus, a subsequent indent</span>
+<a id="L295"></a><span class="ln">   295</span>					<span class="comment">// by a linebreak call after a type, or in the next multi-line identList</span>
+<a id="L296"></a><span class="ln">   296</span>					<span class="comment">// will do the right thing.</span>
+<a id="L297"></a><span class="ln">   297</span>					p.identList(par.Names, ws == indent)
+<a id="L298"></a><span class="ln">   298</span>					p.print(blank)
+<a id="L299"></a><span class="ln">   299</span>				}
+<a id="L300"></a><span class="ln">   300</span>				<span class="comment">// parameter type</span>
+<a id="L301"></a><span class="ln">   301</span>				p.expr(par.Type)
+<a id="L302"></a><span class="ln">   302</span>				prevLine = parLineEnd
+<a id="L303"></a><span class="ln">   303</span>			}
+<a id="L304"></a><span class="ln">   304</span>			<span class="comment">// if the closing &#34;)&#34; is on a separate line from the last parameter,</span>
+<a id="L305"></a><span class="ln">   305</span>			<span class="comment">// print an additional &#34;,&#34; and line break</span>
+<a id="L306"></a><span class="ln">   306</span>			if closing := p.lineFor(fields.Closing); 0 &lt; prevLine &amp;&amp; prevLine &lt; closing {
+<a id="L307"></a><span class="ln">   307</span>				p.print(token.COMMA)
+<a id="L308"></a><span class="ln">   308</span>				p.linebreak(closing, 0, ignore, true)
+<a id="L309"></a><span class="ln">   309</span>			}
+<a id="L310"></a><span class="ln">   310</span>			<span class="comment">// unindent if we indented</span>
+<a id="L311"></a><span class="ln">   311</span>			if ws == ignore {
+<a id="L312"></a><span class="ln">   312</span>				p.print(unindent)
+<a id="L313"></a><span class="ln">   313</span>			}
+<a id="L314"></a><span class="ln">   314</span>		}
+<a id="L315"></a><span class="ln">   315</span>		p.print(fields.Closing, token.RPAREN)
+<a id="L316"></a><span class="ln">   316</span>	}
+<a id="L317"></a><span class="ln">   317</span>	
+<a id="L318"></a><span class="ln">   318</span>	func (p *printer) signature(params, result *ast.FieldList) {
+<a id="L319"></a><span class="ln">   319</span>		p.parameters(params)
+<a id="L320"></a><span class="ln">   320</span>		n := result.NumFields()
+<a id="L321"></a><span class="ln">   321</span>		if n &gt; 0 {
+<a id="L322"></a><span class="ln">   322</span>			p.print(blank)
+<a id="L323"></a><span class="ln">   323</span>			if n == 1 &amp;&amp; result.List[0].Names == nil {
+<a id="L324"></a><span class="ln">   324</span>				<span class="comment">// single anonymous result; no ()&#39;s</span>
+<a id="L325"></a><span class="ln">   325</span>				p.expr(result.List[0].Type)
+<a id="L326"></a><span class="ln">   326</span>				return
+<a id="L327"></a><span class="ln">   327</span>			}
+<a id="L328"></a><span class="ln">   328</span>			p.parameters(result)
+<a id="L329"></a><span class="ln">   329</span>		}
+<a id="L330"></a><span class="ln">   330</span>	}
+<a id="L331"></a><span class="ln">   331</span>	
+<a id="L332"></a><span class="ln">   332</span>	func identListSize(list []*ast.Ident, maxSize int) (size int) {
+<a id="L333"></a><span class="ln">   333</span>		for i, x := range list {
+<a id="L334"></a><span class="ln">   334</span>			if i &gt; 0 {
+<a id="L335"></a><span class="ln">   335</span>				size += len(&#34;, &#34;)
+<a id="L336"></a><span class="ln">   336</span>			}
+<a id="L337"></a><span class="ln">   337</span>			size += utf8.RuneCountInString(x.Name)
+<a id="L338"></a><span class="ln">   338</span>			if size &gt;= maxSize {
+<a id="L339"></a><span class="ln">   339</span>				break
+<a id="L340"></a><span class="ln">   340</span>			}
+<a id="L341"></a><span class="ln">   341</span>		}
+<a id="L342"></a><span class="ln">   342</span>		return
+<a id="L343"></a><span class="ln">   343</span>	}
+<a id="L344"></a><span class="ln">   344</span>	
+<a id="L345"></a><span class="ln">   345</span>	func (p *printer) isOneLineFieldList(list []*ast.Field) bool {
+<a id="L346"></a><span class="ln">   346</span>		if len(list) != 1 {
+<a id="L347"></a><span class="ln">   347</span>			return false <span class="comment">// allow only one field</span>
+<a id="L348"></a><span class="ln">   348</span>		}
+<a id="L349"></a><span class="ln">   349</span>		f := list[0]
+<a id="L350"></a><span class="ln">   350</span>		if f.Tag != nil || f.Comment != nil {
+<a id="L351"></a><span class="ln">   351</span>			return false <span class="comment">// don&#39;t allow tags or comments</span>
+<a id="L352"></a><span class="ln">   352</span>		}
+<a id="L353"></a><span class="ln">   353</span>		<span class="comment">// only name(s) and type</span>
+<a id="L354"></a><span class="ln">   354</span>		const maxSize = 30 <span class="comment">// adjust as appropriate, this is an approximate value</span>
+<a id="L355"></a><span class="ln">   355</span>		namesSize := identListSize(f.Names, maxSize)
+<a id="L356"></a><span class="ln">   356</span>		if namesSize &gt; 0 {
+<a id="L357"></a><span class="ln">   357</span>			namesSize = 1 <span class="comment">// blank between names and types</span>
+<a id="L358"></a><span class="ln">   358</span>		}
+<a id="L359"></a><span class="ln">   359</span>		typeSize := p.nodeSize(f.Type, maxSize)
+<a id="L360"></a><span class="ln">   360</span>		return namesSize+typeSize &lt;= maxSize
+<a id="L361"></a><span class="ln">   361</span>	}
+<a id="L362"></a><span class="ln">   362</span>	
+<a id="L363"></a><span class="ln">   363</span>	func (p *printer) setLineComment(text string) {
+<a id="L364"></a><span class="ln">   364</span>		p.setComment(&amp;ast.CommentGroup{List: []*ast.Comment{{Slash: token.NoPos, Text: text}}})
+<a id="L365"></a><span class="ln">   365</span>	}
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>	func (p *printer) isMultiLine(n ast.Node) bool {
+<a id="L368"></a><span class="ln">   368</span>		return p.lineFor(n.End())-p.lineFor(n.Pos()) &gt; 0
+<a id="L369"></a><span class="ln">   369</span>	}
+<a id="L370"></a><span class="ln">   370</span>	
+<a id="L371"></a><span class="ln">   371</span>	func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) {
+<a id="L372"></a><span class="ln">   372</span>		lbrace := fields.Opening
+<a id="L373"></a><span class="ln">   373</span>		list := fields.List
+<a id="L374"></a><span class="ln">   374</span>		rbrace := fields.Closing
+<a id="L375"></a><span class="ln">   375</span>		hasComments := isIncomplete || p.commentBefore(p.posFor(rbrace))
+<a id="L376"></a><span class="ln">   376</span>		srcIsOneLine := lbrace.IsValid() &amp;&amp; rbrace.IsValid() &amp;&amp; p.lineFor(lbrace) == p.lineFor(rbrace)
+<a id="L377"></a><span class="ln">   377</span>	
+<a id="L378"></a><span class="ln">   378</span>		if !hasComments &amp;&amp; srcIsOneLine {
+<a id="L379"></a><span class="ln">   379</span>			<span class="comment">// possibly a one-line struct/interface</span>
+<a id="L380"></a><span class="ln">   380</span>			if len(list) == 0 {
+<a id="L381"></a><span class="ln">   381</span>				<span class="comment">// no blank between keyword and {} in this case</span>
+<a id="L382"></a><span class="ln">   382</span>				p.print(lbrace, token.LBRACE, rbrace, token.RBRACE)
+<a id="L383"></a><span class="ln">   383</span>				return
+<a id="L384"></a><span class="ln">   384</span>			} else if isStruct &amp;&amp; p.isOneLineFieldList(list) { <span class="comment">// for now ignore interfaces</span>
+<a id="L385"></a><span class="ln">   385</span>				<span class="comment">// small enough - print on one line</span>
+<a id="L386"></a><span class="ln">   386</span>				<span class="comment">// (don&#39;t use identList and ignore source line breaks)</span>
+<a id="L387"></a><span class="ln">   387</span>				p.print(lbrace, token.LBRACE, blank)
+<a id="L388"></a><span class="ln">   388</span>				f := list[0]
+<a id="L389"></a><span class="ln">   389</span>				for i, x := range f.Names {
+<a id="L390"></a><span class="ln">   390</span>					if i &gt; 0 {
+<a id="L391"></a><span class="ln">   391</span>						<span class="comment">// no comments so no need for comma position</span>
+<a id="L392"></a><span class="ln">   392</span>						p.print(token.COMMA, blank)
+<a id="L393"></a><span class="ln">   393</span>					}
+<a id="L394"></a><span class="ln">   394</span>					p.expr(x)
+<a id="L395"></a><span class="ln">   395</span>				}
+<a id="L396"></a><span class="ln">   396</span>				if len(f.Names) &gt; 0 {
+<a id="L397"></a><span class="ln">   397</span>					p.print(blank)
+<a id="L398"></a><span class="ln">   398</span>				}
+<a id="L399"></a><span class="ln">   399</span>				p.expr(f.Type)
+<a id="L400"></a><span class="ln">   400</span>				p.print(blank, rbrace, token.RBRACE)
+<a id="L401"></a><span class="ln">   401</span>				return
+<a id="L402"></a><span class="ln">   402</span>			}
+<a id="L403"></a><span class="ln">   403</span>		}
+<a id="L404"></a><span class="ln">   404</span>		<span class="comment">// hasComments || !srcIsOneLine</span>
+<a id="L405"></a><span class="ln">   405</span>	
+<a id="L406"></a><span class="ln">   406</span>		p.print(blank, lbrace, token.LBRACE, indent)
+<a id="L407"></a><span class="ln">   407</span>		if hasComments || len(list) &gt; 0 {
+<a id="L408"></a><span class="ln">   408</span>			p.print(formfeed)
+<a id="L409"></a><span class="ln">   409</span>		}
+<a id="L410"></a><span class="ln">   410</span>	
+<a id="L411"></a><span class="ln">   411</span>		if isStruct {
+<a id="L412"></a><span class="ln">   412</span>	
+<a id="L413"></a><span class="ln">   413</span>			sep := vtab
+<a id="L414"></a><span class="ln">   414</span>			if len(list) == 1 {
+<a id="L415"></a><span class="ln">   415</span>				sep = blank
+<a id="L416"></a><span class="ln">   416</span>			}
+<a id="L417"></a><span class="ln">   417</span>			newSection := false
+<a id="L418"></a><span class="ln">   418</span>			for i, f := range list {
+<a id="L419"></a><span class="ln">   419</span>				if i &gt; 0 {
+<a id="L420"></a><span class="ln">   420</span>					p.linebreak(p.lineFor(f.Pos()), 1, ignore, newSection)
+<a id="L421"></a><span class="ln">   421</span>				}
+<a id="L422"></a><span class="ln">   422</span>				extraTabs := 0
+<a id="L423"></a><span class="ln">   423</span>				p.setComment(f.Doc)
+<a id="L424"></a><span class="ln">   424</span>				if len(f.Names) &gt; 0 {
+<a id="L425"></a><span class="ln">   425</span>					<span class="comment">// named fields</span>
+<a id="L426"></a><span class="ln">   426</span>					p.identList(f.Names, false)
+<a id="L427"></a><span class="ln">   427</span>					p.print(sep)
+<a id="L428"></a><span class="ln">   428</span>					p.expr(f.Type)
+<a id="L429"></a><span class="ln">   429</span>					extraTabs = 1
+<a id="L430"></a><span class="ln">   430</span>				} else {
+<a id="L431"></a><span class="ln">   431</span>					<span class="comment">// anonymous field</span>
+<a id="L432"></a><span class="ln">   432</span>					p.expr(f.Type)
+<a id="L433"></a><span class="ln">   433</span>					extraTabs = 2
+<a id="L434"></a><span class="ln">   434</span>				}
+<a id="L435"></a><span class="ln">   435</span>				if f.Tag != nil {
+<a id="L436"></a><span class="ln">   436</span>					if len(f.Names) &gt; 0 &amp;&amp; sep == vtab {
+<a id="L437"></a><span class="ln">   437</span>						p.print(sep)
+<a id="L438"></a><span class="ln">   438</span>					}
+<a id="L439"></a><span class="ln">   439</span>					p.print(sep)
+<a id="L440"></a><span class="ln">   440</span>					p.expr(f.Tag)
+<a id="L441"></a><span class="ln">   441</span>					extraTabs = 0
+<a id="L442"></a><span class="ln">   442</span>				}
+<a id="L443"></a><span class="ln">   443</span>				if f.Comment != nil {
+<a id="L444"></a><span class="ln">   444</span>					for ; extraTabs &gt; 0; extraTabs-- {
+<a id="L445"></a><span class="ln">   445</span>						p.print(sep)
+<a id="L446"></a><span class="ln">   446</span>					}
+<a id="L447"></a><span class="ln">   447</span>					p.setComment(f.Comment)
+<a id="L448"></a><span class="ln">   448</span>				}
+<a id="L449"></a><span class="ln">   449</span>				newSection = p.isMultiLine(f)
+<a id="L450"></a><span class="ln">   450</span>			}
+<a id="L451"></a><span class="ln">   451</span>			if isIncomplete {
+<a id="L452"></a><span class="ln">   452</span>				if len(list) &gt; 0 {
+<a id="L453"></a><span class="ln">   453</span>					p.print(formfeed)
+<a id="L454"></a><span class="ln">   454</span>				}
+<a id="L455"></a><span class="ln">   455</span>				p.flush(p.posFor(rbrace), token.RBRACE) <span class="comment">// make sure we don&#39;t lose the last line comment</span>
+<a id="L456"></a><span class="ln">   456</span>				p.setLineComment(&#34;// contains filtered or unexported fields&#34;)
+<a id="L457"></a><span class="ln">   457</span>			}
+<a id="L458"></a><span class="ln">   458</span>	
+<a id="L459"></a><span class="ln">   459</span>		} else { <span class="comment">// interface</span>
+<a id="L460"></a><span class="ln">   460</span>	
+<a id="L461"></a><span class="ln">   461</span>			newSection := false
+<a id="L462"></a><span class="ln">   462</span>			for i, f := range list {
+<a id="L463"></a><span class="ln">   463</span>				if i &gt; 0 {
+<a id="L464"></a><span class="ln">   464</span>					p.linebreak(p.lineFor(f.Pos()), 1, ignore, newSection)
+<a id="L465"></a><span class="ln">   465</span>				}
+<a id="L466"></a><span class="ln">   466</span>				p.setComment(f.Doc)
+<a id="L467"></a><span class="ln">   467</span>				if ftyp, isFtyp := f.Type.(*ast.FuncType); isFtyp {
+<a id="L468"></a><span class="ln">   468</span>					<span class="comment">// method</span>
+<a id="L469"></a><span class="ln">   469</span>					p.expr(f.Names[0])
+<a id="L470"></a><span class="ln">   470</span>					p.signature(ftyp.Params, ftyp.Results)
+<a id="L471"></a><span class="ln">   471</span>				} else {
+<a id="L472"></a><span class="ln">   472</span>					<span class="comment">// embedded interface</span>
+<a id="L473"></a><span class="ln">   473</span>					p.expr(f.Type)
+<a id="L474"></a><span class="ln">   474</span>				}
+<a id="L475"></a><span class="ln">   475</span>				p.setComment(f.Comment)
+<a id="L476"></a><span class="ln">   476</span>				newSection = p.isMultiLine(f)
+<a id="L477"></a><span class="ln">   477</span>			}
+<a id="L478"></a><span class="ln">   478</span>			if isIncomplete {
+<a id="L479"></a><span class="ln">   479</span>				if len(list) &gt; 0 {
+<a id="L480"></a><span class="ln">   480</span>					p.print(formfeed)
+<a id="L481"></a><span class="ln">   481</span>				}
+<a id="L482"></a><span class="ln">   482</span>				p.flush(p.posFor(rbrace), token.RBRACE) <span class="comment">// make sure we don&#39;t lose the last line comment</span>
+<a id="L483"></a><span class="ln">   483</span>				p.setLineComment(&#34;// contains filtered or unexported methods&#34;)
+<a id="L484"></a><span class="ln">   484</span>			}
+<a id="L485"></a><span class="ln">   485</span>	
+<a id="L486"></a><span class="ln">   486</span>		}
+<a id="L487"></a><span class="ln">   487</span>		p.print(unindent, formfeed, rbrace, token.RBRACE)
+<a id="L488"></a><span class="ln">   488</span>	}
+<a id="L489"></a><span class="ln">   489</span>	
+<a id="L490"></a><span class="ln">   490</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L491"></a><span class="ln">   491</span>	<span class="comment">// Expressions</span>
+<a id="L492"></a><span class="ln">   492</span>	
+<a id="L493"></a><span class="ln">   493</span>	func walkBinary(e *ast.BinaryExpr) (has4, has5 bool, maxProblem int) {
+<a id="L494"></a><span class="ln">   494</span>		switch e.Op.Precedence() {
+<a id="L495"></a><span class="ln">   495</span>		case 4:
+<a id="L496"></a><span class="ln">   496</span>			has4 = true
+<a id="L497"></a><span class="ln">   497</span>		case 5:
+<a id="L498"></a><span class="ln">   498</span>			has5 = true
+<a id="L499"></a><span class="ln">   499</span>		}
+<a id="L500"></a><span class="ln">   500</span>	
+<a id="L501"></a><span class="ln">   501</span>		switch l := e.X.(type) {
+<a id="L502"></a><span class="ln">   502</span>		case *ast.BinaryExpr:
+<a id="L503"></a><span class="ln">   503</span>			if l.Op.Precedence() &lt; e.Op.Precedence() {
+<a id="L504"></a><span class="ln">   504</span>				<span class="comment">// parens will be inserted.</span>
+<a id="L505"></a><span class="ln">   505</span>				<span class="comment">// pretend this is an *ast.ParenExpr and do nothing.</span>
+<a id="L506"></a><span class="ln">   506</span>				break
+<a id="L507"></a><span class="ln">   507</span>			}
+<a id="L508"></a><span class="ln">   508</span>			h4, h5, mp := walkBinary(l)
+<a id="L509"></a><span class="ln">   509</span>			has4 = has4 || h4
+<a id="L510"></a><span class="ln">   510</span>			has5 = has5 || h5
+<a id="L511"></a><span class="ln">   511</span>			if maxProblem &lt; mp {
+<a id="L512"></a><span class="ln">   512</span>				maxProblem = mp
+<a id="L513"></a><span class="ln">   513</span>			}
+<a id="L514"></a><span class="ln">   514</span>		}
+<a id="L515"></a><span class="ln">   515</span>	
+<a id="L516"></a><span class="ln">   516</span>		switch r := e.Y.(type) {
+<a id="L517"></a><span class="ln">   517</span>		case *ast.BinaryExpr:
+<a id="L518"></a><span class="ln">   518</span>			if r.Op.Precedence() &lt;= e.Op.Precedence() {
+<a id="L519"></a><span class="ln">   519</span>				<span class="comment">// parens will be inserted.</span>
+<a id="L520"></a><span class="ln">   520</span>				<span class="comment">// pretend this is an *ast.ParenExpr and do nothing.</span>
+<a id="L521"></a><span class="ln">   521</span>				break
+<a id="L522"></a><span class="ln">   522</span>			}
+<a id="L523"></a><span class="ln">   523</span>			h4, h5, mp := walkBinary(r)
+<a id="L524"></a><span class="ln">   524</span>			has4 = has4 || h4
+<a id="L525"></a><span class="ln">   525</span>			has5 = has5 || h5
+<a id="L526"></a><span class="ln">   526</span>			if maxProblem &lt; mp {
+<a id="L527"></a><span class="ln">   527</span>				maxProblem = mp
+<a id="L528"></a><span class="ln">   528</span>			}
+<a id="L529"></a><span class="ln">   529</span>	
+<a id="L530"></a><span class="ln">   530</span>		case *ast.StarExpr:
+<a id="L531"></a><span class="ln">   531</span>			if e.Op == token.QUO { <span class="comment">// `*/`</span>
+<a id="L532"></a><span class="ln">   532</span>				maxProblem = 5
+<a id="L533"></a><span class="ln">   533</span>			}
+<a id="L534"></a><span class="ln">   534</span>	
+<a id="L535"></a><span class="ln">   535</span>		case *ast.UnaryExpr:
+<a id="L536"></a><span class="ln">   536</span>			switch e.Op.String() + r.Op.String() {
+<a id="L537"></a><span class="ln">   537</span>			case &#34;/*&#34;, &#34;&amp;&amp;&#34;, &#34;&amp;^&#34;:
+<a id="L538"></a><span class="ln">   538</span>				maxProblem = 5
+<a id="L539"></a><span class="ln">   539</span>			case &#34;++&#34;, &#34;--&#34;:
+<a id="L540"></a><span class="ln">   540</span>				if maxProblem &lt; 4 {
+<a id="L541"></a><span class="ln">   541</span>					maxProblem = 4
+<a id="L542"></a><span class="ln">   542</span>				}
+<a id="L543"></a><span class="ln">   543</span>			}
+<a id="L544"></a><span class="ln">   544</span>		}
+<a id="L545"></a><span class="ln">   545</span>		return
+<a id="L546"></a><span class="ln">   546</span>	}
+<a id="L547"></a><span class="ln">   547</span>	
+<a id="L548"></a><span class="ln">   548</span>	func cutoff(e *ast.BinaryExpr, depth int) int {
+<a id="L549"></a><span class="ln">   549</span>		has4, has5, maxProblem := walkBinary(e)
+<a id="L550"></a><span class="ln">   550</span>		if maxProblem &gt; 0 {
+<a id="L551"></a><span class="ln">   551</span>			return maxProblem + 1
+<a id="L552"></a><span class="ln">   552</span>		}
+<a id="L553"></a><span class="ln">   553</span>		if has4 &amp;&amp; has5 {
+<a id="L554"></a><span class="ln">   554</span>			if depth == 1 {
+<a id="L555"></a><span class="ln">   555</span>				return 5
+<a id="L556"></a><span class="ln">   556</span>			}
+<a id="L557"></a><span class="ln">   557</span>			return 4
+<a id="L558"></a><span class="ln">   558</span>		}
+<a id="L559"></a><span class="ln">   559</span>		if depth == 1 {
+<a id="L560"></a><span class="ln">   560</span>			return 6
+<a id="L561"></a><span class="ln">   561</span>		}
+<a id="L562"></a><span class="ln">   562</span>		return 4
+<a id="L563"></a><span class="ln">   563</span>	}
+<a id="L564"></a><span class="ln">   564</span>	
+<a id="L565"></a><span class="ln">   565</span>	func diffPrec(expr ast.Expr, prec int) int {
+<a id="L566"></a><span class="ln">   566</span>		x, ok := expr.(*ast.BinaryExpr)
+<a id="L567"></a><span class="ln">   567</span>		if !ok || prec != x.Op.Precedence() {
+<a id="L568"></a><span class="ln">   568</span>			return 1
+<a id="L569"></a><span class="ln">   569</span>		}
+<a id="L570"></a><span class="ln">   570</span>		return 0
+<a id="L571"></a><span class="ln">   571</span>	}
+<a id="L572"></a><span class="ln">   572</span>	
+<a id="L573"></a><span class="ln">   573</span>	func reduceDepth(depth int) int {
+<a id="L574"></a><span class="ln">   574</span>		depth--
+<a id="L575"></a><span class="ln">   575</span>		if depth &lt; 1 {
+<a id="L576"></a><span class="ln">   576</span>			depth = 1
+<a id="L577"></a><span class="ln">   577</span>		}
+<a id="L578"></a><span class="ln">   578</span>		return depth
+<a id="L579"></a><span class="ln">   579</span>	}
+<a id="L580"></a><span class="ln">   580</span>	
+<a id="L581"></a><span class="ln">   581</span>	<span class="comment">// Format the binary expression: decide the cutoff and then format.</span>
+<a id="L582"></a><span class="ln">   582</span>	<span class="comment">// Let&#39;s call depth == 1 Normal mode, and depth &gt; 1 Compact mode.</span>
+<a id="L583"></a><span class="ln">   583</span>	<span class="comment">// (Algorithm suggestion by Russ Cox.)</span>
+<a id="L584"></a><span class="ln">   584</span>	<span class="comment">//</span>
+<a id="L585"></a><span class="ln">   585</span>	<span class="comment">// The precedences are:</span>
+<a id="L586"></a><span class="ln">   586</span>	<span class="comment">//	5             *  /  %  &lt;&lt;  &gt;&gt;  &amp;  &amp;^</span>
+<a id="L587"></a><span class="ln">   587</span>	<span class="comment">//	4             +  -  |  ^</span>
+<a id="L588"></a><span class="ln">   588</span>	<span class="comment">//	3             ==  !=  &lt;  &lt;=  &gt;  &gt;=</span>
+<a id="L589"></a><span class="ln">   589</span>	<span class="comment">//	2             &amp;&amp;</span>
+<a id="L590"></a><span class="ln">   590</span>	<span class="comment">//	1             ||</span>
+<a id="L591"></a><span class="ln">   591</span>	<span class="comment">//</span>
+<a id="L592"></a><span class="ln">   592</span>	<span class="comment">// The only decision is whether there will be spaces around levels 4 and 5.</span>
+<a id="L593"></a><span class="ln">   593</span>	<span class="comment">// There are never spaces at level 6 (unary), and always spaces at levels 3 and below.</span>
+<a id="L594"></a><span class="ln">   594</span>	<span class="comment">//</span>
+<a id="L595"></a><span class="ln">   595</span>	<span class="comment">// To choose the cutoff, look at the whole expression but excluding primary</span>
+<a id="L596"></a><span class="ln">   596</span>	<span class="comment">// expressions (function calls, parenthesized exprs), and apply these rules:</span>
+<a id="L597"></a><span class="ln">   597</span>	<span class="comment">//</span>
+<a id="L598"></a><span class="ln">   598</span>	<span class="comment">//	1) If there is a binary operator with a right side unary operand</span>
+<a id="L599"></a><span class="ln">   599</span>	<span class="comment">//	   that would clash without a space, the cutoff must be (in order):</span>
+<a id="L600"></a><span class="ln">   600</span>	<span class="comment">//</span>
+<a id="L601"></a><span class="ln">   601</span>	<span class="comment">//		/*	6</span>
+<a id="L602"></a><span class="ln">   602</span>	<span class="comment">//		&amp;&amp;	6</span>
+<a id="L603"></a><span class="ln">   603</span>	<span class="comment">//		&amp;^	6</span>
+<a id="L604"></a><span class="ln">   604</span>	<span class="comment">//		++	5</span>
+<a id="L605"></a><span class="ln">   605</span>	<span class="comment">//		--	5</span>
+<a id="L606"></a><span class="ln">   606</span>	<span class="comment">//</span>
+<a id="L607"></a><span class="ln">   607</span>	<span class="comment">//         (Comparison operators always have spaces around them.)</span>
+<a id="L608"></a><span class="ln">   608</span>	<span class="comment">//</span>
+<a id="L609"></a><span class="ln">   609</span>	<span class="comment">//	2) If there is a mix of level 5 and level 4 operators, then the cutoff</span>
+<a id="L610"></a><span class="ln">   610</span>	<span class="comment">//	   is 5 (use spaces to distinguish precedence) in Normal mode</span>
+<a id="L611"></a><span class="ln">   611</span>	<span class="comment">//	   and 4 (never use spaces) in Compact mode.</span>
+<a id="L612"></a><span class="ln">   612</span>	<span class="comment">//</span>
+<a id="L613"></a><span class="ln">   613</span>	<span class="comment">//	3) If there are no level 4 operators or no level 5 operators, then the</span>
+<a id="L614"></a><span class="ln">   614</span>	<span class="comment">//	   cutoff is 6 (always use spaces) in Normal mode</span>
+<a id="L615"></a><span class="ln">   615</span>	<span class="comment">//	   and 4 (never use spaces) in Compact mode.</span>
+<a id="L616"></a><span class="ln">   616</span>	<span class="comment">//</span>
+<a id="L617"></a><span class="ln">   617</span>	func (p *printer) binaryExpr(x *ast.BinaryExpr, prec1, cutoff, depth int) {
+<a id="L618"></a><span class="ln">   618</span>		prec := x.Op.Precedence()
+<a id="L619"></a><span class="ln">   619</span>		if prec &lt; prec1 {
+<a id="L620"></a><span class="ln">   620</span>			<span class="comment">// parenthesis needed</span>
+<a id="L621"></a><span class="ln">   621</span>			<span class="comment">// Note: The parser inserts an ast.ParenExpr node; thus this case</span>
+<a id="L622"></a><span class="ln">   622</span>			<span class="comment">//       can only occur if the AST is created in a different way.</span>
+<a id="L623"></a><span class="ln">   623</span>			p.print(token.LPAREN)
+<a id="L624"></a><span class="ln">   624</span>			p.expr0(x, reduceDepth(depth)) <span class="comment">// parentheses undo one level of depth</span>
+<a id="L625"></a><span class="ln">   625</span>			p.print(token.RPAREN)
+<a id="L626"></a><span class="ln">   626</span>			return
+<a id="L627"></a><span class="ln">   627</span>		}
+<a id="L628"></a><span class="ln">   628</span>	
+<a id="L629"></a><span class="ln">   629</span>		printBlank := prec &lt; cutoff
+<a id="L630"></a><span class="ln">   630</span>	
+<a id="L631"></a><span class="ln">   631</span>		ws := indent
+<a id="L632"></a><span class="ln">   632</span>		p.expr1(x.X, prec, depth+diffPrec(x.X, prec))
+<a id="L633"></a><span class="ln">   633</span>		if printBlank {
+<a id="L634"></a><span class="ln">   634</span>			p.print(blank)
+<a id="L635"></a><span class="ln">   635</span>		}
+<a id="L636"></a><span class="ln">   636</span>		xline := p.pos.Line <span class="comment">// before the operator (it may be on the next line!)</span>
+<a id="L637"></a><span class="ln">   637</span>		yline := p.lineFor(x.Y.Pos())
+<a id="L638"></a><span class="ln">   638</span>		p.print(x.OpPos, x.Op)
+<a id="L639"></a><span class="ln">   639</span>		if xline != yline &amp;&amp; xline &gt; 0 &amp;&amp; yline &gt; 0 {
+<a id="L640"></a><span class="ln">   640</span>			<span class="comment">// at least one line break, but respect an extra empty line</span>
+<a id="L641"></a><span class="ln">   641</span>			<span class="comment">// in the source</span>
+<a id="L642"></a><span class="ln">   642</span>			if p.linebreak(yline, 1, ws, true) {
+<a id="L643"></a><span class="ln">   643</span>				ws = ignore
+<a id="L644"></a><span class="ln">   644</span>				printBlank = false <span class="comment">// no blank after line break</span>
+<a id="L645"></a><span class="ln">   645</span>			}
+<a id="L646"></a><span class="ln">   646</span>		}
+<a id="L647"></a><span class="ln">   647</span>		if printBlank {
+<a id="L648"></a><span class="ln">   648</span>			p.print(blank)
+<a id="L649"></a><span class="ln">   649</span>		}
+<a id="L650"></a><span class="ln">   650</span>		p.expr1(x.Y, prec+1, depth+1)
+<a id="L651"></a><span class="ln">   651</span>		if ws == ignore {
+<a id="L652"></a><span class="ln">   652</span>			p.print(unindent)
+<a id="L653"></a><span class="ln">   653</span>		}
+<a id="L654"></a><span class="ln">   654</span>	}
+<a id="L655"></a><span class="ln">   655</span>	
+<a id="L656"></a><span class="ln">   656</span>	func isBinary(expr ast.Expr) bool {
+<a id="L657"></a><span class="ln">   657</span>		_, ok := expr.(*ast.BinaryExpr)
+<a id="L658"></a><span class="ln">   658</span>		return ok
+<a id="L659"></a><span class="ln">   659</span>	}
+<a id="L660"></a><span class="ln">   660</span>	
+<a id="L661"></a><span class="ln">   661</span>	func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
+<a id="L662"></a><span class="ln">   662</span>		p.print(expr.Pos())
+<a id="L663"></a><span class="ln">   663</span>	
+<a id="L664"></a><span class="ln">   664</span>		switch x := expr.(type) {
+<a id="L665"></a><span class="ln">   665</span>		case *ast.BadExpr:
+<a id="L666"></a><span class="ln">   666</span>			p.print(&#34;BadExpr&#34;)
+<a id="L667"></a><span class="ln">   667</span>	
+<a id="L668"></a><span class="ln">   668</span>		case *ast.Ident:
+<a id="L669"></a><span class="ln">   669</span>			p.print(x)
+<a id="L670"></a><span class="ln">   670</span>	
+<a id="L671"></a><span class="ln">   671</span>		case *ast.BinaryExpr:
+<a id="L672"></a><span class="ln">   672</span>			if depth &lt; 1 {
+<a id="L673"></a><span class="ln">   673</span>				p.internalError(&#34;depth &lt; 1:&#34;, depth)
+<a id="L674"></a><span class="ln">   674</span>				depth = 1
+<a id="L675"></a><span class="ln">   675</span>			}
+<a id="L676"></a><span class="ln">   676</span>			p.binaryExpr(x, prec1, cutoff(x, depth), depth)
+<a id="L677"></a><span class="ln">   677</span>	
+<a id="L678"></a><span class="ln">   678</span>		case *ast.KeyValueExpr:
+<a id="L679"></a><span class="ln">   679</span>			p.expr(x.Key)
+<a id="L680"></a><span class="ln">   680</span>			p.print(x.Colon, token.COLON, blank)
+<a id="L681"></a><span class="ln">   681</span>			p.expr(x.Value)
+<a id="L682"></a><span class="ln">   682</span>	
+<a id="L683"></a><span class="ln">   683</span>		case *ast.StarExpr:
+<a id="L684"></a><span class="ln">   684</span>			const prec = token.UnaryPrec
+<a id="L685"></a><span class="ln">   685</span>			if prec &lt; prec1 {
+<a id="L686"></a><span class="ln">   686</span>				<span class="comment">// parenthesis needed</span>
+<a id="L687"></a><span class="ln">   687</span>				p.print(token.LPAREN)
+<a id="L688"></a><span class="ln">   688</span>				p.print(token.MUL)
+<a id="L689"></a><span class="ln">   689</span>				p.expr(x.X)
+<a id="L690"></a><span class="ln">   690</span>				p.print(token.RPAREN)
+<a id="L691"></a><span class="ln">   691</span>			} else {
+<a id="L692"></a><span class="ln">   692</span>				<span class="comment">// no parenthesis needed</span>
+<a id="L693"></a><span class="ln">   693</span>				p.print(token.MUL)
+<a id="L694"></a><span class="ln">   694</span>				p.expr(x.X)
+<a id="L695"></a><span class="ln">   695</span>			}
+<a id="L696"></a><span class="ln">   696</span>	
+<a id="L697"></a><span class="ln">   697</span>		case *ast.UnaryExpr:
+<a id="L698"></a><span class="ln">   698</span>			const prec = token.UnaryPrec
+<a id="L699"></a><span class="ln">   699</span>			if prec &lt; prec1 {
+<a id="L700"></a><span class="ln">   700</span>				<span class="comment">// parenthesis needed</span>
+<a id="L701"></a><span class="ln">   701</span>				p.print(token.LPAREN)
+<a id="L702"></a><span class="ln">   702</span>				p.expr(x)
+<a id="L703"></a><span class="ln">   703</span>				p.print(token.RPAREN)
+<a id="L704"></a><span class="ln">   704</span>			} else {
+<a id="L705"></a><span class="ln">   705</span>				<span class="comment">// no parenthesis needed</span>
+<a id="L706"></a><span class="ln">   706</span>				p.print(x.Op)
+<a id="L707"></a><span class="ln">   707</span>				if x.Op == token.RANGE {
+<a id="L708"></a><span class="ln">   708</span>					<span class="comment">// TODO(gri) Remove this code if it cannot be reached.</span>
+<a id="L709"></a><span class="ln">   709</span>					p.print(blank)
+<a id="L710"></a><span class="ln">   710</span>				}
+<a id="L711"></a><span class="ln">   711</span>				p.expr1(x.X, prec, depth)
+<a id="L712"></a><span class="ln">   712</span>			}
+<a id="L713"></a><span class="ln">   713</span>	
+<a id="L714"></a><span class="ln">   714</span>		case *ast.BasicLit:
+<a id="L715"></a><span class="ln">   715</span>			p.print(x)
+<a id="L716"></a><span class="ln">   716</span>	
+<a id="L717"></a><span class="ln">   717</span>		case *ast.FuncLit:
+<a id="L718"></a><span class="ln">   718</span>			p.expr(x.Type)
+<a id="L719"></a><span class="ln">   719</span>			p.funcBody(x.Body, p.distance(x.Type.Pos(), p.pos), true)
+<a id="L720"></a><span class="ln">   720</span>	
+<a id="L721"></a><span class="ln">   721</span>		case *ast.ParenExpr:
+<a id="L722"></a><span class="ln">   722</span>			if _, hasParens := x.X.(*ast.ParenExpr); hasParens {
+<a id="L723"></a><span class="ln">   723</span>				<span class="comment">// don&#39;t print parentheses around an already parenthesized expression</span>
+<a id="L724"></a><span class="ln">   724</span>				<span class="comment">// TODO(gri) consider making this more general and incorporate precedence levels</span>
+<a id="L725"></a><span class="ln">   725</span>				p.expr0(x.X, reduceDepth(depth)) <span class="comment">// parentheses undo one level of depth</span>
+<a id="L726"></a><span class="ln">   726</span>			} else {
+<a id="L727"></a><span class="ln">   727</span>				p.print(token.LPAREN)
+<a id="L728"></a><span class="ln">   728</span>				p.expr0(x.X, reduceDepth(depth)) <span class="comment">// parentheses undo one level of depth</span>
+<a id="L729"></a><span class="ln">   729</span>				p.print(x.Rparen, token.RPAREN)
+<a id="L730"></a><span class="ln">   730</span>			}
+<a id="L731"></a><span class="ln">   731</span>	
+<a id="L732"></a><span class="ln">   732</span>		case *ast.SelectorExpr:
+<a id="L733"></a><span class="ln">   733</span>			p.expr1(x.X, token.HighestPrec, depth)
+<a id="L734"></a><span class="ln">   734</span>			p.print(token.PERIOD)
+<a id="L735"></a><span class="ln">   735</span>			if line := p.lineFor(x.Sel.Pos()); p.pos.IsValid() &amp;&amp; p.pos.Line &lt; line {
+<a id="L736"></a><span class="ln">   736</span>				p.print(indent, newline, x.Sel.Pos(), x.Sel, unindent)
+<a id="L737"></a><span class="ln">   737</span>			} else {
+<a id="L738"></a><span class="ln">   738</span>				p.print(x.Sel.Pos(), x.Sel)
+<a id="L739"></a><span class="ln">   739</span>			}
+<a id="L740"></a><span class="ln">   740</span>	
+<a id="L741"></a><span class="ln">   741</span>		case *ast.TypeAssertExpr:
+<a id="L742"></a><span class="ln">   742</span>			p.expr1(x.X, token.HighestPrec, depth)
+<a id="L743"></a><span class="ln">   743</span>			p.print(token.PERIOD, token.LPAREN)
+<a id="L744"></a><span class="ln">   744</span>			if x.Type != nil {
+<a id="L745"></a><span class="ln">   745</span>				p.expr(x.Type)
+<a id="L746"></a><span class="ln">   746</span>			} else {
+<a id="L747"></a><span class="ln">   747</span>				p.print(token.TYPE)
+<a id="L748"></a><span class="ln">   748</span>			}
+<a id="L749"></a><span class="ln">   749</span>			p.print(token.RPAREN)
+<a id="L750"></a><span class="ln">   750</span>	
+<a id="L751"></a><span class="ln">   751</span>		case *ast.IndexExpr:
+<a id="L752"></a><span class="ln">   752</span>			<span class="comment">// TODO(gri): should treat[] like parentheses and undo one level of depth</span>
+<a id="L753"></a><span class="ln">   753</span>			p.expr1(x.X, token.HighestPrec, 1)
+<a id="L754"></a><span class="ln">   754</span>			p.print(x.Lbrack, token.LBRACK)
+<a id="L755"></a><span class="ln">   755</span>			p.expr0(x.Index, depth+1)
+<a id="L756"></a><span class="ln">   756</span>			p.print(x.Rbrack, token.RBRACK)
+<a id="L757"></a><span class="ln">   757</span>	
+<a id="L758"></a><span class="ln">   758</span>		case *ast.SliceExpr:
+<a id="L759"></a><span class="ln">   759</span>			<span class="comment">// TODO(gri): should treat[] like parentheses and undo one level of depth</span>
+<a id="L760"></a><span class="ln">   760</span>			p.expr1(x.X, token.HighestPrec, 1)
+<a id="L761"></a><span class="ln">   761</span>			p.print(x.Lbrack, token.LBRACK)
+<a id="L762"></a><span class="ln">   762</span>			if x.Low != nil {
+<a id="L763"></a><span class="ln">   763</span>				p.expr0(x.Low, depth+1)
+<a id="L764"></a><span class="ln">   764</span>			}
+<a id="L765"></a><span class="ln">   765</span>			<span class="comment">// blanks around &#34;:&#34; if both sides exist and either side is a binary expression</span>
+<a id="L766"></a><span class="ln">   766</span>			if depth &lt;= 1 &amp;&amp; x.Low != nil &amp;&amp; x.High != nil &amp;&amp; (isBinary(x.Low) || isBinary(x.High)) {
+<a id="L767"></a><span class="ln">   767</span>				p.print(blank, token.COLON, blank)
+<a id="L768"></a><span class="ln">   768</span>			} else {
+<a id="L769"></a><span class="ln">   769</span>				p.print(token.COLON)
+<a id="L770"></a><span class="ln">   770</span>			}
+<a id="L771"></a><span class="ln">   771</span>			if x.High != nil {
+<a id="L772"></a><span class="ln">   772</span>				p.expr0(x.High, depth+1)
+<a id="L773"></a><span class="ln">   773</span>			}
+<a id="L774"></a><span class="ln">   774</span>			p.print(x.Rbrack, token.RBRACK)
+<a id="L775"></a><span class="ln">   775</span>	
+<a id="L776"></a><span class="ln">   776</span>		case *ast.CallExpr:
+<a id="L777"></a><span class="ln">   777</span>			if len(x.Args) &gt; 1 {
+<a id="L778"></a><span class="ln">   778</span>				depth++
+<a id="L779"></a><span class="ln">   779</span>			}
+<a id="L780"></a><span class="ln">   780</span>			p.expr1(x.Fun, token.HighestPrec, depth)
+<a id="L781"></a><span class="ln">   781</span>			p.print(x.Lparen, token.LPAREN)
+<a id="L782"></a><span class="ln">   782</span>			if x.Ellipsis.IsValid() {
+<a id="L783"></a><span class="ln">   783</span>				p.exprList(x.Lparen, x.Args, depth, 0, x.Ellipsis)
+<a id="L784"></a><span class="ln">   784</span>				p.print(x.Ellipsis, token.ELLIPSIS)
+<a id="L785"></a><span class="ln">   785</span>				if x.Rparen.IsValid() &amp;&amp; p.lineFor(x.Ellipsis) &lt; p.lineFor(x.Rparen) {
+<a id="L786"></a><span class="ln">   786</span>					p.print(token.COMMA, formfeed)
+<a id="L787"></a><span class="ln">   787</span>				}
+<a id="L788"></a><span class="ln">   788</span>			} else {
+<a id="L789"></a><span class="ln">   789</span>				p.exprList(x.Lparen, x.Args, depth, commaTerm, x.Rparen)
+<a id="L790"></a><span class="ln">   790</span>			}
+<a id="L791"></a><span class="ln">   791</span>			p.print(x.Rparen, token.RPAREN)
+<a id="L792"></a><span class="ln">   792</span>	
+<a id="L793"></a><span class="ln">   793</span>		case *ast.CompositeLit:
+<a id="L794"></a><span class="ln">   794</span>			<span class="comment">// composite literal elements that are composite literals themselves may have the type omitted</span>
+<a id="L795"></a><span class="ln">   795</span>			if x.Type != nil {
+<a id="L796"></a><span class="ln">   796</span>				p.expr1(x.Type, token.HighestPrec, depth)
+<a id="L797"></a><span class="ln">   797</span>			}
+<a id="L798"></a><span class="ln">   798</span>			p.print(x.Lbrace, token.LBRACE)
+<a id="L799"></a><span class="ln">   799</span>			p.exprList(x.Lbrace, x.Elts, 1, commaTerm, x.Rbrace)
+<a id="L800"></a><span class="ln">   800</span>			<span class="comment">// do not insert extra line breaks because of comments before</span>
+<a id="L801"></a><span class="ln">   801</span>			<span class="comment">// the closing &#39;}&#39; as it might break the code if there is no</span>
+<a id="L802"></a><span class="ln">   802</span>			<span class="comment">// trailing &#39;,&#39;</span>
+<a id="L803"></a><span class="ln">   803</span>			p.print(noExtraLinebreak, x.Rbrace, token.RBRACE, noExtraLinebreak)
+<a id="L804"></a><span class="ln">   804</span>	
+<a id="L805"></a><span class="ln">   805</span>		case *ast.Ellipsis:
+<a id="L806"></a><span class="ln">   806</span>			p.print(token.ELLIPSIS)
+<a id="L807"></a><span class="ln">   807</span>			if x.Elt != nil {
+<a id="L808"></a><span class="ln">   808</span>				p.expr(x.Elt)
+<a id="L809"></a><span class="ln">   809</span>			}
+<a id="L810"></a><span class="ln">   810</span>	
+<a id="L811"></a><span class="ln">   811</span>		case *ast.ArrayType:
+<a id="L812"></a><span class="ln">   812</span>			p.print(token.LBRACK)
+<a id="L813"></a><span class="ln">   813</span>			if x.Len != nil {
+<a id="L814"></a><span class="ln">   814</span>				p.expr(x.Len)
+<a id="L815"></a><span class="ln">   815</span>			}
+<a id="L816"></a><span class="ln">   816</span>			p.print(token.RBRACK)
+<a id="L817"></a><span class="ln">   817</span>			p.expr(x.Elt)
+<a id="L818"></a><span class="ln">   818</span>	
+<a id="L819"></a><span class="ln">   819</span>		case *ast.StructType:
+<a id="L820"></a><span class="ln">   820</span>			p.print(token.STRUCT)
+<a id="L821"></a><span class="ln">   821</span>			p.fieldList(x.Fields, true, x.Incomplete)
+<a id="L822"></a><span class="ln">   822</span>	
+<a id="L823"></a><span class="ln">   823</span>		case *ast.FuncType:
+<a id="L824"></a><span class="ln">   824</span>			p.print(token.FUNC)
+<a id="L825"></a><span class="ln">   825</span>			p.signature(x.Params, x.Results)
+<a id="L826"></a><span class="ln">   826</span>	
+<a id="L827"></a><span class="ln">   827</span>		case *ast.InterfaceType:
+<a id="L828"></a><span class="ln">   828</span>			p.print(token.INTERFACE)
+<a id="L829"></a><span class="ln">   829</span>			p.fieldList(x.Methods, false, x.Incomplete)
+<a id="L830"></a><span class="ln">   830</span>	
+<a id="L831"></a><span class="ln">   831</span>		case *ast.MapType:
+<a id="L832"></a><span class="ln">   832</span>			p.print(token.MAP, token.LBRACK)
+<a id="L833"></a><span class="ln">   833</span>			p.expr(x.Key)
+<a id="L834"></a><span class="ln">   834</span>			p.print(token.RBRACK)
+<a id="L835"></a><span class="ln">   835</span>			p.expr(x.Value)
+<a id="L836"></a><span class="ln">   836</span>	
+<a id="L837"></a><span class="ln">   837</span>		case *ast.ChanType:
+<a id="L838"></a><span class="ln">   838</span>			switch x.Dir {
+<a id="L839"></a><span class="ln">   839</span>			case ast.SEND | ast.RECV:
+<a id="L840"></a><span class="ln">   840</span>				p.print(token.CHAN)
+<a id="L841"></a><span class="ln">   841</span>			case ast.RECV:
+<a id="L842"></a><span class="ln">   842</span>				p.print(token.ARROW, token.CHAN)
+<a id="L843"></a><span class="ln">   843</span>			case ast.SEND:
+<a id="L844"></a><span class="ln">   844</span>				p.print(token.CHAN, token.ARROW)
+<a id="L845"></a><span class="ln">   845</span>			}
+<a id="L846"></a><span class="ln">   846</span>			p.print(blank)
+<a id="L847"></a><span class="ln">   847</span>			p.expr(x.Value)
+<a id="L848"></a><span class="ln">   848</span>	
+<a id="L849"></a><span class="ln">   849</span>		default:
+<a id="L850"></a><span class="ln">   850</span>			panic(&#34;unreachable&#34;)
+<a id="L851"></a><span class="ln">   851</span>		}
+<a id="L852"></a><span class="ln">   852</span>	
+<a id="L853"></a><span class="ln">   853</span>		return
+<a id="L854"></a><span class="ln">   854</span>	}
+<a id="L855"></a><span class="ln">   855</span>	
+<a id="L856"></a><span class="ln">   856</span>	func (p *printer) expr0(x ast.Expr, depth int) {
+<a id="L857"></a><span class="ln">   857</span>		p.expr1(x, token.LowestPrec, depth)
+<a id="L858"></a><span class="ln">   858</span>	}
+<a id="L859"></a><span class="ln">   859</span>	
+<a id="L860"></a><span class="ln">   860</span>	func (p *printer) expr(x ast.Expr) {
+<a id="L861"></a><span class="ln">   861</span>		const depth = 1
+<a id="L862"></a><span class="ln">   862</span>		p.expr1(x, token.LowestPrec, depth)
+<a id="L863"></a><span class="ln">   863</span>	}
+<a id="L864"></a><span class="ln">   864</span>	
+<a id="L865"></a><span class="ln">   865</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L866"></a><span class="ln">   866</span>	<span class="comment">// Statements</span>
+<a id="L867"></a><span class="ln">   867</span>	
+<a id="L868"></a><span class="ln">   868</span>	<span class="comment">// Print the statement list indented, but without a newline after the last statement.</span>
+<a id="L869"></a><span class="ln">   869</span>	<span class="comment">// Extra line breaks between statements in the source are respected but at most one</span>
+<a id="L870"></a><span class="ln">   870</span>	<span class="comment">// empty line is printed between statements.</span>
+<a id="L871"></a><span class="ln">   871</span>	func (p *printer) stmtList(list []ast.Stmt, _indent int, nextIsRBrace bool) {
+<a id="L872"></a><span class="ln">   872</span>		<span class="comment">// TODO(gri): fix _indent code</span>
+<a id="L873"></a><span class="ln">   873</span>		if _indent &gt; 0 {
+<a id="L874"></a><span class="ln">   874</span>			p.print(indent)
+<a id="L875"></a><span class="ln">   875</span>		}
+<a id="L876"></a><span class="ln">   876</span>		multiLine := false
+<a id="L877"></a><span class="ln">   877</span>		for i, s := range list {
+<a id="L878"></a><span class="ln">   878</span>			<span class="comment">// _indent == 0 only for lists of switch/select case clauses;</span>
+<a id="L879"></a><span class="ln">   879</span>			<span class="comment">// in those cases each clause is a new section</span>
+<a id="L880"></a><span class="ln">   880</span>			p.linebreak(p.lineFor(s.Pos()), 1, ignore, i == 0 || _indent == 0 || multiLine)
+<a id="L881"></a><span class="ln">   881</span>			p.stmt(s, nextIsRBrace &amp;&amp; i == len(list)-1)
+<a id="L882"></a><span class="ln">   882</span>			multiLine = p.isMultiLine(s)
+<a id="L883"></a><span class="ln">   883</span>		}
+<a id="L884"></a><span class="ln">   884</span>		if _indent &gt; 0 {
+<a id="L885"></a><span class="ln">   885</span>			p.print(unindent)
+<a id="L886"></a><span class="ln">   886</span>		}
+<a id="L887"></a><span class="ln">   887</span>	}
+<a id="L888"></a><span class="ln">   888</span>	
+<a id="L889"></a><span class="ln">   889</span>	<span class="comment">// block prints an *ast.BlockStmt; it always spans at least two lines.</span>
+<a id="L890"></a><span class="ln">   890</span>	func (p *printer) block(s *ast.BlockStmt, indent int) {
+<a id="L891"></a><span class="ln">   891</span>		p.print(s.Pos(), token.LBRACE)
+<a id="L892"></a><span class="ln">   892</span>		p.stmtList(s.List, indent, true)
+<a id="L893"></a><span class="ln">   893</span>		p.linebreak(p.lineFor(s.Rbrace), 1, ignore, true)
+<a id="L894"></a><span class="ln">   894</span>		p.print(s.Rbrace, token.RBRACE)
+<a id="L895"></a><span class="ln">   895</span>	}
+<a id="L896"></a><span class="ln">   896</span>	
+<a id="L897"></a><span class="ln">   897</span>	func isTypeName(x ast.Expr) bool {
+<a id="L898"></a><span class="ln">   898</span>		switch t := x.(type) {
+<a id="L899"></a><span class="ln">   899</span>		case *ast.Ident:
+<a id="L900"></a><span class="ln">   900</span>			return true
+<a id="L901"></a><span class="ln">   901</span>		case *ast.SelectorExpr:
+<a id="L902"></a><span class="ln">   902</span>			return isTypeName(t.X)
+<a id="L903"></a><span class="ln">   903</span>		}
+<a id="L904"></a><span class="ln">   904</span>		return false
+<a id="L905"></a><span class="ln">   905</span>	}
+<a id="L906"></a><span class="ln">   906</span>	
+<a id="L907"></a><span class="ln">   907</span>	func stripParens(x ast.Expr) ast.Expr {
+<a id="L908"></a><span class="ln">   908</span>		if px, strip := x.(*ast.ParenExpr); strip {
+<a id="L909"></a><span class="ln">   909</span>			<span class="comment">// parentheses must not be stripped if there are any</span>
+<a id="L910"></a><span class="ln">   910</span>			<span class="comment">// unparenthesized composite literals starting with</span>
+<a id="L911"></a><span class="ln">   911</span>			<span class="comment">// a type name</span>
+<a id="L912"></a><span class="ln">   912</span>			ast.Inspect(px.X, func(node ast.Node) bool {
+<a id="L913"></a><span class="ln">   913</span>				switch x := node.(type) {
+<a id="L914"></a><span class="ln">   914</span>				case *ast.ParenExpr:
+<a id="L915"></a><span class="ln">   915</span>					<span class="comment">// parentheses protect enclosed composite literals</span>
+<a id="L916"></a><span class="ln">   916</span>					return false
+<a id="L917"></a><span class="ln">   917</span>				case *ast.CompositeLit:
+<a id="L918"></a><span class="ln">   918</span>					if isTypeName(x.Type) {
+<a id="L919"></a><span class="ln">   919</span>						strip = false <span class="comment">// do not strip parentheses</span>
+<a id="L920"></a><span class="ln">   920</span>					}
+<a id="L921"></a><span class="ln">   921</span>					return false
+<a id="L922"></a><span class="ln">   922</span>				}
+<a id="L923"></a><span class="ln">   923</span>				<span class="comment">// in all other cases, keep inspecting</span>
+<a id="L924"></a><span class="ln">   924</span>				return true
+<a id="L925"></a><span class="ln">   925</span>			})
+<a id="L926"></a><span class="ln">   926</span>			if strip {
+<a id="L927"></a><span class="ln">   927</span>				return stripParens(px.X)
+<a id="L928"></a><span class="ln">   928</span>			}
+<a id="L929"></a><span class="ln">   929</span>		}
+<a id="L930"></a><span class="ln">   930</span>		return x
+<a id="L931"></a><span class="ln">   931</span>	}
+<a id="L932"></a><span class="ln">   932</span>	
+<a id="L933"></a><span class="ln">   933</span>	func (p *printer) controlClause(isForStmt bool, init ast.Stmt, expr ast.Expr, post ast.Stmt) {
+<a id="L934"></a><span class="ln">   934</span>		p.print(blank)
+<a id="L935"></a><span class="ln">   935</span>		needsBlank := false
+<a id="L936"></a><span class="ln">   936</span>		if init == nil &amp;&amp; post == nil {
+<a id="L937"></a><span class="ln">   937</span>			<span class="comment">// no semicolons required</span>
+<a id="L938"></a><span class="ln">   938</span>			if expr != nil {
+<a id="L939"></a><span class="ln">   939</span>				p.expr(stripParens(expr))
+<a id="L940"></a><span class="ln">   940</span>				needsBlank = true
+<a id="L941"></a><span class="ln">   941</span>			}
+<a id="L942"></a><span class="ln">   942</span>		} else {
+<a id="L943"></a><span class="ln">   943</span>			<span class="comment">// all semicolons required</span>
+<a id="L944"></a><span class="ln">   944</span>			<span class="comment">// (they are not separators, print them explicitly)</span>
+<a id="L945"></a><span class="ln">   945</span>			if init != nil {
+<a id="L946"></a><span class="ln">   946</span>				p.stmt(init, false)
+<a id="L947"></a><span class="ln">   947</span>			}
+<a id="L948"></a><span class="ln">   948</span>			p.print(token.SEMICOLON, blank)
+<a id="L949"></a><span class="ln">   949</span>			if expr != nil {
+<a id="L950"></a><span class="ln">   950</span>				p.expr(stripParens(expr))
+<a id="L951"></a><span class="ln">   951</span>				needsBlank = true
+<a id="L952"></a><span class="ln">   952</span>			}
+<a id="L953"></a><span class="ln">   953</span>			if isForStmt {
+<a id="L954"></a><span class="ln">   954</span>				p.print(token.SEMICOLON, blank)
+<a id="L955"></a><span class="ln">   955</span>				needsBlank = false
+<a id="L956"></a><span class="ln">   956</span>				if post != nil {
+<a id="L957"></a><span class="ln">   957</span>					p.stmt(post, false)
+<a id="L958"></a><span class="ln">   958</span>					needsBlank = true
+<a id="L959"></a><span class="ln">   959</span>				}
+<a id="L960"></a><span class="ln">   960</span>			}
+<a id="L961"></a><span class="ln">   961</span>		}
+<a id="L962"></a><span class="ln">   962</span>		if needsBlank {
+<a id="L963"></a><span class="ln">   963</span>			p.print(blank)
+<a id="L964"></a><span class="ln">   964</span>		}
+<a id="L965"></a><span class="ln">   965</span>	}
+<a id="L966"></a><span class="ln">   966</span>	
+<a id="L967"></a><span class="ln">   967</span>	<span class="comment">// indentList reports whether an expression list would look better if it</span>
+<a id="L968"></a><span class="ln">   968</span>	<span class="comment">// were indented wholesale (starting with the very first element, rather</span>
+<a id="L969"></a><span class="ln">   969</span>	<span class="comment">// than starting at the first line break).</span>
+<a id="L970"></a><span class="ln">   970</span>	<span class="comment">//</span>
+<a id="L971"></a><span class="ln">   971</span>	func (p *printer) indentList(list []ast.Expr) bool {
+<a id="L972"></a><span class="ln">   972</span>		<span class="comment">// Heuristic: indentList returns true if there are more than one multi-</span>
+<a id="L973"></a><span class="ln">   973</span>		<span class="comment">// line element in the list, or if there is any element that is not</span>
+<a id="L974"></a><span class="ln">   974</span>		<span class="comment">// starting on the same line as the previous one ends.</span>
+<a id="L975"></a><span class="ln">   975</span>		if len(list) &gt;= 2 {
+<a id="L976"></a><span class="ln">   976</span>			var b = p.lineFor(list[0].Pos())
+<a id="L977"></a><span class="ln">   977</span>			var e = p.lineFor(list[len(list)-1].End())
+<a id="L978"></a><span class="ln">   978</span>			if 0 &lt; b &amp;&amp; b &lt; e {
+<a id="L979"></a><span class="ln">   979</span>				<span class="comment">// list spans multiple lines</span>
+<a id="L980"></a><span class="ln">   980</span>				n := 0 <span class="comment">// multi-line element count</span>
+<a id="L981"></a><span class="ln">   981</span>				line := b
+<a id="L982"></a><span class="ln">   982</span>				for _, x := range list {
+<a id="L983"></a><span class="ln">   983</span>					xb := p.lineFor(x.Pos())
+<a id="L984"></a><span class="ln">   984</span>					xe := p.lineFor(x.End())
+<a id="L985"></a><span class="ln">   985</span>					if line &lt; xb {
+<a id="L986"></a><span class="ln">   986</span>						<span class="comment">// x is not starting on the same</span>
+<a id="L987"></a><span class="ln">   987</span>						<span class="comment">// line as the previous one ended</span>
+<a id="L988"></a><span class="ln">   988</span>						return true
+<a id="L989"></a><span class="ln">   989</span>					}
+<a id="L990"></a><span class="ln">   990</span>					if xb &lt; xe {
+<a id="L991"></a><span class="ln">   991</span>						<span class="comment">// x is a multi-line element</span>
+<a id="L992"></a><span class="ln">   992</span>						n++
+<a id="L993"></a><span class="ln">   993</span>					}
+<a id="L994"></a><span class="ln">   994</span>					line = xe
+<a id="L995"></a><span class="ln">   995</span>				}
+<a id="L996"></a><span class="ln">   996</span>				return n &gt; 1
+<a id="L997"></a><span class="ln">   997</span>			}
+<a id="L998"></a><span class="ln">   998</span>		}
+<a id="L999"></a><span class="ln">   999</span>		return false
+<a id="L1000"></a><span class="ln">  1000</span>	}
+<a id="L1001"></a><span class="ln">  1001</span>	
+<a id="L1002"></a><span class="ln">  1002</span>	func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
+<a id="L1003"></a><span class="ln">  1003</span>		p.print(stmt.Pos())
+<a id="L1004"></a><span class="ln">  1004</span>	
+<a id="L1005"></a><span class="ln">  1005</span>		switch s := stmt.(type) {
+<a id="L1006"></a><span class="ln">  1006</span>		case *ast.BadStmt:
+<a id="L1007"></a><span class="ln">  1007</span>			p.print(&#34;BadStmt&#34;)
+<a id="L1008"></a><span class="ln">  1008</span>	
+<a id="L1009"></a><span class="ln">  1009</span>		case *ast.DeclStmt:
+<a id="L1010"></a><span class="ln">  1010</span>			p.decl(s.Decl)
+<a id="L1011"></a><span class="ln">  1011</span>	
+<a id="L1012"></a><span class="ln">  1012</span>		case *ast.EmptyStmt:
+<a id="L1013"></a><span class="ln">  1013</span>			<span class="comment">// nothing to do</span>
+<a id="L1014"></a><span class="ln">  1014</span>	
+<a id="L1015"></a><span class="ln">  1015</span>		case *ast.LabeledStmt:
+<a id="L1016"></a><span class="ln">  1016</span>			<span class="comment">// a &#34;correcting&#34; unindent immediately following a line break</span>
+<a id="L1017"></a><span class="ln">  1017</span>			<span class="comment">// is applied before the line break if there is no comment</span>
+<a id="L1018"></a><span class="ln">  1018</span>			<span class="comment">// between (see writeWhitespace)</span>
+<a id="L1019"></a><span class="ln">  1019</span>			p.print(unindent)
+<a id="L1020"></a><span class="ln">  1020</span>			p.expr(s.Label)
+<a id="L1021"></a><span class="ln">  1021</span>			p.print(s.Colon, token.COLON, indent)
+<a id="L1022"></a><span class="ln">  1022</span>			if e, isEmpty := s.Stmt.(*ast.EmptyStmt); isEmpty {
+<a id="L1023"></a><span class="ln">  1023</span>				if !nextIsRBrace {
+<a id="L1024"></a><span class="ln">  1024</span>					p.print(newline, e.Pos(), token.SEMICOLON)
+<a id="L1025"></a><span class="ln">  1025</span>					break
+<a id="L1026"></a><span class="ln">  1026</span>				}
+<a id="L1027"></a><span class="ln">  1027</span>			} else {
+<a id="L1028"></a><span class="ln">  1028</span>				p.linebreak(p.lineFor(s.Stmt.Pos()), 1, ignore, true)
+<a id="L1029"></a><span class="ln">  1029</span>			}
+<a id="L1030"></a><span class="ln">  1030</span>			p.stmt(s.Stmt, nextIsRBrace)
+<a id="L1031"></a><span class="ln">  1031</span>	
+<a id="L1032"></a><span class="ln">  1032</span>		case *ast.ExprStmt:
+<a id="L1033"></a><span class="ln">  1033</span>			const depth = 1
+<a id="L1034"></a><span class="ln">  1034</span>			p.expr0(s.X, depth)
+<a id="L1035"></a><span class="ln">  1035</span>	
+<a id="L1036"></a><span class="ln">  1036</span>		case *ast.SendStmt:
+<a id="L1037"></a><span class="ln">  1037</span>			const depth = 1
+<a id="L1038"></a><span class="ln">  1038</span>			p.expr0(s.Chan, depth)
+<a id="L1039"></a><span class="ln">  1039</span>			p.print(blank, s.Arrow, token.ARROW, blank)
+<a id="L1040"></a><span class="ln">  1040</span>			p.expr0(s.Value, depth)
+<a id="L1041"></a><span class="ln">  1041</span>	
+<a id="L1042"></a><span class="ln">  1042</span>		case *ast.IncDecStmt:
+<a id="L1043"></a><span class="ln">  1043</span>			const depth = 1
+<a id="L1044"></a><span class="ln">  1044</span>			p.expr0(s.X, depth+1)
+<a id="L1045"></a><span class="ln">  1045</span>			p.print(s.TokPos, s.Tok)
+<a id="L1046"></a><span class="ln">  1046</span>	
+<a id="L1047"></a><span class="ln">  1047</span>		case *ast.AssignStmt:
+<a id="L1048"></a><span class="ln">  1048</span>			var depth = 1
+<a id="L1049"></a><span class="ln">  1049</span>			if len(s.Lhs) &gt; 1 &amp;&amp; len(s.Rhs) &gt; 1 {
+<a id="L1050"></a><span class="ln">  1050</span>				depth++
+<a id="L1051"></a><span class="ln">  1051</span>			}
+<a id="L1052"></a><span class="ln">  1052</span>			p.exprList(s.Pos(), s.Lhs, depth, 0, s.TokPos)
+<a id="L1053"></a><span class="ln">  1053</span>			p.print(blank, s.TokPos, s.Tok, blank)
+<a id="L1054"></a><span class="ln">  1054</span>			p.exprList(s.TokPos, s.Rhs, depth, 0, token.NoPos)
+<a id="L1055"></a><span class="ln">  1055</span>	
+<a id="L1056"></a><span class="ln">  1056</span>		case *ast.GoStmt:
+<a id="L1057"></a><span class="ln">  1057</span>			p.print(token.GO, blank)
+<a id="L1058"></a><span class="ln">  1058</span>			p.expr(s.Call)
+<a id="L1059"></a><span class="ln">  1059</span>	
+<a id="L1060"></a><span class="ln">  1060</span>		case *ast.DeferStmt:
+<a id="L1061"></a><span class="ln">  1061</span>			p.print(token.DEFER, blank)
+<a id="L1062"></a><span class="ln">  1062</span>			p.expr(s.Call)
+<a id="L1063"></a><span class="ln">  1063</span>	
+<a id="L1064"></a><span class="ln">  1064</span>		case *ast.ReturnStmt:
+<a id="L1065"></a><span class="ln">  1065</span>			p.print(token.RETURN)
+<a id="L1066"></a><span class="ln">  1066</span>			if s.Results != nil {
+<a id="L1067"></a><span class="ln">  1067</span>				p.print(blank)
+<a id="L1068"></a><span class="ln">  1068</span>				<span class="comment">// Use indentList heuristic to make corner cases look</span>
+<a id="L1069"></a><span class="ln">  1069</span>				<span class="comment">// better (issue 1207). A more systematic approach would</span>
+<a id="L1070"></a><span class="ln">  1070</span>				<span class="comment">// always indent, but this would cause significant</span>
+<a id="L1071"></a><span class="ln">  1071</span>				<span class="comment">// reformatting of the code base and not necessarily</span>
+<a id="L1072"></a><span class="ln">  1072</span>				<span class="comment">// lead to more nicely formatted code in general.</span>
+<a id="L1073"></a><span class="ln">  1073</span>				if p.indentList(s.Results) {
+<a id="L1074"></a><span class="ln">  1074</span>					p.print(indent)
+<a id="L1075"></a><span class="ln">  1075</span>					p.exprList(s.Pos(), s.Results, 1, noIndent, token.NoPos)
+<a id="L1076"></a><span class="ln">  1076</span>					p.print(unindent)
+<a id="L1077"></a><span class="ln">  1077</span>				} else {
+<a id="L1078"></a><span class="ln">  1078</span>					p.exprList(s.Pos(), s.Results, 1, 0, token.NoPos)
+<a id="L1079"></a><span class="ln">  1079</span>				}
+<a id="L1080"></a><span class="ln">  1080</span>			}
+<a id="L1081"></a><span class="ln">  1081</span>	
+<a id="L1082"></a><span class="ln">  1082</span>		case *ast.BranchStmt:
+<a id="L1083"></a><span class="ln">  1083</span>			p.print(s.Tok)
+<a id="L1084"></a><span class="ln">  1084</span>			if s.Label != nil {
+<a id="L1085"></a><span class="ln">  1085</span>				p.print(blank)
+<a id="L1086"></a><span class="ln">  1086</span>				p.expr(s.Label)
+<a id="L1087"></a><span class="ln">  1087</span>			}
+<a id="L1088"></a><span class="ln">  1088</span>	
+<a id="L1089"></a><span class="ln">  1089</span>		case *ast.BlockStmt:
+<a id="L1090"></a><span class="ln">  1090</span>			p.block(s, 1)
+<a id="L1091"></a><span class="ln">  1091</span>	
+<a id="L1092"></a><span class="ln">  1092</span>		case *ast.IfStmt:
+<a id="L1093"></a><span class="ln">  1093</span>			p.print(token.IF)
+<a id="L1094"></a><span class="ln">  1094</span>			p.controlClause(false, s.Init, s.Cond, nil)
+<a id="L1095"></a><span class="ln">  1095</span>			p.block(s.Body, 1)
+<a id="L1096"></a><span class="ln">  1096</span>			if s.Else != nil {
+<a id="L1097"></a><span class="ln">  1097</span>				p.print(blank, token.ELSE, blank)
+<a id="L1098"></a><span class="ln">  1098</span>				switch s.Else.(type) {
+<a id="L1099"></a><span class="ln">  1099</span>				case *ast.BlockStmt, *ast.IfStmt:
+<a id="L1100"></a><span class="ln">  1100</span>					p.stmt(s.Else, nextIsRBrace)
+<a id="L1101"></a><span class="ln">  1101</span>				default:
+<a id="L1102"></a><span class="ln">  1102</span>					p.print(token.LBRACE, indent, formfeed)
+<a id="L1103"></a><span class="ln">  1103</span>					p.stmt(s.Else, true)
+<a id="L1104"></a><span class="ln">  1104</span>					p.print(unindent, formfeed, token.RBRACE)
+<a id="L1105"></a><span class="ln">  1105</span>				}
+<a id="L1106"></a><span class="ln">  1106</span>			}
+<a id="L1107"></a><span class="ln">  1107</span>	
+<a id="L1108"></a><span class="ln">  1108</span>		case *ast.CaseClause:
+<a id="L1109"></a><span class="ln">  1109</span>			if s.List != nil {
+<a id="L1110"></a><span class="ln">  1110</span>				p.print(token.CASE, blank)
+<a id="L1111"></a><span class="ln">  1111</span>				p.exprList(s.Pos(), s.List, 1, 0, s.Colon)
+<a id="L1112"></a><span class="ln">  1112</span>			} else {
+<a id="L1113"></a><span class="ln">  1113</span>				p.print(token.DEFAULT)
+<a id="L1114"></a><span class="ln">  1114</span>			}
+<a id="L1115"></a><span class="ln">  1115</span>			p.print(s.Colon, token.COLON)
+<a id="L1116"></a><span class="ln">  1116</span>			p.stmtList(s.Body, 1, nextIsRBrace)
+<a id="L1117"></a><span class="ln">  1117</span>	
+<a id="L1118"></a><span class="ln">  1118</span>		case *ast.SwitchStmt:
+<a id="L1119"></a><span class="ln">  1119</span>			p.print(token.SWITCH)
+<a id="L1120"></a><span class="ln">  1120</span>			p.controlClause(false, s.Init, s.Tag, nil)
+<a id="L1121"></a><span class="ln">  1121</span>			p.block(s.Body, 0)
+<a id="L1122"></a><span class="ln">  1122</span>	
+<a id="L1123"></a><span class="ln">  1123</span>		case *ast.TypeSwitchStmt:
+<a id="L1124"></a><span class="ln">  1124</span>			p.print(token.SWITCH)
+<a id="L1125"></a><span class="ln">  1125</span>			if s.Init != nil {
+<a id="L1126"></a><span class="ln">  1126</span>				p.print(blank)
+<a id="L1127"></a><span class="ln">  1127</span>				p.stmt(s.Init, false)
+<a id="L1128"></a><span class="ln">  1128</span>				p.print(token.SEMICOLON)
+<a id="L1129"></a><span class="ln">  1129</span>			}
+<a id="L1130"></a><span class="ln">  1130</span>			p.print(blank)
+<a id="L1131"></a><span class="ln">  1131</span>			p.stmt(s.Assign, false)
+<a id="L1132"></a><span class="ln">  1132</span>			p.print(blank)
+<a id="L1133"></a><span class="ln">  1133</span>			p.block(s.Body, 0)
+<a id="L1134"></a><span class="ln">  1134</span>	
+<a id="L1135"></a><span class="ln">  1135</span>		case *ast.CommClause:
+<a id="L1136"></a><span class="ln">  1136</span>			if s.Comm != nil {
+<a id="L1137"></a><span class="ln">  1137</span>				p.print(token.CASE, blank)
+<a id="L1138"></a><span class="ln">  1138</span>				p.stmt(s.Comm, false)
+<a id="L1139"></a><span class="ln">  1139</span>			} else {
+<a id="L1140"></a><span class="ln">  1140</span>				p.print(token.DEFAULT)
+<a id="L1141"></a><span class="ln">  1141</span>			}
+<a id="L1142"></a><span class="ln">  1142</span>			p.print(s.Colon, token.COLON)
+<a id="L1143"></a><span class="ln">  1143</span>			p.stmtList(s.Body, 1, nextIsRBrace)
+<a id="L1144"></a><span class="ln">  1144</span>	
+<a id="L1145"></a><span class="ln">  1145</span>		case *ast.SelectStmt:
+<a id="L1146"></a><span class="ln">  1146</span>			p.print(token.SELECT, blank)
+<a id="L1147"></a><span class="ln">  1147</span>			body := s.Body
+<a id="L1148"></a><span class="ln">  1148</span>			if len(body.List) == 0 &amp;&amp; !p.commentBefore(p.posFor(body.Rbrace)) {
+<a id="L1149"></a><span class="ln">  1149</span>				<span class="comment">// print empty select statement w/o comments on one line</span>
+<a id="L1150"></a><span class="ln">  1150</span>				p.print(body.Lbrace, token.LBRACE, body.Rbrace, token.RBRACE)
+<a id="L1151"></a><span class="ln">  1151</span>			} else {
+<a id="L1152"></a><span class="ln">  1152</span>				p.block(body, 0)
+<a id="L1153"></a><span class="ln">  1153</span>			}
+<a id="L1154"></a><span class="ln">  1154</span>	
+<a id="L1155"></a><span class="ln">  1155</span>		case *ast.ForStmt:
+<a id="L1156"></a><span class="ln">  1156</span>			p.print(token.FOR)
+<a id="L1157"></a><span class="ln">  1157</span>			p.controlClause(true, s.Init, s.Cond, s.Post)
+<a id="L1158"></a><span class="ln">  1158</span>			p.block(s.Body, 1)
+<a id="L1159"></a><span class="ln">  1159</span>	
+<a id="L1160"></a><span class="ln">  1160</span>		case *ast.RangeStmt:
+<a id="L1161"></a><span class="ln">  1161</span>			p.print(token.FOR, blank)
+<a id="L1162"></a><span class="ln">  1162</span>			p.expr(s.Key)
+<a id="L1163"></a><span class="ln">  1163</span>			if s.Value != nil {
+<a id="L1164"></a><span class="ln">  1164</span>				<span class="comment">// use position of value following the comma as</span>
+<a id="L1165"></a><span class="ln">  1165</span>				<span class="comment">// comma position for correct comment placement</span>
+<a id="L1166"></a><span class="ln">  1166</span>				p.print(s.Value.Pos(), token.COMMA, blank)
+<a id="L1167"></a><span class="ln">  1167</span>				p.expr(s.Value)
+<a id="L1168"></a><span class="ln">  1168</span>			}
+<a id="L1169"></a><span class="ln">  1169</span>			p.print(blank, s.TokPos, s.Tok, blank, token.RANGE, blank)
+<a id="L1170"></a><span class="ln">  1170</span>			p.expr(stripParens(s.X))
+<a id="L1171"></a><span class="ln">  1171</span>			p.print(blank)
+<a id="L1172"></a><span class="ln">  1172</span>			p.block(s.Body, 1)
+<a id="L1173"></a><span class="ln">  1173</span>	
+<a id="L1174"></a><span class="ln">  1174</span>		default:
+<a id="L1175"></a><span class="ln">  1175</span>			panic(&#34;unreachable&#34;)
+<a id="L1176"></a><span class="ln">  1176</span>		}
+<a id="L1177"></a><span class="ln">  1177</span>	
+<a id="L1178"></a><span class="ln">  1178</span>		return
+<a id="L1179"></a><span class="ln">  1179</span>	}
+<a id="L1180"></a><span class="ln">  1180</span>	
+<a id="L1181"></a><span class="ln">  1181</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L1182"></a><span class="ln">  1182</span>	<span class="comment">// Declarations</span>
+<a id="L1183"></a><span class="ln">  1183</span>	
+<a id="L1184"></a><span class="ln">  1184</span>	<span class="comment">// The keepTypeColumn function determines if the type column of a series of</span>
+<a id="L1185"></a><span class="ln">  1185</span>	<span class="comment">// consecutive const or var declarations must be kept, or if initialization</span>
+<a id="L1186"></a><span class="ln">  1186</span>	<span class="comment">// values (V) can be placed in the type column (T) instead. The i&#39;th entry</span>
+<a id="L1187"></a><span class="ln">  1187</span>	<span class="comment">// in the result slice is true if the type column in spec[i] must be kept.</span>
+<a id="L1188"></a><span class="ln">  1188</span>	<span class="comment">//</span>
+<a id="L1189"></a><span class="ln">  1189</span>	<span class="comment">// For example, the declaration:</span>
+<a id="L1190"></a><span class="ln">  1190</span>	<span class="comment">//</span>
+<a id="L1191"></a><span class="ln">  1191</span>	<span class="comment">//	const (</span>
+<a id="L1192"></a><span class="ln">  1192</span>	<span class="comment">//		foobar int = 42 // comment</span>
+<a id="L1193"></a><span class="ln">  1193</span>	<span class="comment">//		x          = 7  // comment</span>
+<a id="L1194"></a><span class="ln">  1194</span>	<span class="comment">//		foo</span>
+<a id="L1195"></a><span class="ln">  1195</span>	<span class="comment">//              bar = 991</span>
+<a id="L1196"></a><span class="ln">  1196</span>	<span class="comment">//	)</span>
+<a id="L1197"></a><span class="ln">  1197</span>	<span class="comment">//</span>
+<a id="L1198"></a><span class="ln">  1198</span>	<span class="comment">// leads to the type/values matrix below. A run of value columns (V) can</span>
+<a id="L1199"></a><span class="ln">  1199</span>	<span class="comment">// be moved into the type column if there is no type for any of the values</span>
+<a id="L1200"></a><span class="ln">  1200</span>	<span class="comment">// in that column (we only move entire columns so that they align properly).</span>
+<a id="L1201"></a><span class="ln">  1201</span>	<span class="comment">//</span>
+<a id="L1202"></a><span class="ln">  1202</span>	<span class="comment">//	matrix        formatted     result</span>
+<a id="L1203"></a><span class="ln">  1203</span>	<span class="comment">//                    matrix</span>
+<a id="L1204"></a><span class="ln">  1204</span>	<span class="comment">//	T  V    -&gt;    T  V     -&gt;   true      there is a T and so the type</span>
+<a id="L1205"></a><span class="ln">  1205</span>	<span class="comment">//	-  V          -  V          true      column must be kept</span>
+<a id="L1206"></a><span class="ln">  1206</span>	<span class="comment">//	-  -          -  -          false</span>
+<a id="L1207"></a><span class="ln">  1207</span>	<span class="comment">//	-  V          V  -          false     V is moved into T column</span>
+<a id="L1208"></a><span class="ln">  1208</span>	<span class="comment">//</span>
+<a id="L1209"></a><span class="ln">  1209</span>	func keepTypeColumn(specs []ast.Spec) []bool {
+<a id="L1210"></a><span class="ln">  1210</span>		m := make([]bool, len(specs))
+<a id="L1211"></a><span class="ln">  1211</span>	
+<a id="L1212"></a><span class="ln">  1212</span>		populate := func(i, j int, keepType bool) {
+<a id="L1213"></a><span class="ln">  1213</span>			if keepType {
+<a id="L1214"></a><span class="ln">  1214</span>				for ; i &lt; j; i++ {
+<a id="L1215"></a><span class="ln">  1215</span>					m[i] = true
+<a id="L1216"></a><span class="ln">  1216</span>				}
+<a id="L1217"></a><span class="ln">  1217</span>			}
+<a id="L1218"></a><span class="ln">  1218</span>		}
+<a id="L1219"></a><span class="ln">  1219</span>	
+<a id="L1220"></a><span class="ln">  1220</span>		i0 := -1 <span class="comment">// if i0 &gt;= 0 we are in a run and i0 is the start of the run</span>
+<a id="L1221"></a><span class="ln">  1221</span>		var keepType bool
+<a id="L1222"></a><span class="ln">  1222</span>		for i, s := range specs {
+<a id="L1223"></a><span class="ln">  1223</span>			t := s.(*ast.ValueSpec)
+<a id="L1224"></a><span class="ln">  1224</span>			if t.Values != nil {
+<a id="L1225"></a><span class="ln">  1225</span>				if i0 &lt; 0 {
+<a id="L1226"></a><span class="ln">  1226</span>					<span class="comment">// start of a run of ValueSpecs with non-nil Values</span>
+<a id="L1227"></a><span class="ln">  1227</span>					i0 = i
+<a id="L1228"></a><span class="ln">  1228</span>					keepType = false
+<a id="L1229"></a><span class="ln">  1229</span>				}
+<a id="L1230"></a><span class="ln">  1230</span>			} else {
+<a id="L1231"></a><span class="ln">  1231</span>				if i0 &gt;= 0 {
+<a id="L1232"></a><span class="ln">  1232</span>					<span class="comment">// end of a run</span>
+<a id="L1233"></a><span class="ln">  1233</span>					populate(i0, i, keepType)
+<a id="L1234"></a><span class="ln">  1234</span>					i0 = -1
+<a id="L1235"></a><span class="ln">  1235</span>				}
+<a id="L1236"></a><span class="ln">  1236</span>			}
+<a id="L1237"></a><span class="ln">  1237</span>			if t.Type != nil {
+<a id="L1238"></a><span class="ln">  1238</span>				keepType = true
+<a id="L1239"></a><span class="ln">  1239</span>			}
+<a id="L1240"></a><span class="ln">  1240</span>		}
+<a id="L1241"></a><span class="ln">  1241</span>		if i0 &gt;= 0 {
+<a id="L1242"></a><span class="ln">  1242</span>			<span class="comment">// end of a run</span>
+<a id="L1243"></a><span class="ln">  1243</span>			populate(i0, len(specs), keepType)
+<a id="L1244"></a><span class="ln">  1244</span>		}
+<a id="L1245"></a><span class="ln">  1245</span>	
+<a id="L1246"></a><span class="ln">  1246</span>		return m
+<a id="L1247"></a><span class="ln">  1247</span>	}
+<a id="L1248"></a><span class="ln">  1248</span>	
+<a id="L1249"></a><span class="ln">  1249</span>	func (p *printer) valueSpec(s *ast.ValueSpec, keepType bool) {
+<a id="L1250"></a><span class="ln">  1250</span>		p.setComment(s.Doc)
+<a id="L1251"></a><span class="ln">  1251</span>		p.identList(s.Names, false) <span class="comment">// always present</span>
+<a id="L1252"></a><span class="ln">  1252</span>		extraTabs := 3
+<a id="L1253"></a><span class="ln">  1253</span>		if s.Type != nil || keepType {
+<a id="L1254"></a><span class="ln">  1254</span>			p.print(vtab)
+<a id="L1255"></a><span class="ln">  1255</span>			extraTabs--
+<a id="L1256"></a><span class="ln">  1256</span>		}
+<a id="L1257"></a><span class="ln">  1257</span>		if s.Type != nil {
+<a id="L1258"></a><span class="ln">  1258</span>			p.expr(s.Type)
+<a id="L1259"></a><span class="ln">  1259</span>		}
+<a id="L1260"></a><span class="ln">  1260</span>		if s.Values != nil {
+<a id="L1261"></a><span class="ln">  1261</span>			p.print(vtab, token.ASSIGN, blank)
+<a id="L1262"></a><span class="ln">  1262</span>			p.exprList(token.NoPos, s.Values, 1, 0, token.NoPos)
+<a id="L1263"></a><span class="ln">  1263</span>			extraTabs--
+<a id="L1264"></a><span class="ln">  1264</span>		}
+<a id="L1265"></a><span class="ln">  1265</span>		if s.Comment != nil {
+<a id="L1266"></a><span class="ln">  1266</span>			for ; extraTabs &gt; 0; extraTabs-- {
+<a id="L1267"></a><span class="ln">  1267</span>				p.print(vtab)
+<a id="L1268"></a><span class="ln">  1268</span>			}
+<a id="L1269"></a><span class="ln">  1269</span>			p.setComment(s.Comment)
+<a id="L1270"></a><span class="ln">  1270</span>		}
+<a id="L1271"></a><span class="ln">  1271</span>	}
+<a id="L1272"></a><span class="ln">  1272</span>	
+<a id="L1273"></a><span class="ln">  1273</span>	<span class="comment">// The parameter n is the number of specs in the group. If doIndent is set,</span>
+<a id="L1274"></a><span class="ln">  1274</span>	<span class="comment">// multi-line identifier lists in the spec are indented when the first</span>
+<a id="L1275"></a><span class="ln">  1275</span>	<span class="comment">// linebreak is encountered.</span>
+<a id="L1276"></a><span class="ln">  1276</span>	<span class="comment">//</span>
+<a id="L1277"></a><span class="ln">  1277</span>	func (p *printer) spec(spec ast.Spec, n int, doIndent bool) {
+<a id="L1278"></a><span class="ln">  1278</span>		switch s := spec.(type) {
+<a id="L1279"></a><span class="ln">  1279</span>		case *ast.ImportSpec:
+<a id="L1280"></a><span class="ln">  1280</span>			p.setComment(s.Doc)
+<a id="L1281"></a><span class="ln">  1281</span>			if s.Name != nil {
+<a id="L1282"></a><span class="ln">  1282</span>				p.expr(s.Name)
+<a id="L1283"></a><span class="ln">  1283</span>				p.print(blank)
+<a id="L1284"></a><span class="ln">  1284</span>			}
+<a id="L1285"></a><span class="ln">  1285</span>			p.expr(s.Path)
+<a id="L1286"></a><span class="ln">  1286</span>			p.setComment(s.Comment)
+<a id="L1287"></a><span class="ln">  1287</span>			p.print(s.EndPos)
+<a id="L1288"></a><span class="ln">  1288</span>	
+<a id="L1289"></a><span class="ln">  1289</span>		case *ast.ValueSpec:
+<a id="L1290"></a><span class="ln">  1290</span>			if n != 1 {
+<a id="L1291"></a><span class="ln">  1291</span>				p.internalError(&#34;expected n = 1; got&#34;, n)
+<a id="L1292"></a><span class="ln">  1292</span>			}
+<a id="L1293"></a><span class="ln">  1293</span>			p.setComment(s.Doc)
+<a id="L1294"></a><span class="ln">  1294</span>			p.identList(s.Names, doIndent) <span class="comment">// always present</span>
+<a id="L1295"></a><span class="ln">  1295</span>			if s.Type != nil {
+<a id="L1296"></a><span class="ln">  1296</span>				p.print(blank)
+<a id="L1297"></a><span class="ln">  1297</span>				p.expr(s.Type)
+<a id="L1298"></a><span class="ln">  1298</span>			}
+<a id="L1299"></a><span class="ln">  1299</span>			if s.Values != nil {
+<a id="L1300"></a><span class="ln">  1300</span>				p.print(blank, token.ASSIGN, blank)
+<a id="L1301"></a><span class="ln">  1301</span>				p.exprList(token.NoPos, s.Values, 1, 0, token.NoPos)
+<a id="L1302"></a><span class="ln">  1302</span>			}
+<a id="L1303"></a><span class="ln">  1303</span>			p.setComment(s.Comment)
+<a id="L1304"></a><span class="ln">  1304</span>	
+<a id="L1305"></a><span class="ln">  1305</span>		case *ast.TypeSpec:
+<a id="L1306"></a><span class="ln">  1306</span>			p.setComment(s.Doc)
+<a id="L1307"></a><span class="ln">  1307</span>			p.expr(s.Name)
+<a id="L1308"></a><span class="ln">  1308</span>			if n == 1 {
+<a id="L1309"></a><span class="ln">  1309</span>				p.print(blank)
+<a id="L1310"></a><span class="ln">  1310</span>			} else {
+<a id="L1311"></a><span class="ln">  1311</span>				p.print(vtab)
+<a id="L1312"></a><span class="ln">  1312</span>			}
+<a id="L1313"></a><span class="ln">  1313</span>			p.expr(s.Type)
+<a id="L1314"></a><span class="ln">  1314</span>			p.setComment(s.Comment)
+<a id="L1315"></a><span class="ln">  1315</span>	
+<a id="L1316"></a><span class="ln">  1316</span>		default:
+<a id="L1317"></a><span class="ln">  1317</span>			panic(&#34;unreachable&#34;)
+<a id="L1318"></a><span class="ln">  1318</span>		}
+<a id="L1319"></a><span class="ln">  1319</span>	}
+<a id="L1320"></a><span class="ln">  1320</span>	
+<a id="L1321"></a><span class="ln">  1321</span>	func (p *printer) genDecl(d *ast.GenDecl) {
+<a id="L1322"></a><span class="ln">  1322</span>		p.setComment(d.Doc)
+<a id="L1323"></a><span class="ln">  1323</span>		p.print(d.Pos(), d.Tok, blank)
+<a id="L1324"></a><span class="ln">  1324</span>	
+<a id="L1325"></a><span class="ln">  1325</span>		if d.Lparen.IsValid() {
+<a id="L1326"></a><span class="ln">  1326</span>			<span class="comment">// group of parenthesized declarations</span>
+<a id="L1327"></a><span class="ln">  1327</span>			p.print(d.Lparen, token.LPAREN)
+<a id="L1328"></a><span class="ln">  1328</span>			if n := len(d.Specs); n &gt; 0 {
+<a id="L1329"></a><span class="ln">  1329</span>				p.print(indent, formfeed)
+<a id="L1330"></a><span class="ln">  1330</span>				if n &gt; 1 &amp;&amp; (d.Tok == token.CONST || d.Tok == token.VAR) {
+<a id="L1331"></a><span class="ln">  1331</span>					<span class="comment">// two or more grouped const/var declarations:</span>
+<a id="L1332"></a><span class="ln">  1332</span>					<span class="comment">// determine if the type column must be kept</span>
+<a id="L1333"></a><span class="ln">  1333</span>					keepType := keepTypeColumn(d.Specs)
+<a id="L1334"></a><span class="ln">  1334</span>					newSection := false
+<a id="L1335"></a><span class="ln">  1335</span>					for i, s := range d.Specs {
+<a id="L1336"></a><span class="ln">  1336</span>						if i &gt; 0 {
+<a id="L1337"></a><span class="ln">  1337</span>							p.linebreak(p.lineFor(s.Pos()), 1, ignore, newSection)
+<a id="L1338"></a><span class="ln">  1338</span>						}
+<a id="L1339"></a><span class="ln">  1339</span>						p.valueSpec(s.(*ast.ValueSpec), keepType[i])
+<a id="L1340"></a><span class="ln">  1340</span>						newSection = p.isMultiLine(s)
+<a id="L1341"></a><span class="ln">  1341</span>					}
+<a id="L1342"></a><span class="ln">  1342</span>				} else {
+<a id="L1343"></a><span class="ln">  1343</span>					newSection := false
+<a id="L1344"></a><span class="ln">  1344</span>					for i, s := range d.Specs {
+<a id="L1345"></a><span class="ln">  1345</span>						if i &gt; 0 {
+<a id="L1346"></a><span class="ln">  1346</span>							p.linebreak(p.lineFor(s.Pos()), 1, ignore, newSection)
+<a id="L1347"></a><span class="ln">  1347</span>						}
+<a id="L1348"></a><span class="ln">  1348</span>						p.spec(s, n, false)
+<a id="L1349"></a><span class="ln">  1349</span>						newSection = p.isMultiLine(s)
+<a id="L1350"></a><span class="ln">  1350</span>					}
+<a id="L1351"></a><span class="ln">  1351</span>				}
+<a id="L1352"></a><span class="ln">  1352</span>				p.print(unindent, formfeed)
+<a id="L1353"></a><span class="ln">  1353</span>			}
+<a id="L1354"></a><span class="ln">  1354</span>			p.print(d.Rparen, token.RPAREN)
+<a id="L1355"></a><span class="ln">  1355</span>	
+<a id="L1356"></a><span class="ln">  1356</span>		} else {
+<a id="L1357"></a><span class="ln">  1357</span>			<span class="comment">// single declaration</span>
+<a id="L1358"></a><span class="ln">  1358</span>			p.spec(d.Specs[0], 1, true)
+<a id="L1359"></a><span class="ln">  1359</span>		}
+<a id="L1360"></a><span class="ln">  1360</span>	}
+<a id="L1361"></a><span class="ln">  1361</span>	
+<a id="L1362"></a><span class="ln">  1362</span>	<span class="comment">// nodeSize determines the size of n in chars after formatting.</span>
+<a id="L1363"></a><span class="ln">  1363</span>	<span class="comment">// The result is &lt;= maxSize if the node fits on one line with at</span>
+<a id="L1364"></a><span class="ln">  1364</span>	<span class="comment">// most maxSize chars and the formatted output doesn&#39;t contain</span>
+<a id="L1365"></a><span class="ln">  1365</span>	<span class="comment">// any control chars. Otherwise, the result is &gt; maxSize.</span>
+<a id="L1366"></a><span class="ln">  1366</span>	<span class="comment">//</span>
+<a id="L1367"></a><span class="ln">  1367</span>	func (p *printer) nodeSize(n ast.Node, maxSize int) (size int) {
+<a id="L1368"></a><span class="ln">  1368</span>		<span class="comment">// nodeSize invokes the printer, which may invoke nodeSize</span>
+<a id="L1369"></a><span class="ln">  1369</span>		<span class="comment">// recursively. For deep composite literal nests, this can</span>
+<a id="L1370"></a><span class="ln">  1370</span>		<span class="comment">// lead to an exponential algorithm. Remember previous</span>
+<a id="L1371"></a><span class="ln">  1371</span>		<span class="comment">// results to prune the recursion (was issue 1628).</span>
+<a id="L1372"></a><span class="ln">  1372</span>		if size, found := p.nodeSizes[n]; found {
+<a id="L1373"></a><span class="ln">  1373</span>			return size
+<a id="L1374"></a><span class="ln">  1374</span>		}
+<a id="L1375"></a><span class="ln">  1375</span>	
+<a id="L1376"></a><span class="ln">  1376</span>		size = maxSize + 1 <span class="comment">// assume n doesn&#39;t fit</span>
+<a id="L1377"></a><span class="ln">  1377</span>		p.nodeSizes[n] = size
+<a id="L1378"></a><span class="ln">  1378</span>	
+<a id="L1379"></a><span class="ln">  1379</span>		<span class="comment">// nodeSize computation must be independent of particular</span>
+<a id="L1380"></a><span class="ln">  1380</span>		<span class="comment">// style so that we always get the same decision; print</span>
+<a id="L1381"></a><span class="ln">  1381</span>		<span class="comment">// in RawFormat</span>
+<a id="L1382"></a><span class="ln">  1382</span>		cfg := Config{Mode: RawFormat}
+<a id="L1383"></a><span class="ln">  1383</span>		var buf bytes.Buffer
+<a id="L1384"></a><span class="ln">  1384</span>		if err := cfg.fprint(&amp;buf, p.fset, n, p.nodeSizes); err != nil {
+<a id="L1385"></a><span class="ln">  1385</span>			return
+<a id="L1386"></a><span class="ln">  1386</span>		}
+<a id="L1387"></a><span class="ln">  1387</span>		if buf.Len() &lt;= maxSize {
+<a id="L1388"></a><span class="ln">  1388</span>			for _, ch := range buf.Bytes() {
+<a id="L1389"></a><span class="ln">  1389</span>				if ch &lt; &#39; &#39; {
+<a id="L1390"></a><span class="ln">  1390</span>					return
+<a id="L1391"></a><span class="ln">  1391</span>				}
+<a id="L1392"></a><span class="ln">  1392</span>			}
+<a id="L1393"></a><span class="ln">  1393</span>			size = buf.Len() <span class="comment">// n fits</span>
+<a id="L1394"></a><span class="ln">  1394</span>			p.nodeSizes[n] = size
+<a id="L1395"></a><span class="ln">  1395</span>		}
+<a id="L1396"></a><span class="ln">  1396</span>		return
+<a id="L1397"></a><span class="ln">  1397</span>	}
+<a id="L1398"></a><span class="ln">  1398</span>	
+<a id="L1399"></a><span class="ln">  1399</span>	func (p *printer) isOneLineFunc(b *ast.BlockStmt, headerSize int) bool {
+<a id="L1400"></a><span class="ln">  1400</span>		pos1 := b.Pos()
+<a id="L1401"></a><span class="ln">  1401</span>		pos2 := b.Rbrace
+<a id="L1402"></a><span class="ln">  1402</span>		if pos1.IsValid() &amp;&amp; pos2.IsValid() &amp;&amp; p.lineFor(pos1) != p.lineFor(pos2) {
+<a id="L1403"></a><span class="ln">  1403</span>			<span class="comment">// opening and closing brace are on different lines - don&#39;t make it a one-liner</span>
+<a id="L1404"></a><span class="ln">  1404</span>			return false
+<a id="L1405"></a><span class="ln">  1405</span>		}
+<a id="L1406"></a><span class="ln">  1406</span>		if len(b.List) &gt; 5 || p.commentBefore(p.posFor(pos2)) {
+<a id="L1407"></a><span class="ln">  1407</span>			<span class="comment">// too many statements or there is a comment inside - don&#39;t make it a one-liner</span>
+<a id="L1408"></a><span class="ln">  1408</span>			return false
+<a id="L1409"></a><span class="ln">  1409</span>		}
+<a id="L1410"></a><span class="ln">  1410</span>		<span class="comment">// otherwise, estimate body size</span>
+<a id="L1411"></a><span class="ln">  1411</span>		const maxSize = 100
+<a id="L1412"></a><span class="ln">  1412</span>		bodySize := 0
+<a id="L1413"></a><span class="ln">  1413</span>		for i, s := range b.List {
+<a id="L1414"></a><span class="ln">  1414</span>			if i &gt; 0 {
+<a id="L1415"></a><span class="ln">  1415</span>				bodySize += 2 <span class="comment">// space for a semicolon and blank</span>
+<a id="L1416"></a><span class="ln">  1416</span>			}
+<a id="L1417"></a><span class="ln">  1417</span>			bodySize += p.nodeSize(s, maxSize)
+<a id="L1418"></a><span class="ln">  1418</span>		}
+<a id="L1419"></a><span class="ln">  1419</span>		return headerSize+bodySize &lt;= maxSize
+<a id="L1420"></a><span class="ln">  1420</span>	}
+<a id="L1421"></a><span class="ln">  1421</span>	
+<a id="L1422"></a><span class="ln">  1422</span>	func (p *printer) funcBody(b *ast.BlockStmt, headerSize int, isLit bool) {
+<a id="L1423"></a><span class="ln">  1423</span>		if b == nil {
+<a id="L1424"></a><span class="ln">  1424</span>			return
+<a id="L1425"></a><span class="ln">  1425</span>		}
+<a id="L1426"></a><span class="ln">  1426</span>	
+<a id="L1427"></a><span class="ln">  1427</span>		if p.isOneLineFunc(b, headerSize) {
+<a id="L1428"></a><span class="ln">  1428</span>			sep := vtab
+<a id="L1429"></a><span class="ln">  1429</span>			if isLit {
+<a id="L1430"></a><span class="ln">  1430</span>				sep = blank
+<a id="L1431"></a><span class="ln">  1431</span>			}
+<a id="L1432"></a><span class="ln">  1432</span>			p.print(sep, b.Lbrace, token.LBRACE)
+<a id="L1433"></a><span class="ln">  1433</span>			if len(b.List) &gt; 0 {
+<a id="L1434"></a><span class="ln">  1434</span>				p.print(blank)
+<a id="L1435"></a><span class="ln">  1435</span>				for i, s := range b.List {
+<a id="L1436"></a><span class="ln">  1436</span>					if i &gt; 0 {
+<a id="L1437"></a><span class="ln">  1437</span>						p.print(token.SEMICOLON, blank)
+<a id="L1438"></a><span class="ln">  1438</span>					}
+<a id="L1439"></a><span class="ln">  1439</span>					p.stmt(s, i == len(b.List)-1)
+<a id="L1440"></a><span class="ln">  1440</span>				}
+<a id="L1441"></a><span class="ln">  1441</span>				p.print(blank)
+<a id="L1442"></a><span class="ln">  1442</span>			}
+<a id="L1443"></a><span class="ln">  1443</span>			p.print(b.Rbrace, token.RBRACE)
+<a id="L1444"></a><span class="ln">  1444</span>			return
+<a id="L1445"></a><span class="ln">  1445</span>		}
+<a id="L1446"></a><span class="ln">  1446</span>	
+<a id="L1447"></a><span class="ln">  1447</span>		p.print(blank)
+<a id="L1448"></a><span class="ln">  1448</span>		p.block(b, 1)
+<a id="L1449"></a><span class="ln">  1449</span>	}
+<a id="L1450"></a><span class="ln">  1450</span>	
+<a id="L1451"></a><span class="ln">  1451</span>	<span class="comment">// distance returns the column difference between from and to if both</span>
+<a id="L1452"></a><span class="ln">  1452</span>	<span class="comment">// are on the same line; if they are on different lines (or unknown)</span>
+<a id="L1453"></a><span class="ln">  1453</span>	<span class="comment">// the result is infinity.</span>
+<a id="L1454"></a><span class="ln">  1454</span>	func (p *printer) distance(from0 token.Pos, to token.Position) int {
+<a id="L1455"></a><span class="ln">  1455</span>		from := p.posFor(from0)
+<a id="L1456"></a><span class="ln">  1456</span>		if from.IsValid() &amp;&amp; to.IsValid() &amp;&amp; from.Line == to.Line {
+<a id="L1457"></a><span class="ln">  1457</span>			return to.Column - from.Column
+<a id="L1458"></a><span class="ln">  1458</span>		}
+<a id="L1459"></a><span class="ln">  1459</span>		return infinity
+<a id="L1460"></a><span class="ln">  1460</span>	}
+<a id="L1461"></a><span class="ln">  1461</span>	
+<a id="L1462"></a><span class="ln">  1462</span>	func (p *printer) funcDecl(d *ast.FuncDecl) {
+<a id="L1463"></a><span class="ln">  1463</span>		p.setComment(d.Doc)
+<a id="L1464"></a><span class="ln">  1464</span>		p.print(d.Pos(), token.FUNC, blank)
+<a id="L1465"></a><span class="ln">  1465</span>		if d.Recv != nil {
+<a id="L1466"></a><span class="ln">  1466</span>			p.parameters(d.Recv) <span class="comment">// method: print receiver</span>
+<a id="L1467"></a><span class="ln">  1467</span>			p.print(blank)
+<a id="L1468"></a><span class="ln">  1468</span>		}
+<a id="L1469"></a><span class="ln">  1469</span>		p.expr(d.Name)
+<a id="L1470"></a><span class="ln">  1470</span>		p.signature(d.Type.Params, d.Type.Results)
+<a id="L1471"></a><span class="ln">  1471</span>		p.funcBody(d.Body, p.distance(d.Pos(), p.pos), false)
+<a id="L1472"></a><span class="ln">  1472</span>	}
+<a id="L1473"></a><span class="ln">  1473</span>	
+<a id="L1474"></a><span class="ln">  1474</span>	func (p *printer) decl(decl ast.Decl) {
+<a id="L1475"></a><span class="ln">  1475</span>		switch d := decl.(type) {
+<a id="L1476"></a><span class="ln">  1476</span>		case *ast.BadDecl:
+<a id="L1477"></a><span class="ln">  1477</span>			p.print(d.Pos(), &#34;BadDecl&#34;)
+<a id="L1478"></a><span class="ln">  1478</span>		case *ast.GenDecl:
+<a id="L1479"></a><span class="ln">  1479</span>			p.genDecl(d)
+<a id="L1480"></a><span class="ln">  1480</span>		case *ast.FuncDecl:
+<a id="L1481"></a><span class="ln">  1481</span>			p.funcDecl(d)
+<a id="L1482"></a><span class="ln">  1482</span>		default:
+<a id="L1483"></a><span class="ln">  1483</span>			panic(&#34;unreachable&#34;)
+<a id="L1484"></a><span class="ln">  1484</span>		}
+<a id="L1485"></a><span class="ln">  1485</span>	}
+<a id="L1486"></a><span class="ln">  1486</span>	
+<a id="L1487"></a><span class="ln">  1487</span>	<span class="comment">// ----------------------------------------------------------------------------</span>
+<a id="L1488"></a><span class="ln">  1488</span>	<span class="comment">// Files</span>
+<a id="L1489"></a><span class="ln">  1489</span>	
+<a id="L1490"></a><span class="ln">  1490</span>	func declToken(decl ast.Decl) (tok token.Token) {
+<a id="L1491"></a><span class="ln">  1491</span>		tok = token.ILLEGAL
+<a id="L1492"></a><span class="ln">  1492</span>		switch d := decl.(type) {
+<a id="L1493"></a><span class="ln">  1493</span>		case *ast.GenDecl:
+<a id="L1494"></a><span class="ln">  1494</span>			tok = d.Tok
+<a id="L1495"></a><span class="ln">  1495</span>		case *ast.FuncDecl:
+<a id="L1496"></a><span class="ln">  1496</span>			tok = token.FUNC
+<a id="L1497"></a><span class="ln">  1497</span>		}
+<a id="L1498"></a><span class="ln">  1498</span>		return
+<a id="L1499"></a><span class="ln">  1499</span>	}
+<a id="L1500"></a><span class="ln">  1500</span>	
+<a id="L1501"></a><span class="ln">  1501</span>	func (p *printer) file(src *ast.File) {
+<a id="L1502"></a><span class="ln">  1502</span>		p.setComment(src.Doc)
+<a id="L1503"></a><span class="ln">  1503</span>		p.print(src.Pos(), token.PACKAGE, blank)
+<a id="L1504"></a><span class="ln">  1504</span>		p.expr(src.Name)
+<a id="L1505"></a><span class="ln">  1505</span>	
+<a id="L1506"></a><span class="ln">  1506</span>		if len(src.Decls) &gt; 0 {
+<a id="L1507"></a><span class="ln">  1507</span>			tok := token.ILLEGAL
+<a id="L1508"></a><span class="ln">  1508</span>			for _, d := range src.Decls {
+<a id="L1509"></a><span class="ln">  1509</span>				prev := tok
+<a id="L1510"></a><span class="ln">  1510</span>				tok = declToken(d)
+<a id="L1511"></a><span class="ln">  1511</span>				<span class="comment">// if the declaration token changed (e.g., from CONST to TYPE)</span>
+<a id="L1512"></a><span class="ln">  1512</span>				<span class="comment">// or the next declaration has documentation associated with it,</span>
+<a id="L1513"></a><span class="ln">  1513</span>				<span class="comment">// print an empty line between top-level declarations</span>
+<a id="L1514"></a><span class="ln">  1514</span>				<span class="comment">// (because p.linebreak is called with the position of d, which</span>
+<a id="L1515"></a><span class="ln">  1515</span>				<span class="comment">// is past any documentation, the minimum requirement is satisfied</span>
+<a id="L1516"></a><span class="ln">  1516</span>				<span class="comment">// even w/o the extra getDoc(d) nil-check - leave it in case the</span>
+<a id="L1517"></a><span class="ln">  1517</span>				<span class="comment">// linebreak logic improves - there&#39;s already a TODO).</span>
+<a id="L1518"></a><span class="ln">  1518</span>				min := 1
+<a id="L1519"></a><span class="ln">  1519</span>				if prev != tok || getDoc(d) != nil {
+<a id="L1520"></a><span class="ln">  1520</span>					min = 2
+<a id="L1521"></a><span class="ln">  1521</span>				}
+<a id="L1522"></a><span class="ln">  1522</span>				p.linebreak(p.lineFor(d.Pos()), min, ignore, false)
+<a id="L1523"></a><span class="ln">  1523</span>				p.decl(d)
+<a id="L1524"></a><span class="ln">  1524</span>			}
+<a id="L1525"></a><span class="ln">  1525</span>		}
+<a id="L1526"></a><span class="ln">  1526</span>	
+<a id="L1527"></a><span class="ln">  1527</span>		p.print(newline)
+<a id="L1528"></a><span class="ln">  1528</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

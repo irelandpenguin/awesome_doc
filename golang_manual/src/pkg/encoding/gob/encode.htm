@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/encoding/gob/encode.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/encoding/gob/encode.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package gob
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bytes&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;math&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;reflect&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unsafe&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	const uint64Size = int(unsafe.Sizeof(uint64(0)))
+<a id="L15"></a><span class="ln">    15</span>	
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// encoderState is the global execution state of an instance of the encoder.</span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// Field numbers are delta encoded and always increase. The field</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// number is initialized to -1 so 0 comes out as delta(1). A delta of</span>
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// 0 terminates the structure.</span>
+<a id="L20"></a><span class="ln">    20</span>	type encoderState struct {
+<a id="L21"></a><span class="ln">    21</span>		enc      *Encoder
+<a id="L22"></a><span class="ln">    22</span>		b        *bytes.Buffer
+<a id="L23"></a><span class="ln">    23</span>		sendZero bool                 <span class="comment">// encoding an array element or map key/value pair; send zero values</span>
+<a id="L24"></a><span class="ln">    24</span>		fieldnum int                  <span class="comment">// the last field number written.</span>
+<a id="L25"></a><span class="ln">    25</span>		buf      [1 + uint64Size]byte <span class="comment">// buffer used by the encoder; here to avoid allocation.</span>
+<a id="L26"></a><span class="ln">    26</span>		next     *encoderState        <span class="comment">// for free list</span>
+<a id="L27"></a><span class="ln">    27</span>	}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	func (enc *Encoder) newEncoderState(b *bytes.Buffer) *encoderState {
+<a id="L30"></a><span class="ln">    30</span>		e := enc.freeList
+<a id="L31"></a><span class="ln">    31</span>		if e == nil {
+<a id="L32"></a><span class="ln">    32</span>			e = new(encoderState)
+<a id="L33"></a><span class="ln">    33</span>			e.enc = enc
+<a id="L34"></a><span class="ln">    34</span>		} else {
+<a id="L35"></a><span class="ln">    35</span>			enc.freeList = e.next
+<a id="L36"></a><span class="ln">    36</span>		}
+<a id="L37"></a><span class="ln">    37</span>		e.sendZero = false
+<a id="L38"></a><span class="ln">    38</span>		e.fieldnum = 0
+<a id="L39"></a><span class="ln">    39</span>		e.b = b
+<a id="L40"></a><span class="ln">    40</span>		return e
+<a id="L41"></a><span class="ln">    41</span>	}
+<a id="L42"></a><span class="ln">    42</span>	
+<a id="L43"></a><span class="ln">    43</span>	func (enc *Encoder) freeEncoderState(e *encoderState) {
+<a id="L44"></a><span class="ln">    44</span>		e.next = enc.freeList
+<a id="L45"></a><span class="ln">    45</span>		enc.freeList = e
+<a id="L46"></a><span class="ln">    46</span>	}
+<a id="L47"></a><span class="ln">    47</span>	
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// Unsigned integers have a two-state encoding.  If the number is less</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// than 128 (0 through 0x7F), its value is written directly.</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// Otherwise the value is written in big-endian byte order preceded</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// by the byte length, negated.</span>
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// encodeUint writes an encoded unsigned integer to state.b.</span>
+<a id="L54"></a><span class="ln">    54</span>	func (state *encoderState) encodeUint(x uint64) {
+<a id="L55"></a><span class="ln">    55</span>		if x &lt;= 0x7F {
+<a id="L56"></a><span class="ln">    56</span>			err := state.b.WriteByte(uint8(x))
+<a id="L57"></a><span class="ln">    57</span>			if err != nil {
+<a id="L58"></a><span class="ln">    58</span>				error_(err)
+<a id="L59"></a><span class="ln">    59</span>			}
+<a id="L60"></a><span class="ln">    60</span>			return
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		i := uint64Size
+<a id="L63"></a><span class="ln">    63</span>		for x &gt; 0 {
+<a id="L64"></a><span class="ln">    64</span>			state.buf[i] = uint8(x)
+<a id="L65"></a><span class="ln">    65</span>			x &gt;&gt;= 8
+<a id="L66"></a><span class="ln">    66</span>			i--
+<a id="L67"></a><span class="ln">    67</span>		}
+<a id="L68"></a><span class="ln">    68</span>		state.buf[i] = uint8(i - uint64Size) <span class="comment">// = loop count, negated</span>
+<a id="L69"></a><span class="ln">    69</span>		_, err := state.b.Write(state.buf[i : uint64Size+1])
+<a id="L70"></a><span class="ln">    70</span>		if err != nil {
+<a id="L71"></a><span class="ln">    71</span>			error_(err)
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// encodeInt writes an encoded signed integer to state.w.</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// The low bit of the encoding says whether to bit complement the (other bits of the)</span>
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// uint to recover the int.</span>
+<a id="L78"></a><span class="ln">    78</span>	func (state *encoderState) encodeInt(i int64) {
+<a id="L79"></a><span class="ln">    79</span>		var x uint64
+<a id="L80"></a><span class="ln">    80</span>		if i &lt; 0 {
+<a id="L81"></a><span class="ln">    81</span>			x = uint64(^i&lt;&lt;1) | 1
+<a id="L82"></a><span class="ln">    82</span>		} else {
+<a id="L83"></a><span class="ln">    83</span>			x = uint64(i &lt;&lt; 1)
+<a id="L84"></a><span class="ln">    84</span>		}
+<a id="L85"></a><span class="ln">    85</span>		state.encodeUint(uint64(x))
+<a id="L86"></a><span class="ln">    86</span>	}
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// encOp is the signature of an encoding operator for a given type.</span>
+<a id="L89"></a><span class="ln">    89</span>	type encOp func(i *encInstr, state *encoderState, p unsafe.Pointer)
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">// The &#39;instructions&#39; of the encoding machine</span>
+<a id="L92"></a><span class="ln">    92</span>	type encInstr struct {
+<a id="L93"></a><span class="ln">    93</span>		op     encOp
+<a id="L94"></a><span class="ln">    94</span>		field  int     <span class="comment">// field number</span>
+<a id="L95"></a><span class="ln">    95</span>		indir  int     <span class="comment">// how many pointer indirections to reach the value in the struct</span>
+<a id="L96"></a><span class="ln">    96</span>		offset uintptr <span class="comment">// offset in the structure of the field to encode</span>
+<a id="L97"></a><span class="ln">    97</span>	}
+<a id="L98"></a><span class="ln">    98</span>	
+<a id="L99"></a><span class="ln">    99</span>	<span class="comment">// update emits a field number and updates the state to record its value for delta encoding.</span>
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// If the instruction pointer is nil, it does nothing</span>
+<a id="L101"></a><span class="ln">   101</span>	func (state *encoderState) update(instr *encInstr) {
+<a id="L102"></a><span class="ln">   102</span>		if instr != nil {
+<a id="L103"></a><span class="ln">   103</span>			state.encodeUint(uint64(instr.field - state.fieldnum))
+<a id="L104"></a><span class="ln">   104</span>			state.fieldnum = instr.field
+<a id="L105"></a><span class="ln">   105</span>		}
+<a id="L106"></a><span class="ln">   106</span>	}
+<a id="L107"></a><span class="ln">   107</span>	
+<a id="L108"></a><span class="ln">   108</span>	<span class="comment">// Each encoder for a composite is responsible for handling any</span>
+<a id="L109"></a><span class="ln">   109</span>	<span class="comment">// indirections associated with the elements of the data structure.</span>
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// If any pointer so reached is nil, no bytes are written.  If the</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// data item is zero, no bytes are written.  Single values - ints,</span>
+<a id="L112"></a><span class="ln">   112</span>	<span class="comment">// strings etc. - are indirected before calling their encoders.</span>
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// Otherwise, the output (for a scalar) is the field number, as an</span>
+<a id="L114"></a><span class="ln">   114</span>	<span class="comment">// encoded integer, followed by the field data in its appropriate</span>
+<a id="L115"></a><span class="ln">   115</span>	<span class="comment">// format.</span>
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">// encIndirect dereferences p indir times and returns the result.</span>
+<a id="L118"></a><span class="ln">   118</span>	func encIndirect(p unsafe.Pointer, indir int) unsafe.Pointer {
+<a id="L119"></a><span class="ln">   119</span>		for ; indir &gt; 0; indir-- {
+<a id="L120"></a><span class="ln">   120</span>			p = *(*unsafe.Pointer)(p)
+<a id="L121"></a><span class="ln">   121</span>			if p == nil {
+<a id="L122"></a><span class="ln">   122</span>				return unsafe.Pointer(nil)
+<a id="L123"></a><span class="ln">   123</span>			}
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>		return p
+<a id="L126"></a><span class="ln">   126</span>	}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// encBool encodes the bool with address p as an unsigned 0 or 1.</span>
+<a id="L129"></a><span class="ln">   129</span>	func encBool(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L130"></a><span class="ln">   130</span>		b := *(*bool)(p)
+<a id="L131"></a><span class="ln">   131</span>		if b || state.sendZero {
+<a id="L132"></a><span class="ln">   132</span>			state.update(i)
+<a id="L133"></a><span class="ln">   133</span>			if b {
+<a id="L134"></a><span class="ln">   134</span>				state.encodeUint(1)
+<a id="L135"></a><span class="ln">   135</span>			} else {
+<a id="L136"></a><span class="ln">   136</span>				state.encodeUint(0)
+<a id="L137"></a><span class="ln">   137</span>			}
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>	}
+<a id="L140"></a><span class="ln">   140</span>	
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// encInt encodes the int with address p.</span>
+<a id="L142"></a><span class="ln">   142</span>	func encInt(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L143"></a><span class="ln">   143</span>		v := int64(*(*int)(p))
+<a id="L144"></a><span class="ln">   144</span>		if v != 0 || state.sendZero {
+<a id="L145"></a><span class="ln">   145</span>			state.update(i)
+<a id="L146"></a><span class="ln">   146</span>			state.encodeInt(v)
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>	}
+<a id="L149"></a><span class="ln">   149</span>	
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// encUint encodes the uint with address p.</span>
+<a id="L151"></a><span class="ln">   151</span>	func encUint(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L152"></a><span class="ln">   152</span>		v := uint64(*(*uint)(p))
+<a id="L153"></a><span class="ln">   153</span>		if v != 0 || state.sendZero {
+<a id="L154"></a><span class="ln">   154</span>			state.update(i)
+<a id="L155"></a><span class="ln">   155</span>			state.encodeUint(v)
+<a id="L156"></a><span class="ln">   156</span>		}
+<a id="L157"></a><span class="ln">   157</span>	}
+<a id="L158"></a><span class="ln">   158</span>	
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">// encInt8 encodes the int8 with address p.</span>
+<a id="L160"></a><span class="ln">   160</span>	func encInt8(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L161"></a><span class="ln">   161</span>		v := int64(*(*int8)(p))
+<a id="L162"></a><span class="ln">   162</span>		if v != 0 || state.sendZero {
+<a id="L163"></a><span class="ln">   163</span>			state.update(i)
+<a id="L164"></a><span class="ln">   164</span>			state.encodeInt(v)
+<a id="L165"></a><span class="ln">   165</span>		}
+<a id="L166"></a><span class="ln">   166</span>	}
+<a id="L167"></a><span class="ln">   167</span>	
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// encUint8 encodes the uint8 with address p.</span>
+<a id="L169"></a><span class="ln">   169</span>	func encUint8(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L170"></a><span class="ln">   170</span>		v := uint64(*(*uint8)(p))
+<a id="L171"></a><span class="ln">   171</span>		if v != 0 || state.sendZero {
+<a id="L172"></a><span class="ln">   172</span>			state.update(i)
+<a id="L173"></a><span class="ln">   173</span>			state.encodeUint(v)
+<a id="L174"></a><span class="ln">   174</span>		}
+<a id="L175"></a><span class="ln">   175</span>	}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// encInt16 encodes the int16 with address p.</span>
+<a id="L178"></a><span class="ln">   178</span>	func encInt16(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L179"></a><span class="ln">   179</span>		v := int64(*(*int16)(p))
+<a id="L180"></a><span class="ln">   180</span>		if v != 0 || state.sendZero {
+<a id="L181"></a><span class="ln">   181</span>			state.update(i)
+<a id="L182"></a><span class="ln">   182</span>			state.encodeInt(v)
+<a id="L183"></a><span class="ln">   183</span>		}
+<a id="L184"></a><span class="ln">   184</span>	}
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>	<span class="comment">// encUint16 encodes the uint16 with address p.</span>
+<a id="L187"></a><span class="ln">   187</span>	func encUint16(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L188"></a><span class="ln">   188</span>		v := uint64(*(*uint16)(p))
+<a id="L189"></a><span class="ln">   189</span>		if v != 0 || state.sendZero {
+<a id="L190"></a><span class="ln">   190</span>			state.update(i)
+<a id="L191"></a><span class="ln">   191</span>			state.encodeUint(v)
+<a id="L192"></a><span class="ln">   192</span>		}
+<a id="L193"></a><span class="ln">   193</span>	}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>	<span class="comment">// encInt32 encodes the int32 with address p.</span>
+<a id="L196"></a><span class="ln">   196</span>	func encInt32(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L197"></a><span class="ln">   197</span>		v := int64(*(*int32)(p))
+<a id="L198"></a><span class="ln">   198</span>		if v != 0 || state.sendZero {
+<a id="L199"></a><span class="ln">   199</span>			state.update(i)
+<a id="L200"></a><span class="ln">   200</span>			state.encodeInt(v)
+<a id="L201"></a><span class="ln">   201</span>		}
+<a id="L202"></a><span class="ln">   202</span>	}
+<a id="L203"></a><span class="ln">   203</span>	
+<a id="L204"></a><span class="ln">   204</span>	<span class="comment">// encUint encodes the uint32 with address p.</span>
+<a id="L205"></a><span class="ln">   205</span>	func encUint32(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L206"></a><span class="ln">   206</span>		v := uint64(*(*uint32)(p))
+<a id="L207"></a><span class="ln">   207</span>		if v != 0 || state.sendZero {
+<a id="L208"></a><span class="ln">   208</span>			state.update(i)
+<a id="L209"></a><span class="ln">   209</span>			state.encodeUint(v)
+<a id="L210"></a><span class="ln">   210</span>		}
+<a id="L211"></a><span class="ln">   211</span>	}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// encInt64 encodes the int64 with address p.</span>
+<a id="L214"></a><span class="ln">   214</span>	func encInt64(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L215"></a><span class="ln">   215</span>		v := *(*int64)(p)
+<a id="L216"></a><span class="ln">   216</span>		if v != 0 || state.sendZero {
+<a id="L217"></a><span class="ln">   217</span>			state.update(i)
+<a id="L218"></a><span class="ln">   218</span>			state.encodeInt(v)
+<a id="L219"></a><span class="ln">   219</span>		}
+<a id="L220"></a><span class="ln">   220</span>	}
+<a id="L221"></a><span class="ln">   221</span>	
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// encInt64 encodes the uint64 with address p.</span>
+<a id="L223"></a><span class="ln">   223</span>	func encUint64(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L224"></a><span class="ln">   224</span>		v := *(*uint64)(p)
+<a id="L225"></a><span class="ln">   225</span>		if v != 0 || state.sendZero {
+<a id="L226"></a><span class="ln">   226</span>			state.update(i)
+<a id="L227"></a><span class="ln">   227</span>			state.encodeUint(v)
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>	}
+<a id="L230"></a><span class="ln">   230</span>	
+<a id="L231"></a><span class="ln">   231</span>	<span class="comment">// encUintptr encodes the uintptr with address p.</span>
+<a id="L232"></a><span class="ln">   232</span>	func encUintptr(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L233"></a><span class="ln">   233</span>		v := uint64(*(*uintptr)(p))
+<a id="L234"></a><span class="ln">   234</span>		if v != 0 || state.sendZero {
+<a id="L235"></a><span class="ln">   235</span>			state.update(i)
+<a id="L236"></a><span class="ln">   236</span>			state.encodeUint(v)
+<a id="L237"></a><span class="ln">   237</span>		}
+<a id="L238"></a><span class="ln">   238</span>	}
+<a id="L239"></a><span class="ln">   239</span>	
+<a id="L240"></a><span class="ln">   240</span>	<span class="comment">// floatBits returns a uint64 holding the bits of a floating-point number.</span>
+<a id="L241"></a><span class="ln">   241</span>	<span class="comment">// Floating-point numbers are transmitted as uint64s holding the bits</span>
+<a id="L242"></a><span class="ln">   242</span>	<span class="comment">// of the underlying representation.  They are sent byte-reversed, with</span>
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// the exponent end coming out first, so integer floating point numbers</span>
+<a id="L244"></a><span class="ln">   244</span>	<span class="comment">// (for example) transmit more compactly.  This routine does the</span>
+<a id="L245"></a><span class="ln">   245</span>	<span class="comment">// swizzling.</span>
+<a id="L246"></a><span class="ln">   246</span>	func floatBits(f float64) uint64 {
+<a id="L247"></a><span class="ln">   247</span>		u := math.Float64bits(f)
+<a id="L248"></a><span class="ln">   248</span>		var v uint64
+<a id="L249"></a><span class="ln">   249</span>		for i := 0; i &lt; 8; i++ {
+<a id="L250"></a><span class="ln">   250</span>			v &lt;&lt;= 8
+<a id="L251"></a><span class="ln">   251</span>			v |= u &amp; 0xFF
+<a id="L252"></a><span class="ln">   252</span>			u &gt;&gt;= 8
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>		return v
+<a id="L255"></a><span class="ln">   255</span>	}
+<a id="L256"></a><span class="ln">   256</span>	
+<a id="L257"></a><span class="ln">   257</span>	<span class="comment">// encFloat32 encodes the float32 with address p.</span>
+<a id="L258"></a><span class="ln">   258</span>	func encFloat32(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L259"></a><span class="ln">   259</span>		f := *(*float32)(p)
+<a id="L260"></a><span class="ln">   260</span>		if f != 0 || state.sendZero {
+<a id="L261"></a><span class="ln">   261</span>			v := floatBits(float64(f))
+<a id="L262"></a><span class="ln">   262</span>			state.update(i)
+<a id="L263"></a><span class="ln">   263</span>			state.encodeUint(v)
+<a id="L264"></a><span class="ln">   264</span>		}
+<a id="L265"></a><span class="ln">   265</span>	}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// encFloat64 encodes the float64 with address p.</span>
+<a id="L268"></a><span class="ln">   268</span>	func encFloat64(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L269"></a><span class="ln">   269</span>		f := *(*float64)(p)
+<a id="L270"></a><span class="ln">   270</span>		if f != 0 || state.sendZero {
+<a id="L271"></a><span class="ln">   271</span>			state.update(i)
+<a id="L272"></a><span class="ln">   272</span>			v := floatBits(f)
+<a id="L273"></a><span class="ln">   273</span>			state.encodeUint(v)
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>	}
+<a id="L276"></a><span class="ln">   276</span>	
+<a id="L277"></a><span class="ln">   277</span>	<span class="comment">// encComplex64 encodes the complex64 with address p.</span>
+<a id="L278"></a><span class="ln">   278</span>	<span class="comment">// Complex numbers are just a pair of floating-point numbers, real part first.</span>
+<a id="L279"></a><span class="ln">   279</span>	func encComplex64(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L280"></a><span class="ln">   280</span>		c := *(*complex64)(p)
+<a id="L281"></a><span class="ln">   281</span>		if c != 0+0i || state.sendZero {
+<a id="L282"></a><span class="ln">   282</span>			rpart := floatBits(float64(real(c)))
+<a id="L283"></a><span class="ln">   283</span>			ipart := floatBits(float64(imag(c)))
+<a id="L284"></a><span class="ln">   284</span>			state.update(i)
+<a id="L285"></a><span class="ln">   285</span>			state.encodeUint(rpart)
+<a id="L286"></a><span class="ln">   286</span>			state.encodeUint(ipart)
+<a id="L287"></a><span class="ln">   287</span>		}
+<a id="L288"></a><span class="ln">   288</span>	}
+<a id="L289"></a><span class="ln">   289</span>	
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">// encComplex128 encodes the complex128 with address p.</span>
+<a id="L291"></a><span class="ln">   291</span>	func encComplex128(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L292"></a><span class="ln">   292</span>		c := *(*complex128)(p)
+<a id="L293"></a><span class="ln">   293</span>		if c != 0+0i || state.sendZero {
+<a id="L294"></a><span class="ln">   294</span>			rpart := floatBits(real(c))
+<a id="L295"></a><span class="ln">   295</span>			ipart := floatBits(imag(c))
+<a id="L296"></a><span class="ln">   296</span>			state.update(i)
+<a id="L297"></a><span class="ln">   297</span>			state.encodeUint(rpart)
+<a id="L298"></a><span class="ln">   298</span>			state.encodeUint(ipart)
+<a id="L299"></a><span class="ln">   299</span>		}
+<a id="L300"></a><span class="ln">   300</span>	}
+<a id="L301"></a><span class="ln">   301</span>	
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">// encUint8Array encodes the byte slice whose header has address p.</span>
+<a id="L303"></a><span class="ln">   303</span>	<span class="comment">// Byte arrays are encoded as an unsigned count followed by the raw bytes.</span>
+<a id="L304"></a><span class="ln">   304</span>	func encUint8Array(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L305"></a><span class="ln">   305</span>		b := *(*[]byte)(p)
+<a id="L306"></a><span class="ln">   306</span>		if len(b) &gt; 0 || state.sendZero {
+<a id="L307"></a><span class="ln">   307</span>			state.update(i)
+<a id="L308"></a><span class="ln">   308</span>			state.encodeUint(uint64(len(b)))
+<a id="L309"></a><span class="ln">   309</span>			state.b.Write(b)
+<a id="L310"></a><span class="ln">   310</span>		}
+<a id="L311"></a><span class="ln">   311</span>	}
+<a id="L312"></a><span class="ln">   312</span>	
+<a id="L313"></a><span class="ln">   313</span>	<span class="comment">// encString encodes the string whose header has address p.</span>
+<a id="L314"></a><span class="ln">   314</span>	<span class="comment">// Strings are encoded as an unsigned count followed by the raw bytes.</span>
+<a id="L315"></a><span class="ln">   315</span>	func encString(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L316"></a><span class="ln">   316</span>		s := *(*string)(p)
+<a id="L317"></a><span class="ln">   317</span>		if len(s) &gt; 0 || state.sendZero {
+<a id="L318"></a><span class="ln">   318</span>			state.update(i)
+<a id="L319"></a><span class="ln">   319</span>			state.encodeUint(uint64(len(s)))
+<a id="L320"></a><span class="ln">   320</span>			state.b.WriteString(s)
+<a id="L321"></a><span class="ln">   321</span>		}
+<a id="L322"></a><span class="ln">   322</span>	}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">// encStructTerminator encodes the end of an encoded struct</span>
+<a id="L325"></a><span class="ln">   325</span>	<span class="comment">// as delta field number of 0.</span>
+<a id="L326"></a><span class="ln">   326</span>	func encStructTerminator(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L327"></a><span class="ln">   327</span>		state.encodeUint(0)
+<a id="L328"></a><span class="ln">   328</span>	}
+<a id="L329"></a><span class="ln">   329</span>	
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">// Execution engine</span>
+<a id="L331"></a><span class="ln">   331</span>	
+<a id="L332"></a><span class="ln">   332</span>	<span class="comment">// encEngine an array of instructions indexed by field number of the encoding</span>
+<a id="L333"></a><span class="ln">   333</span>	<span class="comment">// data, typically a struct.  It is executed top to bottom, walking the struct.</span>
+<a id="L334"></a><span class="ln">   334</span>	type encEngine struct {
+<a id="L335"></a><span class="ln">   335</span>		instr []encInstr
+<a id="L336"></a><span class="ln">   336</span>	}
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>	const singletonField = 0
+<a id="L339"></a><span class="ln">   339</span>	
+<a id="L340"></a><span class="ln">   340</span>	<span class="comment">// encodeSingle encodes a single top-level non-struct value.</span>
+<a id="L341"></a><span class="ln">   341</span>	func (enc *Encoder) encodeSingle(b *bytes.Buffer, engine *encEngine, basep uintptr) {
+<a id="L342"></a><span class="ln">   342</span>		state := enc.newEncoderState(b)
+<a id="L343"></a><span class="ln">   343</span>		state.fieldnum = singletonField
+<a id="L344"></a><span class="ln">   344</span>		<span class="comment">// There is no surrounding struct to frame the transmission, so we must</span>
+<a id="L345"></a><span class="ln">   345</span>		<span class="comment">// generate data even if the item is zero.  To do this, set sendZero.</span>
+<a id="L346"></a><span class="ln">   346</span>		state.sendZero = true
+<a id="L347"></a><span class="ln">   347</span>		instr := &amp;engine.instr[singletonField]
+<a id="L348"></a><span class="ln">   348</span>		p := unsafe.Pointer(basep) <span class="comment">// offset will be zero</span>
+<a id="L349"></a><span class="ln">   349</span>		if instr.indir &gt; 0 {
+<a id="L350"></a><span class="ln">   350</span>			if p = encIndirect(p, instr.indir); p == nil {
+<a id="L351"></a><span class="ln">   351</span>				return
+<a id="L352"></a><span class="ln">   352</span>			}
+<a id="L353"></a><span class="ln">   353</span>		}
+<a id="L354"></a><span class="ln">   354</span>		instr.op(instr, state, p)
+<a id="L355"></a><span class="ln">   355</span>		enc.freeEncoderState(state)
+<a id="L356"></a><span class="ln">   356</span>	}
+<a id="L357"></a><span class="ln">   357</span>	
+<a id="L358"></a><span class="ln">   358</span>	<span class="comment">// encodeStruct encodes a single struct value.</span>
+<a id="L359"></a><span class="ln">   359</span>	func (enc *Encoder) encodeStruct(b *bytes.Buffer, engine *encEngine, basep uintptr) {
+<a id="L360"></a><span class="ln">   360</span>		state := enc.newEncoderState(b)
+<a id="L361"></a><span class="ln">   361</span>		state.fieldnum = -1
+<a id="L362"></a><span class="ln">   362</span>		for i := 0; i &lt; len(engine.instr); i++ {
+<a id="L363"></a><span class="ln">   363</span>			instr := &amp;engine.instr[i]
+<a id="L364"></a><span class="ln">   364</span>			p := unsafe.Pointer(basep + instr.offset)
+<a id="L365"></a><span class="ln">   365</span>			if instr.indir &gt; 0 {
+<a id="L366"></a><span class="ln">   366</span>				if p = encIndirect(p, instr.indir); p == nil {
+<a id="L367"></a><span class="ln">   367</span>					continue
+<a id="L368"></a><span class="ln">   368</span>				}
+<a id="L369"></a><span class="ln">   369</span>			}
+<a id="L370"></a><span class="ln">   370</span>			instr.op(instr, state, p)
+<a id="L371"></a><span class="ln">   371</span>		}
+<a id="L372"></a><span class="ln">   372</span>		enc.freeEncoderState(state)
+<a id="L373"></a><span class="ln">   373</span>	}
+<a id="L374"></a><span class="ln">   374</span>	
+<a id="L375"></a><span class="ln">   375</span>	<span class="comment">// encodeArray encodes the array whose 0th element is at p.</span>
+<a id="L376"></a><span class="ln">   376</span>	func (enc *Encoder) encodeArray(b *bytes.Buffer, p uintptr, op encOp, elemWid uintptr, elemIndir int, length int) {
+<a id="L377"></a><span class="ln">   377</span>		state := enc.newEncoderState(b)
+<a id="L378"></a><span class="ln">   378</span>		state.fieldnum = -1
+<a id="L379"></a><span class="ln">   379</span>		state.sendZero = true
+<a id="L380"></a><span class="ln">   380</span>		state.encodeUint(uint64(length))
+<a id="L381"></a><span class="ln">   381</span>		for i := 0; i &lt; length; i++ {
+<a id="L382"></a><span class="ln">   382</span>			elemp := p
+<a id="L383"></a><span class="ln">   383</span>			up := unsafe.Pointer(elemp)
+<a id="L384"></a><span class="ln">   384</span>			if elemIndir &gt; 0 {
+<a id="L385"></a><span class="ln">   385</span>				if up = encIndirect(up, elemIndir); up == nil {
+<a id="L386"></a><span class="ln">   386</span>					errorf(&#34;encodeArray: nil element&#34;)
+<a id="L387"></a><span class="ln">   387</span>				}
+<a id="L388"></a><span class="ln">   388</span>				elemp = uintptr(up)
+<a id="L389"></a><span class="ln">   389</span>			}
+<a id="L390"></a><span class="ln">   390</span>			op(nil, state, unsafe.Pointer(elemp))
+<a id="L391"></a><span class="ln">   391</span>			p += uintptr(elemWid)
+<a id="L392"></a><span class="ln">   392</span>		}
+<a id="L393"></a><span class="ln">   393</span>		enc.freeEncoderState(state)
+<a id="L394"></a><span class="ln">   394</span>	}
+<a id="L395"></a><span class="ln">   395</span>	
+<a id="L396"></a><span class="ln">   396</span>	<span class="comment">// encodeReflectValue is a helper for maps. It encodes the value v.</span>
+<a id="L397"></a><span class="ln">   397</span>	func encodeReflectValue(state *encoderState, v reflect.Value, op encOp, indir int) {
+<a id="L398"></a><span class="ln">   398</span>		for i := 0; i &lt; indir &amp;&amp; v.IsValid(); i++ {
+<a id="L399"></a><span class="ln">   399</span>			v = reflect.Indirect(v)
+<a id="L400"></a><span class="ln">   400</span>		}
+<a id="L401"></a><span class="ln">   401</span>		if !v.IsValid() {
+<a id="L402"></a><span class="ln">   402</span>			errorf(&#34;encodeReflectValue: nil element&#34;)
+<a id="L403"></a><span class="ln">   403</span>		}
+<a id="L404"></a><span class="ln">   404</span>		op(nil, state, unsafe.Pointer(unsafeAddr(v)))
+<a id="L405"></a><span class="ln">   405</span>	}
+<a id="L406"></a><span class="ln">   406</span>	
+<a id="L407"></a><span class="ln">   407</span>	<span class="comment">// encodeMap encodes a map as unsigned count followed by key:value pairs.</span>
+<a id="L408"></a><span class="ln">   408</span>	<span class="comment">// Because map internals are not exposed, we must use reflection rather than</span>
+<a id="L409"></a><span class="ln">   409</span>	<span class="comment">// addresses.</span>
+<a id="L410"></a><span class="ln">   410</span>	func (enc *Encoder) encodeMap(b *bytes.Buffer, mv reflect.Value, keyOp, elemOp encOp, keyIndir, elemIndir int) {
+<a id="L411"></a><span class="ln">   411</span>		state := enc.newEncoderState(b)
+<a id="L412"></a><span class="ln">   412</span>		state.fieldnum = -1
+<a id="L413"></a><span class="ln">   413</span>		state.sendZero = true
+<a id="L414"></a><span class="ln">   414</span>		keys := mv.MapKeys()
+<a id="L415"></a><span class="ln">   415</span>		state.encodeUint(uint64(len(keys)))
+<a id="L416"></a><span class="ln">   416</span>		for _, key := range keys {
+<a id="L417"></a><span class="ln">   417</span>			encodeReflectValue(state, key, keyOp, keyIndir)
+<a id="L418"></a><span class="ln">   418</span>			encodeReflectValue(state, mv.MapIndex(key), elemOp, elemIndir)
+<a id="L419"></a><span class="ln">   419</span>		}
+<a id="L420"></a><span class="ln">   420</span>		enc.freeEncoderState(state)
+<a id="L421"></a><span class="ln">   421</span>	}
+<a id="L422"></a><span class="ln">   422</span>	
+<a id="L423"></a><span class="ln">   423</span>	<span class="comment">// encodeInterface encodes the interface value iv.</span>
+<a id="L424"></a><span class="ln">   424</span>	<span class="comment">// To send an interface, we send a string identifying the concrete type, followed</span>
+<a id="L425"></a><span class="ln">   425</span>	<span class="comment">// by the type identifier (which might require defining that type right now), followed</span>
+<a id="L426"></a><span class="ln">   426</span>	<span class="comment">// by the concrete value.  A nil value gets sent as the empty string for the name,</span>
+<a id="L427"></a><span class="ln">   427</span>	<span class="comment">// followed by no value.</span>
+<a id="L428"></a><span class="ln">   428</span>	func (enc *Encoder) encodeInterface(b *bytes.Buffer, iv reflect.Value) {
+<a id="L429"></a><span class="ln">   429</span>		state := enc.newEncoderState(b)
+<a id="L430"></a><span class="ln">   430</span>		state.fieldnum = -1
+<a id="L431"></a><span class="ln">   431</span>		state.sendZero = true
+<a id="L432"></a><span class="ln">   432</span>		if iv.IsNil() {
+<a id="L433"></a><span class="ln">   433</span>			state.encodeUint(0)
+<a id="L434"></a><span class="ln">   434</span>			return
+<a id="L435"></a><span class="ln">   435</span>		}
+<a id="L436"></a><span class="ln">   436</span>	
+<a id="L437"></a><span class="ln">   437</span>		ut := userType(iv.Elem().Type())
+<a id="L438"></a><span class="ln">   438</span>		name, ok := concreteTypeToName[ut.base]
+<a id="L439"></a><span class="ln">   439</span>		if !ok {
+<a id="L440"></a><span class="ln">   440</span>			errorf(&#34;type not registered for interface: %s&#34;, ut.base)
+<a id="L441"></a><span class="ln">   441</span>		}
+<a id="L442"></a><span class="ln">   442</span>		<span class="comment">// Send the name.</span>
+<a id="L443"></a><span class="ln">   443</span>		state.encodeUint(uint64(len(name)))
+<a id="L444"></a><span class="ln">   444</span>		_, err := state.b.WriteString(name)
+<a id="L445"></a><span class="ln">   445</span>		if err != nil {
+<a id="L446"></a><span class="ln">   446</span>			error_(err)
+<a id="L447"></a><span class="ln">   447</span>		}
+<a id="L448"></a><span class="ln">   448</span>		<span class="comment">// Define the type id if necessary.</span>
+<a id="L449"></a><span class="ln">   449</span>		enc.sendTypeDescriptor(enc.writer(), state, ut)
+<a id="L450"></a><span class="ln">   450</span>		<span class="comment">// Send the type id.</span>
+<a id="L451"></a><span class="ln">   451</span>		enc.sendTypeId(state, ut)
+<a id="L452"></a><span class="ln">   452</span>		<span class="comment">// Encode the value into a new buffer.  Any nested type definitions</span>
+<a id="L453"></a><span class="ln">   453</span>		<span class="comment">// should be written to b, before the encoded value.</span>
+<a id="L454"></a><span class="ln">   454</span>		enc.pushWriter(b)
+<a id="L455"></a><span class="ln">   455</span>		data := new(bytes.Buffer)
+<a id="L456"></a><span class="ln">   456</span>		data.Write(spaceForLength)
+<a id="L457"></a><span class="ln">   457</span>		enc.encode(data, iv.Elem(), ut)
+<a id="L458"></a><span class="ln">   458</span>		if enc.err != nil {
+<a id="L459"></a><span class="ln">   459</span>			error_(enc.err)
+<a id="L460"></a><span class="ln">   460</span>		}
+<a id="L461"></a><span class="ln">   461</span>		enc.popWriter()
+<a id="L462"></a><span class="ln">   462</span>		enc.writeMessage(b, data)
+<a id="L463"></a><span class="ln">   463</span>		if enc.err != nil {
+<a id="L464"></a><span class="ln">   464</span>			error_(err)
+<a id="L465"></a><span class="ln">   465</span>		}
+<a id="L466"></a><span class="ln">   466</span>		enc.freeEncoderState(state)
+<a id="L467"></a><span class="ln">   467</span>	}
+<a id="L468"></a><span class="ln">   468</span>	
+<a id="L469"></a><span class="ln">   469</span>	<span class="comment">// isZero returns whether the value is the zero of its type.</span>
+<a id="L470"></a><span class="ln">   470</span>	func isZero(val reflect.Value) bool {
+<a id="L471"></a><span class="ln">   471</span>		switch val.Kind() {
+<a id="L472"></a><span class="ln">   472</span>		case reflect.Array:
+<a id="L473"></a><span class="ln">   473</span>			for i := 0; i &lt; val.Len(); i++ {
+<a id="L474"></a><span class="ln">   474</span>				if !isZero(val.Index(i)) {
+<a id="L475"></a><span class="ln">   475</span>					return false
+<a id="L476"></a><span class="ln">   476</span>				}
+<a id="L477"></a><span class="ln">   477</span>			}
+<a id="L478"></a><span class="ln">   478</span>			return true
+<a id="L479"></a><span class="ln">   479</span>		case reflect.Map, reflect.Slice, reflect.String:
+<a id="L480"></a><span class="ln">   480</span>			return val.Len() == 0
+<a id="L481"></a><span class="ln">   481</span>		case reflect.Bool:
+<a id="L482"></a><span class="ln">   482</span>			return !val.Bool()
+<a id="L483"></a><span class="ln">   483</span>		case reflect.Complex64, reflect.Complex128:
+<a id="L484"></a><span class="ln">   484</span>			return val.Complex() == 0
+<a id="L485"></a><span class="ln">   485</span>		case reflect.Chan, reflect.Func, reflect.Ptr:
+<a id="L486"></a><span class="ln">   486</span>			return val.IsNil()
+<a id="L487"></a><span class="ln">   487</span>		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+<a id="L488"></a><span class="ln">   488</span>			return val.Int() == 0
+<a id="L489"></a><span class="ln">   489</span>		case reflect.Float32, reflect.Float64:
+<a id="L490"></a><span class="ln">   490</span>			return val.Float() == 0
+<a id="L491"></a><span class="ln">   491</span>		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+<a id="L492"></a><span class="ln">   492</span>			return val.Uint() == 0
+<a id="L493"></a><span class="ln">   493</span>		case reflect.Struct:
+<a id="L494"></a><span class="ln">   494</span>			for i := 0; i &lt; val.NumField(); i++ {
+<a id="L495"></a><span class="ln">   495</span>				if !isZero(val.Field(i)) {
+<a id="L496"></a><span class="ln">   496</span>					return false
+<a id="L497"></a><span class="ln">   497</span>				}
+<a id="L498"></a><span class="ln">   498</span>			}
+<a id="L499"></a><span class="ln">   499</span>			return true
+<a id="L500"></a><span class="ln">   500</span>		}
+<a id="L501"></a><span class="ln">   501</span>		panic(&#34;unknown type in isZero &#34; + val.Type().String())
+<a id="L502"></a><span class="ln">   502</span>	}
+<a id="L503"></a><span class="ln">   503</span>	
+<a id="L504"></a><span class="ln">   504</span>	<span class="comment">// encGobEncoder encodes a value that implements the GobEncoder interface.</span>
+<a id="L505"></a><span class="ln">   505</span>	<span class="comment">// The data is sent as a byte array.</span>
+<a id="L506"></a><span class="ln">   506</span>	func (enc *Encoder) encodeGobEncoder(b *bytes.Buffer, v reflect.Value) {
+<a id="L507"></a><span class="ln">   507</span>		<span class="comment">// TODO: should we catch panics from the called method?</span>
+<a id="L508"></a><span class="ln">   508</span>		<span class="comment">// We know it&#39;s a GobEncoder, so just call the method directly.</span>
+<a id="L509"></a><span class="ln">   509</span>		data, err := v.Interface().(GobEncoder).GobEncode()
+<a id="L510"></a><span class="ln">   510</span>		if err != nil {
+<a id="L511"></a><span class="ln">   511</span>			error_(err)
+<a id="L512"></a><span class="ln">   512</span>		}
+<a id="L513"></a><span class="ln">   513</span>		state := enc.newEncoderState(b)
+<a id="L514"></a><span class="ln">   514</span>		state.fieldnum = -1
+<a id="L515"></a><span class="ln">   515</span>		state.encodeUint(uint64(len(data)))
+<a id="L516"></a><span class="ln">   516</span>		state.b.Write(data)
+<a id="L517"></a><span class="ln">   517</span>		enc.freeEncoderState(state)
+<a id="L518"></a><span class="ln">   518</span>	}
+<a id="L519"></a><span class="ln">   519</span>	
+<a id="L520"></a><span class="ln">   520</span>	var encOpTable = [...]encOp{
+<a id="L521"></a><span class="ln">   521</span>		reflect.Bool:       encBool,
+<a id="L522"></a><span class="ln">   522</span>		reflect.Int:        encInt,
+<a id="L523"></a><span class="ln">   523</span>		reflect.Int8:       encInt8,
+<a id="L524"></a><span class="ln">   524</span>		reflect.Int16:      encInt16,
+<a id="L525"></a><span class="ln">   525</span>		reflect.Int32:      encInt32,
+<a id="L526"></a><span class="ln">   526</span>		reflect.Int64:      encInt64,
+<a id="L527"></a><span class="ln">   527</span>		reflect.Uint:       encUint,
+<a id="L528"></a><span class="ln">   528</span>		reflect.Uint8:      encUint8,
+<a id="L529"></a><span class="ln">   529</span>		reflect.Uint16:     encUint16,
+<a id="L530"></a><span class="ln">   530</span>		reflect.Uint32:     encUint32,
+<a id="L531"></a><span class="ln">   531</span>		reflect.Uint64:     encUint64,
+<a id="L532"></a><span class="ln">   532</span>		reflect.Uintptr:    encUintptr,
+<a id="L533"></a><span class="ln">   533</span>		reflect.Float32:    encFloat32,
+<a id="L534"></a><span class="ln">   534</span>		reflect.Float64:    encFloat64,
+<a id="L535"></a><span class="ln">   535</span>		reflect.Complex64:  encComplex64,
+<a id="L536"></a><span class="ln">   536</span>		reflect.Complex128: encComplex128,
+<a id="L537"></a><span class="ln">   537</span>		reflect.String:     encString,
+<a id="L538"></a><span class="ln">   538</span>	}
+<a id="L539"></a><span class="ln">   539</span>	
+<a id="L540"></a><span class="ln">   540</span>	<span class="comment">// encOpFor returns (a pointer to) the encoding op for the base type under rt and</span>
+<a id="L541"></a><span class="ln">   541</span>	<span class="comment">// the indirection count to reach it.</span>
+<a id="L542"></a><span class="ln">   542</span>	func (enc *Encoder) encOpFor(rt reflect.Type, inProgress map[reflect.Type]*encOp) (*encOp, int) {
+<a id="L543"></a><span class="ln">   543</span>		ut := userType(rt)
+<a id="L544"></a><span class="ln">   544</span>		<span class="comment">// If the type implements GobEncoder, we handle it without further processing.</span>
+<a id="L545"></a><span class="ln">   545</span>		if ut.isGobEncoder {
+<a id="L546"></a><span class="ln">   546</span>			return enc.gobEncodeOpFor(ut)
+<a id="L547"></a><span class="ln">   547</span>		}
+<a id="L548"></a><span class="ln">   548</span>		<span class="comment">// If this type is already in progress, it&#39;s a recursive type (e.g. map[string]*T).</span>
+<a id="L549"></a><span class="ln">   549</span>		<span class="comment">// Return the pointer to the op we&#39;re already building.</span>
+<a id="L550"></a><span class="ln">   550</span>		if opPtr := inProgress[rt]; opPtr != nil {
+<a id="L551"></a><span class="ln">   551</span>			return opPtr, ut.indir
+<a id="L552"></a><span class="ln">   552</span>		}
+<a id="L553"></a><span class="ln">   553</span>		typ := ut.base
+<a id="L554"></a><span class="ln">   554</span>		indir := ut.indir
+<a id="L555"></a><span class="ln">   555</span>		k := typ.Kind()
+<a id="L556"></a><span class="ln">   556</span>		var op encOp
+<a id="L557"></a><span class="ln">   557</span>		if int(k) &lt; len(encOpTable) {
+<a id="L558"></a><span class="ln">   558</span>			op = encOpTable[k]
+<a id="L559"></a><span class="ln">   559</span>		}
+<a id="L560"></a><span class="ln">   560</span>		if op == nil {
+<a id="L561"></a><span class="ln">   561</span>			inProgress[rt] = &amp;op
+<a id="L562"></a><span class="ln">   562</span>			<span class="comment">// Special cases</span>
+<a id="L563"></a><span class="ln">   563</span>			switch t := typ; t.Kind() {
+<a id="L564"></a><span class="ln">   564</span>			case reflect.Slice:
+<a id="L565"></a><span class="ln">   565</span>				if t.Elem().Kind() == reflect.Uint8 {
+<a id="L566"></a><span class="ln">   566</span>					op = encUint8Array
+<a id="L567"></a><span class="ln">   567</span>					break
+<a id="L568"></a><span class="ln">   568</span>				}
+<a id="L569"></a><span class="ln">   569</span>				<span class="comment">// Slices have a header; we decode it to find the underlying array.</span>
+<a id="L570"></a><span class="ln">   570</span>				elemOp, indir := enc.encOpFor(t.Elem(), inProgress)
+<a id="L571"></a><span class="ln">   571</span>				op = func(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L572"></a><span class="ln">   572</span>					slice := (*reflect.SliceHeader)(p)
+<a id="L573"></a><span class="ln">   573</span>					if !state.sendZero &amp;&amp; slice.Len == 0 {
+<a id="L574"></a><span class="ln">   574</span>						return
+<a id="L575"></a><span class="ln">   575</span>					}
+<a id="L576"></a><span class="ln">   576</span>					state.update(i)
+<a id="L577"></a><span class="ln">   577</span>					state.enc.encodeArray(state.b, slice.Data, *elemOp, t.Elem().Size(), indir, int(slice.Len))
+<a id="L578"></a><span class="ln">   578</span>				}
+<a id="L579"></a><span class="ln">   579</span>			case reflect.Array:
+<a id="L580"></a><span class="ln">   580</span>				<span class="comment">// True arrays have size in the type.</span>
+<a id="L581"></a><span class="ln">   581</span>				elemOp, indir := enc.encOpFor(t.Elem(), inProgress)
+<a id="L582"></a><span class="ln">   582</span>				op = func(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L583"></a><span class="ln">   583</span>					state.update(i)
+<a id="L584"></a><span class="ln">   584</span>					state.enc.encodeArray(state.b, uintptr(p), *elemOp, t.Elem().Size(), indir, t.Len())
+<a id="L585"></a><span class="ln">   585</span>				}
+<a id="L586"></a><span class="ln">   586</span>			case reflect.Map:
+<a id="L587"></a><span class="ln">   587</span>				keyOp, keyIndir := enc.encOpFor(t.Key(), inProgress)
+<a id="L588"></a><span class="ln">   588</span>				elemOp, elemIndir := enc.encOpFor(t.Elem(), inProgress)
+<a id="L589"></a><span class="ln">   589</span>				op = func(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L590"></a><span class="ln">   590</span>					<span class="comment">// Maps cannot be accessed by moving addresses around the way</span>
+<a id="L591"></a><span class="ln">   591</span>					<span class="comment">// that slices etc. can.  We must recover a full reflection value for</span>
+<a id="L592"></a><span class="ln">   592</span>					<span class="comment">// the iteration.</span>
+<a id="L593"></a><span class="ln">   593</span>					v := reflect.NewAt(t, unsafe.Pointer(p)).Elem()
+<a id="L594"></a><span class="ln">   594</span>					mv := reflect.Indirect(v)
+<a id="L595"></a><span class="ln">   595</span>					<span class="comment">// We send zero-length (but non-nil) maps because the</span>
+<a id="L596"></a><span class="ln">   596</span>					<span class="comment">// receiver might want to use the map.  (Maps don&#39;t use append.)</span>
+<a id="L597"></a><span class="ln">   597</span>					if !state.sendZero &amp;&amp; mv.IsNil() {
+<a id="L598"></a><span class="ln">   598</span>						return
+<a id="L599"></a><span class="ln">   599</span>					}
+<a id="L600"></a><span class="ln">   600</span>					state.update(i)
+<a id="L601"></a><span class="ln">   601</span>					state.enc.encodeMap(state.b, mv, *keyOp, *elemOp, keyIndir, elemIndir)
+<a id="L602"></a><span class="ln">   602</span>				}
+<a id="L603"></a><span class="ln">   603</span>			case reflect.Struct:
+<a id="L604"></a><span class="ln">   604</span>				<span class="comment">// Generate a closure that calls out to the engine for the nested type.</span>
+<a id="L605"></a><span class="ln">   605</span>				enc.getEncEngine(userType(typ))
+<a id="L606"></a><span class="ln">   606</span>				info := mustGetTypeInfo(typ)
+<a id="L607"></a><span class="ln">   607</span>				op = func(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L608"></a><span class="ln">   608</span>					state.update(i)
+<a id="L609"></a><span class="ln">   609</span>					<span class="comment">// indirect through info to delay evaluation for recursive structs</span>
+<a id="L610"></a><span class="ln">   610</span>					state.enc.encodeStruct(state.b, info.encoder, uintptr(p))
+<a id="L611"></a><span class="ln">   611</span>				}
+<a id="L612"></a><span class="ln">   612</span>			case reflect.Interface:
+<a id="L613"></a><span class="ln">   613</span>				op = func(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L614"></a><span class="ln">   614</span>					<span class="comment">// Interfaces transmit the name and contents of the concrete</span>
+<a id="L615"></a><span class="ln">   615</span>					<span class="comment">// value they contain.</span>
+<a id="L616"></a><span class="ln">   616</span>					v := reflect.NewAt(t, unsafe.Pointer(p)).Elem()
+<a id="L617"></a><span class="ln">   617</span>					iv := reflect.Indirect(v)
+<a id="L618"></a><span class="ln">   618</span>					if !state.sendZero &amp;&amp; (!iv.IsValid() || iv.IsNil()) {
+<a id="L619"></a><span class="ln">   619</span>						return
+<a id="L620"></a><span class="ln">   620</span>					}
+<a id="L621"></a><span class="ln">   621</span>					state.update(i)
+<a id="L622"></a><span class="ln">   622</span>					state.enc.encodeInterface(state.b, iv)
+<a id="L623"></a><span class="ln">   623</span>				}
+<a id="L624"></a><span class="ln">   624</span>			}
+<a id="L625"></a><span class="ln">   625</span>		}
+<a id="L626"></a><span class="ln">   626</span>		if op == nil {
+<a id="L627"></a><span class="ln">   627</span>			errorf(&#34;can&#39;t happen: encode type %s&#34;, rt)
+<a id="L628"></a><span class="ln">   628</span>		}
+<a id="L629"></a><span class="ln">   629</span>		return &amp;op, indir
+<a id="L630"></a><span class="ln">   630</span>	}
+<a id="L631"></a><span class="ln">   631</span>	
+<a id="L632"></a><span class="ln">   632</span>	<span class="comment">// gobEncodeOpFor returns the op for a type that is known to implement</span>
+<a id="L633"></a><span class="ln">   633</span>	<span class="comment">// GobEncoder.</span>
+<a id="L634"></a><span class="ln">   634</span>	func (enc *Encoder) gobEncodeOpFor(ut *userTypeInfo) (*encOp, int) {
+<a id="L635"></a><span class="ln">   635</span>		rt := ut.user
+<a id="L636"></a><span class="ln">   636</span>		if ut.encIndir == -1 {
+<a id="L637"></a><span class="ln">   637</span>			rt = reflect.PtrTo(rt)
+<a id="L638"></a><span class="ln">   638</span>		} else if ut.encIndir &gt; 0 {
+<a id="L639"></a><span class="ln">   639</span>			for i := int8(0); i &lt; ut.encIndir; i++ {
+<a id="L640"></a><span class="ln">   640</span>				rt = rt.Elem()
+<a id="L641"></a><span class="ln">   641</span>			}
+<a id="L642"></a><span class="ln">   642</span>		}
+<a id="L643"></a><span class="ln">   643</span>		var op encOp
+<a id="L644"></a><span class="ln">   644</span>		op = func(i *encInstr, state *encoderState, p unsafe.Pointer) {
+<a id="L645"></a><span class="ln">   645</span>			var v reflect.Value
+<a id="L646"></a><span class="ln">   646</span>			if ut.encIndir == -1 {
+<a id="L647"></a><span class="ln">   647</span>				<span class="comment">// Need to climb up one level to turn value into pointer.</span>
+<a id="L648"></a><span class="ln">   648</span>				v = reflect.NewAt(rt, unsafe.Pointer(&amp;p)).Elem()
+<a id="L649"></a><span class="ln">   649</span>			} else {
+<a id="L650"></a><span class="ln">   650</span>				v = reflect.NewAt(rt, p).Elem()
+<a id="L651"></a><span class="ln">   651</span>			}
+<a id="L652"></a><span class="ln">   652</span>			if !state.sendZero &amp;&amp; isZero(v) {
+<a id="L653"></a><span class="ln">   653</span>				return
+<a id="L654"></a><span class="ln">   654</span>			}
+<a id="L655"></a><span class="ln">   655</span>			state.update(i)
+<a id="L656"></a><span class="ln">   656</span>			state.enc.encodeGobEncoder(state.b, v)
+<a id="L657"></a><span class="ln">   657</span>		}
+<a id="L658"></a><span class="ln">   658</span>		return &amp;op, int(ut.encIndir) <span class="comment">// encIndir: op will get called with p == address of receiver.</span>
+<a id="L659"></a><span class="ln">   659</span>	}
+<a id="L660"></a><span class="ln">   660</span>	
+<a id="L661"></a><span class="ln">   661</span>	<span class="comment">// compileEnc returns the engine to compile the type.</span>
+<a id="L662"></a><span class="ln">   662</span>	func (enc *Encoder) compileEnc(ut *userTypeInfo) *encEngine {
+<a id="L663"></a><span class="ln">   663</span>		srt := ut.base
+<a id="L664"></a><span class="ln">   664</span>		engine := new(encEngine)
+<a id="L665"></a><span class="ln">   665</span>		seen := make(map[reflect.Type]*encOp)
+<a id="L666"></a><span class="ln">   666</span>		rt := ut.base
+<a id="L667"></a><span class="ln">   667</span>		if ut.isGobEncoder {
+<a id="L668"></a><span class="ln">   668</span>			rt = ut.user
+<a id="L669"></a><span class="ln">   669</span>		}
+<a id="L670"></a><span class="ln">   670</span>		if !ut.isGobEncoder &amp;&amp;
+<a id="L671"></a><span class="ln">   671</span>			srt.Kind() == reflect.Struct {
+<a id="L672"></a><span class="ln">   672</span>			for fieldNum, wireFieldNum := 0, 0; fieldNum &lt; srt.NumField(); fieldNum++ {
+<a id="L673"></a><span class="ln">   673</span>				f := srt.Field(fieldNum)
+<a id="L674"></a><span class="ln">   674</span>				if !isExported(f.Name) {
+<a id="L675"></a><span class="ln">   675</span>					continue
+<a id="L676"></a><span class="ln">   676</span>				}
+<a id="L677"></a><span class="ln">   677</span>				op, indir := enc.encOpFor(f.Type, seen)
+<a id="L678"></a><span class="ln">   678</span>				engine.instr = append(engine.instr, encInstr{*op, wireFieldNum, indir, uintptr(f.Offset)})
+<a id="L679"></a><span class="ln">   679</span>				wireFieldNum++
+<a id="L680"></a><span class="ln">   680</span>			}
+<a id="L681"></a><span class="ln">   681</span>			if srt.NumField() &gt; 0 &amp;&amp; len(engine.instr) == 0 {
+<a id="L682"></a><span class="ln">   682</span>				errorf(&#34;type %s has no exported fields&#34;, rt)
+<a id="L683"></a><span class="ln">   683</span>			}
+<a id="L684"></a><span class="ln">   684</span>			engine.instr = append(engine.instr, encInstr{encStructTerminator, 0, 0, 0})
+<a id="L685"></a><span class="ln">   685</span>		} else {
+<a id="L686"></a><span class="ln">   686</span>			engine.instr = make([]encInstr, 1)
+<a id="L687"></a><span class="ln">   687</span>			op, indir := enc.encOpFor(rt, seen)
+<a id="L688"></a><span class="ln">   688</span>			engine.instr[0] = encInstr{*op, singletonField, indir, 0} <span class="comment">// offset is zero</span>
+<a id="L689"></a><span class="ln">   689</span>		}
+<a id="L690"></a><span class="ln">   690</span>		return engine
+<a id="L691"></a><span class="ln">   691</span>	}
+<a id="L692"></a><span class="ln">   692</span>	
+<a id="L693"></a><span class="ln">   693</span>	<span class="comment">// getEncEngine returns the engine to compile the type.</span>
+<a id="L694"></a><span class="ln">   694</span>	<span class="comment">// typeLock must be held (or we&#39;re in initialization and guaranteed single-threaded).</span>
+<a id="L695"></a><span class="ln">   695</span>	func (enc *Encoder) getEncEngine(ut *userTypeInfo) *encEngine {
+<a id="L696"></a><span class="ln">   696</span>		info, err1 := getTypeInfo(ut)
+<a id="L697"></a><span class="ln">   697</span>		if err1 != nil {
+<a id="L698"></a><span class="ln">   698</span>			error_(err1)
+<a id="L699"></a><span class="ln">   699</span>		}
+<a id="L700"></a><span class="ln">   700</span>		if info.encoder == nil {
+<a id="L701"></a><span class="ln">   701</span>			<span class="comment">// mark this engine as underway before compiling to handle recursive types.</span>
+<a id="L702"></a><span class="ln">   702</span>			info.encoder = new(encEngine)
+<a id="L703"></a><span class="ln">   703</span>			info.encoder = enc.compileEnc(ut)
+<a id="L704"></a><span class="ln">   704</span>		}
+<a id="L705"></a><span class="ln">   705</span>		return info.encoder
+<a id="L706"></a><span class="ln">   706</span>	}
+<a id="L707"></a><span class="ln">   707</span>	
+<a id="L708"></a><span class="ln">   708</span>	<span class="comment">// lockAndGetEncEngine is a function that locks and compiles.</span>
+<a id="L709"></a><span class="ln">   709</span>	<span class="comment">// This lets us hold the lock only while compiling, not when encoding.</span>
+<a id="L710"></a><span class="ln">   710</span>	func (enc *Encoder) lockAndGetEncEngine(ut *userTypeInfo) *encEngine {
+<a id="L711"></a><span class="ln">   711</span>		typeLock.Lock()
+<a id="L712"></a><span class="ln">   712</span>		defer typeLock.Unlock()
+<a id="L713"></a><span class="ln">   713</span>		return enc.getEncEngine(ut)
+<a id="L714"></a><span class="ln">   714</span>	}
+<a id="L715"></a><span class="ln">   715</span>	
+<a id="L716"></a><span class="ln">   716</span>	func (enc *Encoder) encode(b *bytes.Buffer, value reflect.Value, ut *userTypeInfo) {
+<a id="L717"></a><span class="ln">   717</span>		defer catchError(&amp;enc.err)
+<a id="L718"></a><span class="ln">   718</span>		engine := enc.lockAndGetEncEngine(ut)
+<a id="L719"></a><span class="ln">   719</span>		indir := ut.indir
+<a id="L720"></a><span class="ln">   720</span>		if ut.isGobEncoder {
+<a id="L721"></a><span class="ln">   721</span>			indir = int(ut.encIndir)
+<a id="L722"></a><span class="ln">   722</span>		}
+<a id="L723"></a><span class="ln">   723</span>		for i := 0; i &lt; indir; i++ {
+<a id="L724"></a><span class="ln">   724</span>			value = reflect.Indirect(value)
+<a id="L725"></a><span class="ln">   725</span>		}
+<a id="L726"></a><span class="ln">   726</span>		if !ut.isGobEncoder &amp;&amp; value.Type().Kind() == reflect.Struct {
+<a id="L727"></a><span class="ln">   727</span>			enc.encodeStruct(b, engine, unsafeAddr(value))
+<a id="L728"></a><span class="ln">   728</span>		} else {
+<a id="L729"></a><span class="ln">   729</span>			enc.encodeSingle(b, engine, unsafeAddr(value))
+<a id="L730"></a><span class="ln">   730</span>		}
+<a id="L731"></a><span class="ln">   731</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

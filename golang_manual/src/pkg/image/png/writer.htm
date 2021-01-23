@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/image/png/writer.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/image/png/writer.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package png
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;bufio&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;compress/zlib&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;hash/crc32&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;image&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;image/color&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;io&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;strconv&#34;
+<a id="L15"></a><span class="ln">    15</span>	)
+<a id="L16"></a><span class="ln">    16</span>	
+<a id="L17"></a><span class="ln">    17</span>	type encoder struct {
+<a id="L18"></a><span class="ln">    18</span>		w      io.Writer
+<a id="L19"></a><span class="ln">    19</span>		m      image.Image
+<a id="L20"></a><span class="ln">    20</span>		cb     int
+<a id="L21"></a><span class="ln">    21</span>		err    error
+<a id="L22"></a><span class="ln">    22</span>		header [8]byte
+<a id="L23"></a><span class="ln">    23</span>		footer [4]byte
+<a id="L24"></a><span class="ln">    24</span>		tmp    [3 * 256]byte
+<a id="L25"></a><span class="ln">    25</span>	}
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Big-endian.</span>
+<a id="L28"></a><span class="ln">    28</span>	func writeUint32(b []uint8, u uint32) {
+<a id="L29"></a><span class="ln">    29</span>		b[0] = uint8(u &gt;&gt; 24)
+<a id="L30"></a><span class="ln">    30</span>		b[1] = uint8(u &gt;&gt; 16)
+<a id="L31"></a><span class="ln">    31</span>		b[2] = uint8(u &gt;&gt; 8)
+<a id="L32"></a><span class="ln">    32</span>		b[3] = uint8(u &gt;&gt; 0)
+<a id="L33"></a><span class="ln">    33</span>	}
+<a id="L34"></a><span class="ln">    34</span>	
+<a id="L35"></a><span class="ln">    35</span>	type opaquer interface {
+<a id="L36"></a><span class="ln">    36</span>		Opaque() bool
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Returns whether or not the image is fully opaque.</span>
+<a id="L40"></a><span class="ln">    40</span>	func opaque(m image.Image) bool {
+<a id="L41"></a><span class="ln">    41</span>		if o, ok := m.(opaquer); ok {
+<a id="L42"></a><span class="ln">    42</span>			return o.Opaque()
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>		b := m.Bounds()
+<a id="L45"></a><span class="ln">    45</span>		for y := b.Min.Y; y &lt; b.Max.Y; y++ {
+<a id="L46"></a><span class="ln">    46</span>			for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L47"></a><span class="ln">    47</span>				_, _, _, a := m.At(x, y).RGBA()
+<a id="L48"></a><span class="ln">    48</span>				if a != 0xffff {
+<a id="L49"></a><span class="ln">    49</span>					return false
+<a id="L50"></a><span class="ln">    50</span>				}
+<a id="L51"></a><span class="ln">    51</span>			}
+<a id="L52"></a><span class="ln">    52</span>		}
+<a id="L53"></a><span class="ln">    53</span>		return true
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// The absolute value of a byte interpreted as a signed int8.</span>
+<a id="L57"></a><span class="ln">    57</span>	func abs8(d uint8) int {
+<a id="L58"></a><span class="ln">    58</span>		if d &lt; 128 {
+<a id="L59"></a><span class="ln">    59</span>			return int(d)
+<a id="L60"></a><span class="ln">    60</span>		}
+<a id="L61"></a><span class="ln">    61</span>		return 256 - int(d)
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	func (e *encoder) writeChunk(b []byte, name string) {
+<a id="L65"></a><span class="ln">    65</span>		if e.err != nil {
+<a id="L66"></a><span class="ln">    66</span>			return
+<a id="L67"></a><span class="ln">    67</span>		}
+<a id="L68"></a><span class="ln">    68</span>		n := uint32(len(b))
+<a id="L69"></a><span class="ln">    69</span>		if int(n) != len(b) {
+<a id="L70"></a><span class="ln">    70</span>			e.err = UnsupportedError(name + &#34; chunk is too large: &#34; + strconv.Itoa(len(b)))
+<a id="L71"></a><span class="ln">    71</span>			return
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		writeUint32(e.header[0:4], n)
+<a id="L74"></a><span class="ln">    74</span>		e.header[4] = name[0]
+<a id="L75"></a><span class="ln">    75</span>		e.header[5] = name[1]
+<a id="L76"></a><span class="ln">    76</span>		e.header[6] = name[2]
+<a id="L77"></a><span class="ln">    77</span>		e.header[7] = name[3]
+<a id="L78"></a><span class="ln">    78</span>		crc := crc32.NewIEEE()
+<a id="L79"></a><span class="ln">    79</span>		crc.Write(e.header[4:8])
+<a id="L80"></a><span class="ln">    80</span>		crc.Write(b)
+<a id="L81"></a><span class="ln">    81</span>		writeUint32(e.footer[0:4], crc.Sum32())
+<a id="L82"></a><span class="ln">    82</span>	
+<a id="L83"></a><span class="ln">    83</span>		_, e.err = e.w.Write(e.header[0:8])
+<a id="L84"></a><span class="ln">    84</span>		if e.err != nil {
+<a id="L85"></a><span class="ln">    85</span>			return
+<a id="L86"></a><span class="ln">    86</span>		}
+<a id="L87"></a><span class="ln">    87</span>		_, e.err = e.w.Write(b)
+<a id="L88"></a><span class="ln">    88</span>		if e.err != nil {
+<a id="L89"></a><span class="ln">    89</span>			return
+<a id="L90"></a><span class="ln">    90</span>		}
+<a id="L91"></a><span class="ln">    91</span>		_, e.err = e.w.Write(e.footer[0:4])
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	func (e *encoder) writeIHDR() {
+<a id="L95"></a><span class="ln">    95</span>		b := e.m.Bounds()
+<a id="L96"></a><span class="ln">    96</span>		writeUint32(e.tmp[0:4], uint32(b.Dx()))
+<a id="L97"></a><span class="ln">    97</span>		writeUint32(e.tmp[4:8], uint32(b.Dy()))
+<a id="L98"></a><span class="ln">    98</span>		<span class="comment">// Set bit depth and color type.</span>
+<a id="L99"></a><span class="ln">    99</span>		switch e.cb {
+<a id="L100"></a><span class="ln">   100</span>		case cbG8:
+<a id="L101"></a><span class="ln">   101</span>			e.tmp[8] = 8
+<a id="L102"></a><span class="ln">   102</span>			e.tmp[9] = ctGrayscale
+<a id="L103"></a><span class="ln">   103</span>		case cbTC8:
+<a id="L104"></a><span class="ln">   104</span>			e.tmp[8] = 8
+<a id="L105"></a><span class="ln">   105</span>			e.tmp[9] = ctTrueColor
+<a id="L106"></a><span class="ln">   106</span>		case cbP8:
+<a id="L107"></a><span class="ln">   107</span>			e.tmp[8] = 8
+<a id="L108"></a><span class="ln">   108</span>			e.tmp[9] = ctPaletted
+<a id="L109"></a><span class="ln">   109</span>		case cbTCA8:
+<a id="L110"></a><span class="ln">   110</span>			e.tmp[8] = 8
+<a id="L111"></a><span class="ln">   111</span>			e.tmp[9] = ctTrueColorAlpha
+<a id="L112"></a><span class="ln">   112</span>		case cbG16:
+<a id="L113"></a><span class="ln">   113</span>			e.tmp[8] = 16
+<a id="L114"></a><span class="ln">   114</span>			e.tmp[9] = ctGrayscale
+<a id="L115"></a><span class="ln">   115</span>		case cbTC16:
+<a id="L116"></a><span class="ln">   116</span>			e.tmp[8] = 16
+<a id="L117"></a><span class="ln">   117</span>			e.tmp[9] = ctTrueColor
+<a id="L118"></a><span class="ln">   118</span>		case cbTCA16:
+<a id="L119"></a><span class="ln">   119</span>			e.tmp[8] = 16
+<a id="L120"></a><span class="ln">   120</span>			e.tmp[9] = ctTrueColorAlpha
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>		e.tmp[10] = 0 <span class="comment">// default compression method</span>
+<a id="L123"></a><span class="ln">   123</span>		e.tmp[11] = 0 <span class="comment">// default filter method</span>
+<a id="L124"></a><span class="ln">   124</span>		e.tmp[12] = 0 <span class="comment">// non-interlaced</span>
+<a id="L125"></a><span class="ln">   125</span>		e.writeChunk(e.tmp[0:13], &#34;IHDR&#34;)
+<a id="L126"></a><span class="ln">   126</span>	}
+<a id="L127"></a><span class="ln">   127</span>	
+<a id="L128"></a><span class="ln">   128</span>	func (e *encoder) writePLTE(p color.Palette) {
+<a id="L129"></a><span class="ln">   129</span>		if len(p) &lt; 1 || len(p) &gt; 256 {
+<a id="L130"></a><span class="ln">   130</span>			e.err = FormatError(&#34;bad palette length: &#34; + strconv.Itoa(len(p)))
+<a id="L131"></a><span class="ln">   131</span>			return
+<a id="L132"></a><span class="ln">   132</span>		}
+<a id="L133"></a><span class="ln">   133</span>		for i, c := range p {
+<a id="L134"></a><span class="ln">   134</span>			r, g, b, _ := c.RGBA()
+<a id="L135"></a><span class="ln">   135</span>			e.tmp[3*i+0] = uint8(r &gt;&gt; 8)
+<a id="L136"></a><span class="ln">   136</span>			e.tmp[3*i+1] = uint8(g &gt;&gt; 8)
+<a id="L137"></a><span class="ln">   137</span>			e.tmp[3*i+2] = uint8(b &gt;&gt; 8)
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>		e.writeChunk(e.tmp[0:3*len(p)], &#34;PLTE&#34;)
+<a id="L140"></a><span class="ln">   140</span>	}
+<a id="L141"></a><span class="ln">   141</span>	
+<a id="L142"></a><span class="ln">   142</span>	func (e *encoder) maybeWritetRNS(p color.Palette) {
+<a id="L143"></a><span class="ln">   143</span>		last := -1
+<a id="L144"></a><span class="ln">   144</span>		for i, c := range p {
+<a id="L145"></a><span class="ln">   145</span>			_, _, _, a := c.RGBA()
+<a id="L146"></a><span class="ln">   146</span>			if a != 0xffff {
+<a id="L147"></a><span class="ln">   147</span>				last = i
+<a id="L148"></a><span class="ln">   148</span>			}
+<a id="L149"></a><span class="ln">   149</span>			e.tmp[i] = uint8(a &gt;&gt; 8)
+<a id="L150"></a><span class="ln">   150</span>		}
+<a id="L151"></a><span class="ln">   151</span>		if last == -1 {
+<a id="L152"></a><span class="ln">   152</span>			return
+<a id="L153"></a><span class="ln">   153</span>		}
+<a id="L154"></a><span class="ln">   154</span>		e.writeChunk(e.tmp[:last+1], &#34;tRNS&#34;)
+<a id="L155"></a><span class="ln">   155</span>	}
+<a id="L156"></a><span class="ln">   156</span>	
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// An encoder is an io.Writer that satisfies writes by writing PNG IDAT chunks,</span>
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// including an 8-byte header and 4-byte CRC checksum per Write call. Such calls</span>
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">// should be relatively infrequent, since writeIDATs uses a bufio.Writer.</span>
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">//</span>
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// This method should only be called from writeIDATs (via writeImage).</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// No other code should treat an encoder as an io.Writer.</span>
+<a id="L163"></a><span class="ln">   163</span>	func (e *encoder) Write(b []byte) (int, error) {
+<a id="L164"></a><span class="ln">   164</span>		e.writeChunk(b, &#34;IDAT&#34;)
+<a id="L165"></a><span class="ln">   165</span>		if e.err != nil {
+<a id="L166"></a><span class="ln">   166</span>			return 0, e.err
+<a id="L167"></a><span class="ln">   167</span>		}
+<a id="L168"></a><span class="ln">   168</span>		return len(b), nil
+<a id="L169"></a><span class="ln">   169</span>	}
+<a id="L170"></a><span class="ln">   170</span>	
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">// Chooses the filter to use for encoding the current row, and applies it.</span>
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// The return value is the index of the filter and also of the row in cr that has had it applied.</span>
+<a id="L173"></a><span class="ln">   173</span>	func filter(cr *[nFilter][]byte, pr []byte, bpp int) int {
+<a id="L174"></a><span class="ln">   174</span>		<span class="comment">// We try all five filter types, and pick the one that minimizes the sum of absolute differences.</span>
+<a id="L175"></a><span class="ln">   175</span>		<span class="comment">// This is the same heuristic that libpng uses, although the filters are attempted in order of</span>
+<a id="L176"></a><span class="ln">   176</span>		<span class="comment">// estimated most likely to be minimal (ftUp, ftPaeth, ftNone, ftSub, ftAverage), rather than</span>
+<a id="L177"></a><span class="ln">   177</span>		<span class="comment">// in their enumeration order (ftNone, ftSub, ftUp, ftAverage, ftPaeth).</span>
+<a id="L178"></a><span class="ln">   178</span>		cdat0 := cr[0][1:]
+<a id="L179"></a><span class="ln">   179</span>		cdat1 := cr[1][1:]
+<a id="L180"></a><span class="ln">   180</span>		cdat2 := cr[2][1:]
+<a id="L181"></a><span class="ln">   181</span>		cdat3 := cr[3][1:]
+<a id="L182"></a><span class="ln">   182</span>		cdat4 := cr[4][1:]
+<a id="L183"></a><span class="ln">   183</span>		pdat := pr[1:]
+<a id="L184"></a><span class="ln">   184</span>		n := len(cdat0)
+<a id="L185"></a><span class="ln">   185</span>	
+<a id="L186"></a><span class="ln">   186</span>		<span class="comment">// The up filter.</span>
+<a id="L187"></a><span class="ln">   187</span>		sum := 0
+<a id="L188"></a><span class="ln">   188</span>		for i := 0; i &lt; n; i++ {
+<a id="L189"></a><span class="ln">   189</span>			cdat2[i] = cdat0[i] - pdat[i]
+<a id="L190"></a><span class="ln">   190</span>			sum += abs8(cdat2[i])
+<a id="L191"></a><span class="ln">   191</span>		}
+<a id="L192"></a><span class="ln">   192</span>		best := sum
+<a id="L193"></a><span class="ln">   193</span>		filter := ftUp
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>		<span class="comment">// The Paeth filter.</span>
+<a id="L196"></a><span class="ln">   196</span>		sum = 0
+<a id="L197"></a><span class="ln">   197</span>		for i := 0; i &lt; bpp; i++ {
+<a id="L198"></a><span class="ln">   198</span>			cdat4[i] = cdat0[i] - paeth(0, pdat[i], 0)
+<a id="L199"></a><span class="ln">   199</span>			sum += abs8(cdat4[i])
+<a id="L200"></a><span class="ln">   200</span>		}
+<a id="L201"></a><span class="ln">   201</span>		for i := bpp; i &lt; n; i++ {
+<a id="L202"></a><span class="ln">   202</span>			cdat4[i] = cdat0[i] - paeth(cdat0[i-bpp], pdat[i], pdat[i-bpp])
+<a id="L203"></a><span class="ln">   203</span>			sum += abs8(cdat4[i])
+<a id="L204"></a><span class="ln">   204</span>			if sum &gt;= best {
+<a id="L205"></a><span class="ln">   205</span>				break
+<a id="L206"></a><span class="ln">   206</span>			}
+<a id="L207"></a><span class="ln">   207</span>		}
+<a id="L208"></a><span class="ln">   208</span>		if sum &lt; best {
+<a id="L209"></a><span class="ln">   209</span>			best = sum
+<a id="L210"></a><span class="ln">   210</span>			filter = ftPaeth
+<a id="L211"></a><span class="ln">   211</span>		}
+<a id="L212"></a><span class="ln">   212</span>	
+<a id="L213"></a><span class="ln">   213</span>		<span class="comment">// The none filter.</span>
+<a id="L214"></a><span class="ln">   214</span>		sum = 0
+<a id="L215"></a><span class="ln">   215</span>		for i := 0; i &lt; n; i++ {
+<a id="L216"></a><span class="ln">   216</span>			sum += abs8(cdat0[i])
+<a id="L217"></a><span class="ln">   217</span>			if sum &gt;= best {
+<a id="L218"></a><span class="ln">   218</span>				break
+<a id="L219"></a><span class="ln">   219</span>			}
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>		if sum &lt; best {
+<a id="L222"></a><span class="ln">   222</span>			best = sum
+<a id="L223"></a><span class="ln">   223</span>			filter = ftNone
+<a id="L224"></a><span class="ln">   224</span>		}
+<a id="L225"></a><span class="ln">   225</span>	
+<a id="L226"></a><span class="ln">   226</span>		<span class="comment">// The sub filter.</span>
+<a id="L227"></a><span class="ln">   227</span>		sum = 0
+<a id="L228"></a><span class="ln">   228</span>		for i := 0; i &lt; bpp; i++ {
+<a id="L229"></a><span class="ln">   229</span>			cdat1[i] = cdat0[i]
+<a id="L230"></a><span class="ln">   230</span>			sum += abs8(cdat1[i])
+<a id="L231"></a><span class="ln">   231</span>		}
+<a id="L232"></a><span class="ln">   232</span>		for i := bpp; i &lt; n; i++ {
+<a id="L233"></a><span class="ln">   233</span>			cdat1[i] = cdat0[i] - cdat0[i-bpp]
+<a id="L234"></a><span class="ln">   234</span>			sum += abs8(cdat1[i])
+<a id="L235"></a><span class="ln">   235</span>			if sum &gt;= best {
+<a id="L236"></a><span class="ln">   236</span>				break
+<a id="L237"></a><span class="ln">   237</span>			}
+<a id="L238"></a><span class="ln">   238</span>		}
+<a id="L239"></a><span class="ln">   239</span>		if sum &lt; best {
+<a id="L240"></a><span class="ln">   240</span>			best = sum
+<a id="L241"></a><span class="ln">   241</span>			filter = ftSub
+<a id="L242"></a><span class="ln">   242</span>		}
+<a id="L243"></a><span class="ln">   243</span>	
+<a id="L244"></a><span class="ln">   244</span>		<span class="comment">// The average filter.</span>
+<a id="L245"></a><span class="ln">   245</span>		sum = 0
+<a id="L246"></a><span class="ln">   246</span>		for i := 0; i &lt; bpp; i++ {
+<a id="L247"></a><span class="ln">   247</span>			cdat3[i] = cdat0[i] - pdat[i]/2
+<a id="L248"></a><span class="ln">   248</span>			sum += abs8(cdat3[i])
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		for i := bpp; i &lt; n; i++ {
+<a id="L251"></a><span class="ln">   251</span>			cdat3[i] = cdat0[i] - uint8((int(cdat0[i-bpp])+int(pdat[i]))/2)
+<a id="L252"></a><span class="ln">   252</span>			sum += abs8(cdat3[i])
+<a id="L253"></a><span class="ln">   253</span>			if sum &gt;= best {
+<a id="L254"></a><span class="ln">   254</span>				break
+<a id="L255"></a><span class="ln">   255</span>			}
+<a id="L256"></a><span class="ln">   256</span>		}
+<a id="L257"></a><span class="ln">   257</span>		if sum &lt; best {
+<a id="L258"></a><span class="ln">   258</span>			best = sum
+<a id="L259"></a><span class="ln">   259</span>			filter = ftAverage
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>	
+<a id="L262"></a><span class="ln">   262</span>		return filter
+<a id="L263"></a><span class="ln">   263</span>	}
+<a id="L264"></a><span class="ln">   264</span>	
+<a id="L265"></a><span class="ln">   265</span>	func writeImage(w io.Writer, m image.Image, cb int) error {
+<a id="L266"></a><span class="ln">   266</span>		zw := zlib.NewWriter(w)
+<a id="L267"></a><span class="ln">   267</span>		defer zw.Close()
+<a id="L268"></a><span class="ln">   268</span>	
+<a id="L269"></a><span class="ln">   269</span>		bpp := 0 <span class="comment">// Bytes per pixel.</span>
+<a id="L270"></a><span class="ln">   270</span>	
+<a id="L271"></a><span class="ln">   271</span>		switch cb {
+<a id="L272"></a><span class="ln">   272</span>		case cbG8:
+<a id="L273"></a><span class="ln">   273</span>			bpp = 1
+<a id="L274"></a><span class="ln">   274</span>		case cbTC8:
+<a id="L275"></a><span class="ln">   275</span>			bpp = 3
+<a id="L276"></a><span class="ln">   276</span>		case cbP8:
+<a id="L277"></a><span class="ln">   277</span>			bpp = 1
+<a id="L278"></a><span class="ln">   278</span>		case cbTCA8:
+<a id="L279"></a><span class="ln">   279</span>			bpp = 4
+<a id="L280"></a><span class="ln">   280</span>		case cbTC16:
+<a id="L281"></a><span class="ln">   281</span>			bpp = 6
+<a id="L282"></a><span class="ln">   282</span>		case cbTCA16:
+<a id="L283"></a><span class="ln">   283</span>			bpp = 8
+<a id="L284"></a><span class="ln">   284</span>		case cbG16:
+<a id="L285"></a><span class="ln">   285</span>			bpp = 2
+<a id="L286"></a><span class="ln">   286</span>		}
+<a id="L287"></a><span class="ln">   287</span>		<span class="comment">// cr[*] and pr are the bytes for the current and previous row.</span>
+<a id="L288"></a><span class="ln">   288</span>		<span class="comment">// cr[0] is unfiltered (or equivalently, filtered with the ftNone filter).</span>
+<a id="L289"></a><span class="ln">   289</span>		<span class="comment">// cr[ft], for non-zero filter types ft, are buffers for transforming cr[0] under the</span>
+<a id="L290"></a><span class="ln">   290</span>		<span class="comment">// other PNG filter types. These buffers are allocated once and re-used for each row.</span>
+<a id="L291"></a><span class="ln">   291</span>		<span class="comment">// The +1 is for the per-row filter type, which is at cr[*][0].</span>
+<a id="L292"></a><span class="ln">   292</span>		b := m.Bounds()
+<a id="L293"></a><span class="ln">   293</span>		var cr [nFilter][]uint8
+<a id="L294"></a><span class="ln">   294</span>		for i := range cr {
+<a id="L295"></a><span class="ln">   295</span>			cr[i] = make([]uint8, 1+bpp*b.Dx())
+<a id="L296"></a><span class="ln">   296</span>			cr[i][0] = uint8(i)
+<a id="L297"></a><span class="ln">   297</span>		}
+<a id="L298"></a><span class="ln">   298</span>		pr := make([]uint8, 1+bpp*b.Dx())
+<a id="L299"></a><span class="ln">   299</span>	
+<a id="L300"></a><span class="ln">   300</span>		for y := b.Min.Y; y &lt; b.Max.Y; y++ {
+<a id="L301"></a><span class="ln">   301</span>			<span class="comment">// Convert from colors to bytes.</span>
+<a id="L302"></a><span class="ln">   302</span>			i := 1
+<a id="L303"></a><span class="ln">   303</span>			switch cb {
+<a id="L304"></a><span class="ln">   304</span>			case cbG8:
+<a id="L305"></a><span class="ln">   305</span>				for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L306"></a><span class="ln">   306</span>					c := color.GrayModel.Convert(m.At(x, y)).(color.Gray)
+<a id="L307"></a><span class="ln">   307</span>					cr[0][i] = c.Y
+<a id="L308"></a><span class="ln">   308</span>					i++
+<a id="L309"></a><span class="ln">   309</span>				}
+<a id="L310"></a><span class="ln">   310</span>			case cbTC8:
+<a id="L311"></a><span class="ln">   311</span>				<span class="comment">// We have previously verified that the alpha value is fully opaque.</span>
+<a id="L312"></a><span class="ln">   312</span>				cr0 := cr[0]
+<a id="L313"></a><span class="ln">   313</span>				if rgba, _ := m.(*image.RGBA); rgba != nil {
+<a id="L314"></a><span class="ln">   314</span>					j0 := (y - b.Min.Y) * rgba.Stride
+<a id="L315"></a><span class="ln">   315</span>					j1 := j0 + b.Dx()*4
+<a id="L316"></a><span class="ln">   316</span>					for j := j0; j &lt; j1; j += 4 {
+<a id="L317"></a><span class="ln">   317</span>						cr0[i+0] = rgba.Pix[j+0]
+<a id="L318"></a><span class="ln">   318</span>						cr0[i+1] = rgba.Pix[j+1]
+<a id="L319"></a><span class="ln">   319</span>						cr0[i+2] = rgba.Pix[j+2]
+<a id="L320"></a><span class="ln">   320</span>						i += 3
+<a id="L321"></a><span class="ln">   321</span>					}
+<a id="L322"></a><span class="ln">   322</span>				} else {
+<a id="L323"></a><span class="ln">   323</span>					for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L324"></a><span class="ln">   324</span>						r, g, b, _ := m.At(x, y).RGBA()
+<a id="L325"></a><span class="ln">   325</span>						cr0[i+0] = uint8(r &gt;&gt; 8)
+<a id="L326"></a><span class="ln">   326</span>						cr0[i+1] = uint8(g &gt;&gt; 8)
+<a id="L327"></a><span class="ln">   327</span>						cr0[i+2] = uint8(b &gt;&gt; 8)
+<a id="L328"></a><span class="ln">   328</span>						i += 3
+<a id="L329"></a><span class="ln">   329</span>					}
+<a id="L330"></a><span class="ln">   330</span>				}
+<a id="L331"></a><span class="ln">   331</span>			case cbP8:
+<a id="L332"></a><span class="ln">   332</span>				if p, _ := m.(*image.Paletted); p != nil {
+<a id="L333"></a><span class="ln">   333</span>					offset := (y - b.Min.Y) * p.Stride
+<a id="L334"></a><span class="ln">   334</span>					copy(cr[0][1:], p.Pix[offset:offset+b.Dx()])
+<a id="L335"></a><span class="ln">   335</span>				} else {
+<a id="L336"></a><span class="ln">   336</span>					pi := m.(image.PalettedImage)
+<a id="L337"></a><span class="ln">   337</span>					for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L338"></a><span class="ln">   338</span>						cr[0][i] = pi.ColorIndexAt(x, y)
+<a id="L339"></a><span class="ln">   339</span>						i += 1
+<a id="L340"></a><span class="ln">   340</span>					}
+<a id="L341"></a><span class="ln">   341</span>				}
+<a id="L342"></a><span class="ln">   342</span>			case cbTCA8:
+<a id="L343"></a><span class="ln">   343</span>				<span class="comment">// Convert from image.Image (which is alpha-premultiplied) to PNG&#39;s non-alpha-premultiplied.</span>
+<a id="L344"></a><span class="ln">   344</span>				for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L345"></a><span class="ln">   345</span>					c := color.NRGBAModel.Convert(m.At(x, y)).(color.NRGBA)
+<a id="L346"></a><span class="ln">   346</span>					cr[0][i+0] = c.R
+<a id="L347"></a><span class="ln">   347</span>					cr[0][i+1] = c.G
+<a id="L348"></a><span class="ln">   348</span>					cr[0][i+2] = c.B
+<a id="L349"></a><span class="ln">   349</span>					cr[0][i+3] = c.A
+<a id="L350"></a><span class="ln">   350</span>					i += 4
+<a id="L351"></a><span class="ln">   351</span>				}
+<a id="L352"></a><span class="ln">   352</span>			case cbG16:
+<a id="L353"></a><span class="ln">   353</span>				for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L354"></a><span class="ln">   354</span>					c := color.Gray16Model.Convert(m.At(x, y)).(color.Gray16)
+<a id="L355"></a><span class="ln">   355</span>					cr[0][i+0] = uint8(c.Y &gt;&gt; 8)
+<a id="L356"></a><span class="ln">   356</span>					cr[0][i+1] = uint8(c.Y)
+<a id="L357"></a><span class="ln">   357</span>					i += 2
+<a id="L358"></a><span class="ln">   358</span>				}
+<a id="L359"></a><span class="ln">   359</span>			case cbTC16:
+<a id="L360"></a><span class="ln">   360</span>				<span class="comment">// We have previously verified that the alpha value is fully opaque.</span>
+<a id="L361"></a><span class="ln">   361</span>				for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L362"></a><span class="ln">   362</span>					r, g, b, _ := m.At(x, y).RGBA()
+<a id="L363"></a><span class="ln">   363</span>					cr[0][i+0] = uint8(r &gt;&gt; 8)
+<a id="L364"></a><span class="ln">   364</span>					cr[0][i+1] = uint8(r)
+<a id="L365"></a><span class="ln">   365</span>					cr[0][i+2] = uint8(g &gt;&gt; 8)
+<a id="L366"></a><span class="ln">   366</span>					cr[0][i+3] = uint8(g)
+<a id="L367"></a><span class="ln">   367</span>					cr[0][i+4] = uint8(b &gt;&gt; 8)
+<a id="L368"></a><span class="ln">   368</span>					cr[0][i+5] = uint8(b)
+<a id="L369"></a><span class="ln">   369</span>					i += 6
+<a id="L370"></a><span class="ln">   370</span>				}
+<a id="L371"></a><span class="ln">   371</span>			case cbTCA16:
+<a id="L372"></a><span class="ln">   372</span>				<span class="comment">// Convert from image.Image (which is alpha-premultiplied) to PNG&#39;s non-alpha-premultiplied.</span>
+<a id="L373"></a><span class="ln">   373</span>				for x := b.Min.X; x &lt; b.Max.X; x++ {
+<a id="L374"></a><span class="ln">   374</span>					c := color.NRGBA64Model.Convert(m.At(x, y)).(color.NRGBA64)
+<a id="L375"></a><span class="ln">   375</span>					cr[0][i+0] = uint8(c.R &gt;&gt; 8)
+<a id="L376"></a><span class="ln">   376</span>					cr[0][i+1] = uint8(c.R)
+<a id="L377"></a><span class="ln">   377</span>					cr[0][i+2] = uint8(c.G &gt;&gt; 8)
+<a id="L378"></a><span class="ln">   378</span>					cr[0][i+3] = uint8(c.G)
+<a id="L379"></a><span class="ln">   379</span>					cr[0][i+4] = uint8(c.B &gt;&gt; 8)
+<a id="L380"></a><span class="ln">   380</span>					cr[0][i+5] = uint8(c.B)
+<a id="L381"></a><span class="ln">   381</span>					cr[0][i+6] = uint8(c.A &gt;&gt; 8)
+<a id="L382"></a><span class="ln">   382</span>					cr[0][i+7] = uint8(c.A)
+<a id="L383"></a><span class="ln">   383</span>					i += 8
+<a id="L384"></a><span class="ln">   384</span>				}
+<a id="L385"></a><span class="ln">   385</span>			}
+<a id="L386"></a><span class="ln">   386</span>	
+<a id="L387"></a><span class="ln">   387</span>			<span class="comment">// Apply the filter.</span>
+<a id="L388"></a><span class="ln">   388</span>			f := filter(&amp;cr, pr, bpp)
+<a id="L389"></a><span class="ln">   389</span>	
+<a id="L390"></a><span class="ln">   390</span>			<span class="comment">// Write the compressed bytes.</span>
+<a id="L391"></a><span class="ln">   391</span>			if _, err := zw.Write(cr[f]); err != nil {
+<a id="L392"></a><span class="ln">   392</span>				return err
+<a id="L393"></a><span class="ln">   393</span>			}
+<a id="L394"></a><span class="ln">   394</span>	
+<a id="L395"></a><span class="ln">   395</span>			<span class="comment">// The current row for y is the previous row for y+1.</span>
+<a id="L396"></a><span class="ln">   396</span>			pr, cr[0] = cr[0], pr
+<a id="L397"></a><span class="ln">   397</span>		}
+<a id="L398"></a><span class="ln">   398</span>		return nil
+<a id="L399"></a><span class="ln">   399</span>	}
+<a id="L400"></a><span class="ln">   400</span>	
+<a id="L401"></a><span class="ln">   401</span>	<span class="comment">// Write the actual image data to one or more IDAT chunks.</span>
+<a id="L402"></a><span class="ln">   402</span>	func (e *encoder) writeIDATs() {
+<a id="L403"></a><span class="ln">   403</span>		if e.err != nil {
+<a id="L404"></a><span class="ln">   404</span>			return
+<a id="L405"></a><span class="ln">   405</span>		}
+<a id="L406"></a><span class="ln">   406</span>		var bw *bufio.Writer
+<a id="L407"></a><span class="ln">   407</span>		bw = bufio.NewWriterSize(e, 1&lt;&lt;15)
+<a id="L408"></a><span class="ln">   408</span>		e.err = writeImage(bw, e.m, e.cb)
+<a id="L409"></a><span class="ln">   409</span>		if e.err != nil {
+<a id="L410"></a><span class="ln">   410</span>			return
+<a id="L411"></a><span class="ln">   411</span>		}
+<a id="L412"></a><span class="ln">   412</span>		e.err = bw.Flush()
+<a id="L413"></a><span class="ln">   413</span>	}
+<a id="L414"></a><span class="ln">   414</span>	
+<a id="L415"></a><span class="ln">   415</span>	func (e *encoder) writeIEND() { e.writeChunk(e.tmp[0:0], &#34;IEND&#34;) }
+<a id="L416"></a><span class="ln">   416</span>	
+<a id="L417"></a><span class="ln">   417</span>	<span class="comment">// Encode writes the Image m to w in PNG format. Any Image may be encoded, but</span>
+<a id="L418"></a><span class="ln">   418</span>	<span class="comment">// images that are not image.NRGBA might be encoded lossily.</span>
+<a id="L419"></a><span class="ln">   419</span>	func Encode(w io.Writer, m image.Image) error {
+<a id="L420"></a><span class="ln">   420</span>		<span class="comment">// Obviously, negative widths and heights are invalid. Furthermore, the PNG</span>
+<a id="L421"></a><span class="ln">   421</span>		<span class="comment">// spec section 11.2.2 says that zero is invalid. Excessively large images are</span>
+<a id="L422"></a><span class="ln">   422</span>		<span class="comment">// also rejected.</span>
+<a id="L423"></a><span class="ln">   423</span>		mw, mh := int64(m.Bounds().Dx()), int64(m.Bounds().Dy())
+<a id="L424"></a><span class="ln">   424</span>		if mw &lt;= 0 || mh &lt;= 0 || mw &gt;= 1&lt;&lt;32 || mh &gt;= 1&lt;&lt;32 {
+<a id="L425"></a><span class="ln">   425</span>			return FormatError(&#34;invalid image size: &#34; + strconv.FormatInt(mw, 10) + &#34;x&#34; + strconv.FormatInt(mw, 10))
+<a id="L426"></a><span class="ln">   426</span>		}
+<a id="L427"></a><span class="ln">   427</span>	
+<a id="L428"></a><span class="ln">   428</span>		var e encoder
+<a id="L429"></a><span class="ln">   429</span>		e.w = w
+<a id="L430"></a><span class="ln">   430</span>		e.m = m
+<a id="L431"></a><span class="ln">   431</span>	
+<a id="L432"></a><span class="ln">   432</span>		var pal color.Palette
+<a id="L433"></a><span class="ln">   433</span>		<span class="comment">// cbP8 encoding needs PalettedImage&#39;s ColorIndexAt method.</span>
+<a id="L434"></a><span class="ln">   434</span>		if _, ok := m.(image.PalettedImage); ok {
+<a id="L435"></a><span class="ln">   435</span>			pal, _ = m.ColorModel().(color.Palette)
+<a id="L436"></a><span class="ln">   436</span>		}
+<a id="L437"></a><span class="ln">   437</span>		if pal != nil {
+<a id="L438"></a><span class="ln">   438</span>			e.cb = cbP8
+<a id="L439"></a><span class="ln">   439</span>		} else {
+<a id="L440"></a><span class="ln">   440</span>			switch m.ColorModel() {
+<a id="L441"></a><span class="ln">   441</span>			case color.GrayModel:
+<a id="L442"></a><span class="ln">   442</span>				e.cb = cbG8
+<a id="L443"></a><span class="ln">   443</span>			case color.Gray16Model:
+<a id="L444"></a><span class="ln">   444</span>				e.cb = cbG16
+<a id="L445"></a><span class="ln">   445</span>			case color.RGBAModel, color.NRGBAModel, color.AlphaModel:
+<a id="L446"></a><span class="ln">   446</span>				if opaque(m) {
+<a id="L447"></a><span class="ln">   447</span>					e.cb = cbTC8
+<a id="L448"></a><span class="ln">   448</span>				} else {
+<a id="L449"></a><span class="ln">   449</span>					e.cb = cbTCA8
+<a id="L450"></a><span class="ln">   450</span>				}
+<a id="L451"></a><span class="ln">   451</span>			default:
+<a id="L452"></a><span class="ln">   452</span>				if opaque(m) {
+<a id="L453"></a><span class="ln">   453</span>					e.cb = cbTC16
+<a id="L454"></a><span class="ln">   454</span>				} else {
+<a id="L455"></a><span class="ln">   455</span>					e.cb = cbTCA16
+<a id="L456"></a><span class="ln">   456</span>				}
+<a id="L457"></a><span class="ln">   457</span>			}
+<a id="L458"></a><span class="ln">   458</span>		}
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>		_, e.err = io.WriteString(w, pngHeader)
+<a id="L461"></a><span class="ln">   461</span>		e.writeIHDR()
+<a id="L462"></a><span class="ln">   462</span>		if pal != nil {
+<a id="L463"></a><span class="ln">   463</span>			e.writePLTE(pal)
+<a id="L464"></a><span class="ln">   464</span>			e.maybeWritetRNS(pal)
+<a id="L465"></a><span class="ln">   465</span>		}
+<a id="L466"></a><span class="ln">   466</span>		e.writeIDATs()
+<a id="L467"></a><span class="ln">   467</span>		e.writeIEND()
+<a id="L468"></a><span class="ln">   468</span>		return e.err
+<a id="L469"></a><span class="ln">   469</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

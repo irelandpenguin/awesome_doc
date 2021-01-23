@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/fmt/format.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/fmt/format.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package fmt
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;strconv&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;unicode/utf8&#34;
+<a id="L10"></a><span class="ln">    10</span>	)
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	const (
+<a id="L13"></a><span class="ln">    13</span>		nByte = 65 <span class="comment">// %b of an int64, plus a sign.</span>
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>		ldigits = &#34;0123456789abcdef&#34;
+<a id="L16"></a><span class="ln">    16</span>		udigits = &#34;0123456789ABCDEF&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	const (
+<a id="L20"></a><span class="ln">    20</span>		signed   = true
+<a id="L21"></a><span class="ln">    21</span>		unsigned = false
+<a id="L22"></a><span class="ln">    22</span>	)
+<a id="L23"></a><span class="ln">    23</span>	
+<a id="L24"></a><span class="ln">    24</span>	var padZeroBytes = make([]byte, nByte)
+<a id="L25"></a><span class="ln">    25</span>	var padSpaceBytes = make([]byte, nByte)
+<a id="L26"></a><span class="ln">    26</span>	
+<a id="L27"></a><span class="ln">    27</span>	var newline = []byte{&#39;\n&#39;}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	func init() {
+<a id="L30"></a><span class="ln">    30</span>		for i := 0; i &lt; nByte; i++ {
+<a id="L31"></a><span class="ln">    31</span>			padZeroBytes[i] = &#39;0&#39;
+<a id="L32"></a><span class="ln">    32</span>			padSpaceBytes[i] = &#39; &#39;
+<a id="L33"></a><span class="ln">    33</span>		}
+<a id="L34"></a><span class="ln">    34</span>	}
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// A fmt is the raw formatter used by Printf etc.</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// It prints into a buffer that must be set up separately.</span>
+<a id="L38"></a><span class="ln">    38</span>	type fmt struct {
+<a id="L39"></a><span class="ln">    39</span>		intbuf [nByte]byte
+<a id="L40"></a><span class="ln">    40</span>		buf    *buffer
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">// width, precision</span>
+<a id="L42"></a><span class="ln">    42</span>		wid  int
+<a id="L43"></a><span class="ln">    43</span>		prec int
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">// flags</span>
+<a id="L45"></a><span class="ln">    45</span>		widPresent  bool
+<a id="L46"></a><span class="ln">    46</span>		precPresent bool
+<a id="L47"></a><span class="ln">    47</span>		minus       bool
+<a id="L48"></a><span class="ln">    48</span>		plus        bool
+<a id="L49"></a><span class="ln">    49</span>		sharp       bool
+<a id="L50"></a><span class="ln">    50</span>		space       bool
+<a id="L51"></a><span class="ln">    51</span>		unicode     bool
+<a id="L52"></a><span class="ln">    52</span>		uniQuote    bool <span class="comment">// Use &#39;x&#39;= prefix for %U if printable.</span>
+<a id="L53"></a><span class="ln">    53</span>		zero        bool
+<a id="L54"></a><span class="ln">    54</span>	}
+<a id="L55"></a><span class="ln">    55</span>	
+<a id="L56"></a><span class="ln">    56</span>	func (f *fmt) clearflags() {
+<a id="L57"></a><span class="ln">    57</span>		f.wid = 0
+<a id="L58"></a><span class="ln">    58</span>		f.widPresent = false
+<a id="L59"></a><span class="ln">    59</span>		f.prec = 0
+<a id="L60"></a><span class="ln">    60</span>		f.precPresent = false
+<a id="L61"></a><span class="ln">    61</span>		f.minus = false
+<a id="L62"></a><span class="ln">    62</span>		f.plus = false
+<a id="L63"></a><span class="ln">    63</span>		f.sharp = false
+<a id="L64"></a><span class="ln">    64</span>		f.space = false
+<a id="L65"></a><span class="ln">    65</span>		f.unicode = false
+<a id="L66"></a><span class="ln">    66</span>		f.uniQuote = false
+<a id="L67"></a><span class="ln">    67</span>		f.zero = false
+<a id="L68"></a><span class="ln">    68</span>	}
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>	func (f *fmt) init(buf *buffer) {
+<a id="L71"></a><span class="ln">    71</span>		f.buf = buf
+<a id="L72"></a><span class="ln">    72</span>		f.clearflags()
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// Compute left and right padding widths (only one will be non-zero).</span>
+<a id="L76"></a><span class="ln">    76</span>	func (f *fmt) computePadding(width int) (padding []byte, leftWidth, rightWidth int) {
+<a id="L77"></a><span class="ln">    77</span>		left := !f.minus
+<a id="L78"></a><span class="ln">    78</span>		w := f.wid
+<a id="L79"></a><span class="ln">    79</span>		if w &lt; 0 {
+<a id="L80"></a><span class="ln">    80</span>			left = false
+<a id="L81"></a><span class="ln">    81</span>			w = -w
+<a id="L82"></a><span class="ln">    82</span>		}
+<a id="L83"></a><span class="ln">    83</span>		w -= width
+<a id="L84"></a><span class="ln">    84</span>		if w &gt; 0 {
+<a id="L85"></a><span class="ln">    85</span>			if left &amp;&amp; f.zero {
+<a id="L86"></a><span class="ln">    86</span>				return padZeroBytes, w, 0
+<a id="L87"></a><span class="ln">    87</span>			}
+<a id="L88"></a><span class="ln">    88</span>			if left {
+<a id="L89"></a><span class="ln">    89</span>				return padSpaceBytes, w, 0
+<a id="L90"></a><span class="ln">    90</span>			} else {
+<a id="L91"></a><span class="ln">    91</span>				<span class="comment">// can&#39;t be zero padding on the right</span>
+<a id="L92"></a><span class="ln">    92</span>				return padSpaceBytes, 0, w
+<a id="L93"></a><span class="ln">    93</span>			}
+<a id="L94"></a><span class="ln">    94</span>		}
+<a id="L95"></a><span class="ln">    95</span>		return
+<a id="L96"></a><span class="ln">    96</span>	}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	<span class="comment">// Generate n bytes of padding.</span>
+<a id="L99"></a><span class="ln">    99</span>	func (f *fmt) writePadding(n int, padding []byte) {
+<a id="L100"></a><span class="ln">   100</span>		for n &gt; 0 {
+<a id="L101"></a><span class="ln">   101</span>			m := n
+<a id="L102"></a><span class="ln">   102</span>			if m &gt; nByte {
+<a id="L103"></a><span class="ln">   103</span>				m = nByte
+<a id="L104"></a><span class="ln">   104</span>			}
+<a id="L105"></a><span class="ln">   105</span>			f.buf.Write(padding[0:m])
+<a id="L106"></a><span class="ln">   106</span>			n -= m
+<a id="L107"></a><span class="ln">   107</span>		}
+<a id="L108"></a><span class="ln">   108</span>	}
+<a id="L109"></a><span class="ln">   109</span>	
+<a id="L110"></a><span class="ln">   110</span>	<span class="comment">// Append b to f.buf, padded on left (w &gt; 0) or right (w &lt; 0 or f.minus)</span>
+<a id="L111"></a><span class="ln">   111</span>	<span class="comment">// clear flags afterwards.</span>
+<a id="L112"></a><span class="ln">   112</span>	func (f *fmt) pad(b []byte) {
+<a id="L113"></a><span class="ln">   113</span>		var padding []byte
+<a id="L114"></a><span class="ln">   114</span>		var left, right int
+<a id="L115"></a><span class="ln">   115</span>		if f.widPresent &amp;&amp; f.wid != 0 {
+<a id="L116"></a><span class="ln">   116</span>			padding, left, right = f.computePadding(len(b))
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>		if left &gt; 0 {
+<a id="L119"></a><span class="ln">   119</span>			f.writePadding(left, padding)
+<a id="L120"></a><span class="ln">   120</span>		}
+<a id="L121"></a><span class="ln">   121</span>		f.buf.Write(b)
+<a id="L122"></a><span class="ln">   122</span>		if right &gt; 0 {
+<a id="L123"></a><span class="ln">   123</span>			f.writePadding(right, padding)
+<a id="L124"></a><span class="ln">   124</span>		}
+<a id="L125"></a><span class="ln">   125</span>	}
+<a id="L126"></a><span class="ln">   126</span>	
+<a id="L127"></a><span class="ln">   127</span>	<span class="comment">// append s to buf, padded on left (w &gt; 0) or right (w &lt; 0 or f.minus).</span>
+<a id="L128"></a><span class="ln">   128</span>	<span class="comment">// clear flags afterwards.</span>
+<a id="L129"></a><span class="ln">   129</span>	func (f *fmt) padString(s string) {
+<a id="L130"></a><span class="ln">   130</span>		var padding []byte
+<a id="L131"></a><span class="ln">   131</span>		var left, right int
+<a id="L132"></a><span class="ln">   132</span>		if f.widPresent &amp;&amp; f.wid != 0 {
+<a id="L133"></a><span class="ln">   133</span>			padding, left, right = f.computePadding(utf8.RuneCountInString(s))
+<a id="L134"></a><span class="ln">   134</span>		}
+<a id="L135"></a><span class="ln">   135</span>		if left &gt; 0 {
+<a id="L136"></a><span class="ln">   136</span>			f.writePadding(left, padding)
+<a id="L137"></a><span class="ln">   137</span>		}
+<a id="L138"></a><span class="ln">   138</span>		f.buf.WriteString(s)
+<a id="L139"></a><span class="ln">   139</span>		if right &gt; 0 {
+<a id="L140"></a><span class="ln">   140</span>			f.writePadding(right, padding)
+<a id="L141"></a><span class="ln">   141</span>		}
+<a id="L142"></a><span class="ln">   142</span>	}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>	func putint(buf []byte, base, val uint64, digits string) int {
+<a id="L145"></a><span class="ln">   145</span>		i := len(buf) - 1
+<a id="L146"></a><span class="ln">   146</span>		for val &gt;= base {
+<a id="L147"></a><span class="ln">   147</span>			buf[i] = digits[val%base]
+<a id="L148"></a><span class="ln">   148</span>			i--
+<a id="L149"></a><span class="ln">   149</span>			val /= base
+<a id="L150"></a><span class="ln">   150</span>		}
+<a id="L151"></a><span class="ln">   151</span>		buf[i] = digits[val]
+<a id="L152"></a><span class="ln">   152</span>		return i - 1
+<a id="L153"></a><span class="ln">   153</span>	}
+<a id="L154"></a><span class="ln">   154</span>	
+<a id="L155"></a><span class="ln">   155</span>	var (
+<a id="L156"></a><span class="ln">   156</span>		trueBytes  = []byte(&#34;true&#34;)
+<a id="L157"></a><span class="ln">   157</span>		falseBytes = []byte(&#34;false&#34;)
+<a id="L158"></a><span class="ln">   158</span>	)
+<a id="L159"></a><span class="ln">   159</span>	
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">// fmt_boolean formats a boolean.</span>
+<a id="L161"></a><span class="ln">   161</span>	func (f *fmt) fmt_boolean(v bool) {
+<a id="L162"></a><span class="ln">   162</span>		if v {
+<a id="L163"></a><span class="ln">   163</span>			f.pad(trueBytes)
+<a id="L164"></a><span class="ln">   164</span>		} else {
+<a id="L165"></a><span class="ln">   165</span>			f.pad(falseBytes)
+<a id="L166"></a><span class="ln">   166</span>		}
+<a id="L167"></a><span class="ln">   167</span>	}
+<a id="L168"></a><span class="ln">   168</span>	
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">// integer; interprets prec but not wid.  Once formatted, result is sent to pad()</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// and then flags are cleared.</span>
+<a id="L171"></a><span class="ln">   171</span>	func (f *fmt) integer(a int64, base uint64, signedness bool, digits string) {
+<a id="L172"></a><span class="ln">   172</span>		<span class="comment">// precision of 0 and value of 0 means &#34;print nothing&#34;</span>
+<a id="L173"></a><span class="ln">   173</span>		if f.precPresent &amp;&amp; f.prec == 0 &amp;&amp; a == 0 {
+<a id="L174"></a><span class="ln">   174</span>			return
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>		var buf []byte = f.intbuf[0:]
+<a id="L178"></a><span class="ln">   178</span>		negative := signedness == signed &amp;&amp; a &lt; 0
+<a id="L179"></a><span class="ln">   179</span>		if negative {
+<a id="L180"></a><span class="ln">   180</span>			a = -a
+<a id="L181"></a><span class="ln">   181</span>		}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>		<span class="comment">// two ways to ask for extra leading zero digits: %.3d or %03d.</span>
+<a id="L184"></a><span class="ln">   184</span>		<span class="comment">// apparently the first cancels the second.</span>
+<a id="L185"></a><span class="ln">   185</span>		prec := 0
+<a id="L186"></a><span class="ln">   186</span>		if f.precPresent {
+<a id="L187"></a><span class="ln">   187</span>			prec = f.prec
+<a id="L188"></a><span class="ln">   188</span>			f.zero = false
+<a id="L189"></a><span class="ln">   189</span>		} else if f.zero &amp;&amp; f.widPresent &amp;&amp; !f.minus &amp;&amp; f.wid &gt; 0 {
+<a id="L190"></a><span class="ln">   190</span>			prec = f.wid
+<a id="L191"></a><span class="ln">   191</span>			if negative || f.plus || f.space {
+<a id="L192"></a><span class="ln">   192</span>				prec-- <span class="comment">// leave room for sign</span>
+<a id="L193"></a><span class="ln">   193</span>			}
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>		<span class="comment">// format a into buf, ending at buf[i].  (printing is easier right-to-left.)</span>
+<a id="L197"></a><span class="ln">   197</span>		<span class="comment">// a is made into unsigned ua.  we could make things</span>
+<a id="L198"></a><span class="ln">   198</span>		<span class="comment">// marginally faster by splitting the 32-bit case out into a separate</span>
+<a id="L199"></a><span class="ln">   199</span>		<span class="comment">// block but it&#39;s not worth the duplication, so ua has 64 bits.</span>
+<a id="L200"></a><span class="ln">   200</span>		i := len(f.intbuf)
+<a id="L201"></a><span class="ln">   201</span>		ua := uint64(a)
+<a id="L202"></a><span class="ln">   202</span>		for ua &gt;= base {
+<a id="L203"></a><span class="ln">   203</span>			i--
+<a id="L204"></a><span class="ln">   204</span>			buf[i] = digits[ua%base]
+<a id="L205"></a><span class="ln">   205</span>			ua /= base
+<a id="L206"></a><span class="ln">   206</span>		}
+<a id="L207"></a><span class="ln">   207</span>		i--
+<a id="L208"></a><span class="ln">   208</span>		buf[i] = digits[ua]
+<a id="L209"></a><span class="ln">   209</span>		for i &gt; 0 &amp;&amp; prec &gt; nByte-i {
+<a id="L210"></a><span class="ln">   210</span>			i--
+<a id="L211"></a><span class="ln">   211</span>			buf[i] = &#39;0&#39;
+<a id="L212"></a><span class="ln">   212</span>		}
+<a id="L213"></a><span class="ln">   213</span>	
+<a id="L214"></a><span class="ln">   214</span>		<span class="comment">// Various prefixes: 0x, -, etc.</span>
+<a id="L215"></a><span class="ln">   215</span>		if f.sharp {
+<a id="L216"></a><span class="ln">   216</span>			switch base {
+<a id="L217"></a><span class="ln">   217</span>			case 8:
+<a id="L218"></a><span class="ln">   218</span>				if buf[i] != &#39;0&#39; {
+<a id="L219"></a><span class="ln">   219</span>					i--
+<a id="L220"></a><span class="ln">   220</span>					buf[i] = &#39;0&#39;
+<a id="L221"></a><span class="ln">   221</span>				}
+<a id="L222"></a><span class="ln">   222</span>			case 16:
+<a id="L223"></a><span class="ln">   223</span>				i--
+<a id="L224"></a><span class="ln">   224</span>				buf[i] = &#39;x&#39; + digits[10] - &#39;a&#39;
+<a id="L225"></a><span class="ln">   225</span>				i--
+<a id="L226"></a><span class="ln">   226</span>				buf[i] = &#39;0&#39;
+<a id="L227"></a><span class="ln">   227</span>			}
+<a id="L228"></a><span class="ln">   228</span>		}
+<a id="L229"></a><span class="ln">   229</span>		if f.unicode {
+<a id="L230"></a><span class="ln">   230</span>			i--
+<a id="L231"></a><span class="ln">   231</span>			buf[i] = &#39;+&#39;
+<a id="L232"></a><span class="ln">   232</span>			i--
+<a id="L233"></a><span class="ln">   233</span>			buf[i] = &#39;U&#39;
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>	
+<a id="L236"></a><span class="ln">   236</span>		if negative {
+<a id="L237"></a><span class="ln">   237</span>			i--
+<a id="L238"></a><span class="ln">   238</span>			buf[i] = &#39;-&#39;
+<a id="L239"></a><span class="ln">   239</span>		} else if f.plus {
+<a id="L240"></a><span class="ln">   240</span>			i--
+<a id="L241"></a><span class="ln">   241</span>			buf[i] = &#39;+&#39;
+<a id="L242"></a><span class="ln">   242</span>		} else if f.space {
+<a id="L243"></a><span class="ln">   243</span>			i--
+<a id="L244"></a><span class="ln">   244</span>			buf[i] = &#39; &#39;
+<a id="L245"></a><span class="ln">   245</span>		}
+<a id="L246"></a><span class="ln">   246</span>	
+<a id="L247"></a><span class="ln">   247</span>		<span class="comment">// If we want a quoted char for %#U, move the data up to make room.</span>
+<a id="L248"></a><span class="ln">   248</span>		if f.unicode &amp;&amp; f.uniQuote &amp;&amp; a &gt;= 0 &amp;&amp; a &lt;= utf8.MaxRune &amp;&amp; strconv.IsPrint(rune(a)) {
+<a id="L249"></a><span class="ln">   249</span>			runeWidth := utf8.RuneLen(rune(a))
+<a id="L250"></a><span class="ln">   250</span>			width := 1 + 1 + runeWidth + 1 <span class="comment">// space, quote, rune, quote</span>
+<a id="L251"></a><span class="ln">   251</span>			copy(buf[i-width:], buf[i:])   <span class="comment">// guaranteed to have enough room.</span>
+<a id="L252"></a><span class="ln">   252</span>			i -= width
+<a id="L253"></a><span class="ln">   253</span>			<span class="comment">// Now put &#34; &#39;x&#39;&#34; at the end.</span>
+<a id="L254"></a><span class="ln">   254</span>			j := len(buf) - width
+<a id="L255"></a><span class="ln">   255</span>			buf[j] = &#39; &#39;
+<a id="L256"></a><span class="ln">   256</span>			j++
+<a id="L257"></a><span class="ln">   257</span>			buf[j] = &#39;\&#39;&#39;
+<a id="L258"></a><span class="ln">   258</span>			j++
+<a id="L259"></a><span class="ln">   259</span>			utf8.EncodeRune(buf[j:], rune(a))
+<a id="L260"></a><span class="ln">   260</span>			j += runeWidth
+<a id="L261"></a><span class="ln">   261</span>			buf[j] = &#39;\&#39;&#39;
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>	
+<a id="L264"></a><span class="ln">   264</span>		f.pad(buf[i:])
+<a id="L265"></a><span class="ln">   265</span>	}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// truncate truncates the string to the specified precision, if present.</span>
+<a id="L268"></a><span class="ln">   268</span>	func (f *fmt) truncate(s string) string {
+<a id="L269"></a><span class="ln">   269</span>		if f.precPresent &amp;&amp; f.prec &lt; utf8.RuneCountInString(s) {
+<a id="L270"></a><span class="ln">   270</span>			n := f.prec
+<a id="L271"></a><span class="ln">   271</span>			for i := range s {
+<a id="L272"></a><span class="ln">   272</span>				if n == 0 {
+<a id="L273"></a><span class="ln">   273</span>					s = s[:i]
+<a id="L274"></a><span class="ln">   274</span>					break
+<a id="L275"></a><span class="ln">   275</span>				}
+<a id="L276"></a><span class="ln">   276</span>				n--
+<a id="L277"></a><span class="ln">   277</span>			}
+<a id="L278"></a><span class="ln">   278</span>		}
+<a id="L279"></a><span class="ln">   279</span>		return s
+<a id="L280"></a><span class="ln">   280</span>	}
+<a id="L281"></a><span class="ln">   281</span>	
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// fmt_s formats a string.</span>
+<a id="L283"></a><span class="ln">   283</span>	func (f *fmt) fmt_s(s string) {
+<a id="L284"></a><span class="ln">   284</span>		s = f.truncate(s)
+<a id="L285"></a><span class="ln">   285</span>		f.padString(s)
+<a id="L286"></a><span class="ln">   286</span>	}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// fmt_sx formats a string as a hexadecimal encoding of its bytes.</span>
+<a id="L289"></a><span class="ln">   289</span>	func (f *fmt) fmt_sx(s, digits string) {
+<a id="L290"></a><span class="ln">   290</span>		<span class="comment">// TODO: Avoid buffer by pre-padding.</span>
+<a id="L291"></a><span class="ln">   291</span>		var b []byte
+<a id="L292"></a><span class="ln">   292</span>		for i := 0; i &lt; len(s); i++ {
+<a id="L293"></a><span class="ln">   293</span>			if i &gt; 0 &amp;&amp; f.space {
+<a id="L294"></a><span class="ln">   294</span>				b = append(b, &#39; &#39;)
+<a id="L295"></a><span class="ln">   295</span>			}
+<a id="L296"></a><span class="ln">   296</span>			v := s[i]
+<a id="L297"></a><span class="ln">   297</span>			b = append(b, digits[v&gt;&gt;4], digits[v&amp;0xF])
+<a id="L298"></a><span class="ln">   298</span>		}
+<a id="L299"></a><span class="ln">   299</span>		f.pad(b)
+<a id="L300"></a><span class="ln">   300</span>	}
+<a id="L301"></a><span class="ln">   301</span>	
+<a id="L302"></a><span class="ln">   302</span>	<span class="comment">// fmt_q formats a string as a double-quoted, escaped Go string constant.</span>
+<a id="L303"></a><span class="ln">   303</span>	func (f *fmt) fmt_q(s string) {
+<a id="L304"></a><span class="ln">   304</span>		s = f.truncate(s)
+<a id="L305"></a><span class="ln">   305</span>		var quoted string
+<a id="L306"></a><span class="ln">   306</span>		if f.sharp &amp;&amp; strconv.CanBackquote(s) {
+<a id="L307"></a><span class="ln">   307</span>			quoted = &#34;`&#34; + s + &#34;`&#34;
+<a id="L308"></a><span class="ln">   308</span>		} else {
+<a id="L309"></a><span class="ln">   309</span>			if f.plus {
+<a id="L310"></a><span class="ln">   310</span>				quoted = strconv.QuoteToASCII(s)
+<a id="L311"></a><span class="ln">   311</span>			} else {
+<a id="L312"></a><span class="ln">   312</span>				quoted = strconv.Quote(s)
+<a id="L313"></a><span class="ln">   313</span>			}
+<a id="L314"></a><span class="ln">   314</span>		}
+<a id="L315"></a><span class="ln">   315</span>		f.padString(quoted)
+<a id="L316"></a><span class="ln">   316</span>	}
+<a id="L317"></a><span class="ln">   317</span>	
+<a id="L318"></a><span class="ln">   318</span>	<span class="comment">// fmt_qc formats the integer as a single-quoted, escaped Go character constant.</span>
+<a id="L319"></a><span class="ln">   319</span>	<span class="comment">// If the character is not valid Unicode, it will print &#39;\ufffd&#39;.</span>
+<a id="L320"></a><span class="ln">   320</span>	func (f *fmt) fmt_qc(c int64) {
+<a id="L321"></a><span class="ln">   321</span>		var quoted []byte
+<a id="L322"></a><span class="ln">   322</span>		if f.plus {
+<a id="L323"></a><span class="ln">   323</span>			quoted = strconv.AppendQuoteRuneToASCII(f.intbuf[0:0], rune(c))
+<a id="L324"></a><span class="ln">   324</span>		} else {
+<a id="L325"></a><span class="ln">   325</span>			quoted = strconv.AppendQuoteRune(f.intbuf[0:0], rune(c))
+<a id="L326"></a><span class="ln">   326</span>		}
+<a id="L327"></a><span class="ln">   327</span>		f.pad(quoted)
+<a id="L328"></a><span class="ln">   328</span>	}
+<a id="L329"></a><span class="ln">   329</span>	
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">// floating-point</span>
+<a id="L331"></a><span class="ln">   331</span>	
+<a id="L332"></a><span class="ln">   332</span>	func doPrec(f *fmt, def int) int {
+<a id="L333"></a><span class="ln">   333</span>		if f.precPresent {
+<a id="L334"></a><span class="ln">   334</span>			return f.prec
+<a id="L335"></a><span class="ln">   335</span>		}
+<a id="L336"></a><span class="ln">   336</span>		return def
+<a id="L337"></a><span class="ln">   337</span>	}
+<a id="L338"></a><span class="ln">   338</span>	
+<a id="L339"></a><span class="ln">   339</span>	<span class="comment">// formatFloat formats a float64; it is an efficient equivalent to  f.pad(strconv.FormatFloat()...).</span>
+<a id="L340"></a><span class="ln">   340</span>	func (f *fmt) formatFloat(v float64, verb byte, prec, n int) {
+<a id="L341"></a><span class="ln">   341</span>		<span class="comment">// We leave one byte at the beginning of f.intbuf for a sign if needed,</span>
+<a id="L342"></a><span class="ln">   342</span>		<span class="comment">// and make it a space, which we might be able to use.</span>
+<a id="L343"></a><span class="ln">   343</span>		f.intbuf[0] = &#39; &#39;
+<a id="L344"></a><span class="ln">   344</span>		slice := strconv.AppendFloat(f.intbuf[0:1], v, verb, prec, n)
+<a id="L345"></a><span class="ln">   345</span>		<span class="comment">// Add a plus sign or space to the floating-point string representation if missing and required.</span>
+<a id="L346"></a><span class="ln">   346</span>		<span class="comment">// The formatted number starts at slice[1].</span>
+<a id="L347"></a><span class="ln">   347</span>		switch slice[1] {
+<a id="L348"></a><span class="ln">   348</span>		case &#39;-&#39;, &#39;+&#39;:
+<a id="L349"></a><span class="ln">   349</span>			<span class="comment">// We&#39;re set; drop the leading space.</span>
+<a id="L350"></a><span class="ln">   350</span>			slice = slice[1:]
+<a id="L351"></a><span class="ln">   351</span>		default:
+<a id="L352"></a><span class="ln">   352</span>			<span class="comment">// There&#39;s no sign, but we might need one.</span>
+<a id="L353"></a><span class="ln">   353</span>			if f.plus {
+<a id="L354"></a><span class="ln">   354</span>				slice[0] = &#39;+&#39;
+<a id="L355"></a><span class="ln">   355</span>			} else if f.space {
+<a id="L356"></a><span class="ln">   356</span>				<span class="comment">// space is already there</span>
+<a id="L357"></a><span class="ln">   357</span>			} else {
+<a id="L358"></a><span class="ln">   358</span>				slice = slice[1:]
+<a id="L359"></a><span class="ln">   359</span>			}
+<a id="L360"></a><span class="ln">   360</span>		}
+<a id="L361"></a><span class="ln">   361</span>		f.pad(slice)
+<a id="L362"></a><span class="ln">   362</span>	}
+<a id="L363"></a><span class="ln">   363</span>	
+<a id="L364"></a><span class="ln">   364</span>	<span class="comment">// fmt_e64 formats a float64 in the form -1.23e+12.</span>
+<a id="L365"></a><span class="ln">   365</span>	func (f *fmt) fmt_e64(v float64) { f.formatFloat(v, &#39;e&#39;, doPrec(f, 6), 64) }
+<a id="L366"></a><span class="ln">   366</span>	
+<a id="L367"></a><span class="ln">   367</span>	<span class="comment">// fmt_E64 formats a float64 in the form -1.23E+12.</span>
+<a id="L368"></a><span class="ln">   368</span>	func (f *fmt) fmt_E64(v float64) { f.formatFloat(v, &#39;E&#39;, doPrec(f, 6), 64) }
+<a id="L369"></a><span class="ln">   369</span>	
+<a id="L370"></a><span class="ln">   370</span>	<span class="comment">// fmt_f64 formats a float64 in the form -1.23.</span>
+<a id="L371"></a><span class="ln">   371</span>	func (f *fmt) fmt_f64(v float64) { f.formatFloat(v, &#39;f&#39;, doPrec(f, 6), 64) }
+<a id="L372"></a><span class="ln">   372</span>	
+<a id="L373"></a><span class="ln">   373</span>	<span class="comment">// fmt_g64 formats a float64 in the &#39;f&#39; or &#39;e&#39; form according to size.</span>
+<a id="L374"></a><span class="ln">   374</span>	func (f *fmt) fmt_g64(v float64) { f.formatFloat(v, &#39;g&#39;, doPrec(f, -1), 64) }
+<a id="L375"></a><span class="ln">   375</span>	
+<a id="L376"></a><span class="ln">   376</span>	<span class="comment">// fmt_g64 formats a float64 in the &#39;f&#39; or &#39;E&#39; form according to size.</span>
+<a id="L377"></a><span class="ln">   377</span>	func (f *fmt) fmt_G64(v float64) { f.formatFloat(v, &#39;G&#39;, doPrec(f, -1), 64) }
+<a id="L378"></a><span class="ln">   378</span>	
+<a id="L379"></a><span class="ln">   379</span>	<span class="comment">// fmt_fb64 formats a float64 in the form -123p3 (exponent is power of 2).</span>
+<a id="L380"></a><span class="ln">   380</span>	func (f *fmt) fmt_fb64(v float64) { f.formatFloat(v, &#39;b&#39;, 0, 64) }
+<a id="L381"></a><span class="ln">   381</span>	
+<a id="L382"></a><span class="ln">   382</span>	<span class="comment">// float32</span>
+<a id="L383"></a><span class="ln">   383</span>	<span class="comment">// cannot defer to float64 versions</span>
+<a id="L384"></a><span class="ln">   384</span>	<span class="comment">// because it will get rounding wrong in corner cases.</span>
+<a id="L385"></a><span class="ln">   385</span>	
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// fmt_e32 formats a float32 in the form -1.23e+12.</span>
+<a id="L387"></a><span class="ln">   387</span>	func (f *fmt) fmt_e32(v float32) { f.formatFloat(float64(v), &#39;e&#39;, doPrec(f, 6), 32) }
+<a id="L388"></a><span class="ln">   388</span>	
+<a id="L389"></a><span class="ln">   389</span>	<span class="comment">// fmt_E32 formats a float32 in the form -1.23E+12.</span>
+<a id="L390"></a><span class="ln">   390</span>	func (f *fmt) fmt_E32(v float32) { f.formatFloat(float64(v), &#39;E&#39;, doPrec(f, 6), 32) }
+<a id="L391"></a><span class="ln">   391</span>	
+<a id="L392"></a><span class="ln">   392</span>	<span class="comment">// fmt_f32 formats a float32 in the form -1.23.</span>
+<a id="L393"></a><span class="ln">   393</span>	func (f *fmt) fmt_f32(v float32) { f.formatFloat(float64(v), &#39;f&#39;, doPrec(f, 6), 32) }
+<a id="L394"></a><span class="ln">   394</span>	
+<a id="L395"></a><span class="ln">   395</span>	<span class="comment">// fmt_g32 formats a float32 in the &#39;f&#39; or &#39;e&#39; form according to size.</span>
+<a id="L396"></a><span class="ln">   396</span>	func (f *fmt) fmt_g32(v float32) { f.formatFloat(float64(v), &#39;g&#39;, doPrec(f, -1), 32) }
+<a id="L397"></a><span class="ln">   397</span>	
+<a id="L398"></a><span class="ln">   398</span>	<span class="comment">// fmt_G32 formats a float32 in the &#39;f&#39; or &#39;E&#39; form according to size.</span>
+<a id="L399"></a><span class="ln">   399</span>	func (f *fmt) fmt_G32(v float32) { f.formatFloat(float64(v), &#39;G&#39;, doPrec(f, -1), 32) }
+<a id="L400"></a><span class="ln">   400</span>	
+<a id="L401"></a><span class="ln">   401</span>	<span class="comment">// fmt_fb32 formats a float32 in the form -123p3 (exponent is power of 2).</span>
+<a id="L402"></a><span class="ln">   402</span>	func (f *fmt) fmt_fb32(v float32) { f.formatFloat(float64(v), &#39;b&#39;, 0, 32) }
+<a id="L403"></a><span class="ln">   403</span>	
+<a id="L404"></a><span class="ln">   404</span>	<span class="comment">// fmt_c64 formats a complex64 according to the verb.</span>
+<a id="L405"></a><span class="ln">   405</span>	func (f *fmt) fmt_c64(v complex64, verb rune) {
+<a id="L406"></a><span class="ln">   406</span>		f.buf.WriteByte(&#39;(&#39;)
+<a id="L407"></a><span class="ln">   407</span>		r := real(v)
+<a id="L408"></a><span class="ln">   408</span>		for i := 0; ; i++ {
+<a id="L409"></a><span class="ln">   409</span>			switch verb {
+<a id="L410"></a><span class="ln">   410</span>			case &#39;e&#39;:
+<a id="L411"></a><span class="ln">   411</span>				f.fmt_e32(r)
+<a id="L412"></a><span class="ln">   412</span>			case &#39;E&#39;:
+<a id="L413"></a><span class="ln">   413</span>				f.fmt_E32(r)
+<a id="L414"></a><span class="ln">   414</span>			case &#39;f&#39;:
+<a id="L415"></a><span class="ln">   415</span>				f.fmt_f32(r)
+<a id="L416"></a><span class="ln">   416</span>			case &#39;g&#39;:
+<a id="L417"></a><span class="ln">   417</span>				f.fmt_g32(r)
+<a id="L418"></a><span class="ln">   418</span>			case &#39;G&#39;:
+<a id="L419"></a><span class="ln">   419</span>				f.fmt_G32(r)
+<a id="L420"></a><span class="ln">   420</span>			}
+<a id="L421"></a><span class="ln">   421</span>			if i != 0 {
+<a id="L422"></a><span class="ln">   422</span>				break
+<a id="L423"></a><span class="ln">   423</span>			}
+<a id="L424"></a><span class="ln">   424</span>			f.plus = true
+<a id="L425"></a><span class="ln">   425</span>			r = imag(v)
+<a id="L426"></a><span class="ln">   426</span>		}
+<a id="L427"></a><span class="ln">   427</span>		f.buf.Write(irparenBytes)
+<a id="L428"></a><span class="ln">   428</span>	}
+<a id="L429"></a><span class="ln">   429</span>	
+<a id="L430"></a><span class="ln">   430</span>	<span class="comment">// fmt_c128 formats a complex128 according to the verb.</span>
+<a id="L431"></a><span class="ln">   431</span>	func (f *fmt) fmt_c128(v complex128, verb rune) {
+<a id="L432"></a><span class="ln">   432</span>		f.buf.WriteByte(&#39;(&#39;)
+<a id="L433"></a><span class="ln">   433</span>		r := real(v)
+<a id="L434"></a><span class="ln">   434</span>		for i := 0; ; i++ {
+<a id="L435"></a><span class="ln">   435</span>			switch verb {
+<a id="L436"></a><span class="ln">   436</span>			case &#39;e&#39;:
+<a id="L437"></a><span class="ln">   437</span>				f.fmt_e64(r)
+<a id="L438"></a><span class="ln">   438</span>			case &#39;E&#39;:
+<a id="L439"></a><span class="ln">   439</span>				f.fmt_E64(r)
+<a id="L440"></a><span class="ln">   440</span>			case &#39;f&#39;:
+<a id="L441"></a><span class="ln">   441</span>				f.fmt_f64(r)
+<a id="L442"></a><span class="ln">   442</span>			case &#39;g&#39;:
+<a id="L443"></a><span class="ln">   443</span>				f.fmt_g64(r)
+<a id="L444"></a><span class="ln">   444</span>			case &#39;G&#39;:
+<a id="L445"></a><span class="ln">   445</span>				f.fmt_G64(r)
+<a id="L446"></a><span class="ln">   446</span>			}
+<a id="L447"></a><span class="ln">   447</span>			if i != 0 {
+<a id="L448"></a><span class="ln">   448</span>				break
+<a id="L449"></a><span class="ln">   449</span>			}
+<a id="L450"></a><span class="ln">   450</span>			f.plus = true
+<a id="L451"></a><span class="ln">   451</span>			r = imag(v)
+<a id="L452"></a><span class="ln">   452</span>		}
+<a id="L453"></a><span class="ln">   453</span>		f.buf.Write(irparenBytes)
+<a id="L454"></a><span class="ln">   454</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

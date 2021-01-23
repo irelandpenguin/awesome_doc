@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/http/fcgi/child.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/http/fcgi/child.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package fcgi
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// This file implements FastCGI from the perspective of a child process.</span>
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	import (
+<a id="L10"></a><span class="ln">    10</span>		&#34;errors&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;fmt&#34;
+<a id="L12"></a><span class="ln">    12</span>		&#34;io&#34;
+<a id="L13"></a><span class="ln">    13</span>		&#34;net&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;net/http&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;net/http/cgi&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;os&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;time&#34;
+<a id="L18"></a><span class="ln">    18</span>	)
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// request holds the state for an in-progress request. As soon as it&#39;s complete,</span>
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// it&#39;s converted to an http.Request.</span>
+<a id="L22"></a><span class="ln">    22</span>	type request struct {
+<a id="L23"></a><span class="ln">    23</span>		pw        *io.PipeWriter
+<a id="L24"></a><span class="ln">    24</span>		reqId     uint16
+<a id="L25"></a><span class="ln">    25</span>		params    map[string]string
+<a id="L26"></a><span class="ln">    26</span>		buf       [1024]byte
+<a id="L27"></a><span class="ln">    27</span>		rawParams []byte
+<a id="L28"></a><span class="ln">    28</span>		keepConn  bool
+<a id="L29"></a><span class="ln">    29</span>	}
+<a id="L30"></a><span class="ln">    30</span>	
+<a id="L31"></a><span class="ln">    31</span>	func newRequest(reqId uint16, flags uint8) *request {
+<a id="L32"></a><span class="ln">    32</span>		r := &amp;request{
+<a id="L33"></a><span class="ln">    33</span>			reqId:    reqId,
+<a id="L34"></a><span class="ln">    34</span>			params:   map[string]string{},
+<a id="L35"></a><span class="ln">    35</span>			keepConn: flags&amp;flagKeepConn != 0,
+<a id="L36"></a><span class="ln">    36</span>		}
+<a id="L37"></a><span class="ln">    37</span>		r.rawParams = r.buf[:0]
+<a id="L38"></a><span class="ln">    38</span>		return r
+<a id="L39"></a><span class="ln">    39</span>	}
+<a id="L40"></a><span class="ln">    40</span>	
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// parseParams reads an encoded []byte into Params.</span>
+<a id="L42"></a><span class="ln">    42</span>	func (r *request) parseParams() {
+<a id="L43"></a><span class="ln">    43</span>		text := r.rawParams
+<a id="L44"></a><span class="ln">    44</span>		r.rawParams = nil
+<a id="L45"></a><span class="ln">    45</span>		for len(text) &gt; 0 {
+<a id="L46"></a><span class="ln">    46</span>			keyLen, n := readSize(text)
+<a id="L47"></a><span class="ln">    47</span>			if n == 0 {
+<a id="L48"></a><span class="ln">    48</span>				return
+<a id="L49"></a><span class="ln">    49</span>			}
+<a id="L50"></a><span class="ln">    50</span>			text = text[n:]
+<a id="L51"></a><span class="ln">    51</span>			valLen, n := readSize(text)
+<a id="L52"></a><span class="ln">    52</span>			if n == 0 {
+<a id="L53"></a><span class="ln">    53</span>				return
+<a id="L54"></a><span class="ln">    54</span>			}
+<a id="L55"></a><span class="ln">    55</span>			text = text[n:]
+<a id="L56"></a><span class="ln">    56</span>			key := readString(text, keyLen)
+<a id="L57"></a><span class="ln">    57</span>			text = text[keyLen:]
+<a id="L58"></a><span class="ln">    58</span>			val := readString(text, valLen)
+<a id="L59"></a><span class="ln">    59</span>			text = text[valLen:]
+<a id="L60"></a><span class="ln">    60</span>			r.params[key] = val
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// response implements http.ResponseWriter.</span>
+<a id="L65"></a><span class="ln">    65</span>	type response struct {
+<a id="L66"></a><span class="ln">    66</span>		req         *request
+<a id="L67"></a><span class="ln">    67</span>		header      http.Header
+<a id="L68"></a><span class="ln">    68</span>		w           *bufWriter
+<a id="L69"></a><span class="ln">    69</span>		wroteHeader bool
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	func newResponse(c *child, req *request) *response {
+<a id="L73"></a><span class="ln">    73</span>		return &amp;response{
+<a id="L74"></a><span class="ln">    74</span>			req:    req,
+<a id="L75"></a><span class="ln">    75</span>			header: http.Header{},
+<a id="L76"></a><span class="ln">    76</span>			w:      newWriter(c.conn, typeStdout, req.reqId),
+<a id="L77"></a><span class="ln">    77</span>		}
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	func (r *response) Header() http.Header {
+<a id="L81"></a><span class="ln">    81</span>		return r.header
+<a id="L82"></a><span class="ln">    82</span>	}
+<a id="L83"></a><span class="ln">    83</span>	
+<a id="L84"></a><span class="ln">    84</span>	func (r *response) Write(data []byte) (int, error) {
+<a id="L85"></a><span class="ln">    85</span>		if !r.wroteHeader {
+<a id="L86"></a><span class="ln">    86</span>			r.WriteHeader(http.StatusOK)
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>		return r.w.Write(data)
+<a id="L89"></a><span class="ln">    89</span>	}
+<a id="L90"></a><span class="ln">    90</span>	
+<a id="L91"></a><span class="ln">    91</span>	func (r *response) WriteHeader(code int) {
+<a id="L92"></a><span class="ln">    92</span>		if r.wroteHeader {
+<a id="L93"></a><span class="ln">    93</span>			return
+<a id="L94"></a><span class="ln">    94</span>		}
+<a id="L95"></a><span class="ln">    95</span>		r.wroteHeader = true
+<a id="L96"></a><span class="ln">    96</span>		if code == http.StatusNotModified {
+<a id="L97"></a><span class="ln">    97</span>			<span class="comment">// Must not have body.</span>
+<a id="L98"></a><span class="ln">    98</span>			r.header.Del(&#34;Content-Type&#34;)
+<a id="L99"></a><span class="ln">    99</span>			r.header.Del(&#34;Content-Length&#34;)
+<a id="L100"></a><span class="ln">   100</span>			r.header.Del(&#34;Transfer-Encoding&#34;)
+<a id="L101"></a><span class="ln">   101</span>		} else if r.header.Get(&#34;Content-Type&#34;) == &#34;&#34; {
+<a id="L102"></a><span class="ln">   102</span>			r.header.Set(&#34;Content-Type&#34;, &#34;text/html; charset=utf-8&#34;)
+<a id="L103"></a><span class="ln">   103</span>		}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>		if r.header.Get(&#34;Date&#34;) == &#34;&#34; {
+<a id="L106"></a><span class="ln">   106</span>			r.header.Set(&#34;Date&#34;, time.Now().UTC().Format(http.TimeFormat))
+<a id="L107"></a><span class="ln">   107</span>		}
+<a id="L108"></a><span class="ln">   108</span>	
+<a id="L109"></a><span class="ln">   109</span>		fmt.Fprintf(r.w, &#34;Status: %d %s\r\n&#34;, code, http.StatusText(code))
+<a id="L110"></a><span class="ln">   110</span>		r.header.Write(r.w)
+<a id="L111"></a><span class="ln">   111</span>		r.w.WriteString(&#34;\r\n&#34;)
+<a id="L112"></a><span class="ln">   112</span>	}
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>	func (r *response) Flush() {
+<a id="L115"></a><span class="ln">   115</span>		if !r.wroteHeader {
+<a id="L116"></a><span class="ln">   116</span>			r.WriteHeader(http.StatusOK)
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>		r.w.Flush()
+<a id="L119"></a><span class="ln">   119</span>	}
+<a id="L120"></a><span class="ln">   120</span>	
+<a id="L121"></a><span class="ln">   121</span>	func (r *response) Close() error {
+<a id="L122"></a><span class="ln">   122</span>		r.Flush()
+<a id="L123"></a><span class="ln">   123</span>		return r.w.Close()
+<a id="L124"></a><span class="ln">   124</span>	}
+<a id="L125"></a><span class="ln">   125</span>	
+<a id="L126"></a><span class="ln">   126</span>	type child struct {
+<a id="L127"></a><span class="ln">   127</span>		conn     *conn
+<a id="L128"></a><span class="ln">   128</span>		handler  http.Handler
+<a id="L129"></a><span class="ln">   129</span>		requests map[uint16]*request <span class="comment">// keyed by request ID</span>
+<a id="L130"></a><span class="ln">   130</span>	}
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>	func newChild(rwc io.ReadWriteCloser, handler http.Handler) *child {
+<a id="L133"></a><span class="ln">   133</span>		return &amp;child{
+<a id="L134"></a><span class="ln">   134</span>			conn:     newConn(rwc),
+<a id="L135"></a><span class="ln">   135</span>			handler:  handler,
+<a id="L136"></a><span class="ln">   136</span>			requests: make(map[uint16]*request),
+<a id="L137"></a><span class="ln">   137</span>		}
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	func (c *child) serve() {
+<a id="L141"></a><span class="ln">   141</span>		defer c.conn.Close()
+<a id="L142"></a><span class="ln">   142</span>		var rec record
+<a id="L143"></a><span class="ln">   143</span>		for {
+<a id="L144"></a><span class="ln">   144</span>			if err := rec.read(c.conn.rwc); err != nil {
+<a id="L145"></a><span class="ln">   145</span>				return
+<a id="L146"></a><span class="ln">   146</span>			}
+<a id="L147"></a><span class="ln">   147</span>			if err := c.handleRecord(&amp;rec); err != nil {
+<a id="L148"></a><span class="ln">   148</span>				return
+<a id="L149"></a><span class="ln">   149</span>			}
+<a id="L150"></a><span class="ln">   150</span>		}
+<a id="L151"></a><span class="ln">   151</span>	}
+<a id="L152"></a><span class="ln">   152</span>	
+<a id="L153"></a><span class="ln">   153</span>	var errCloseConn = errors.New(&#34;fcgi: connection should be closed&#34;)
+<a id="L154"></a><span class="ln">   154</span>	
+<a id="L155"></a><span class="ln">   155</span>	func (c *child) handleRecord(rec *record) error {
+<a id="L156"></a><span class="ln">   156</span>		req, ok := c.requests[rec.h.Id]
+<a id="L157"></a><span class="ln">   157</span>		if !ok &amp;&amp; rec.h.Type != typeBeginRequest &amp;&amp; rec.h.Type != typeGetValues {
+<a id="L158"></a><span class="ln">   158</span>			<span class="comment">// The spec says to ignore unknown request IDs.</span>
+<a id="L159"></a><span class="ln">   159</span>			return nil
+<a id="L160"></a><span class="ln">   160</span>		}
+<a id="L161"></a><span class="ln">   161</span>		if ok &amp;&amp; rec.h.Type == typeBeginRequest {
+<a id="L162"></a><span class="ln">   162</span>			<span class="comment">// The server is trying to begin a request with the same ID</span>
+<a id="L163"></a><span class="ln">   163</span>			<span class="comment">// as an in-progress request. This is an error.</span>
+<a id="L164"></a><span class="ln">   164</span>			return errors.New(&#34;fcgi: received ID that is already in-flight&#34;)
+<a id="L165"></a><span class="ln">   165</span>		}
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>		switch rec.h.Type {
+<a id="L168"></a><span class="ln">   168</span>		case typeBeginRequest:
+<a id="L169"></a><span class="ln">   169</span>			var br beginRequest
+<a id="L170"></a><span class="ln">   170</span>			if err := br.read(rec.content()); err != nil {
+<a id="L171"></a><span class="ln">   171</span>				return err
+<a id="L172"></a><span class="ln">   172</span>			}
+<a id="L173"></a><span class="ln">   173</span>			if br.role != roleResponder {
+<a id="L174"></a><span class="ln">   174</span>				c.conn.writeEndRequest(rec.h.Id, 0, statusUnknownRole)
+<a id="L175"></a><span class="ln">   175</span>				return nil
+<a id="L176"></a><span class="ln">   176</span>			}
+<a id="L177"></a><span class="ln">   177</span>			c.requests[rec.h.Id] = newRequest(rec.h.Id, br.flags)
+<a id="L178"></a><span class="ln">   178</span>		case typeParams:
+<a id="L179"></a><span class="ln">   179</span>			<span class="comment">// NOTE(eds): Technically a key-value pair can straddle the boundary</span>
+<a id="L180"></a><span class="ln">   180</span>			<span class="comment">// between two packets. We buffer until we&#39;ve received all parameters.</span>
+<a id="L181"></a><span class="ln">   181</span>			if len(rec.content()) &gt; 0 {
+<a id="L182"></a><span class="ln">   182</span>				req.rawParams = append(req.rawParams, rec.content()...)
+<a id="L183"></a><span class="ln">   183</span>				return nil
+<a id="L184"></a><span class="ln">   184</span>			}
+<a id="L185"></a><span class="ln">   185</span>			req.parseParams()
+<a id="L186"></a><span class="ln">   186</span>		case typeStdin:
+<a id="L187"></a><span class="ln">   187</span>			content := rec.content()
+<a id="L188"></a><span class="ln">   188</span>			if req.pw == nil {
+<a id="L189"></a><span class="ln">   189</span>				var body io.ReadCloser
+<a id="L190"></a><span class="ln">   190</span>				if len(content) &gt; 0 {
+<a id="L191"></a><span class="ln">   191</span>					<span class="comment">// body could be an io.LimitReader, but it shouldn&#39;t matter</span>
+<a id="L192"></a><span class="ln">   192</span>					<span class="comment">// as long as both sides are behaving.</span>
+<a id="L193"></a><span class="ln">   193</span>					body, req.pw = io.Pipe()
+<a id="L194"></a><span class="ln">   194</span>				}
+<a id="L195"></a><span class="ln">   195</span>				go c.serveRequest(req, body)
+<a id="L196"></a><span class="ln">   196</span>			}
+<a id="L197"></a><span class="ln">   197</span>			if len(content) &gt; 0 {
+<a id="L198"></a><span class="ln">   198</span>				<span class="comment">// TODO(eds): This blocks until the handler reads from the pipe.</span>
+<a id="L199"></a><span class="ln">   199</span>				<span class="comment">// If the handler takes a long time, it might be a problem.</span>
+<a id="L200"></a><span class="ln">   200</span>				req.pw.Write(content)
+<a id="L201"></a><span class="ln">   201</span>			} else if req.pw != nil {
+<a id="L202"></a><span class="ln">   202</span>				req.pw.Close()
+<a id="L203"></a><span class="ln">   203</span>			}
+<a id="L204"></a><span class="ln">   204</span>		case typeGetValues:
+<a id="L205"></a><span class="ln">   205</span>			values := map[string]string{&#34;FCGI_MPXS_CONNS&#34;: &#34;1&#34;}
+<a id="L206"></a><span class="ln">   206</span>			c.conn.writePairs(typeGetValuesResult, 0, values)
+<a id="L207"></a><span class="ln">   207</span>		case typeData:
+<a id="L208"></a><span class="ln">   208</span>			<span class="comment">// If the filter role is implemented, read the data stream here.</span>
+<a id="L209"></a><span class="ln">   209</span>		case typeAbortRequest:
+<a id="L210"></a><span class="ln">   210</span>			delete(c.requests, rec.h.Id)
+<a id="L211"></a><span class="ln">   211</span>			c.conn.writeEndRequest(rec.h.Id, 0, statusRequestComplete)
+<a id="L212"></a><span class="ln">   212</span>			if !req.keepConn {
+<a id="L213"></a><span class="ln">   213</span>				<span class="comment">// connection will close upon return</span>
+<a id="L214"></a><span class="ln">   214</span>				return errCloseConn
+<a id="L215"></a><span class="ln">   215</span>			}
+<a id="L216"></a><span class="ln">   216</span>		default:
+<a id="L217"></a><span class="ln">   217</span>			b := make([]byte, 8)
+<a id="L218"></a><span class="ln">   218</span>			b[0] = byte(rec.h.Type)
+<a id="L219"></a><span class="ln">   219</span>			c.conn.writeRecord(typeUnknownType, 0, b)
+<a id="L220"></a><span class="ln">   220</span>		}
+<a id="L221"></a><span class="ln">   221</span>		return nil
+<a id="L222"></a><span class="ln">   222</span>	}
+<a id="L223"></a><span class="ln">   223</span>	
+<a id="L224"></a><span class="ln">   224</span>	func (c *child) serveRequest(req *request, body io.ReadCloser) {
+<a id="L225"></a><span class="ln">   225</span>		r := newResponse(c, req)
+<a id="L226"></a><span class="ln">   226</span>		httpReq, err := cgi.RequestFromMap(req.params)
+<a id="L227"></a><span class="ln">   227</span>		if err != nil {
+<a id="L228"></a><span class="ln">   228</span>			<span class="comment">// there was an error reading the request</span>
+<a id="L229"></a><span class="ln">   229</span>			r.WriteHeader(http.StatusInternalServerError)
+<a id="L230"></a><span class="ln">   230</span>			c.conn.writeRecord(typeStderr, req.reqId, []byte(err.Error()))
+<a id="L231"></a><span class="ln">   231</span>		} else {
+<a id="L232"></a><span class="ln">   232</span>			httpReq.Body = body
+<a id="L233"></a><span class="ln">   233</span>			c.handler.ServeHTTP(r, httpReq)
+<a id="L234"></a><span class="ln">   234</span>		}
+<a id="L235"></a><span class="ln">   235</span>		if body != nil {
+<a id="L236"></a><span class="ln">   236</span>			body.Close()
+<a id="L237"></a><span class="ln">   237</span>		}
+<a id="L238"></a><span class="ln">   238</span>		r.Close()
+<a id="L239"></a><span class="ln">   239</span>		c.conn.writeEndRequest(req.reqId, 0, statusRequestComplete)
+<a id="L240"></a><span class="ln">   240</span>		if !req.keepConn {
+<a id="L241"></a><span class="ln">   241</span>			c.conn.Close()
+<a id="L242"></a><span class="ln">   242</span>		}
+<a id="L243"></a><span class="ln">   243</span>	}
+<a id="L244"></a><span class="ln">   244</span>	
+<a id="L245"></a><span class="ln">   245</span>	<span class="comment">// Serve accepts incoming FastCGI connections on the listener l, creating a new</span>
+<a id="L246"></a><span class="ln">   246</span>	<span class="comment">// goroutine for each. The goroutine reads requests and then calls handler</span>
+<a id="L247"></a><span class="ln">   247</span>	<span class="comment">// to reply to them.</span>
+<a id="L248"></a><span class="ln">   248</span>	<span class="comment">// If l is nil, Serve accepts connections from os.Stdin.</span>
+<a id="L249"></a><span class="ln">   249</span>	<span class="comment">// If handler is nil, http.DefaultServeMux is used.</span>
+<a id="L250"></a><span class="ln">   250</span>	func Serve(l net.Listener, handler http.Handler) error {
+<a id="L251"></a><span class="ln">   251</span>		if l == nil {
+<a id="L252"></a><span class="ln">   252</span>			var err error
+<a id="L253"></a><span class="ln">   253</span>			l, err = net.FileListener(os.Stdin)
+<a id="L254"></a><span class="ln">   254</span>			if err != nil {
+<a id="L255"></a><span class="ln">   255</span>				return err
+<a id="L256"></a><span class="ln">   256</span>			}
+<a id="L257"></a><span class="ln">   257</span>			defer l.Close()
+<a id="L258"></a><span class="ln">   258</span>		}
+<a id="L259"></a><span class="ln">   259</span>		if handler == nil {
+<a id="L260"></a><span class="ln">   260</span>			handler = http.DefaultServeMux
+<a id="L261"></a><span class="ln">   261</span>		}
+<a id="L262"></a><span class="ln">   262</span>		for {
+<a id="L263"></a><span class="ln">   263</span>			rw, err := l.Accept()
+<a id="L264"></a><span class="ln">   264</span>			if err != nil {
+<a id="L265"></a><span class="ln">   265</span>				return err
+<a id="L266"></a><span class="ln">   266</span>			}
+<a id="L267"></a><span class="ln">   267</span>			c := newChild(rw, handler)
+<a id="L268"></a><span class="ln">   268</span>			go c.serve()
+<a id="L269"></a><span class="ln">   269</span>		}
+<a id="L270"></a><span class="ln">   270</span>		panic(&#34;unreachable&#34;)
+<a id="L271"></a><span class="ln">   271</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

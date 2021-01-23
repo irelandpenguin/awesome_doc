@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/archive/zip/struct.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/archive/zip/struct.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">/*
+</span><a id="L6"></a><span class="ln">     6</span>	<span class="comment">Package zip provides support for reading and writing ZIP archives.
+</span><a id="L7"></a><span class="ln">     7</span>	<span class="comment">
+</span><a id="L8"></a><span class="ln">     8</span>	<span class="comment">See: http://www.pkware.com/documents/casestudies/APPNOTE.TXT
+</span><a id="L9"></a><span class="ln">     9</span>	<span class="comment">
+</span><a id="L10"></a><span class="ln">    10</span>	<span class="comment">This package does not support ZIP64 or disk spanning.
+</span><a id="L11"></a><span class="ln">    11</span>	<span class="comment">*/</span>
+<a id="L12"></a><span class="ln">    12</span>	package zip
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	import (
+<a id="L15"></a><span class="ln">    15</span>		&#34;errors&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;os&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;time&#34;
+<a id="L18"></a><span class="ln">    18</span>	)
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// Compression methods.</span>
+<a id="L21"></a><span class="ln">    21</span>	const (
+<a id="L22"></a><span class="ln">    22</span>		Store   uint16 = 0
+<a id="L23"></a><span class="ln">    23</span>		Deflate uint16 = 8
+<a id="L24"></a><span class="ln">    24</span>	)
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	const (
+<a id="L27"></a><span class="ln">    27</span>		fileHeaderSignature      = 0x04034b50
+<a id="L28"></a><span class="ln">    28</span>		directoryHeaderSignature = 0x02014b50
+<a id="L29"></a><span class="ln">    29</span>		directoryEndSignature    = 0x06054b50
+<a id="L30"></a><span class="ln">    30</span>		dataDescriptorSignature  = 0x08074b50 <span class="comment">// de-facto standard; required by OS X Finder</span>
+<a id="L31"></a><span class="ln">    31</span>		fileHeaderLen            = 30         <span class="comment">// + filename + extra</span>
+<a id="L32"></a><span class="ln">    32</span>		directoryHeaderLen       = 46         <span class="comment">// + filename + extra + comment</span>
+<a id="L33"></a><span class="ln">    33</span>		directoryEndLen          = 22         <span class="comment">// + comment</span>
+<a id="L34"></a><span class="ln">    34</span>		dataDescriptorLen        = 16         <span class="comment">// four uint32: descriptor signature, crc32, compressed size, size</span>
+<a id="L35"></a><span class="ln">    35</span>	
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// Constants for the first byte in CreatorVersion</span>
+<a id="L37"></a><span class="ln">    37</span>		creatorFAT    = 0
+<a id="L38"></a><span class="ln">    38</span>		creatorUnix   = 3
+<a id="L39"></a><span class="ln">    39</span>		creatorNTFS   = 11
+<a id="L40"></a><span class="ln">    40</span>		creatorVFAT   = 14
+<a id="L41"></a><span class="ln">    41</span>		creatorMacOSX = 19
+<a id="L42"></a><span class="ln">    42</span>	)
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>	type FileHeader struct {
+<a id="L45"></a><span class="ln">    45</span>		Name             string
+<a id="L46"></a><span class="ln">    46</span>		CreatorVersion   uint16
+<a id="L47"></a><span class="ln">    47</span>		ReaderVersion    uint16
+<a id="L48"></a><span class="ln">    48</span>		Flags            uint16
+<a id="L49"></a><span class="ln">    49</span>		Method           uint16
+<a id="L50"></a><span class="ln">    50</span>		ModifiedTime     uint16 <span class="comment">// MS-DOS time</span>
+<a id="L51"></a><span class="ln">    51</span>		ModifiedDate     uint16 <span class="comment">// MS-DOS date</span>
+<a id="L52"></a><span class="ln">    52</span>		CRC32            uint32
+<a id="L53"></a><span class="ln">    53</span>		CompressedSize   uint32
+<a id="L54"></a><span class="ln">    54</span>		UncompressedSize uint32
+<a id="L55"></a><span class="ln">    55</span>		Extra            []byte
+<a id="L56"></a><span class="ln">    56</span>		ExternalAttrs    uint32 <span class="comment">// Meaning depends on CreatorVersion</span>
+<a id="L57"></a><span class="ln">    57</span>		Comment          string
+<a id="L58"></a><span class="ln">    58</span>	}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>	<span class="comment">// FileInfo returns an os.FileInfo for the FileHeader.</span>
+<a id="L61"></a><span class="ln">    61</span>	func (h *FileHeader) FileInfo() os.FileInfo {
+<a id="L62"></a><span class="ln">    62</span>		return headerFileInfo{h}
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// headerFileInfo implements os.FileInfo.</span>
+<a id="L66"></a><span class="ln">    66</span>	type headerFileInfo struct {
+<a id="L67"></a><span class="ln">    67</span>		fh *FileHeader
+<a id="L68"></a><span class="ln">    68</span>	}
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>	func (fi headerFileInfo) Name() string       { return fi.fh.Name }
+<a id="L71"></a><span class="ln">    71</span>	func (fi headerFileInfo) Size() int64        { return int64(fi.fh.UncompressedSize) }
+<a id="L72"></a><span class="ln">    72</span>	func (fi headerFileInfo) IsDir() bool        { return fi.Mode().IsDir() }
+<a id="L73"></a><span class="ln">    73</span>	func (fi headerFileInfo) ModTime() time.Time { return fi.fh.ModTime() }
+<a id="L74"></a><span class="ln">    74</span>	func (fi headerFileInfo) Mode() os.FileMode  { return fi.fh.Mode() }
+<a id="L75"></a><span class="ln">    75</span>	func (fi headerFileInfo) Sys() interface{}   { return fi.fh }
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// FileInfoHeader creates a partially-populated FileHeader from an</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// os.FileInfo.</span>
+<a id="L79"></a><span class="ln">    79</span>	func FileInfoHeader(fi os.FileInfo) (*FileHeader, error) {
+<a id="L80"></a><span class="ln">    80</span>		size := fi.Size()
+<a id="L81"></a><span class="ln">    81</span>		if size &gt; (1&lt;&lt;32 - 1) {
+<a id="L82"></a><span class="ln">    82</span>			return nil, errors.New(&#34;zip: file over 4GB&#34;)
+<a id="L83"></a><span class="ln">    83</span>		}
+<a id="L84"></a><span class="ln">    84</span>		fh := &amp;FileHeader{
+<a id="L85"></a><span class="ln">    85</span>			Name:             fi.Name(),
+<a id="L86"></a><span class="ln">    86</span>			UncompressedSize: uint32(size),
+<a id="L87"></a><span class="ln">    87</span>		}
+<a id="L88"></a><span class="ln">    88</span>		fh.SetModTime(fi.ModTime())
+<a id="L89"></a><span class="ln">    89</span>		fh.SetMode(fi.Mode())
+<a id="L90"></a><span class="ln">    90</span>		return fh, nil
+<a id="L91"></a><span class="ln">    91</span>	}
+<a id="L92"></a><span class="ln">    92</span>	
+<a id="L93"></a><span class="ln">    93</span>	type directoryEnd struct {
+<a id="L94"></a><span class="ln">    94</span>		diskNbr            uint16 <span class="comment">// unused</span>
+<a id="L95"></a><span class="ln">    95</span>		dirDiskNbr         uint16 <span class="comment">// unused</span>
+<a id="L96"></a><span class="ln">    96</span>		dirRecordsThisDisk uint16 <span class="comment">// unused</span>
+<a id="L97"></a><span class="ln">    97</span>		directoryRecords   uint16
+<a id="L98"></a><span class="ln">    98</span>		directorySize      uint32
+<a id="L99"></a><span class="ln">    99</span>		directoryOffset    uint32 <span class="comment">// relative to file</span>
+<a id="L100"></a><span class="ln">   100</span>		commentLen         uint16
+<a id="L101"></a><span class="ln">   101</span>		comment            string
+<a id="L102"></a><span class="ln">   102</span>	}
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	<span class="comment">// msDosTimeToTime converts an MS-DOS date and time into a time.Time.</span>
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// The resolution is 2s.</span>
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// See: http://msdn.microsoft.com/en-us/library/ms724247(v=VS.85).aspx</span>
+<a id="L107"></a><span class="ln">   107</span>	func msDosTimeToTime(dosDate, dosTime uint16) time.Time {
+<a id="L108"></a><span class="ln">   108</span>		return time.Date(
+<a id="L109"></a><span class="ln">   109</span>			<span class="comment">// date bits 0-4: day of month; 5-8: month; 9-15: years since 1980</span>
+<a id="L110"></a><span class="ln">   110</span>			int(dosDate&gt;&gt;9+1980),
+<a id="L111"></a><span class="ln">   111</span>			time.Month(dosDate&gt;&gt;5&amp;0xf),
+<a id="L112"></a><span class="ln">   112</span>			int(dosDate&amp;0x1f),
+<a id="L113"></a><span class="ln">   113</span>	
+<a id="L114"></a><span class="ln">   114</span>			<span class="comment">// time bits 0-4: second/2; 5-10: minute; 11-15: hour</span>
+<a id="L115"></a><span class="ln">   115</span>			int(dosTime&gt;&gt;11),
+<a id="L116"></a><span class="ln">   116</span>			int(dosTime&gt;&gt;5&amp;0x3f),
+<a id="L117"></a><span class="ln">   117</span>			int(dosTime&amp;0x1f*2),
+<a id="L118"></a><span class="ln">   118</span>			0, <span class="comment">// nanoseconds</span>
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>			time.UTC,
+<a id="L121"></a><span class="ln">   121</span>		)
+<a id="L122"></a><span class="ln">   122</span>	}
+<a id="L123"></a><span class="ln">   123</span>	
+<a id="L124"></a><span class="ln">   124</span>	<span class="comment">// timeToMsDosTime converts a time.Time to an MS-DOS date and time.</span>
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// The resolution is 2s.</span>
+<a id="L126"></a><span class="ln">   126</span>	<span class="comment">// See: http://msdn.microsoft.com/en-us/library/ms724274(v=VS.85).aspx</span>
+<a id="L127"></a><span class="ln">   127</span>	func timeToMsDosTime(t time.Time) (fDate uint16, fTime uint16) {
+<a id="L128"></a><span class="ln">   128</span>		t = t.In(time.UTC)
+<a id="L129"></a><span class="ln">   129</span>		fDate = uint16(t.Day() + int(t.Month())&lt;&lt;5 + (t.Year()-1980)&lt;&lt;9)
+<a id="L130"></a><span class="ln">   130</span>		fTime = uint16(t.Second()/2 + t.Minute()&lt;&lt;5 + t.Hour()&lt;&lt;11)
+<a id="L131"></a><span class="ln">   131</span>		return
+<a id="L132"></a><span class="ln">   132</span>	}
+<a id="L133"></a><span class="ln">   133</span>	
+<a id="L134"></a><span class="ln">   134</span>	<span class="comment">// ModTime returns the modification time.</span>
+<a id="L135"></a><span class="ln">   135</span>	<span class="comment">// The resolution is 2s.</span>
+<a id="L136"></a><span class="ln">   136</span>	func (h *FileHeader) ModTime() time.Time {
+<a id="L137"></a><span class="ln">   137</span>		return msDosTimeToTime(h.ModifiedDate, h.ModifiedTime)
+<a id="L138"></a><span class="ln">   138</span>	}
+<a id="L139"></a><span class="ln">   139</span>	
+<a id="L140"></a><span class="ln">   140</span>	<span class="comment">// SetModTime sets the ModifiedTime and ModifiedDate fields to the given time.</span>
+<a id="L141"></a><span class="ln">   141</span>	<span class="comment">// The resolution is 2s.</span>
+<a id="L142"></a><span class="ln">   142</span>	func (h *FileHeader) SetModTime(t time.Time) {
+<a id="L143"></a><span class="ln">   143</span>		h.ModifiedDate, h.ModifiedTime = timeToMsDosTime(t)
+<a id="L144"></a><span class="ln">   144</span>	}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>	const (
+<a id="L147"></a><span class="ln">   147</span>		<span class="comment">// Unix constants. The specification doesn&#39;t mention them,</span>
+<a id="L148"></a><span class="ln">   148</span>		<span class="comment">// but these seem to be the values agreed on by tools.</span>
+<a id="L149"></a><span class="ln">   149</span>		s_IFMT   = 0xf000
+<a id="L150"></a><span class="ln">   150</span>		s_IFSOCK = 0xc000
+<a id="L151"></a><span class="ln">   151</span>		s_IFLNK  = 0xa000
+<a id="L152"></a><span class="ln">   152</span>		s_IFREG  = 0x8000
+<a id="L153"></a><span class="ln">   153</span>		s_IFBLK  = 0x6000
+<a id="L154"></a><span class="ln">   154</span>		s_IFDIR  = 0x4000
+<a id="L155"></a><span class="ln">   155</span>		s_IFCHR  = 0x2000
+<a id="L156"></a><span class="ln">   156</span>		s_IFIFO  = 0x1000
+<a id="L157"></a><span class="ln">   157</span>		s_ISUID  = 0x800
+<a id="L158"></a><span class="ln">   158</span>		s_ISGID  = 0x400
+<a id="L159"></a><span class="ln">   159</span>		s_ISVTX  = 0x200
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>		msdosDir      = 0x10
+<a id="L162"></a><span class="ln">   162</span>		msdosReadOnly = 0x01
+<a id="L163"></a><span class="ln">   163</span>	)
+<a id="L164"></a><span class="ln">   164</span>	
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// Mode returns the permission and mode bits for the FileHeader.</span>
+<a id="L166"></a><span class="ln">   166</span>	func (h *FileHeader) Mode() (mode os.FileMode) {
+<a id="L167"></a><span class="ln">   167</span>		switch h.CreatorVersion &gt;&gt; 8 {
+<a id="L168"></a><span class="ln">   168</span>		case creatorUnix, creatorMacOSX:
+<a id="L169"></a><span class="ln">   169</span>			mode = unixModeToFileMode(h.ExternalAttrs &gt;&gt; 16)
+<a id="L170"></a><span class="ln">   170</span>		case creatorNTFS, creatorVFAT, creatorFAT:
+<a id="L171"></a><span class="ln">   171</span>			mode = msdosModeToFileMode(h.ExternalAttrs)
+<a id="L172"></a><span class="ln">   172</span>		}
+<a id="L173"></a><span class="ln">   173</span>		if len(h.Name) &gt; 0 &amp;&amp; h.Name[len(h.Name)-1] == &#39;/&#39; {
+<a id="L174"></a><span class="ln">   174</span>			mode |= os.ModeDir
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>		return mode
+<a id="L177"></a><span class="ln">   177</span>	}
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// SetMode changes the permission and mode bits for the FileHeader.</span>
+<a id="L180"></a><span class="ln">   180</span>	func (h *FileHeader) SetMode(mode os.FileMode) {
+<a id="L181"></a><span class="ln">   181</span>		h.CreatorVersion = h.CreatorVersion&amp;0xff | creatorUnix&lt;&lt;8
+<a id="L182"></a><span class="ln">   182</span>		h.ExternalAttrs = fileModeToUnixMode(mode) &lt;&lt; 16
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>		<span class="comment">// set MSDOS attributes too, as the original zip does.</span>
+<a id="L185"></a><span class="ln">   185</span>		if mode&amp;os.ModeDir != 0 {
+<a id="L186"></a><span class="ln">   186</span>			h.ExternalAttrs |= msdosDir
+<a id="L187"></a><span class="ln">   187</span>		}
+<a id="L188"></a><span class="ln">   188</span>		if mode&amp;0200 == 0 {
+<a id="L189"></a><span class="ln">   189</span>			h.ExternalAttrs |= msdosReadOnly
+<a id="L190"></a><span class="ln">   190</span>		}
+<a id="L191"></a><span class="ln">   191</span>	}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>	func msdosModeToFileMode(m uint32) (mode os.FileMode) {
+<a id="L194"></a><span class="ln">   194</span>		if m&amp;msdosDir != 0 {
+<a id="L195"></a><span class="ln">   195</span>			mode = os.ModeDir | 0777
+<a id="L196"></a><span class="ln">   196</span>		} else {
+<a id="L197"></a><span class="ln">   197</span>			mode = 0666
+<a id="L198"></a><span class="ln">   198</span>		}
+<a id="L199"></a><span class="ln">   199</span>		if m&amp;msdosReadOnly != 0 {
+<a id="L200"></a><span class="ln">   200</span>			mode &amp;^= 0222
+<a id="L201"></a><span class="ln">   201</span>		}
+<a id="L202"></a><span class="ln">   202</span>		return mode
+<a id="L203"></a><span class="ln">   203</span>	}
+<a id="L204"></a><span class="ln">   204</span>	
+<a id="L205"></a><span class="ln">   205</span>	func fileModeToUnixMode(mode os.FileMode) uint32 {
+<a id="L206"></a><span class="ln">   206</span>		var m uint32
+<a id="L207"></a><span class="ln">   207</span>		switch mode &amp; os.ModeType {
+<a id="L208"></a><span class="ln">   208</span>		default:
+<a id="L209"></a><span class="ln">   209</span>			m = s_IFREG
+<a id="L210"></a><span class="ln">   210</span>		case os.ModeDir:
+<a id="L211"></a><span class="ln">   211</span>			m = s_IFDIR
+<a id="L212"></a><span class="ln">   212</span>		case os.ModeSymlink:
+<a id="L213"></a><span class="ln">   213</span>			m = s_IFLNK
+<a id="L214"></a><span class="ln">   214</span>		case os.ModeNamedPipe:
+<a id="L215"></a><span class="ln">   215</span>			m = s_IFIFO
+<a id="L216"></a><span class="ln">   216</span>		case os.ModeSocket:
+<a id="L217"></a><span class="ln">   217</span>			m = s_IFSOCK
+<a id="L218"></a><span class="ln">   218</span>		case os.ModeDevice:
+<a id="L219"></a><span class="ln">   219</span>			if mode&amp;os.ModeCharDevice != 0 {
+<a id="L220"></a><span class="ln">   220</span>				m = s_IFCHR
+<a id="L221"></a><span class="ln">   221</span>			} else {
+<a id="L222"></a><span class="ln">   222</span>				m = s_IFBLK
+<a id="L223"></a><span class="ln">   223</span>			}
+<a id="L224"></a><span class="ln">   224</span>		}
+<a id="L225"></a><span class="ln">   225</span>		if mode&amp;os.ModeSetuid != 0 {
+<a id="L226"></a><span class="ln">   226</span>			m |= s_ISUID
+<a id="L227"></a><span class="ln">   227</span>		}
+<a id="L228"></a><span class="ln">   228</span>		if mode&amp;os.ModeSetgid != 0 {
+<a id="L229"></a><span class="ln">   229</span>			m |= s_ISGID
+<a id="L230"></a><span class="ln">   230</span>		}
+<a id="L231"></a><span class="ln">   231</span>		if mode&amp;os.ModeSticky != 0 {
+<a id="L232"></a><span class="ln">   232</span>			m |= s_ISVTX
+<a id="L233"></a><span class="ln">   233</span>		}
+<a id="L234"></a><span class="ln">   234</span>		return m | uint32(mode&amp;0777)
+<a id="L235"></a><span class="ln">   235</span>	}
+<a id="L236"></a><span class="ln">   236</span>	
+<a id="L237"></a><span class="ln">   237</span>	func unixModeToFileMode(m uint32) os.FileMode {
+<a id="L238"></a><span class="ln">   238</span>		mode := os.FileMode(m &amp; 0777)
+<a id="L239"></a><span class="ln">   239</span>		switch m &amp; s_IFMT {
+<a id="L240"></a><span class="ln">   240</span>		case s_IFBLK:
+<a id="L241"></a><span class="ln">   241</span>			mode |= os.ModeDevice
+<a id="L242"></a><span class="ln">   242</span>		case s_IFCHR:
+<a id="L243"></a><span class="ln">   243</span>			mode |= os.ModeDevice | os.ModeCharDevice
+<a id="L244"></a><span class="ln">   244</span>		case s_IFDIR:
+<a id="L245"></a><span class="ln">   245</span>			mode |= os.ModeDir
+<a id="L246"></a><span class="ln">   246</span>		case s_IFIFO:
+<a id="L247"></a><span class="ln">   247</span>			mode |= os.ModeNamedPipe
+<a id="L248"></a><span class="ln">   248</span>		case s_IFLNK:
+<a id="L249"></a><span class="ln">   249</span>			mode |= os.ModeSymlink
+<a id="L250"></a><span class="ln">   250</span>		case s_IFREG:
+<a id="L251"></a><span class="ln">   251</span>			<span class="comment">// nothing to do</span>
+<a id="L252"></a><span class="ln">   252</span>		case s_IFSOCK:
+<a id="L253"></a><span class="ln">   253</span>			mode |= os.ModeSocket
+<a id="L254"></a><span class="ln">   254</span>		}
+<a id="L255"></a><span class="ln">   255</span>		if m&amp;s_ISGID != 0 {
+<a id="L256"></a><span class="ln">   256</span>			mode |= os.ModeSetgid
+<a id="L257"></a><span class="ln">   257</span>		}
+<a id="L258"></a><span class="ln">   258</span>		if m&amp;s_ISUID != 0 {
+<a id="L259"></a><span class="ln">   259</span>			mode |= os.ModeSetuid
+<a id="L260"></a><span class="ln">   260</span>		}
+<a id="L261"></a><span class="ln">   261</span>		if m&amp;s_ISVTX != 0 {
+<a id="L262"></a><span class="ln">   262</span>			mode |= os.ModeSticky
+<a id="L263"></a><span class="ln">   263</span>		}
+<a id="L264"></a><span class="ln">   264</span>		return mode
+<a id="L265"></a><span class="ln">   265</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

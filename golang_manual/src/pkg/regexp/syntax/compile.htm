@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/regexp/syntax/compile.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/regexp/syntax/compile.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package syntax
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import &#34;unicode&#34;
+<a id="L8"></a><span class="ln">     8</span>	
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// A patchList is a list of instruction pointers that need to be filled in (patched).</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Because the pointers haven&#39;t been filled in yet, we can reuse their storage</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// to hold the list.  It&#39;s kind of sleazy, but works well in practice.</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// See http://swtch.com/~rsc/regexp/regexp1.html for inspiration.</span>
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// </span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// These aren&#39;t really pointers: they&#39;re integers, so we can reinterpret them</span>
+<a id="L15"></a><span class="ln">    15</span>	<span class="comment">// this way without using package unsafe.  A value l denotes</span>
+<a id="L16"></a><span class="ln">    16</span>	<span class="comment">// p.inst[l&gt;&gt;1].Out (l&amp;1==0) or .Arg (l&amp;1==1). </span>
+<a id="L17"></a><span class="ln">    17</span>	<span class="comment">// l == 0 denotes the empty list, okay because we start every program</span>
+<a id="L18"></a><span class="ln">    18</span>	<span class="comment">// with a fail instruction, so we&#39;ll never want to point at its output link.</span>
+<a id="L19"></a><span class="ln">    19</span>	type patchList uint32
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	func (l patchList) next(p *Prog) patchList {
+<a id="L22"></a><span class="ln">    22</span>		i := &amp;p.Inst[l&gt;&gt;1]
+<a id="L23"></a><span class="ln">    23</span>		if l&amp;1 == 0 {
+<a id="L24"></a><span class="ln">    24</span>			return patchList(i.Out)
+<a id="L25"></a><span class="ln">    25</span>		}
+<a id="L26"></a><span class="ln">    26</span>		return patchList(i.Arg)
+<a id="L27"></a><span class="ln">    27</span>	}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	func (l patchList) patch(p *Prog, val uint32) {
+<a id="L30"></a><span class="ln">    30</span>		for l != 0 {
+<a id="L31"></a><span class="ln">    31</span>			i := &amp;p.Inst[l&gt;&gt;1]
+<a id="L32"></a><span class="ln">    32</span>			if l&amp;1 == 0 {
+<a id="L33"></a><span class="ln">    33</span>				l = patchList(i.Out)
+<a id="L34"></a><span class="ln">    34</span>				i.Out = val
+<a id="L35"></a><span class="ln">    35</span>			} else {
+<a id="L36"></a><span class="ln">    36</span>				l = patchList(i.Arg)
+<a id="L37"></a><span class="ln">    37</span>				i.Arg = val
+<a id="L38"></a><span class="ln">    38</span>			}
+<a id="L39"></a><span class="ln">    39</span>		}
+<a id="L40"></a><span class="ln">    40</span>	}
+<a id="L41"></a><span class="ln">    41</span>	
+<a id="L42"></a><span class="ln">    42</span>	func (l1 patchList) append(p *Prog, l2 patchList) patchList {
+<a id="L43"></a><span class="ln">    43</span>		if l1 == 0 {
+<a id="L44"></a><span class="ln">    44</span>			return l2
+<a id="L45"></a><span class="ln">    45</span>		}
+<a id="L46"></a><span class="ln">    46</span>		if l2 == 0 {
+<a id="L47"></a><span class="ln">    47</span>			return l1
+<a id="L48"></a><span class="ln">    48</span>		}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>		last := l1
+<a id="L51"></a><span class="ln">    51</span>		for {
+<a id="L52"></a><span class="ln">    52</span>			next := last.next(p)
+<a id="L53"></a><span class="ln">    53</span>			if next == 0 {
+<a id="L54"></a><span class="ln">    54</span>				break
+<a id="L55"></a><span class="ln">    55</span>			}
+<a id="L56"></a><span class="ln">    56</span>			last = next
+<a id="L57"></a><span class="ln">    57</span>		}
+<a id="L58"></a><span class="ln">    58</span>	
+<a id="L59"></a><span class="ln">    59</span>		i := &amp;p.Inst[last&gt;&gt;1]
+<a id="L60"></a><span class="ln">    60</span>		if last&amp;1 == 0 {
+<a id="L61"></a><span class="ln">    61</span>			i.Out = uint32(l2)
+<a id="L62"></a><span class="ln">    62</span>		} else {
+<a id="L63"></a><span class="ln">    63</span>			i.Arg = uint32(l2)
+<a id="L64"></a><span class="ln">    64</span>		}
+<a id="L65"></a><span class="ln">    65</span>		return l1
+<a id="L66"></a><span class="ln">    66</span>	}
+<a id="L67"></a><span class="ln">    67</span>	
+<a id="L68"></a><span class="ln">    68</span>	<span class="comment">// A frag represents a compiled program fragment.</span>
+<a id="L69"></a><span class="ln">    69</span>	type frag struct {
+<a id="L70"></a><span class="ln">    70</span>		i   uint32    <span class="comment">// index of first instruction</span>
+<a id="L71"></a><span class="ln">    71</span>		out patchList <span class="comment">// where to record end instruction</span>
+<a id="L72"></a><span class="ln">    72</span>	}
+<a id="L73"></a><span class="ln">    73</span>	
+<a id="L74"></a><span class="ln">    74</span>	type compiler struct {
+<a id="L75"></a><span class="ln">    75</span>		p *Prog
+<a id="L76"></a><span class="ln">    76</span>	}
+<a id="L77"></a><span class="ln">    77</span>	
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">// Compile compiles the regexp into a program to be executed.</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// The regexp should have been simplified already (returned from re.Simplify).</span>
+<a id="L80"></a><span class="ln">    80</span>	func Compile(re *Regexp) (*Prog, error) {
+<a id="L81"></a><span class="ln">    81</span>		var c compiler
+<a id="L82"></a><span class="ln">    82</span>		c.init()
+<a id="L83"></a><span class="ln">    83</span>		f := c.compile(re)
+<a id="L84"></a><span class="ln">    84</span>		f.out.patch(c.p, c.inst(InstMatch).i)
+<a id="L85"></a><span class="ln">    85</span>		c.p.Start = int(f.i)
+<a id="L86"></a><span class="ln">    86</span>		return c.p, nil
+<a id="L87"></a><span class="ln">    87</span>	}
+<a id="L88"></a><span class="ln">    88</span>	
+<a id="L89"></a><span class="ln">    89</span>	func (c *compiler) init() {
+<a id="L90"></a><span class="ln">    90</span>		c.p = new(Prog)
+<a id="L91"></a><span class="ln">    91</span>		c.p.NumCap = 2 <span class="comment">// implicit ( and ) for whole match $0</span>
+<a id="L92"></a><span class="ln">    92</span>		c.inst(InstFail)
+<a id="L93"></a><span class="ln">    93</span>	}
+<a id="L94"></a><span class="ln">    94</span>	
+<a id="L95"></a><span class="ln">    95</span>	var anyRuneNotNL = []rune{0, &#39;\n&#39; - 1, &#39;\n&#39; + 1, unicode.MaxRune}
+<a id="L96"></a><span class="ln">    96</span>	var anyRune = []rune{0, unicode.MaxRune}
+<a id="L97"></a><span class="ln">    97</span>	
+<a id="L98"></a><span class="ln">    98</span>	func (c *compiler) compile(re *Regexp) frag {
+<a id="L99"></a><span class="ln">    99</span>		switch re.Op {
+<a id="L100"></a><span class="ln">   100</span>		case OpNoMatch:
+<a id="L101"></a><span class="ln">   101</span>			return c.fail()
+<a id="L102"></a><span class="ln">   102</span>		case OpEmptyMatch:
+<a id="L103"></a><span class="ln">   103</span>			return c.nop()
+<a id="L104"></a><span class="ln">   104</span>		case OpLiteral:
+<a id="L105"></a><span class="ln">   105</span>			if len(re.Rune) == 0 {
+<a id="L106"></a><span class="ln">   106</span>				return c.nop()
+<a id="L107"></a><span class="ln">   107</span>			}
+<a id="L108"></a><span class="ln">   108</span>			var f frag
+<a id="L109"></a><span class="ln">   109</span>			for j := range re.Rune {
+<a id="L110"></a><span class="ln">   110</span>				f1 := c.rune(re.Rune[j:j+1], re.Flags)
+<a id="L111"></a><span class="ln">   111</span>				if j == 0 {
+<a id="L112"></a><span class="ln">   112</span>					f = f1
+<a id="L113"></a><span class="ln">   113</span>				} else {
+<a id="L114"></a><span class="ln">   114</span>					f = c.cat(f, f1)
+<a id="L115"></a><span class="ln">   115</span>				}
+<a id="L116"></a><span class="ln">   116</span>			}
+<a id="L117"></a><span class="ln">   117</span>			return f
+<a id="L118"></a><span class="ln">   118</span>		case OpCharClass:
+<a id="L119"></a><span class="ln">   119</span>			return c.rune(re.Rune, re.Flags)
+<a id="L120"></a><span class="ln">   120</span>		case OpAnyCharNotNL:
+<a id="L121"></a><span class="ln">   121</span>			return c.rune(anyRuneNotNL, 0)
+<a id="L122"></a><span class="ln">   122</span>		case OpAnyChar:
+<a id="L123"></a><span class="ln">   123</span>			return c.rune(anyRune, 0)
+<a id="L124"></a><span class="ln">   124</span>		case OpBeginLine:
+<a id="L125"></a><span class="ln">   125</span>			return c.empty(EmptyBeginLine)
+<a id="L126"></a><span class="ln">   126</span>		case OpEndLine:
+<a id="L127"></a><span class="ln">   127</span>			return c.empty(EmptyEndLine)
+<a id="L128"></a><span class="ln">   128</span>		case OpBeginText:
+<a id="L129"></a><span class="ln">   129</span>			return c.empty(EmptyBeginText)
+<a id="L130"></a><span class="ln">   130</span>		case OpEndText:
+<a id="L131"></a><span class="ln">   131</span>			return c.empty(EmptyEndText)
+<a id="L132"></a><span class="ln">   132</span>		case OpWordBoundary:
+<a id="L133"></a><span class="ln">   133</span>			return c.empty(EmptyWordBoundary)
+<a id="L134"></a><span class="ln">   134</span>		case OpNoWordBoundary:
+<a id="L135"></a><span class="ln">   135</span>			return c.empty(EmptyNoWordBoundary)
+<a id="L136"></a><span class="ln">   136</span>		case OpCapture:
+<a id="L137"></a><span class="ln">   137</span>			bra := c.cap(uint32(re.Cap &lt;&lt; 1))
+<a id="L138"></a><span class="ln">   138</span>			sub := c.compile(re.Sub[0])
+<a id="L139"></a><span class="ln">   139</span>			ket := c.cap(uint32(re.Cap&lt;&lt;1 | 1))
+<a id="L140"></a><span class="ln">   140</span>			return c.cat(c.cat(bra, sub), ket)
+<a id="L141"></a><span class="ln">   141</span>		case OpStar:
+<a id="L142"></a><span class="ln">   142</span>			return c.star(c.compile(re.Sub[0]), re.Flags&amp;NonGreedy != 0)
+<a id="L143"></a><span class="ln">   143</span>		case OpPlus:
+<a id="L144"></a><span class="ln">   144</span>			return c.plus(c.compile(re.Sub[0]), re.Flags&amp;NonGreedy != 0)
+<a id="L145"></a><span class="ln">   145</span>		case OpQuest:
+<a id="L146"></a><span class="ln">   146</span>			return c.quest(c.compile(re.Sub[0]), re.Flags&amp;NonGreedy != 0)
+<a id="L147"></a><span class="ln">   147</span>		case OpConcat:
+<a id="L148"></a><span class="ln">   148</span>			if len(re.Sub) == 0 {
+<a id="L149"></a><span class="ln">   149</span>				return c.nop()
+<a id="L150"></a><span class="ln">   150</span>			}
+<a id="L151"></a><span class="ln">   151</span>			var f frag
+<a id="L152"></a><span class="ln">   152</span>			for i, sub := range re.Sub {
+<a id="L153"></a><span class="ln">   153</span>				if i == 0 {
+<a id="L154"></a><span class="ln">   154</span>					f = c.compile(sub)
+<a id="L155"></a><span class="ln">   155</span>				} else {
+<a id="L156"></a><span class="ln">   156</span>					f = c.cat(f, c.compile(sub))
+<a id="L157"></a><span class="ln">   157</span>				}
+<a id="L158"></a><span class="ln">   158</span>			}
+<a id="L159"></a><span class="ln">   159</span>			return f
+<a id="L160"></a><span class="ln">   160</span>		case OpAlternate:
+<a id="L161"></a><span class="ln">   161</span>			var f frag
+<a id="L162"></a><span class="ln">   162</span>			for _, sub := range re.Sub {
+<a id="L163"></a><span class="ln">   163</span>				f = c.alt(f, c.compile(sub))
+<a id="L164"></a><span class="ln">   164</span>			}
+<a id="L165"></a><span class="ln">   165</span>			return f
+<a id="L166"></a><span class="ln">   166</span>		}
+<a id="L167"></a><span class="ln">   167</span>		panic(&#34;regexp: unhandled case in compile&#34;)
+<a id="L168"></a><span class="ln">   168</span>	}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>	func (c *compiler) inst(op InstOp) frag {
+<a id="L171"></a><span class="ln">   171</span>		<span class="comment">// TODO: impose length limit</span>
+<a id="L172"></a><span class="ln">   172</span>		f := frag{i: uint32(len(c.p.Inst))}
+<a id="L173"></a><span class="ln">   173</span>		c.p.Inst = append(c.p.Inst, Inst{Op: op})
+<a id="L174"></a><span class="ln">   174</span>		return f
+<a id="L175"></a><span class="ln">   175</span>	}
+<a id="L176"></a><span class="ln">   176</span>	
+<a id="L177"></a><span class="ln">   177</span>	func (c *compiler) nop() frag {
+<a id="L178"></a><span class="ln">   178</span>		f := c.inst(InstNop)
+<a id="L179"></a><span class="ln">   179</span>		f.out = patchList(f.i &lt;&lt; 1)
+<a id="L180"></a><span class="ln">   180</span>		return f
+<a id="L181"></a><span class="ln">   181</span>	}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>	func (c *compiler) fail() frag {
+<a id="L184"></a><span class="ln">   184</span>		return frag{}
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	func (c *compiler) cap(arg uint32) frag {
+<a id="L188"></a><span class="ln">   188</span>		f := c.inst(InstCapture)
+<a id="L189"></a><span class="ln">   189</span>		f.out = patchList(f.i &lt;&lt; 1)
+<a id="L190"></a><span class="ln">   190</span>		c.p.Inst[f.i].Arg = arg
+<a id="L191"></a><span class="ln">   191</span>	
+<a id="L192"></a><span class="ln">   192</span>		if c.p.NumCap &lt; int(arg)+1 {
+<a id="L193"></a><span class="ln">   193</span>			c.p.NumCap = int(arg) + 1
+<a id="L194"></a><span class="ln">   194</span>		}
+<a id="L195"></a><span class="ln">   195</span>		return f
+<a id="L196"></a><span class="ln">   196</span>	}
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>	func (c *compiler) cat(f1, f2 frag) frag {
+<a id="L199"></a><span class="ln">   199</span>		<span class="comment">// concat of failure is failure</span>
+<a id="L200"></a><span class="ln">   200</span>		if f1.i == 0 || f2.i == 0 {
+<a id="L201"></a><span class="ln">   201</span>			return frag{}
+<a id="L202"></a><span class="ln">   202</span>		}
+<a id="L203"></a><span class="ln">   203</span>	
+<a id="L204"></a><span class="ln">   204</span>		<span class="comment">// TODO: elide nop</span>
+<a id="L205"></a><span class="ln">   205</span>	
+<a id="L206"></a><span class="ln">   206</span>		f1.out.patch(c.p, f2.i)
+<a id="L207"></a><span class="ln">   207</span>		return frag{f1.i, f2.out}
+<a id="L208"></a><span class="ln">   208</span>	}
+<a id="L209"></a><span class="ln">   209</span>	
+<a id="L210"></a><span class="ln">   210</span>	func (c *compiler) alt(f1, f2 frag) frag {
+<a id="L211"></a><span class="ln">   211</span>		<span class="comment">// alt of failure is other</span>
+<a id="L212"></a><span class="ln">   212</span>		if f1.i == 0 {
+<a id="L213"></a><span class="ln">   213</span>			return f2
+<a id="L214"></a><span class="ln">   214</span>		}
+<a id="L215"></a><span class="ln">   215</span>		if f2.i == 0 {
+<a id="L216"></a><span class="ln">   216</span>			return f1
+<a id="L217"></a><span class="ln">   217</span>		}
+<a id="L218"></a><span class="ln">   218</span>	
+<a id="L219"></a><span class="ln">   219</span>		f := c.inst(InstAlt)
+<a id="L220"></a><span class="ln">   220</span>		i := &amp;c.p.Inst[f.i]
+<a id="L221"></a><span class="ln">   221</span>		i.Out = f1.i
+<a id="L222"></a><span class="ln">   222</span>		i.Arg = f2.i
+<a id="L223"></a><span class="ln">   223</span>		f.out = f1.out.append(c.p, f2.out)
+<a id="L224"></a><span class="ln">   224</span>		return f
+<a id="L225"></a><span class="ln">   225</span>	}
+<a id="L226"></a><span class="ln">   226</span>	
+<a id="L227"></a><span class="ln">   227</span>	func (c *compiler) quest(f1 frag, nongreedy bool) frag {
+<a id="L228"></a><span class="ln">   228</span>		f := c.inst(InstAlt)
+<a id="L229"></a><span class="ln">   229</span>		i := &amp;c.p.Inst[f.i]
+<a id="L230"></a><span class="ln">   230</span>		if nongreedy {
+<a id="L231"></a><span class="ln">   231</span>			i.Arg = f1.i
+<a id="L232"></a><span class="ln">   232</span>			f.out = patchList(f.i &lt;&lt; 1)
+<a id="L233"></a><span class="ln">   233</span>		} else {
+<a id="L234"></a><span class="ln">   234</span>			i.Out = f1.i
+<a id="L235"></a><span class="ln">   235</span>			f.out = patchList(f.i&lt;&lt;1 | 1)
+<a id="L236"></a><span class="ln">   236</span>		}
+<a id="L237"></a><span class="ln">   237</span>		f.out = f.out.append(c.p, f1.out)
+<a id="L238"></a><span class="ln">   238</span>		return f
+<a id="L239"></a><span class="ln">   239</span>	}
+<a id="L240"></a><span class="ln">   240</span>	
+<a id="L241"></a><span class="ln">   241</span>	func (c *compiler) star(f1 frag, nongreedy bool) frag {
+<a id="L242"></a><span class="ln">   242</span>		f := c.inst(InstAlt)
+<a id="L243"></a><span class="ln">   243</span>		i := &amp;c.p.Inst[f.i]
+<a id="L244"></a><span class="ln">   244</span>		if nongreedy {
+<a id="L245"></a><span class="ln">   245</span>			i.Arg = f1.i
+<a id="L246"></a><span class="ln">   246</span>			f.out = patchList(f.i &lt;&lt; 1)
+<a id="L247"></a><span class="ln">   247</span>		} else {
+<a id="L248"></a><span class="ln">   248</span>			i.Out = f1.i
+<a id="L249"></a><span class="ln">   249</span>			f.out = patchList(f.i&lt;&lt;1 | 1)
+<a id="L250"></a><span class="ln">   250</span>		}
+<a id="L251"></a><span class="ln">   251</span>		f1.out.patch(c.p, f.i)
+<a id="L252"></a><span class="ln">   252</span>		return f
+<a id="L253"></a><span class="ln">   253</span>	}
+<a id="L254"></a><span class="ln">   254</span>	
+<a id="L255"></a><span class="ln">   255</span>	func (c *compiler) plus(f1 frag, nongreedy bool) frag {
+<a id="L256"></a><span class="ln">   256</span>		return frag{f1.i, c.star(f1, nongreedy).out}
+<a id="L257"></a><span class="ln">   257</span>	}
+<a id="L258"></a><span class="ln">   258</span>	
+<a id="L259"></a><span class="ln">   259</span>	func (c *compiler) empty(op EmptyOp) frag {
+<a id="L260"></a><span class="ln">   260</span>		f := c.inst(InstEmptyWidth)
+<a id="L261"></a><span class="ln">   261</span>		c.p.Inst[f.i].Arg = uint32(op)
+<a id="L262"></a><span class="ln">   262</span>		f.out = patchList(f.i &lt;&lt; 1)
+<a id="L263"></a><span class="ln">   263</span>		return f
+<a id="L264"></a><span class="ln">   264</span>	}
+<a id="L265"></a><span class="ln">   265</span>	
+<a id="L266"></a><span class="ln">   266</span>	func (c *compiler) rune(r []rune, flags Flags) frag {
+<a id="L267"></a><span class="ln">   267</span>		f := c.inst(InstRune)
+<a id="L268"></a><span class="ln">   268</span>		i := &amp;c.p.Inst[f.i]
+<a id="L269"></a><span class="ln">   269</span>		i.Rune = r
+<a id="L270"></a><span class="ln">   270</span>		flags &amp;= FoldCase <span class="comment">// only relevant flag is FoldCase</span>
+<a id="L271"></a><span class="ln">   271</span>		if len(r) != 1 || unicode.SimpleFold(r[0]) == r[0] {
+<a id="L272"></a><span class="ln">   272</span>			<span class="comment">// and sometimes not even that</span>
+<a id="L273"></a><span class="ln">   273</span>			flags &amp;^= FoldCase
+<a id="L274"></a><span class="ln">   274</span>		}
+<a id="L275"></a><span class="ln">   275</span>		i.Arg = uint32(flags)
+<a id="L276"></a><span class="ln">   276</span>		f.out = patchList(f.i &lt;&lt; 1)
+<a id="L277"></a><span class="ln">   277</span>	
+<a id="L278"></a><span class="ln">   278</span>		<span class="comment">// Special cases for exec machine.</span>
+<a id="L279"></a><span class="ln">   279</span>		switch {
+<a id="L280"></a><span class="ln">   280</span>		case flags&amp;FoldCase == 0 &amp;&amp; (len(r) == 1 || len(r) == 2 &amp;&amp; r[0] == r[1]):
+<a id="L281"></a><span class="ln">   281</span>			i.Op = InstRune1
+<a id="L282"></a><span class="ln">   282</span>		case len(r) == 2 &amp;&amp; r[0] == 0 &amp;&amp; r[1] == unicode.MaxRune:
+<a id="L283"></a><span class="ln">   283</span>			i.Op = InstRuneAny
+<a id="L284"></a><span class="ln">   284</span>		case len(r) == 4 &amp;&amp; r[0] == 0 &amp;&amp; r[1] == &#39;\n&#39;-1 &amp;&amp; r[2] == &#39;\n&#39;+1 &amp;&amp; r[3] == unicode.MaxRune:
+<a id="L285"></a><span class="ln">   285</span>			i.Op = InstRuneAnyNotNL
+<a id="L286"></a><span class="ln">   286</span>		}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>		return f
+<a id="L289"></a><span class="ln">   289</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

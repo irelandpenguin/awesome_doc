@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/strings/strings.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/strings/strings.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package strings implements simple functions to manipulate strings.</span>
+<a id="L6"></a><span class="ln">     6</span>	package strings
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;unicode&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;unicode/utf8&#34;
+<a id="L11"></a><span class="ln">    11</span>	)
+<a id="L12"></a><span class="ln">    12</span>	
+<a id="L13"></a><span class="ln">    13</span>	<span class="comment">// explode splits s into an array of UTF-8 sequences, one per Unicode character (still strings) up to a maximum of n (n &lt; 0 means no limit).</span>
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// Invalid UTF-8 sequences become correct encodings of U+FFF8.</span>
+<a id="L15"></a><span class="ln">    15</span>	func explode(s string, n int) []string {
+<a id="L16"></a><span class="ln">    16</span>		if n == 0 {
+<a id="L17"></a><span class="ln">    17</span>			return nil
+<a id="L18"></a><span class="ln">    18</span>		}
+<a id="L19"></a><span class="ln">    19</span>		l := utf8.RuneCountInString(s)
+<a id="L20"></a><span class="ln">    20</span>		if n &lt;= 0 || n &gt; l {
+<a id="L21"></a><span class="ln">    21</span>			n = l
+<a id="L22"></a><span class="ln">    22</span>		}
+<a id="L23"></a><span class="ln">    23</span>		a := make([]string, n)
+<a id="L24"></a><span class="ln">    24</span>		var size int
+<a id="L25"></a><span class="ln">    25</span>		var ch rune
+<a id="L26"></a><span class="ln">    26</span>		i, cur := 0, 0
+<a id="L27"></a><span class="ln">    27</span>		for ; i+1 &lt; n; i++ {
+<a id="L28"></a><span class="ln">    28</span>			ch, size = utf8.DecodeRuneInString(s[cur:])
+<a id="L29"></a><span class="ln">    29</span>			a[i] = string(ch)
+<a id="L30"></a><span class="ln">    30</span>			cur += size
+<a id="L31"></a><span class="ln">    31</span>		}
+<a id="L32"></a><span class="ln">    32</span>		<span class="comment">// add the rest, if there is any</span>
+<a id="L33"></a><span class="ln">    33</span>		if cur &lt; len(s) {
+<a id="L34"></a><span class="ln">    34</span>			a[i] = s[cur:]
+<a id="L35"></a><span class="ln">    35</span>		}
+<a id="L36"></a><span class="ln">    36</span>		return a
+<a id="L37"></a><span class="ln">    37</span>	}
+<a id="L38"></a><span class="ln">    38</span>	
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Count counts the number of non-overlapping instances of sep in s.</span>
+<a id="L40"></a><span class="ln">    40</span>	func Count(s, sep string) int {
+<a id="L41"></a><span class="ln">    41</span>		if sep == &#34;&#34; {
+<a id="L42"></a><span class="ln">    42</span>			return utf8.RuneCountInString(s) + 1
+<a id="L43"></a><span class="ln">    43</span>		}
+<a id="L44"></a><span class="ln">    44</span>		c := sep[0]
+<a id="L45"></a><span class="ln">    45</span>		l := len(sep)
+<a id="L46"></a><span class="ln">    46</span>		n := 0
+<a id="L47"></a><span class="ln">    47</span>		if l == 1 {
+<a id="L48"></a><span class="ln">    48</span>			<span class="comment">// special case worth making fast</span>
+<a id="L49"></a><span class="ln">    49</span>			for i := 0; i &lt; len(s); i++ {
+<a id="L50"></a><span class="ln">    50</span>				if s[i] == c {
+<a id="L51"></a><span class="ln">    51</span>					n++
+<a id="L52"></a><span class="ln">    52</span>				}
+<a id="L53"></a><span class="ln">    53</span>			}
+<a id="L54"></a><span class="ln">    54</span>			return n
+<a id="L55"></a><span class="ln">    55</span>		}
+<a id="L56"></a><span class="ln">    56</span>		for i := 0; i+l &lt;= len(s); i++ {
+<a id="L57"></a><span class="ln">    57</span>			if s[i] == c &amp;&amp; s[i:i+l] == sep {
+<a id="L58"></a><span class="ln">    58</span>				n++
+<a id="L59"></a><span class="ln">    59</span>				i += l - 1
+<a id="L60"></a><span class="ln">    60</span>			}
+<a id="L61"></a><span class="ln">    61</span>		}
+<a id="L62"></a><span class="ln">    62</span>		return n
+<a id="L63"></a><span class="ln">    63</span>	}
+<a id="L64"></a><span class="ln">    64</span>	
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// Contains returns true if substr is within s.</span>
+<a id="L66"></a><span class="ln">    66</span>	func Contains(s, substr string) bool {
+<a id="L67"></a><span class="ln">    67</span>		return Index(s, substr) &gt;= 0
+<a id="L68"></a><span class="ln">    68</span>	}
+<a id="L69"></a><span class="ln">    69</span>	
+<a id="L70"></a><span class="ln">    70</span>	<span class="comment">// ContainsAny returns true if any Unicode code points in chars are within s.</span>
+<a id="L71"></a><span class="ln">    71</span>	func ContainsAny(s, chars string) bool {
+<a id="L72"></a><span class="ln">    72</span>		return IndexAny(s, chars) &gt;= 0
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// ContainsRune returns true if the Unicode code point r is within s.</span>
+<a id="L76"></a><span class="ln">    76</span>	func ContainsRune(s string, r rune) bool {
+<a id="L77"></a><span class="ln">    77</span>		return IndexRune(s, r) &gt;= 0
+<a id="L78"></a><span class="ln">    78</span>	}
+<a id="L79"></a><span class="ln">    79</span>	
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// Index returns the index of the first instance of sep in s, or -1 if sep is not present in s.</span>
+<a id="L81"></a><span class="ln">    81</span>	func Index(s, sep string) int {
+<a id="L82"></a><span class="ln">    82</span>		n := len(sep)
+<a id="L83"></a><span class="ln">    83</span>		if n == 0 {
+<a id="L84"></a><span class="ln">    84</span>			return 0
+<a id="L85"></a><span class="ln">    85</span>		}
+<a id="L86"></a><span class="ln">    86</span>		c := sep[0]
+<a id="L87"></a><span class="ln">    87</span>		if n == 1 {
+<a id="L88"></a><span class="ln">    88</span>			<span class="comment">// special case worth making fast</span>
+<a id="L89"></a><span class="ln">    89</span>			for i := 0; i &lt; len(s); i++ {
+<a id="L90"></a><span class="ln">    90</span>				if s[i] == c {
+<a id="L91"></a><span class="ln">    91</span>					return i
+<a id="L92"></a><span class="ln">    92</span>				}
+<a id="L93"></a><span class="ln">    93</span>			}
+<a id="L94"></a><span class="ln">    94</span>			return -1
+<a id="L95"></a><span class="ln">    95</span>		}
+<a id="L96"></a><span class="ln">    96</span>		<span class="comment">// n &gt; 1</span>
+<a id="L97"></a><span class="ln">    97</span>		for i := 0; i+n &lt;= len(s); i++ {
+<a id="L98"></a><span class="ln">    98</span>			if s[i] == c &amp;&amp; s[i:i+n] == sep {
+<a id="L99"></a><span class="ln">    99</span>				return i
+<a id="L100"></a><span class="ln">   100</span>			}
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>		return -1
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// LastIndex returns the index of the last instance of sep in s, or -1 if sep is not present in s.</span>
+<a id="L106"></a><span class="ln">   106</span>	func LastIndex(s, sep string) int {
+<a id="L107"></a><span class="ln">   107</span>		n := len(sep)
+<a id="L108"></a><span class="ln">   108</span>		if n == 0 {
+<a id="L109"></a><span class="ln">   109</span>			return len(s)
+<a id="L110"></a><span class="ln">   110</span>		}
+<a id="L111"></a><span class="ln">   111</span>		c := sep[0]
+<a id="L112"></a><span class="ln">   112</span>		if n == 1 {
+<a id="L113"></a><span class="ln">   113</span>			<span class="comment">// special case worth making fast</span>
+<a id="L114"></a><span class="ln">   114</span>			for i := len(s) - 1; i &gt;= 0; i-- {
+<a id="L115"></a><span class="ln">   115</span>				if s[i] == c {
+<a id="L116"></a><span class="ln">   116</span>					return i
+<a id="L117"></a><span class="ln">   117</span>				}
+<a id="L118"></a><span class="ln">   118</span>			}
+<a id="L119"></a><span class="ln">   119</span>			return -1
+<a id="L120"></a><span class="ln">   120</span>		}
+<a id="L121"></a><span class="ln">   121</span>		<span class="comment">// n &gt; 1</span>
+<a id="L122"></a><span class="ln">   122</span>		for i := len(s) - n; i &gt;= 0; i-- {
+<a id="L123"></a><span class="ln">   123</span>			if s[i] == c &amp;&amp; s[i:i+n] == sep {
+<a id="L124"></a><span class="ln">   124</span>				return i
+<a id="L125"></a><span class="ln">   125</span>			}
+<a id="L126"></a><span class="ln">   126</span>		}
+<a id="L127"></a><span class="ln">   127</span>		return -1
+<a id="L128"></a><span class="ln">   128</span>	}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>	<span class="comment">// IndexRune returns the index of the first instance of the Unicode code point</span>
+<a id="L131"></a><span class="ln">   131</span>	<span class="comment">// r, or -1 if rune is not present in s.</span>
+<a id="L132"></a><span class="ln">   132</span>	func IndexRune(s string, r rune) int {
+<a id="L133"></a><span class="ln">   133</span>		switch {
+<a id="L134"></a><span class="ln">   134</span>		case r &lt; 0x80:
+<a id="L135"></a><span class="ln">   135</span>			b := byte(r)
+<a id="L136"></a><span class="ln">   136</span>			for i := 0; i &lt; len(s); i++ {
+<a id="L137"></a><span class="ln">   137</span>				if s[i] == b {
+<a id="L138"></a><span class="ln">   138</span>					return i
+<a id="L139"></a><span class="ln">   139</span>				}
+<a id="L140"></a><span class="ln">   140</span>			}
+<a id="L141"></a><span class="ln">   141</span>		default:
+<a id="L142"></a><span class="ln">   142</span>			for i, c := range s {
+<a id="L143"></a><span class="ln">   143</span>				if c == r {
+<a id="L144"></a><span class="ln">   144</span>					return i
+<a id="L145"></a><span class="ln">   145</span>				}
+<a id="L146"></a><span class="ln">   146</span>			}
+<a id="L147"></a><span class="ln">   147</span>		}
+<a id="L148"></a><span class="ln">   148</span>		return -1
+<a id="L149"></a><span class="ln">   149</span>	}
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// IndexAny returns the index of the first instance of any Unicode code point</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">// from chars in s, or -1 if no Unicode code point from chars is present in s.</span>
+<a id="L153"></a><span class="ln">   153</span>	func IndexAny(s, chars string) int {
+<a id="L154"></a><span class="ln">   154</span>		if len(chars) &gt; 0 {
+<a id="L155"></a><span class="ln">   155</span>			for i, c := range s {
+<a id="L156"></a><span class="ln">   156</span>				for _, m := range chars {
+<a id="L157"></a><span class="ln">   157</span>					if c == m {
+<a id="L158"></a><span class="ln">   158</span>						return i
+<a id="L159"></a><span class="ln">   159</span>					}
+<a id="L160"></a><span class="ln">   160</span>				}
+<a id="L161"></a><span class="ln">   161</span>			}
+<a id="L162"></a><span class="ln">   162</span>		}
+<a id="L163"></a><span class="ln">   163</span>		return -1
+<a id="L164"></a><span class="ln">   164</span>	}
+<a id="L165"></a><span class="ln">   165</span>	
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">// LastIndexAny returns the index of the last instance of any Unicode code</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// point from chars in s, or -1 if no Unicode code point from chars is</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">// present in s.</span>
+<a id="L169"></a><span class="ln">   169</span>	func LastIndexAny(s, chars string) int {
+<a id="L170"></a><span class="ln">   170</span>		if len(chars) &gt; 0 {
+<a id="L171"></a><span class="ln">   171</span>			for i := len(s); i &gt; 0; {
+<a id="L172"></a><span class="ln">   172</span>				rune, size := utf8.DecodeLastRuneInString(s[0:i])
+<a id="L173"></a><span class="ln">   173</span>				i -= size
+<a id="L174"></a><span class="ln">   174</span>				for _, m := range chars {
+<a id="L175"></a><span class="ln">   175</span>					if rune == m {
+<a id="L176"></a><span class="ln">   176</span>						return i
+<a id="L177"></a><span class="ln">   177</span>					}
+<a id="L178"></a><span class="ln">   178</span>				}
+<a id="L179"></a><span class="ln">   179</span>			}
+<a id="L180"></a><span class="ln">   180</span>		}
+<a id="L181"></a><span class="ln">   181</span>		return -1
+<a id="L182"></a><span class="ln">   182</span>	}
+<a id="L183"></a><span class="ln">   183</span>	
+<a id="L184"></a><span class="ln">   184</span>	<span class="comment">// Generic split: splits after each instance of sep,</span>
+<a id="L185"></a><span class="ln">   185</span>	<span class="comment">// including sepSave bytes of sep in the subarrays.</span>
+<a id="L186"></a><span class="ln">   186</span>	func genSplit(s, sep string, sepSave, n int) []string {
+<a id="L187"></a><span class="ln">   187</span>		if n == 0 {
+<a id="L188"></a><span class="ln">   188</span>			return nil
+<a id="L189"></a><span class="ln">   189</span>		}
+<a id="L190"></a><span class="ln">   190</span>		if sep == &#34;&#34; {
+<a id="L191"></a><span class="ln">   191</span>			return explode(s, n)
+<a id="L192"></a><span class="ln">   192</span>		}
+<a id="L193"></a><span class="ln">   193</span>		if n &lt; 0 {
+<a id="L194"></a><span class="ln">   194</span>			n = Count(s, sep) + 1
+<a id="L195"></a><span class="ln">   195</span>		}
+<a id="L196"></a><span class="ln">   196</span>		c := sep[0]
+<a id="L197"></a><span class="ln">   197</span>		start := 0
+<a id="L198"></a><span class="ln">   198</span>		a := make([]string, n)
+<a id="L199"></a><span class="ln">   199</span>		na := 0
+<a id="L200"></a><span class="ln">   200</span>		for i := 0; i+len(sep) &lt;= len(s) &amp;&amp; na+1 &lt; n; i++ {
+<a id="L201"></a><span class="ln">   201</span>			if s[i] == c &amp;&amp; (len(sep) == 1 || s[i:i+len(sep)] == sep) {
+<a id="L202"></a><span class="ln">   202</span>				a[na] = s[start : i+sepSave]
+<a id="L203"></a><span class="ln">   203</span>				na++
+<a id="L204"></a><span class="ln">   204</span>				start = i + len(sep)
+<a id="L205"></a><span class="ln">   205</span>				i += len(sep) - 1
+<a id="L206"></a><span class="ln">   206</span>			}
+<a id="L207"></a><span class="ln">   207</span>		}
+<a id="L208"></a><span class="ln">   208</span>		a[na] = s[start:]
+<a id="L209"></a><span class="ln">   209</span>		return a[0 : na+1]
+<a id="L210"></a><span class="ln">   210</span>	}
+<a id="L211"></a><span class="ln">   211</span>	
+<a id="L212"></a><span class="ln">   212</span>	<span class="comment">// SplitN slices s into substrings separated by sep and returns a slice of</span>
+<a id="L213"></a><span class="ln">   213</span>	<span class="comment">// the substrings between those separators.</span>
+<a id="L214"></a><span class="ln">   214</span>	<span class="comment">// If sep is empty, SplitN splits after each UTF-8 sequence.</span>
+<a id="L215"></a><span class="ln">   215</span>	<span class="comment">// The count determines the number of substrings to return:</span>
+<a id="L216"></a><span class="ln">   216</span>	<span class="comment">//   n &gt; 0: at most n substrings; the last substring will be the unsplit remainder.</span>
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">//   n == 0: the result is nil (zero substrings)</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">//   n &lt; 0: all substrings</span>
+<a id="L219"></a><span class="ln">   219</span>	func SplitN(s, sep string, n int) []string { return genSplit(s, sep, 0, n) }
+<a id="L220"></a><span class="ln">   220</span>	
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// SplitAfterN slices s into substrings after each instance of sep and</span>
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// returns a slice of those substrings.</span>
+<a id="L223"></a><span class="ln">   223</span>	<span class="comment">// If sep is empty, SplitAfterN splits after each UTF-8 sequence.</span>
+<a id="L224"></a><span class="ln">   224</span>	<span class="comment">// The count determines the number of substrings to return:</span>
+<a id="L225"></a><span class="ln">   225</span>	<span class="comment">//   n &gt; 0: at most n substrings; the last substring will be the unsplit remainder.</span>
+<a id="L226"></a><span class="ln">   226</span>	<span class="comment">//   n == 0: the result is nil (zero substrings)</span>
+<a id="L227"></a><span class="ln">   227</span>	<span class="comment">//   n &lt; 0: all substrings</span>
+<a id="L228"></a><span class="ln">   228</span>	func SplitAfterN(s, sep string, n int) []string {
+<a id="L229"></a><span class="ln">   229</span>		return genSplit(s, sep, len(sep), n)
+<a id="L230"></a><span class="ln">   230</span>	}
+<a id="L231"></a><span class="ln">   231</span>	
+<a id="L232"></a><span class="ln">   232</span>	<span class="comment">// Split slices s into all substrings separated by sep and returns a slice of</span>
+<a id="L233"></a><span class="ln">   233</span>	<span class="comment">// the substrings between those separators.</span>
+<a id="L234"></a><span class="ln">   234</span>	<span class="comment">// If sep is empty, Split splits after each UTF-8 sequence.</span>
+<a id="L235"></a><span class="ln">   235</span>	<span class="comment">// It is equivalent to SplitN with a count of -1.</span>
+<a id="L236"></a><span class="ln">   236</span>	func Split(s, sep string) []string { return genSplit(s, sep, 0, -1) }
+<a id="L237"></a><span class="ln">   237</span>	
+<a id="L238"></a><span class="ln">   238</span>	<span class="comment">// SplitAfter slices s into all substrings after each instance of sep and</span>
+<a id="L239"></a><span class="ln">   239</span>	<span class="comment">// returns a slice of those substrings.</span>
+<a id="L240"></a><span class="ln">   240</span>	<span class="comment">// If sep is empty, SplitAfter splits after each UTF-8 sequence.</span>
+<a id="L241"></a><span class="ln">   241</span>	<span class="comment">// It is equivalent to SplitAfterN with a count of -1.</span>
+<a id="L242"></a><span class="ln">   242</span>	func SplitAfter(s, sep string) []string {
+<a id="L243"></a><span class="ln">   243</span>		return genSplit(s, sep, len(sep), -1)
+<a id="L244"></a><span class="ln">   244</span>	}
+<a id="L245"></a><span class="ln">   245</span>	
+<a id="L246"></a><span class="ln">   246</span>	<span class="comment">// Fields splits the string s around each instance of one or more consecutive white space</span>
+<a id="L247"></a><span class="ln">   247</span>	<span class="comment">// characters, returning an array of substrings of s or an empty list if s contains only white space.</span>
+<a id="L248"></a><span class="ln">   248</span>	func Fields(s string) []string {
+<a id="L249"></a><span class="ln">   249</span>		return FieldsFunc(s, unicode.IsSpace)
+<a id="L250"></a><span class="ln">   250</span>	}
+<a id="L251"></a><span class="ln">   251</span>	
+<a id="L252"></a><span class="ln">   252</span>	<span class="comment">// FieldsFunc splits the string s at each run of Unicode code points c satisfying f(c)</span>
+<a id="L253"></a><span class="ln">   253</span>	<span class="comment">// and returns an array of slices of s. If all code points in s satisfy f(c) or the</span>
+<a id="L254"></a><span class="ln">   254</span>	<span class="comment">// string is empty, an empty slice is returned.</span>
+<a id="L255"></a><span class="ln">   255</span>	func FieldsFunc(s string, f func(rune) bool) []string {
+<a id="L256"></a><span class="ln">   256</span>		<span class="comment">// First count the fields.</span>
+<a id="L257"></a><span class="ln">   257</span>		n := 0
+<a id="L258"></a><span class="ln">   258</span>		inField := false
+<a id="L259"></a><span class="ln">   259</span>		for _, rune := range s {
+<a id="L260"></a><span class="ln">   260</span>			wasInField := inField
+<a id="L261"></a><span class="ln">   261</span>			inField = !f(rune)
+<a id="L262"></a><span class="ln">   262</span>			if inField &amp;&amp; !wasInField {
+<a id="L263"></a><span class="ln">   263</span>				n++
+<a id="L264"></a><span class="ln">   264</span>			}
+<a id="L265"></a><span class="ln">   265</span>		}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>		<span class="comment">// Now create them.</span>
+<a id="L268"></a><span class="ln">   268</span>		a := make([]string, n)
+<a id="L269"></a><span class="ln">   269</span>		na := 0
+<a id="L270"></a><span class="ln">   270</span>		fieldStart := -1 <span class="comment">// Set to -1 when looking for start of field.</span>
+<a id="L271"></a><span class="ln">   271</span>		for i, rune := range s {
+<a id="L272"></a><span class="ln">   272</span>			if f(rune) {
+<a id="L273"></a><span class="ln">   273</span>				if fieldStart &gt;= 0 {
+<a id="L274"></a><span class="ln">   274</span>					a[na] = s[fieldStart:i]
+<a id="L275"></a><span class="ln">   275</span>					na++
+<a id="L276"></a><span class="ln">   276</span>					fieldStart = -1
+<a id="L277"></a><span class="ln">   277</span>				}
+<a id="L278"></a><span class="ln">   278</span>			} else if fieldStart == -1 {
+<a id="L279"></a><span class="ln">   279</span>				fieldStart = i
+<a id="L280"></a><span class="ln">   280</span>			}
+<a id="L281"></a><span class="ln">   281</span>		}
+<a id="L282"></a><span class="ln">   282</span>		if fieldStart &gt;= 0 { <span class="comment">// Last field might end at EOF.</span>
+<a id="L283"></a><span class="ln">   283</span>			a[na] = s[fieldStart:]
+<a id="L284"></a><span class="ln">   284</span>		}
+<a id="L285"></a><span class="ln">   285</span>		return a
+<a id="L286"></a><span class="ln">   286</span>	}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// Join concatenates the elements of a to create a single string.   The separator string</span>
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// sep is placed between elements in the resulting string.</span>
+<a id="L290"></a><span class="ln">   290</span>	func Join(a []string, sep string) string {
+<a id="L291"></a><span class="ln">   291</span>		if len(a) == 0 {
+<a id="L292"></a><span class="ln">   292</span>			return &#34;&#34;
+<a id="L293"></a><span class="ln">   293</span>		}
+<a id="L294"></a><span class="ln">   294</span>		if len(a) == 1 {
+<a id="L295"></a><span class="ln">   295</span>			return a[0]
+<a id="L296"></a><span class="ln">   296</span>		}
+<a id="L297"></a><span class="ln">   297</span>		n := len(sep) * (len(a) - 1)
+<a id="L298"></a><span class="ln">   298</span>		for i := 0; i &lt; len(a); i++ {
+<a id="L299"></a><span class="ln">   299</span>			n += len(a[i])
+<a id="L300"></a><span class="ln">   300</span>		}
+<a id="L301"></a><span class="ln">   301</span>	
+<a id="L302"></a><span class="ln">   302</span>		b := make([]byte, n)
+<a id="L303"></a><span class="ln">   303</span>		bp := copy(b, a[0])
+<a id="L304"></a><span class="ln">   304</span>		for _, s := range a[1:] {
+<a id="L305"></a><span class="ln">   305</span>			bp += copy(b[bp:], sep)
+<a id="L306"></a><span class="ln">   306</span>			bp += copy(b[bp:], s)
+<a id="L307"></a><span class="ln">   307</span>		}
+<a id="L308"></a><span class="ln">   308</span>		return string(b)
+<a id="L309"></a><span class="ln">   309</span>	}
+<a id="L310"></a><span class="ln">   310</span>	
+<a id="L311"></a><span class="ln">   311</span>	<span class="comment">// HasPrefix tests whether the string s begins with prefix.</span>
+<a id="L312"></a><span class="ln">   312</span>	func HasPrefix(s, prefix string) bool {
+<a id="L313"></a><span class="ln">   313</span>		return len(s) &gt;= len(prefix) &amp;&amp; s[0:len(prefix)] == prefix
+<a id="L314"></a><span class="ln">   314</span>	}
+<a id="L315"></a><span class="ln">   315</span>	
+<a id="L316"></a><span class="ln">   316</span>	<span class="comment">// HasSuffix tests whether the string s ends with suffix.</span>
+<a id="L317"></a><span class="ln">   317</span>	func HasSuffix(s, suffix string) bool {
+<a id="L318"></a><span class="ln">   318</span>		return len(s) &gt;= len(suffix) &amp;&amp; s[len(s)-len(suffix):] == suffix
+<a id="L319"></a><span class="ln">   319</span>	}
+<a id="L320"></a><span class="ln">   320</span>	
+<a id="L321"></a><span class="ln">   321</span>	<span class="comment">// Map returns a copy of the string s with all its characters modified</span>
+<a id="L322"></a><span class="ln">   322</span>	<span class="comment">// according to the mapping function. If mapping returns a negative value, the character is</span>
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">// dropped from the string with no replacement.</span>
+<a id="L324"></a><span class="ln">   324</span>	func Map(mapping func(rune) rune, s string) string {
+<a id="L325"></a><span class="ln">   325</span>		<span class="comment">// In the worst case, the string can grow when mapped, making</span>
+<a id="L326"></a><span class="ln">   326</span>		<span class="comment">// things unpleasant.  But it&#39;s so rare we barge in assuming it&#39;s</span>
+<a id="L327"></a><span class="ln">   327</span>		<span class="comment">// fine.  It could also shrink but that falls out naturally.</span>
+<a id="L328"></a><span class="ln">   328</span>		maxbytes := len(s) <span class="comment">// length of b</span>
+<a id="L329"></a><span class="ln">   329</span>		nbytes := 0        <span class="comment">// number of bytes encoded in b</span>
+<a id="L330"></a><span class="ln">   330</span>		<span class="comment">// The output buffer b is initialized on demand, the first</span>
+<a id="L331"></a><span class="ln">   331</span>		<span class="comment">// time a character differs.</span>
+<a id="L332"></a><span class="ln">   332</span>		var b []byte
+<a id="L333"></a><span class="ln">   333</span>	
+<a id="L334"></a><span class="ln">   334</span>		for i, c := range s {
+<a id="L335"></a><span class="ln">   335</span>			r := mapping(c)
+<a id="L336"></a><span class="ln">   336</span>			if b == nil {
+<a id="L337"></a><span class="ln">   337</span>				if r == c {
+<a id="L338"></a><span class="ln">   338</span>					continue
+<a id="L339"></a><span class="ln">   339</span>				}
+<a id="L340"></a><span class="ln">   340</span>				b = make([]byte, maxbytes)
+<a id="L341"></a><span class="ln">   341</span>				nbytes = copy(b, s[:i])
+<a id="L342"></a><span class="ln">   342</span>			}
+<a id="L343"></a><span class="ln">   343</span>			if r &gt;= 0 {
+<a id="L344"></a><span class="ln">   344</span>				wid := 1
+<a id="L345"></a><span class="ln">   345</span>				if r &gt;= utf8.RuneSelf {
+<a id="L346"></a><span class="ln">   346</span>					wid = utf8.RuneLen(r)
+<a id="L347"></a><span class="ln">   347</span>				}
+<a id="L348"></a><span class="ln">   348</span>				if nbytes+wid &gt; maxbytes {
+<a id="L349"></a><span class="ln">   349</span>					<span class="comment">// Grow the buffer.</span>
+<a id="L350"></a><span class="ln">   350</span>					maxbytes = maxbytes*2 + utf8.UTFMax
+<a id="L351"></a><span class="ln">   351</span>					nb := make([]byte, maxbytes)
+<a id="L352"></a><span class="ln">   352</span>					copy(nb, b[0:nbytes])
+<a id="L353"></a><span class="ln">   353</span>					b = nb
+<a id="L354"></a><span class="ln">   354</span>				}
+<a id="L355"></a><span class="ln">   355</span>				nbytes += utf8.EncodeRune(b[nbytes:maxbytes], r)
+<a id="L356"></a><span class="ln">   356</span>			}
+<a id="L357"></a><span class="ln">   357</span>		}
+<a id="L358"></a><span class="ln">   358</span>		if b == nil {
+<a id="L359"></a><span class="ln">   359</span>			return s
+<a id="L360"></a><span class="ln">   360</span>		}
+<a id="L361"></a><span class="ln">   361</span>		return string(b[0:nbytes])
+<a id="L362"></a><span class="ln">   362</span>	}
+<a id="L363"></a><span class="ln">   363</span>	
+<a id="L364"></a><span class="ln">   364</span>	<span class="comment">// Repeat returns a new string consisting of count copies of the string s.</span>
+<a id="L365"></a><span class="ln">   365</span>	func Repeat(s string, count int) string {
+<a id="L366"></a><span class="ln">   366</span>		b := make([]byte, len(s)*count)
+<a id="L367"></a><span class="ln">   367</span>		bp := 0
+<a id="L368"></a><span class="ln">   368</span>		for i := 0; i &lt; count; i++ {
+<a id="L369"></a><span class="ln">   369</span>			for j := 0; j &lt; len(s); j++ {
+<a id="L370"></a><span class="ln">   370</span>				b[bp] = s[j]
+<a id="L371"></a><span class="ln">   371</span>				bp++
+<a id="L372"></a><span class="ln">   372</span>			}
+<a id="L373"></a><span class="ln">   373</span>		}
+<a id="L374"></a><span class="ln">   374</span>		return string(b)
+<a id="L375"></a><span class="ln">   375</span>	}
+<a id="L376"></a><span class="ln">   376</span>	
+<a id="L377"></a><span class="ln">   377</span>	<span class="comment">// ToUpper returns a copy of the string s with all Unicode letters mapped to their upper case.</span>
+<a id="L378"></a><span class="ln">   378</span>	func ToUpper(s string) string { return Map(unicode.ToUpper, s) }
+<a id="L379"></a><span class="ln">   379</span>	
+<a id="L380"></a><span class="ln">   380</span>	<span class="comment">// ToLower returns a copy of the string s with all Unicode letters mapped to their lower case.</span>
+<a id="L381"></a><span class="ln">   381</span>	func ToLower(s string) string { return Map(unicode.ToLower, s) }
+<a id="L382"></a><span class="ln">   382</span>	
+<a id="L383"></a><span class="ln">   383</span>	<span class="comment">// ToTitle returns a copy of the string s with all Unicode letters mapped to their title case.</span>
+<a id="L384"></a><span class="ln">   384</span>	func ToTitle(s string) string { return Map(unicode.ToTitle, s) }
+<a id="L385"></a><span class="ln">   385</span>	
+<a id="L386"></a><span class="ln">   386</span>	<span class="comment">// ToUpperSpecial returns a copy of the string s with all Unicode letters mapped to their</span>
+<a id="L387"></a><span class="ln">   387</span>	<span class="comment">// upper case, giving priority to the special casing rules.</span>
+<a id="L388"></a><span class="ln">   388</span>	func ToUpperSpecial(_case unicode.SpecialCase, s string) string {
+<a id="L389"></a><span class="ln">   389</span>		return Map(func(r rune) rune { return _case.ToUpper(r) }, s)
+<a id="L390"></a><span class="ln">   390</span>	}
+<a id="L391"></a><span class="ln">   391</span>	
+<a id="L392"></a><span class="ln">   392</span>	<span class="comment">// ToLowerSpecial returns a copy of the string s with all Unicode letters mapped to their</span>
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// lower case, giving priority to the special casing rules.</span>
+<a id="L394"></a><span class="ln">   394</span>	func ToLowerSpecial(_case unicode.SpecialCase, s string) string {
+<a id="L395"></a><span class="ln">   395</span>		return Map(func(r rune) rune { return _case.ToLower(r) }, s)
+<a id="L396"></a><span class="ln">   396</span>	}
+<a id="L397"></a><span class="ln">   397</span>	
+<a id="L398"></a><span class="ln">   398</span>	<span class="comment">// ToTitleSpecial returns a copy of the string s with all Unicode letters mapped to their</span>
+<a id="L399"></a><span class="ln">   399</span>	<span class="comment">// title case, giving priority to the special casing rules.</span>
+<a id="L400"></a><span class="ln">   400</span>	func ToTitleSpecial(_case unicode.SpecialCase, s string) string {
+<a id="L401"></a><span class="ln">   401</span>		return Map(func(r rune) rune { return _case.ToTitle(r) }, s)
+<a id="L402"></a><span class="ln">   402</span>	}
+<a id="L403"></a><span class="ln">   403</span>	
+<a id="L404"></a><span class="ln">   404</span>	<span class="comment">// isSeparator reports whether the rune could mark a word boundary.</span>
+<a id="L405"></a><span class="ln">   405</span>	<span class="comment">// TODO: update when package unicode captures more of the properties.</span>
+<a id="L406"></a><span class="ln">   406</span>	func isSeparator(r rune) bool {
+<a id="L407"></a><span class="ln">   407</span>		<span class="comment">// ASCII alphanumerics and underscore are not separators</span>
+<a id="L408"></a><span class="ln">   408</span>		if r &lt;= 0x7F {
+<a id="L409"></a><span class="ln">   409</span>			switch {
+<a id="L410"></a><span class="ln">   410</span>			case &#39;0&#39; &lt;= r &amp;&amp; r &lt;= &#39;9&#39;:
+<a id="L411"></a><span class="ln">   411</span>				return false
+<a id="L412"></a><span class="ln">   412</span>			case &#39;a&#39; &lt;= r &amp;&amp; r &lt;= &#39;z&#39;:
+<a id="L413"></a><span class="ln">   413</span>				return false
+<a id="L414"></a><span class="ln">   414</span>			case &#39;A&#39; &lt;= r &amp;&amp; r &lt;= &#39;Z&#39;:
+<a id="L415"></a><span class="ln">   415</span>				return false
+<a id="L416"></a><span class="ln">   416</span>			case r == &#39;_&#39;:
+<a id="L417"></a><span class="ln">   417</span>				return false
+<a id="L418"></a><span class="ln">   418</span>			}
+<a id="L419"></a><span class="ln">   419</span>			return true
+<a id="L420"></a><span class="ln">   420</span>		}
+<a id="L421"></a><span class="ln">   421</span>		<span class="comment">// Letters and digits are not separators</span>
+<a id="L422"></a><span class="ln">   422</span>		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+<a id="L423"></a><span class="ln">   423</span>			return false
+<a id="L424"></a><span class="ln">   424</span>		}
+<a id="L425"></a><span class="ln">   425</span>		<span class="comment">// Otherwise, all we can do for now is treat spaces as separators.</span>
+<a id="L426"></a><span class="ln">   426</span>		return unicode.IsSpace(r)
+<a id="L427"></a><span class="ln">   427</span>	}
+<a id="L428"></a><span class="ln">   428</span>	
+<a id="L429"></a><span class="ln">   429</span>	<span class="comment">// BUG(r): The rule Title uses for word boundaries does not handle Unicode punctuation properly.</span>
+<a id="L430"></a><span class="ln">   430</span>	
+<a id="L431"></a><span class="ln">   431</span>	<span class="comment">// Title returns a copy of the string s with all Unicode letters that begin words</span>
+<a id="L432"></a><span class="ln">   432</span>	<span class="comment">// mapped to their title case.</span>
+<a id="L433"></a><span class="ln">   433</span>	func Title(s string) string {
+<a id="L434"></a><span class="ln">   434</span>		<span class="comment">// Use a closure here to remember state.</span>
+<a id="L435"></a><span class="ln">   435</span>		<span class="comment">// Hackish but effective. Depends on Map scanning in order and calling</span>
+<a id="L436"></a><span class="ln">   436</span>		<span class="comment">// the closure once per rune.</span>
+<a id="L437"></a><span class="ln">   437</span>		prev := &#39; &#39;
+<a id="L438"></a><span class="ln">   438</span>		return Map(
+<a id="L439"></a><span class="ln">   439</span>			func(r rune) rune {
+<a id="L440"></a><span class="ln">   440</span>				if isSeparator(prev) {
+<a id="L441"></a><span class="ln">   441</span>					prev = r
+<a id="L442"></a><span class="ln">   442</span>					return unicode.ToTitle(r)
+<a id="L443"></a><span class="ln">   443</span>				}
+<a id="L444"></a><span class="ln">   444</span>				prev = r
+<a id="L445"></a><span class="ln">   445</span>				return r
+<a id="L446"></a><span class="ln">   446</span>			},
+<a id="L447"></a><span class="ln">   447</span>			s)
+<a id="L448"></a><span class="ln">   448</span>	}
+<a id="L449"></a><span class="ln">   449</span>	
+<a id="L450"></a><span class="ln">   450</span>	<span class="comment">// TrimLeftFunc returns a slice of the string s with all leading</span>
+<a id="L451"></a><span class="ln">   451</span>	<span class="comment">// Unicode code points c satisfying f(c) removed.</span>
+<a id="L452"></a><span class="ln">   452</span>	func TrimLeftFunc(s string, f func(rune) bool) string {
+<a id="L453"></a><span class="ln">   453</span>		i := indexFunc(s, f, false)
+<a id="L454"></a><span class="ln">   454</span>		if i == -1 {
+<a id="L455"></a><span class="ln">   455</span>			return &#34;&#34;
+<a id="L456"></a><span class="ln">   456</span>		}
+<a id="L457"></a><span class="ln">   457</span>		return s[i:]
+<a id="L458"></a><span class="ln">   458</span>	}
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>	<span class="comment">// TrimRightFunc returns a slice of the string s with all trailing</span>
+<a id="L461"></a><span class="ln">   461</span>	<span class="comment">// Unicode code points c satisfying f(c) removed.</span>
+<a id="L462"></a><span class="ln">   462</span>	func TrimRightFunc(s string, f func(rune) bool) string {
+<a id="L463"></a><span class="ln">   463</span>		i := lastIndexFunc(s, f, false)
+<a id="L464"></a><span class="ln">   464</span>		if i &gt;= 0 &amp;&amp; s[i] &gt;= utf8.RuneSelf {
+<a id="L465"></a><span class="ln">   465</span>			_, wid := utf8.DecodeRuneInString(s[i:])
+<a id="L466"></a><span class="ln">   466</span>			i += wid
+<a id="L467"></a><span class="ln">   467</span>		} else {
+<a id="L468"></a><span class="ln">   468</span>			i++
+<a id="L469"></a><span class="ln">   469</span>		}
+<a id="L470"></a><span class="ln">   470</span>		return s[0:i]
+<a id="L471"></a><span class="ln">   471</span>	}
+<a id="L472"></a><span class="ln">   472</span>	
+<a id="L473"></a><span class="ln">   473</span>	<span class="comment">// TrimFunc returns a slice of the string s with all leading</span>
+<a id="L474"></a><span class="ln">   474</span>	<span class="comment">// and trailing Unicode code points c satisfying f(c) removed.</span>
+<a id="L475"></a><span class="ln">   475</span>	func TrimFunc(s string, f func(rune) bool) string {
+<a id="L476"></a><span class="ln">   476</span>		return TrimRightFunc(TrimLeftFunc(s, f), f)
+<a id="L477"></a><span class="ln">   477</span>	}
+<a id="L478"></a><span class="ln">   478</span>	
+<a id="L479"></a><span class="ln">   479</span>	<span class="comment">// IndexFunc returns the index into s of the first Unicode</span>
+<a id="L480"></a><span class="ln">   480</span>	<span class="comment">// code point satisfying f(c), or -1 if none do.</span>
+<a id="L481"></a><span class="ln">   481</span>	func IndexFunc(s string, f func(rune) bool) int {
+<a id="L482"></a><span class="ln">   482</span>		return indexFunc(s, f, true)
+<a id="L483"></a><span class="ln">   483</span>	}
+<a id="L484"></a><span class="ln">   484</span>	
+<a id="L485"></a><span class="ln">   485</span>	<span class="comment">// LastIndexFunc returns the index into s of the last</span>
+<a id="L486"></a><span class="ln">   486</span>	<span class="comment">// Unicode code point satisfying f(c), or -1 if none do.</span>
+<a id="L487"></a><span class="ln">   487</span>	func LastIndexFunc(s string, f func(rune) bool) int {
+<a id="L488"></a><span class="ln">   488</span>		return lastIndexFunc(s, f, true)
+<a id="L489"></a><span class="ln">   489</span>	}
+<a id="L490"></a><span class="ln">   490</span>	
+<a id="L491"></a><span class="ln">   491</span>	<span class="comment">// indexFunc is the same as IndexFunc except that if</span>
+<a id="L492"></a><span class="ln">   492</span>	<span class="comment">// truth==false, the sense of the predicate function is</span>
+<a id="L493"></a><span class="ln">   493</span>	<span class="comment">// inverted.</span>
+<a id="L494"></a><span class="ln">   494</span>	func indexFunc(s string, f func(rune) bool, truth bool) int {
+<a id="L495"></a><span class="ln">   495</span>		start := 0
+<a id="L496"></a><span class="ln">   496</span>		for start &lt; len(s) {
+<a id="L497"></a><span class="ln">   497</span>			wid := 1
+<a id="L498"></a><span class="ln">   498</span>			r := rune(s[start])
+<a id="L499"></a><span class="ln">   499</span>			if r &gt;= utf8.RuneSelf {
+<a id="L500"></a><span class="ln">   500</span>				r, wid = utf8.DecodeRuneInString(s[start:])
+<a id="L501"></a><span class="ln">   501</span>			}
+<a id="L502"></a><span class="ln">   502</span>			if f(r) == truth {
+<a id="L503"></a><span class="ln">   503</span>				return start
+<a id="L504"></a><span class="ln">   504</span>			}
+<a id="L505"></a><span class="ln">   505</span>			start += wid
+<a id="L506"></a><span class="ln">   506</span>		}
+<a id="L507"></a><span class="ln">   507</span>		return -1
+<a id="L508"></a><span class="ln">   508</span>	}
+<a id="L509"></a><span class="ln">   509</span>	
+<a id="L510"></a><span class="ln">   510</span>	<span class="comment">// lastIndexFunc is the same as LastIndexFunc except that if</span>
+<a id="L511"></a><span class="ln">   511</span>	<span class="comment">// truth==false, the sense of the predicate function is</span>
+<a id="L512"></a><span class="ln">   512</span>	<span class="comment">// inverted.</span>
+<a id="L513"></a><span class="ln">   513</span>	func lastIndexFunc(s string, f func(rune) bool, truth bool) int {
+<a id="L514"></a><span class="ln">   514</span>		for i := len(s); i &gt; 0; {
+<a id="L515"></a><span class="ln">   515</span>			r, size := utf8.DecodeLastRuneInString(s[0:i])
+<a id="L516"></a><span class="ln">   516</span>			i -= size
+<a id="L517"></a><span class="ln">   517</span>			if f(r) == truth {
+<a id="L518"></a><span class="ln">   518</span>				return i
+<a id="L519"></a><span class="ln">   519</span>			}
+<a id="L520"></a><span class="ln">   520</span>		}
+<a id="L521"></a><span class="ln">   521</span>		return -1
+<a id="L522"></a><span class="ln">   522</span>	}
+<a id="L523"></a><span class="ln">   523</span>	
+<a id="L524"></a><span class="ln">   524</span>	func makeCutsetFunc(cutset string) func(rune) bool {
+<a id="L525"></a><span class="ln">   525</span>		return func(r rune) bool { return IndexRune(cutset, r) &gt;= 0 }
+<a id="L526"></a><span class="ln">   526</span>	}
+<a id="L527"></a><span class="ln">   527</span>	
+<a id="L528"></a><span class="ln">   528</span>	<span class="comment">// Trim returns a slice of the string s with all leading and</span>
+<a id="L529"></a><span class="ln">   529</span>	<span class="comment">// trailing Unicode code points contained in cutset removed.</span>
+<a id="L530"></a><span class="ln">   530</span>	func Trim(s string, cutset string) string {
+<a id="L531"></a><span class="ln">   531</span>		if s == &#34;&#34; || cutset == &#34;&#34; {
+<a id="L532"></a><span class="ln">   532</span>			return s
+<a id="L533"></a><span class="ln">   533</span>		}
+<a id="L534"></a><span class="ln">   534</span>		return TrimFunc(s, makeCutsetFunc(cutset))
+<a id="L535"></a><span class="ln">   535</span>	}
+<a id="L536"></a><span class="ln">   536</span>	
+<a id="L537"></a><span class="ln">   537</span>	<span class="comment">// TrimLeft returns a slice of the string s with all leading</span>
+<a id="L538"></a><span class="ln">   538</span>	<span class="comment">// Unicode code points contained in cutset removed.</span>
+<a id="L539"></a><span class="ln">   539</span>	func TrimLeft(s string, cutset string) string {
+<a id="L540"></a><span class="ln">   540</span>		if s == &#34;&#34; || cutset == &#34;&#34; {
+<a id="L541"></a><span class="ln">   541</span>			return s
+<a id="L542"></a><span class="ln">   542</span>		}
+<a id="L543"></a><span class="ln">   543</span>		return TrimLeftFunc(s, makeCutsetFunc(cutset))
+<a id="L544"></a><span class="ln">   544</span>	}
+<a id="L545"></a><span class="ln">   545</span>	
+<a id="L546"></a><span class="ln">   546</span>	<span class="comment">// TrimRight returns a slice of the string s, with all trailing</span>
+<a id="L547"></a><span class="ln">   547</span>	<span class="comment">// Unicode code points contained in cutset removed.</span>
+<a id="L548"></a><span class="ln">   548</span>	func TrimRight(s string, cutset string) string {
+<a id="L549"></a><span class="ln">   549</span>		if s == &#34;&#34; || cutset == &#34;&#34; {
+<a id="L550"></a><span class="ln">   550</span>			return s
+<a id="L551"></a><span class="ln">   551</span>		}
+<a id="L552"></a><span class="ln">   552</span>		return TrimRightFunc(s, makeCutsetFunc(cutset))
+<a id="L553"></a><span class="ln">   553</span>	}
+<a id="L554"></a><span class="ln">   554</span>	
+<a id="L555"></a><span class="ln">   555</span>	<span class="comment">// TrimSpace returns a slice of the string s, with all leading</span>
+<a id="L556"></a><span class="ln">   556</span>	<span class="comment">// and trailing white space removed, as defined by Unicode.</span>
+<a id="L557"></a><span class="ln">   557</span>	func TrimSpace(s string) string {
+<a id="L558"></a><span class="ln">   558</span>		return TrimFunc(s, unicode.IsSpace)
+<a id="L559"></a><span class="ln">   559</span>	}
+<a id="L560"></a><span class="ln">   560</span>	
+<a id="L561"></a><span class="ln">   561</span>	<span class="comment">// Replace returns a copy of the string s with the first n</span>
+<a id="L562"></a><span class="ln">   562</span>	<span class="comment">// non-overlapping instances of old replaced by new.</span>
+<a id="L563"></a><span class="ln">   563</span>	<span class="comment">// If n &lt; 0, there is no limit on the number of replacements.</span>
+<a id="L564"></a><span class="ln">   564</span>	func Replace(s, old, new string, n int) string {
+<a id="L565"></a><span class="ln">   565</span>		if old == new || n == 0 {
+<a id="L566"></a><span class="ln">   566</span>			return s <span class="comment">// avoid allocation</span>
+<a id="L567"></a><span class="ln">   567</span>		}
+<a id="L568"></a><span class="ln">   568</span>	
+<a id="L569"></a><span class="ln">   569</span>		<span class="comment">// Compute number of replacements.</span>
+<a id="L570"></a><span class="ln">   570</span>		if m := Count(s, old); m == 0 {
+<a id="L571"></a><span class="ln">   571</span>			return s <span class="comment">// avoid allocation</span>
+<a id="L572"></a><span class="ln">   572</span>		} else if n &lt; 0 || m &lt; n {
+<a id="L573"></a><span class="ln">   573</span>			n = m
+<a id="L574"></a><span class="ln">   574</span>		}
+<a id="L575"></a><span class="ln">   575</span>	
+<a id="L576"></a><span class="ln">   576</span>		<span class="comment">// Apply replacements to buffer.</span>
+<a id="L577"></a><span class="ln">   577</span>		t := make([]byte, len(s)+n*(len(new)-len(old)))
+<a id="L578"></a><span class="ln">   578</span>		w := 0
+<a id="L579"></a><span class="ln">   579</span>		start := 0
+<a id="L580"></a><span class="ln">   580</span>		for i := 0; i &lt; n; i++ {
+<a id="L581"></a><span class="ln">   581</span>			j := start
+<a id="L582"></a><span class="ln">   582</span>			if len(old) == 0 {
+<a id="L583"></a><span class="ln">   583</span>				if i &gt; 0 {
+<a id="L584"></a><span class="ln">   584</span>					_, wid := utf8.DecodeRuneInString(s[start:])
+<a id="L585"></a><span class="ln">   585</span>					j += wid
+<a id="L586"></a><span class="ln">   586</span>				}
+<a id="L587"></a><span class="ln">   587</span>			} else {
+<a id="L588"></a><span class="ln">   588</span>				j += Index(s[start:], old)
+<a id="L589"></a><span class="ln">   589</span>			}
+<a id="L590"></a><span class="ln">   590</span>			w += copy(t[w:], s[start:j])
+<a id="L591"></a><span class="ln">   591</span>			w += copy(t[w:], new)
+<a id="L592"></a><span class="ln">   592</span>			start = j + len(old)
+<a id="L593"></a><span class="ln">   593</span>		}
+<a id="L594"></a><span class="ln">   594</span>		w += copy(t[w:], s[start:])
+<a id="L595"></a><span class="ln">   595</span>		return string(t[0:w])
+<a id="L596"></a><span class="ln">   596</span>	}
+<a id="L597"></a><span class="ln">   597</span>	
+<a id="L598"></a><span class="ln">   598</span>	<span class="comment">// EqualFold reports whether s and t, interpreted as UTF-8 strings,</span>
+<a id="L599"></a><span class="ln">   599</span>	<span class="comment">// are equal under Unicode case-folding.</span>
+<a id="L600"></a><span class="ln">   600</span>	func EqualFold(s, t string) bool {
+<a id="L601"></a><span class="ln">   601</span>		for s != &#34;&#34; &amp;&amp; t != &#34;&#34; {
+<a id="L602"></a><span class="ln">   602</span>			<span class="comment">// Extract first rune from each string.</span>
+<a id="L603"></a><span class="ln">   603</span>			var sr, tr rune
+<a id="L604"></a><span class="ln">   604</span>			if s[0] &lt; utf8.RuneSelf {
+<a id="L605"></a><span class="ln">   605</span>				sr, s = rune(s[0]), s[1:]
+<a id="L606"></a><span class="ln">   606</span>			} else {
+<a id="L607"></a><span class="ln">   607</span>				r, size := utf8.DecodeRuneInString(s)
+<a id="L608"></a><span class="ln">   608</span>				sr, s = r, s[size:]
+<a id="L609"></a><span class="ln">   609</span>			}
+<a id="L610"></a><span class="ln">   610</span>			if t[0] &lt; utf8.RuneSelf {
+<a id="L611"></a><span class="ln">   611</span>				tr, t = rune(t[0]), t[1:]
+<a id="L612"></a><span class="ln">   612</span>			} else {
+<a id="L613"></a><span class="ln">   613</span>				r, size := utf8.DecodeRuneInString(t)
+<a id="L614"></a><span class="ln">   614</span>				tr, t = r, t[size:]
+<a id="L615"></a><span class="ln">   615</span>			}
+<a id="L616"></a><span class="ln">   616</span>	
+<a id="L617"></a><span class="ln">   617</span>			<span class="comment">// If they match, keep going; if not, return false.</span>
+<a id="L618"></a><span class="ln">   618</span>	
+<a id="L619"></a><span class="ln">   619</span>			<span class="comment">// Easy case.</span>
+<a id="L620"></a><span class="ln">   620</span>			if tr == sr {
+<a id="L621"></a><span class="ln">   621</span>				continue
+<a id="L622"></a><span class="ln">   622</span>			}
+<a id="L623"></a><span class="ln">   623</span>	
+<a id="L624"></a><span class="ln">   624</span>			<span class="comment">// Make sr &lt; tr to simplify what follows.</span>
+<a id="L625"></a><span class="ln">   625</span>			if tr &lt; sr {
+<a id="L626"></a><span class="ln">   626</span>				tr, sr = sr, tr
+<a id="L627"></a><span class="ln">   627</span>			}
+<a id="L628"></a><span class="ln">   628</span>			<span class="comment">// Fast check for ASCII.</span>
+<a id="L629"></a><span class="ln">   629</span>			if tr &lt; utf8.RuneSelf &amp;&amp; &#39;A&#39; &lt;= sr &amp;&amp; sr &lt;= &#39;Z&#39; {
+<a id="L630"></a><span class="ln">   630</span>				<span class="comment">// ASCII, and sr is upper case.  tr must be lower case.</span>
+<a id="L631"></a><span class="ln">   631</span>				if tr == sr+&#39;a&#39;-&#39;A&#39; {
+<a id="L632"></a><span class="ln">   632</span>					continue
+<a id="L633"></a><span class="ln">   633</span>				}
+<a id="L634"></a><span class="ln">   634</span>				return false
+<a id="L635"></a><span class="ln">   635</span>			}
+<a id="L636"></a><span class="ln">   636</span>	
+<a id="L637"></a><span class="ln">   637</span>			<span class="comment">// General case.  SimpleFold(x) returns the next equivalent rune &gt; x</span>
+<a id="L638"></a><span class="ln">   638</span>			<span class="comment">// or wraps around to smaller values.</span>
+<a id="L639"></a><span class="ln">   639</span>			r := unicode.SimpleFold(sr)
+<a id="L640"></a><span class="ln">   640</span>			for r != sr &amp;&amp; r &lt; tr {
+<a id="L641"></a><span class="ln">   641</span>				r = unicode.SimpleFold(r)
+<a id="L642"></a><span class="ln">   642</span>			}
+<a id="L643"></a><span class="ln">   643</span>			if r == tr {
+<a id="L644"></a><span class="ln">   644</span>				continue
+<a id="L645"></a><span class="ln">   645</span>			}
+<a id="L646"></a><span class="ln">   646</span>			return false
+<a id="L647"></a><span class="ln">   647</span>		}
+<a id="L648"></a><span class="ln">   648</span>	
+<a id="L649"></a><span class="ln">   649</span>		<span class="comment">// One string is empty.  Are both?</span>
+<a id="L650"></a><span class="ln">   650</span>		return s == t
+<a id="L651"></a><span class="ln">   651</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

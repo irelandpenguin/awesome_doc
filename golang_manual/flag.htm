@@ -1,0 +1,1281 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>flag - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="../../doc/style.css">
+<script type="text/javascript" src="../../doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Package flag</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<!--
+	Copyright 2009 The Go Authors. All rights reserved.
+	Use of this source code is governed by a BSD-style
+	license that can be found in the LICENSE file.
+-->
+
+	
+		<div id="short-nav">
+			<dl>
+			<dd><code>import "flag"</code></dd>
+			</dl>
+			<dl>
+			<dd><a href="#overview" class="overviewLink">Overview</a></dd>
+			<dd><a href="#index">Index</a></dd>
+			
+				<dd><a href="#examples">Examples</a></dd>
+			
+			
+			</dl>
+		</div>
+		<!-- The package's Name is printed as title by the top-level template -->
+		<div id="overview" class="toggleVisible">
+			<div class="collapsed">
+				<h2 class="toggleButton" title="Click to show Overview section">Overview ?</h2>
+			</div>
+			<div class="expanded">
+				<h2 class="toggleButton" title="Click to hide Overview section">Overview ?</h2>
+				<p>
+Package flag implements command-line flag parsing.
+</p>
+<p>
+Usage:
+</p>
+<p>
+Define flags using flag.String(), Bool(), Int(), etc.
+</p>
+<p>
+This declares an integer flag, -flagname, stored in the pointer ip, with type *int.
+</p>
+<pre>import &#34;flag&#34;
+var ip = flag.Int(&#34;flagname&#34;, 1234, &#34;help message for flagname&#34;)
+</pre>
+<p>
+If you like, you can bind the flag to a variable using the Var() functions.
+</p>
+<pre>var flagvar int
+func init() {
+	flag.IntVar(&amp;flagvar, &#34;flagname&#34;, 1234, &#34;help message for flagname&#34;)
+}
+</pre>
+<p>
+Or you can create custom flags that satisfy the Value interface (with
+pointer receivers) and couple them to flag parsing by
+</p>
+<pre>flag.Var(&amp;flagVal, &#34;name&#34;, &#34;help message for flagname&#34;)
+</pre>
+<p>
+For such flags, the default value is just the initial value of the variable.
+</p>
+<p>
+After all flags are defined, call
+</p>
+<pre>flag.Parse()
+</pre>
+<p>
+to parse the command line into the defined flags.
+</p>
+<p>
+Flags may then be used directly. If you&#39;re using the flags themselves,
+they are all pointers; if you bind to variables, they&#39;re values.
+</p>
+<pre>fmt.Println(&#34;ip has value &#34;, *ip)
+fmt.Println(&#34;flagvar has value &#34;, flagvar)
+</pre>
+<p>
+After parsing, the arguments after the flag are available as the
+slice flag.Args() or individually as flag.Arg(i).
+The arguments are indexed from 0 up to flag.NArg().
+</p>
+<p>
+Command line flag syntax:
+</p>
+<pre>-flag
+-flag=x
+-flag x  // non-boolean flags only
+</pre>
+<p>
+One or two minus signs may be used; they are equivalent.
+The last form is not permitted for boolean flags because the
+meaning of the command
+</p>
+<pre>cmd -x *
+</pre>
+<p>
+will change if there is a file called 0, false, etc.  You must
+use the -flag=false form to turn off a boolean flag.
+</p>
+<p>
+Flag parsing stops just before the first non-flag argument
+(&#34;-&#34; is a non-flag argument) or after the terminator &#34;--&#34;.
+</p>
+<p>
+Integer flags accept 1234, 0664, 0x1234 and may be negative.
+Boolean flags may be 1, 0, t, f, true, false, TRUE, FALSE, True, False.
+Duration flags accept any input valid for time.ParseDuration.
+</p>
+<p>
+The default set of command-line flags is controlled by
+top-level functions.  The FlagSet type allows one to define
+independent sets of flags, such as to implement subcommands
+in a command-line interface. The methods of FlagSet are
+analogous to the top-level functions for the command-line
+flag set.
+</p>
+
+			</div>
+		</div>
+		<div id="example_" class="toggle">
+	<div class="collapsed">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+	</div>
+	<div class="expanded">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+		
+		<p>Code:</p>
+		<pre class="code"><span class="comment">// These examples demonstrate more intricate uses of the flag package.</span>
+package flag_test
+
+import (
+    &#34;errors&#34;
+    &#34;flag&#34;
+    &#34;fmt&#34;
+    &#34;strings&#34;
+    &#34;time&#34;
+)
+
+<span class="comment">// Example 1: A single string flag called &#34;species&#34; with default value &#34;gopher&#34;.</span>
+var species = flag.String(&#34;species&#34;, &#34;gopher&#34;, &#34;the species we are studying&#34;)
+
+<span class="comment">// Example 2: Two flags sharing a variable, so we can have a shorthand.</span>
+<span class="comment">// The order of initialization is undefined, so make sure both use the</span>
+<span class="comment">// same default value. They must be set up with an init function.</span>
+var gopherType string
+
+func init() {
+    const (
+        defaultGopher = &#34;pocket&#34;
+        usage         = &#34;the variety of gopher&#34;
+    )
+    flag.StringVar(&amp;gopherType, &#34;gopher_type&#34;, defaultGopher, usage)
+    flag.StringVar(&amp;gopherType, &#34;g&#34;, defaultGopher, usage+&#34; (shorthand)&#34;)
+}
+
+<span class="comment">// Example 3: A user-defined flag type, a slice of durations.</span>
+type interval []time.Duration
+
+<span class="comment">// String is the method to format the flag&#39;s value, part of the flag.Value interface.</span>
+<span class="comment">// The String method&#39;s output will be used in diagnostics.</span>
+func (i *interval) String() string {
+    return fmt.Sprint(*i)
+}
+
+<span class="comment">// Set is the method to set the flag value, part of the flag.Value interface.</span>
+<span class="comment">// Set&#39;s argument is a string to be parsed to set the flag.</span>
+<span class="comment">// It&#39;s a comma-separated list, so we split it.</span>
+func (i *interval) Set(value string) error {
+    <span class="comment">// If we wanted to allow the flag to be set multiple times,</span>
+    <span class="comment">// accumulating values, we would delete this if statement.</span>
+    <span class="comment">// That would permit usages such as</span>
+    <span class="comment">//	-deltaT 10s -deltaT 15s</span>
+    <span class="comment">// and other combinations.</span>
+    if len(*i) &gt; 0 {
+        return errors.New(&#34;interval flag already set&#34;)
+    }
+    for _, dt := range strings.Split(value, &#34;,&#34;) {
+        duration, err := time.ParseDuration(dt)
+        if err != nil {
+            return err
+        }
+        *i = append(*i, duration)
+    }
+    return nil
+}
+
+<span class="comment">// Define a flag to accumulate durations. Because it has a special type,</span>
+<span class="comment">// we need to use the Var function and therefore create the flag during</span>
+<span class="comment">// init.</span>
+
+var intervalFlag interval
+
+func init() {
+    <span class="comment">// Tie the command-line flag to the intervalFlag variable and</span>
+    <span class="comment">// set a usage message.</span>
+    flag.Var(&amp;intervalFlag, &#34;deltaT&#34;, &#34;comma-separated list of intervals to use between events&#34;)
+}
+
+func Example() {
+    <span class="comment">// All the interesting pieces are with the variables declared above, but</span>
+    <span class="comment">// to enable the flag package to see the flags defined there, one must</span>
+    <span class="comment">// execute, typically at the start of main (not init!):</span>
+    <span class="comment">//	flag.Parse()</span>
+    <span class="comment">// We don&#39;t run it here because this is not a main function and</span>
+    <span class="comment">// the testing suite has already parsed the flags.</span>
+}
+</pre>
+		
+	</div>
+</div>
+
+	
+		<h2 id="index">Index</h2>
+		<!-- Table of contents for API; must be named manual-nav to turn off auto nav. -->
+		<div id="manual-nav">
+			<dl>
+			
+			
+				<dd><a href="#variables">Variables</a></dd>
+			
+			
+				
+				<dd><a href="#Arg">func Arg(i int) string</a></dd>
+			
+				
+				<dd><a href="#Args">func Args() []string</a></dd>
+			
+				
+				<dd><a href="#Bool">func Bool(name string, value bool, usage string) *bool</a></dd>
+			
+				
+				<dd><a href="#BoolVar">func BoolVar(p *bool, name string, value bool, usage string)</a></dd>
+			
+				
+				<dd><a href="#Duration">func Duration(name string, value time.Duration, usage string) *time.Duration</a></dd>
+			
+				
+				<dd><a href="#DurationVar">func DurationVar(p *time.Duration, name string, value time.Duration, usage string)</a></dd>
+			
+				
+				<dd><a href="#Float64">func Float64(name string, value float64, usage string) *float64</a></dd>
+			
+				
+				<dd><a href="#Float64Var">func Float64Var(p *float64, name string, value float64, usage string)</a></dd>
+			
+				
+				<dd><a href="#Int">func Int(name string, value int, usage string) *int</a></dd>
+			
+				
+				<dd><a href="#Int64">func Int64(name string, value int64, usage string) *int64</a></dd>
+			
+				
+				<dd><a href="#Int64Var">func Int64Var(p *int64, name string, value int64, usage string)</a></dd>
+			
+				
+				<dd><a href="#IntVar">func IntVar(p *int, name string, value int, usage string)</a></dd>
+			
+				
+				<dd><a href="#NArg">func NArg() int</a></dd>
+			
+				
+				<dd><a href="#NFlag">func NFlag() int</a></dd>
+			
+				
+				<dd><a href="#Parse">func Parse()</a></dd>
+			
+				
+				<dd><a href="#Parsed">func Parsed() bool</a></dd>
+			
+				
+				<dd><a href="#PrintDefaults">func PrintDefaults()</a></dd>
+			
+				
+				<dd><a href="#Set">func Set(name, value string) error</a></dd>
+			
+				
+				<dd><a href="#String">func String(name string, value string, usage string) *string</a></dd>
+			
+				
+				<dd><a href="#StringVar">func StringVar(p *string, name string, value string, usage string)</a></dd>
+			
+				
+				<dd><a href="#Uint">func Uint(name string, value uint, usage string) *uint</a></dd>
+			
+				
+				<dd><a href="#Uint64">func Uint64(name string, value uint64, usage string) *uint64</a></dd>
+			
+				
+				<dd><a href="#Uint64Var">func Uint64Var(p *uint64, name string, value uint64, usage string)</a></dd>
+			
+				
+				<dd><a href="#UintVar">func UintVar(p *uint, name string, value uint, usage string)</a></dd>
+			
+				
+				<dd><a href="#Var">func Var(value Value, name string, usage string)</a></dd>
+			
+				
+				<dd><a href="#Visit">func Visit(fn func(*Flag))</a></dd>
+			
+				
+				<dd><a href="#VisitAll">func VisitAll(fn func(*Flag))</a></dd>
+			
+			
+				
+				<dd><a href="#ErrorHandling">type ErrorHandling</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Flag">type Flag</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Lookup">func Lookup(name string) *Flag</a></dd>
+				
+				
+			
+				
+				<dd><a href="#FlagSet">type FlagSet</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewFlagSet">func NewFlagSet(name string, errorHandling ErrorHandling) *FlagSet</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Arg">func (f *FlagSet) Arg(i int) string</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Args">func (f *FlagSet) Args() []string</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Bool">func (f *FlagSet) Bool(name string, value bool, usage string) *bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.BoolVar">func (f *FlagSet) BoolVar(p *bool, name string, value bool, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Duration">func (f *FlagSet) Duration(name string, value time.Duration, usage string) *time.Duration</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.DurationVar">func (f *FlagSet) DurationVar(p *time.Duration, name string, value time.Duration, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Float64">func (f *FlagSet) Float64(name string, value float64, usage string) *float64</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Float64Var">func (f *FlagSet) Float64Var(p *float64, name string, value float64, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Init">func (f *FlagSet) Init(name string, errorHandling ErrorHandling)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Int">func (f *FlagSet) Int(name string, value int, usage string) *int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Int64">func (f *FlagSet) Int64(name string, value int64, usage string) *int64</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Int64Var">func (f *FlagSet) Int64Var(p *int64, name string, value int64, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.IntVar">func (f *FlagSet) IntVar(p *int, name string, value int, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Lookup">func (f *FlagSet) Lookup(name string) *Flag</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.NArg">func (f *FlagSet) NArg() int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.NFlag">func (f *FlagSet) NFlag() int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Parse">func (f *FlagSet) Parse(arguments []string) error</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Parsed">func (f *FlagSet) Parsed() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.PrintDefaults">func (f *FlagSet) PrintDefaults()</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Set">func (f *FlagSet) Set(name, value string) error</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.SetOutput">func (f *FlagSet) SetOutput(output io.Writer)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.String">func (f *FlagSet) String(name string, value string, usage string) *string</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.StringVar">func (f *FlagSet) StringVar(p *string, name string, value string, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Uint">func (f *FlagSet) Uint(name string, value uint, usage string) *uint</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Uint64">func (f *FlagSet) Uint64(name string, value uint64, usage string) *uint64</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Uint64Var">func (f *FlagSet) Uint64Var(p *uint64, name string, value uint64, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.UintVar">func (f *FlagSet) UintVar(p *uint, name string, value uint, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Var">func (f *FlagSet) Var(value Value, name string, usage string)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.Visit">func (f *FlagSet) Visit(fn func(*Flag))</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#FlagSet.VisitAll">func (f *FlagSet) VisitAll(fn func(*Flag))</a></dd>
+				
+			
+				
+				<dd><a href="#Value">type Value</a></dd>
+				
+				
+			
+			
+		</dl>
+
+		
+			<h4 id="examples">Examples</h4>
+			<dl>
+			
+			<dd><a class="exampleLink" href="#example_">Package</a></dd>
+			
+			</dl>
+		
+
+		
+			<h4>Package files</h4>
+			<p>
+			<span style="font-size:90%">
+			
+				<a href="src/pkg/flag/flag.htm">flag.go</a>
+			
+			</span>
+			</p>
+		
+	
+		
+		
+			<h2 id="variables">Variables</h2>
+			
+				<pre>var ErrHelp = errors.New(&#34;flag: help requested&#34;)</pre>
+				<p>
+ErrHelp is the error returned if the flag -help is invoked but no such flag is defined.
+</p>
+
+			
+				<pre>var Usage = func() {
+    fmt.Fprintf(os.Stderr, &#34;Usage of %s:\n&#34;, os.Args[0])
+    PrintDefaults()
+}</pre>
+				<p>
+Usage prints to standard error a usage message documenting all defined command-line flags.
+The function is a variable that may be changed to point to a custom function.
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="Arg">func <a href="src/pkg/flag/flag.htm#L378">Arg</a></h2>
+			<pre>func Arg(i int) string</pre>
+			<p>
+Arg returns the i&#39;th command-line argument.  Arg(0) is the first remaining argument
+after flags have been processed.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Args">func <a href="src/pkg/flag/flag.htm#L392">Args</a></h2>
+			<pre>func Args() []string</pre>
+			<p>
+Args returns the non-flag command-line arguments.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Bool">func <a href="src/pkg/flag/flag.htm#L416">Bool</a></h2>
+			<pre>func Bool(name string, value bool, usage string) *bool</pre>
+			<p>
+Bool defines a bool flag with specified name, default value, and usage string.
+The return value is the address of a bool variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="BoolVar">func <a href="src/pkg/flag/flag.htm#L402">BoolVar</a></h2>
+			<pre>func BoolVar(p *bool, name string, value bool, usage string)</pre>
+			<p>
+BoolVar defines a bool flag with specified name, default value, and usage string.
+The argument p points to a bool variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Duration">func <a href="src/pkg/flag/flag.htm#L598">Duration</a></h2>
+			<pre>func Duration(name string, value time.Duration, usage string) *time.Duration</pre>
+			<p>
+Duration defines a time.Duration flag with specified name, default value, and usage string.
+The return value is the address of a time.Duration variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="DurationVar">func <a href="src/pkg/flag/flag.htm#L584">DurationVar</a></h2>
+			<pre>func DurationVar(p *time.Duration, name string, value time.Duration, usage string)</pre>
+			<p>
+DurationVar defines a time.Duration flag with specified name, default value, and usage string.
+The argument p points to a time.Duration variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Float64">func <a href="src/pkg/flag/flag.htm#L572">Float64</a></h2>
+			<pre>func Float64(name string, value float64, usage string) *float64</pre>
+			<p>
+Float64 defines a float64 flag with specified name, default value, and usage string.
+The return value is the address of a float64 variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Float64Var">func <a href="src/pkg/flag/flag.htm#L558">Float64Var</a></h2>
+			<pre>func Float64Var(p *float64, name string, value float64, usage string)</pre>
+			<p>
+Float64Var defines a float64 flag with specified name, default value, and usage string.
+The argument p points to a float64 variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Int">func <a href="src/pkg/flag/flag.htm#L442">Int</a></h2>
+			<pre>func Int(name string, value int, usage string) *int</pre>
+			<p>
+Int defines an int flag with specified name, default value, and usage string.
+The return value is the address of an int variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Int64">func <a href="src/pkg/flag/flag.htm#L468">Int64</a></h2>
+			<pre>func Int64(name string, value int64, usage string) *int64</pre>
+			<p>
+Int64 defines an int64 flag with specified name, default value, and usage string.
+The return value is the address of an int64 variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Int64Var">func <a href="src/pkg/flag/flag.htm#L454">Int64Var</a></h2>
+			<pre>func Int64Var(p *int64, name string, value int64, usage string)</pre>
+			<p>
+Int64Var defines an int64 flag with specified name, default value, and usage string.
+The argument p points to an int64 variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="IntVar">func <a href="src/pkg/flag/flag.htm#L428">IntVar</a></h2>
+			<pre>func IntVar(p *int, name string, value int, usage string)</pre>
+			<p>
+IntVar defines an int flag with specified name, default value, and usage string.
+The argument p points to an int variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="NArg">func <a href="src/pkg/flag/flag.htm#L386">NArg</a></h2>
+			<pre>func NArg() int</pre>
+			<p>
+NArg is the number of arguments remaining after flags have been processed.
+</p>
+
+			
+		
+			
+			
+			<h2 id="NFlag">func <a href="src/pkg/flag/flag.htm#L365">NFlag</a></h2>
+			<pre>func NFlag() int</pre>
+			<p>
+NFlag returns the number of command-line flags that have been set.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Parse">func <a href="src/pkg/flag/flag.htm#L759">Parse</a></h2>
+			<pre>func Parse()</pre>
+			<p>
+Parse parses the command-line flags from os.Args[1:].  Must be called
+after all flags are defined and before flags are accessed by the program.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Parsed">func <a href="src/pkg/flag/flag.htm#L765">Parsed</a></h2>
+			<pre>func Parsed() bool</pre>
+			<p>
+Parsed returns true if the command-line flags have been parsed.
+</p>
+
+			
+		
+			
+			
+			<h2 id="PrintDefaults">func <a href="src/pkg/flag/flag.htm#L340">PrintDefaults</a></h2>
+			<pre>func PrintDefaults()</pre>
+			<p>
+PrintDefaults prints to standard error the default values of all defined command-line flags.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Set">func <a href="src/pkg/flag/flag.htm#L322">Set</a></h2>
+			<pre>func Set(name, value string) error</pre>
+			<p>
+Set sets the value of the named command-line flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="String">func <a href="src/pkg/flag/flag.htm#L546">String</a></h2>
+			<pre>func String(name string, value string, usage string) *string</pre>
+			<p>
+String defines a string flag with specified name, default value, and usage string.
+The return value is the address of a string variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="StringVar">func <a href="src/pkg/flag/flag.htm#L532">StringVar</a></h2>
+			<pre>func StringVar(p *string, name string, value string, usage string)</pre>
+			<p>
+StringVar defines a string flag with specified name, default value, and usage string.
+The argument p points to a string variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Uint">func <a href="src/pkg/flag/flag.htm#L494">Uint</a></h2>
+			<pre>func Uint(name string, value uint, usage string) *uint</pre>
+			<p>
+Uint defines a uint flag with specified name, default value, and usage string.
+The return value is the address of a uint  variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Uint64">func <a href="src/pkg/flag/flag.htm#L520">Uint64</a></h2>
+			<pre>func Uint64(name string, value uint64, usage string) *uint64</pre>
+			<p>
+Uint64 defines a uint64 flag with specified name, default value, and usage string.
+The return value is the address of a uint64 variable that stores the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Uint64Var">func <a href="src/pkg/flag/flag.htm#L506">Uint64Var</a></h2>
+			<pre>func Uint64Var(p *uint64, name string, value uint64, usage string)</pre>
+			<p>
+Uint64Var defines a uint64 flag with specified name, default value, and usage string.
+The argument p points to a uint64 variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="UintVar">func <a href="src/pkg/flag/flag.htm#L480">UintVar</a></h2>
+			<pre>func UintVar(p *uint, name string, value uint, usage string)</pre>
+			<p>
+UintVar defines a uint flag with specified name, default value, and usage string.
+The argument p points to a uint  variable in which to store the value of the flag.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Var">func <a href="src/pkg/flag/flag.htm#L628">Var</a></h2>
+			<pre>func Var(value Value, name string, usage string)</pre>
+			<p>
+Var defines a flag with the specified name and usage string. The type and
+value of the flag are represented by the first argument, of type Value, which
+typically holds a user-defined implementation of Value. For instance, the
+caller could create a flag that turns a comma-separated string into a slice
+of strings by giving the slice the methods of Value; in particular, Set would
+decompose the comma-separated string into the slice.
+</p>
+
+			
+		
+			
+			
+			<h2 id="Visit">func <a href="src/pkg/flag/flag.htm#L289">Visit</a></h2>
+			<pre>func Visit(fn func(*Flag))</pre>
+			<p>
+Visit visits the command-line flags in lexicographical order, calling fn
+for each.  It visits only those flags that have been set.
+</p>
+
+			
+		
+			
+			
+			<h2 id="VisitAll">func <a href="src/pkg/flag/flag.htm#L275">VisitAll</a></h2>
+			<pre>func VisitAll(fn func(*Flag))</pre>
+			<p>
+VisitAll visits the command-line flags in lexicographical order, calling
+fn for each.  It visits all flags, even those not set.
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="ErrorHandling">type <a href="src/pkg/flag/flag.htm#L203">ErrorHandling</a></h2>
+			<pre>type ErrorHandling int</pre>
+			<p>
+ErrorHandling defines how to handle flag parsing errors.
+</p>
+
+
+			
+				<pre>const (
+    ContinueOnError ErrorHandling = iota
+    ExitOnError
+    PanicOnError
+)</pre>
+				
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Flag">type <a href="src/pkg/flag/flag.htm#L229">Flag</a></h2>
+			<pre>type Flag struct {
+    Name     string <span class="comment">// name as it appears on command line</span>
+    Usage    string <span class="comment">// help message</span>
+    Value    Value  <span class="comment">// value as set</span>
+    DefValue string <span class="comment">// default value (as text); for usage message</span>
+}</pre>
+			<p>
+A Flag represents the state of a flag.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="Lookup">func <a href="src/pkg/flag/flag.htm#L300">Lookup</a></h3>
+				<pre>func Lookup(name string) *Flag</pre>
+				<p>
+Lookup returns the Flag structure of the named command-line flag,
+returning nil if none exists.
+</p>
+
+				
+			
+
+			
+		
+			
+			
+			<h2 id="FlagSet">type <a href="src/pkg/flag/flag.htm#L212">FlagSet</a></h2>
+			<pre>type FlagSet struct {
+    <span class="comment">// Usage is the function called when an error occurs while parsing flags.</span>
+    <span class="comment">// The field is a function (not a method) that may be changed to point to</span>
+    <span class="comment">// a custom error handler.</span>
+    Usage func()
+    <span class="comment">// contains filtered or unexported fields</span>
+}</pre>
+			<p>
+A FlagSet represents a set of defined flags.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewFlagSet">func <a href="src/pkg/flag/flag.htm#L774">NewFlagSet</a></h3>
+				<pre>func NewFlagSet(name string, errorHandling ErrorHandling) *FlagSet</pre>
+				<p>
+NewFlagSet returns a new, empty flag set with the specified name and
+error handling property.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="FlagSet.Arg">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L369">Arg</a></h3>
+				<pre>func (f *FlagSet) Arg(i int) string</pre>
+				<p>
+Arg returns the i&#39;th argument.  Arg(0) is the first remaining argument
+after flags have been processed.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Args">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L389">Args</a></h3>
+				<pre>func (f *FlagSet) Args() []string</pre>
+				<p>
+Args returns the non-flag arguments.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Bool">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L408">Bool</a></h3>
+				<pre>func (f *FlagSet) Bool(name string, value bool, usage string) *bool</pre>
+				<p>
+Bool defines a bool flag with specified name, default value, and usage string.
+The return value is the address of a bool variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.BoolVar">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L396">BoolVar</a></h3>
+				<pre>func (f *FlagSet) BoolVar(p *bool, name string, value bool, usage string)</pre>
+				<p>
+BoolVar defines a bool flag with specified name, default value, and usage string.
+The argument p points to a bool variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Duration">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L590">Duration</a></h3>
+				<pre>func (f *FlagSet) Duration(name string, value time.Duration, usage string) *time.Duration</pre>
+				<p>
+Duration defines a time.Duration flag with specified name, default value, and usage string.
+The return value is the address of a time.Duration variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.DurationVar">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L578">DurationVar</a></h3>
+				<pre>func (f *FlagSet) DurationVar(p *time.Duration, name string, value time.Duration, usage string)</pre>
+				<p>
+DurationVar defines a time.Duration flag with specified name, default value, and usage string.
+The argument p points to a time.Duration variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Float64">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L564">Float64</a></h3>
+				<pre>func (f *FlagSet) Float64(name string, value float64, usage string) *float64</pre>
+				<p>
+Float64 defines a float64 flag with specified name, default value, and usage string.
+The return value is the address of a float64 variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Float64Var">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L552">Float64Var</a></h3>
+				<pre>func (f *FlagSet) Float64Var(p *float64, name string, value float64, usage string)</pre>
+				<p>
+Float64Var defines a float64 flag with specified name, default value, and usage string.
+The argument p points to a float64 variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Init">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L785">Init</a></h3>
+				<pre>func (f *FlagSet) Init(name string, errorHandling ErrorHandling)</pre>
+				<p>
+Init sets the name and error handling property for a flag set.
+By default, the zero FlagSet uses an empty name and the
+ContinueOnError error handling policy.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Int">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L434">Int</a></h3>
+				<pre>func (f *FlagSet) Int(name string, value int, usage string) *int</pre>
+				<p>
+Int defines an int flag with specified name, default value, and usage string.
+The return value is the address of an int variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Int64">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L460">Int64</a></h3>
+				<pre>func (f *FlagSet) Int64(name string, value int64, usage string) *int64</pre>
+				<p>
+Int64 defines an int64 flag with specified name, default value, and usage string.
+The return value is the address of an int64 variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Int64Var">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L448">Int64Var</a></h3>
+				<pre>func (f *FlagSet) Int64Var(p *int64, name string, value int64, usage string)</pre>
+				<p>
+Int64Var defines an int64 flag with specified name, default value, and usage string.
+The argument p points to an int64 variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.IntVar">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L422">IntVar</a></h3>
+				<pre>func (f *FlagSet) IntVar(p *int, name string, value int, usage string)</pre>
+				<p>
+IntVar defines an int flag with specified name, default value, and usage string.
+The argument p points to an int variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Lookup">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L294">Lookup</a></h3>
+				<pre>func (f *FlagSet) Lookup(name string) *Flag</pre>
+				<p>
+Lookup returns the Flag structure of the named flag, returning nil if none exists.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.NArg">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L383">NArg</a></h3>
+				<pre>func (f *FlagSet) NArg() int</pre>
+				<p>
+NArg is the number of arguments remaining after flags have been processed.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.NFlag">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L362">NFlag</a></h3>
+				<pre>func (f *FlagSet) NFlag() int</pre>
+				<p>
+NFlag returns the number of flags that have been set.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Parse">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L729">Parse</a></h3>
+				<pre>func (f *FlagSet) Parse(arguments []string) error</pre>
+				<p>
+Parse parses flag definitions from the argument list, which should not
+include the command name.  Must be called after all flags in the FlagSet
+are defined and before flags are accessed by the program.
+The return value will be ErrHelp if -help was set but not defined.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Parsed">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L753">Parsed</a></h3>
+				<pre>func (f *FlagSet) Parsed() bool</pre>
+				<p>
+Parsed reports whether f.Parse has been called.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.PrintDefaults">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L328">PrintDefaults</a></h3>
+				<pre>func (f *FlagSet) PrintDefaults()</pre>
+				<p>
+PrintDefaults prints, to standard error unless configured
+otherwise, the default values of all defined flags in the set.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Set">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L305">Set</a></h3>
+				<pre>func (f *FlagSet) Set(name, value string) error</pre>
+				<p>
+Set sets the value of the named flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.SetOutput">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L261">SetOutput</a></h3>
+				<pre>func (f *FlagSet) SetOutput(output io.Writer)</pre>
+				<p>
+SetOutput sets the destination for usage and error messages.
+If output is nil, os.Stderr is used.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.String">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L538">String</a></h3>
+				<pre>func (f *FlagSet) String(name string, value string, usage string) *string</pre>
+				<p>
+String defines a string flag with specified name, default value, and usage string.
+The return value is the address of a string variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.StringVar">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L526">StringVar</a></h3>
+				<pre>func (f *FlagSet) StringVar(p *string, name string, value string, usage string)</pre>
+				<p>
+StringVar defines a string flag with specified name, default value, and usage string.
+The argument p points to a string variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Uint">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L486">Uint</a></h3>
+				<pre>func (f *FlagSet) Uint(name string, value uint, usage string) *uint</pre>
+				<p>
+Uint defines a uint flag with specified name, default value, and usage string.
+The return value is the address of a uint  variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Uint64">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L512">Uint64</a></h3>
+				<pre>func (f *FlagSet) Uint64(name string, value uint64, usage string) *uint64</pre>
+				<p>
+Uint64 defines a uint64 flag with specified name, default value, and usage string.
+The return value is the address of a uint64 variable that stores the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Uint64Var">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L500">Uint64Var</a></h3>
+				<pre>func (f *FlagSet) Uint64Var(p *uint64, name string, value uint64, usage string)</pre>
+				<p>
+Uint64Var defines a uint64 flag with specified name, default value, and usage string.
+The argument p points to a uint64 variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.UintVar">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L474">UintVar</a></h3>
+				<pre>func (f *FlagSet) UintVar(p *uint, name string, value uint, usage string)</pre>
+				<p>
+UintVar defines a uint flag with specified name, default value, and usage string.
+The argument p points to a uint variable in which to store the value of the flag.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Var">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L608">Var</a></h3>
+				<pre>func (f *FlagSet) Var(value Value, name string, usage string)</pre>
+				<p>
+Var defines a flag with the specified name and usage string. The type and
+value of the flag are represented by the first argument, of type Value, which
+typically holds a user-defined implementation of Value. For instance, the
+caller could create a flag that turns a comma-separated string into a slice
+of strings by giving the slice the methods of Value; in particular, Set would
+decompose the comma-separated string into the slice.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.Visit">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L281">Visit</a></h3>
+				<pre>func (f *FlagSet) Visit(fn func(*Flag))</pre>
+				<p>
+Visit visits the flags in lexicographical order, calling fn for each.
+It visits only those flags that have been set.
+</p>
+
+				
+				
+			
+				
+				<h3 id="FlagSet.VisitAll">func (*FlagSet) <a href="src/pkg/flag/flag.htm#L267">VisitAll</a></h3>
+				<pre>func (f *FlagSet) VisitAll(fn func(*Flag))</pre>
+				<p>
+VisitAll visits the flags in lexicographical order, calling fn for each.
+It visits all flags, even those not set.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Value">type <a href="src/pkg/flag/flag.htm#L197">Value</a></h2>
+			<pre>type Value interface {
+    String() string
+    Set(string) error
+}</pre>
+			<p>
+Value is the interface to the dynamic value stored in a flag.
+(The default value is represented as a string.)
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+		</div>
+	
+
+	
+
+
+
+
+
+
+
+
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>

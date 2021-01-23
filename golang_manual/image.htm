@@ -1,0 +1,2345 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>image - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="../../doc/style.css">
+<script type="text/javascript" src="../../doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Package image</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<!--
+	Copyright 2009 The Go Authors. All rights reserved.
+	Use of this source code is governed by a BSD-style
+	license that can be found in the LICENSE file.
+-->
+
+	
+		<div id="short-nav">
+			<dl>
+			<dd><code>import "image"</code></dd>
+			</dl>
+			<dl>
+			<dd><a href="#overview" class="overviewLink">Overview</a></dd>
+			<dd><a href="#index">Index</a></dd>
+			
+				<dd><a href="#examples">Examples</a></dd>
+			
+			
+				<dd><a href="#subdirectories">Subdirectories</a></dd>
+			
+			</dl>
+		</div>
+		<!-- The package's Name is printed as title by the top-level template -->
+		<div id="overview" class="toggleVisible">
+			<div class="collapsed">
+				<h2 class="toggleButton" title="Click to show Overview section">Overview ?</h2>
+			</div>
+			<div class="expanded">
+				<h2 class="toggleButton" title="Click to hide Overview section">Overview ?</h2>
+				<p>
+Package image implements a basic 2-D image library.
+</p>
+<p>
+The fundamental interface is called Image. An Image contains colors, which
+are described in the image/color package.
+</p>
+<p>
+Values of the Image interface are created either by calling functions such
+as NewRGBA and NewPaletted, or by calling Decode on an io.Reader containing
+image data in a format such as GIF, JPEG or PNG. Decoding any particular
+image format requires the prior registration of a decoder function.
+Registration is typically automatic as a side effect of initializing that
+format&#39;s package so that, to decode a PNG image, it suffices to have
+</p>
+<pre>import _ &#34;image/png&#34;
+</pre>
+<p>
+in a program&#39;s main package. The _ means to import a package purely for its
+initialization side effects.
+</p>
+<p>
+See &#34;The Go image package&#34; for more details:
+<a href="http://golang.org/doc/articles/image_package.html">http://golang.org/doc/articles/image_package.html</a>
+</p>
+
+			</div>
+		</div>
+		<div id="example_" class="toggle">
+	<div class="collapsed">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+	</div>
+	<div class="expanded">
+		<p class="exampleHeading toggleButton">? <span class="text">Example</span></p>
+		
+		<p>Code:</p>
+		<pre class="code"><span class="comment">// Open the file.</span>
+file, err := os.Open(&#34;testdata/video-001.jpeg&#34;)
+if err != nil {
+    log.Fatal(err)
+}
+defer file.Close()
+
+<span class="comment">// Decode the image.</span>
+m, _, err := image.Decode(file)
+if err != nil {
+    log.Fatal(err)
+}
+bounds := m.Bounds()
+
+<span class="comment">// Calculate a 16-bin histogram for m&#39;s red, green, blue and alpha components.</span>
+<span class="comment">//</span>
+<span class="comment">// An image&#39;s bounds do not necessarily start at (0, 0), so the two loops start</span>
+<span class="comment">// at bounds.Min.Y and bounds.Min.X. Looping over Y first and X second is more</span>
+<span class="comment">// likely to result in better memory access patterns than X first and Y second.</span>
+var histogram [16][4]int
+for y := bounds.Min.Y; y &lt; bounds.Max.Y; y++ {
+    for x := bounds.Min.X; x &lt; bounds.Max.X; x++ {
+        r, g, b, a := m.At(x, y).RGBA()
+        <span class="comment">// A color&#39;s RGBA method returns values in the range [0, 65535].</span>
+        <span class="comment">// Shifting by 12 reduces this to the range [0, 15].</span>
+        histogram[r&gt;&gt;12][0]++
+        histogram[g&gt;&gt;12][1]++
+        histogram[b&gt;&gt;12][2]++
+        histogram[a&gt;&gt;12][3]++
+    }
+}
+
+<span class="comment">// Print the results.</span>
+fmt.Printf(&#34;%-14s %6s %6s %6s %6s\n&#34;, &#34;bin&#34;, &#34;red&#34;, &#34;green&#34;, &#34;blue&#34;, &#34;alpha&#34;)
+for i, x := range histogram {
+    fmt.Printf(&#34;0x%04x-0x%04x: %6d %6d %6d %6d\n&#34;, i&lt;&lt;12, (i+1)&lt;&lt;12-1, x[0], x[1], x[2], x[3])
+}
+<span class="comment"></pre>
+		
+		<p>Output:</p>
+		<pre class="output">bin               red  green   blue  alpha
+0x0000-0x0fff:    471    819   7596      0
+0x1000-0x1fff:    576   2892    726      0
+0x2000-0x2fff:   1038   2330    943      0
+0x3000-0x3fff:    883   2321   1014      0
+0x4000-0x4fff:    501   1295    525      0
+0x5000-0x5fff:    302    962    242      0
+0x6000-0x6fff:    219    358    150      0
+0x7000-0x7fff:    352    281    192      0
+0x8000-0x8fff:   3688    216    246      0
+0x9000-0x9fff:   2277    237    283      0
+0xa000-0xafff:    971    254    357      0
+0xb000-0xbfff:    317    306    429      0
+0xc000-0xcfff:    203    402    401      0
+0xd000-0xdfff:    256    394    241      0
+0xe000-0xefff:    378    343    173      0
+0xf000-0xffff:   3018   2040   1932  15450</pre>
+		
+	</div>
+</div>
+
+	
+		<h2 id="index">Index</h2>
+		<!-- Table of contents for API; must be named manual-nav to turn off auto nav. -->
+		<div id="manual-nav">
+			<dl>
+			
+			
+				<dd><a href="#variables">Variables</a></dd>
+			
+			
+				
+				<dd><a href="#RegisterFormat">func RegisterFormat(name, magic string, decode func(io.Reader) (Image, error), decodeConfig func(io.Reader) (Config, error))</a></dd>
+			
+			
+				
+				<dd><a href="#Alpha">type Alpha</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewAlpha">func NewAlpha(r Rectangle) *Alpha</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.At">func (p *Alpha) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.Bounds">func (p *Alpha) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.ColorModel">func (p *Alpha) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.Opaque">func (p *Alpha) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.PixOffset">func (p *Alpha) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.Set">func (p *Alpha) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.SetAlpha">func (p *Alpha) SetAlpha(x, y int, c color.Alpha)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha.SubImage">func (p *Alpha) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#Alpha16">type Alpha16</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewAlpha16">func NewAlpha16(r Rectangle) *Alpha16</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.At">func (p *Alpha16) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.Bounds">func (p *Alpha16) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.ColorModel">func (p *Alpha16) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.Opaque">func (p *Alpha16) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.PixOffset">func (p *Alpha16) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.Set">func (p *Alpha16) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.SetAlpha16">func (p *Alpha16) SetAlpha16(x, y int, c color.Alpha16)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Alpha16.SubImage">func (p *Alpha16) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#Config">type Config</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#DecodeConfig">func DecodeConfig(r io.Reader) (Config, string, error)</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Gray">type Gray</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewGray">func NewGray(r Rectangle) *Gray</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.At">func (p *Gray) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.Bounds">func (p *Gray) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.ColorModel">func (p *Gray) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.Opaque">func (p *Gray) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.PixOffset">func (p *Gray) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.Set">func (p *Gray) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.SetGray">func (p *Gray) SetGray(x, y int, c color.Gray)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray.SubImage">func (p *Gray) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#Gray16">type Gray16</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewGray16">func NewGray16(r Rectangle) *Gray16</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.At">func (p *Gray16) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.Bounds">func (p *Gray16) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.ColorModel">func (p *Gray16) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.Opaque">func (p *Gray16) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.PixOffset">func (p *Gray16) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.Set">func (p *Gray16) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.SetGray16">func (p *Gray16) SetGray16(x, y int, c color.Gray16)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Gray16.SubImage">func (p *Gray16) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#Image">type Image</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Decode">func Decode(r io.Reader) (Image, string, error)</a></dd>
+				
+				
+			
+				
+				<dd><a href="#NRGBA">type NRGBA</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewNRGBA">func NewNRGBA(r Rectangle) *NRGBA</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.At">func (p *NRGBA) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.Bounds">func (p *NRGBA) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.ColorModel">func (p *NRGBA) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.Opaque">func (p *NRGBA) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.PixOffset">func (p *NRGBA) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.Set">func (p *NRGBA) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.SetNRGBA">func (p *NRGBA) SetNRGBA(x, y int, c color.NRGBA)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA.SubImage">func (p *NRGBA) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#NRGBA64">type NRGBA64</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewNRGBA64">func NewNRGBA64(r Rectangle) *NRGBA64</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.At">func (p *NRGBA64) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.Bounds">func (p *NRGBA64) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.ColorModel">func (p *NRGBA64) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.Opaque">func (p *NRGBA64) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.PixOffset">func (p *NRGBA64) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.Set">func (p *NRGBA64) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.SetNRGBA64">func (p *NRGBA64) SetNRGBA64(x, y int, c color.NRGBA64)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NRGBA64.SubImage">func (p *NRGBA64) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#Paletted">type Paletted</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewPaletted">func NewPaletted(r Rectangle, p color.Palette) *Paletted</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.At">func (p *Paletted) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.Bounds">func (p *Paletted) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.ColorIndexAt">func (p *Paletted) ColorIndexAt(x, y int) uint8</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.ColorModel">func (p *Paletted) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.Opaque">func (p *Paletted) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.PixOffset">func (p *Paletted) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.Set">func (p *Paletted) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.SetColorIndex">func (p *Paletted) SetColorIndex(x, y int, index uint8)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Paletted.SubImage">func (p *Paletted) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#PalettedImage">type PalettedImage</a></dd>
+				
+				
+			
+				
+				<dd><a href="#Point">type Point</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Pt">func Pt(X, Y int) Point</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.Add">func (p Point) Add(q Point) Point</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.Div">func (p Point) Div(k int) Point</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.Eq">func (p Point) Eq(q Point) bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.In">func (p Point) In(r Rectangle) bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.Mod">func (p Point) Mod(r Rectangle) Point</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.Mul">func (p Point) Mul(k int) Point</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.String">func (p Point) String() string</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Point.Sub">func (p Point) Sub(q Point) Point</a></dd>
+				
+			
+				
+				<dd><a href="#RGBA">type RGBA</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewRGBA">func NewRGBA(r Rectangle) *RGBA</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.At">func (p *RGBA) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.Bounds">func (p *RGBA) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.ColorModel">func (p *RGBA) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.Opaque">func (p *RGBA) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.PixOffset">func (p *RGBA) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.Set">func (p *RGBA) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.SetRGBA">func (p *RGBA) SetRGBA(x, y int, c color.RGBA)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA.SubImage">func (p *RGBA) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#RGBA64">type RGBA64</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewRGBA64">func NewRGBA64(r Rectangle) *RGBA64</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.At">func (p *RGBA64) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.Bounds">func (p *RGBA64) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.ColorModel">func (p *RGBA64) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.Opaque">func (p *RGBA64) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.PixOffset">func (p *RGBA64) PixOffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.Set">func (p *RGBA64) Set(x, y int, c color.Color)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.SetRGBA64">func (p *RGBA64) SetRGBA64(x, y int, c color.RGBA64)</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#RGBA64.SubImage">func (p *RGBA64) SubImage(r Rectangle) Image</a></dd>
+				
+			
+				
+				<dd><a href="#Rectangle">type Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rect">func Rect(x0, y0, x1, y1 int) Rectangle</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Add">func (r Rectangle) Add(p Point) Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Canon">func (r Rectangle) Canon() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Dx">func (r Rectangle) Dx() int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Dy">func (r Rectangle) Dy() int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Empty">func (r Rectangle) Empty() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Eq">func (r Rectangle) Eq(s Rectangle) bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.In">func (r Rectangle) In(s Rectangle) bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Inset">func (r Rectangle) Inset(n int) Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Intersect">func (r Rectangle) Intersect(s Rectangle) Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Overlaps">func (r Rectangle) Overlaps(s Rectangle) bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Size">func (r Rectangle) Size() Point</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.String">func (r Rectangle) String() string</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Sub">func (r Rectangle) Sub(p Point) Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Rectangle.Union">func (r Rectangle) Union(s Rectangle) Rectangle</a></dd>
+				
+			
+				
+				<dd><a href="#Uniform">type Uniform</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewUniform">func NewUniform(c color.Color) *Uniform</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Uniform.At">func (c *Uniform) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Uniform.Bounds">func (c *Uniform) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Uniform.ColorModel">func (c *Uniform) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Uniform.Convert">func (c *Uniform) Convert(color.Color) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Uniform.Opaque">func (c *Uniform) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#Uniform.RGBA">func (c *Uniform) RGBA() (r, g, b, a uint32)</a></dd>
+				
+			
+				
+				<dd><a href="#YCbCr">type YCbCr</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#NewYCbCr">func NewYCbCr(r Rectangle, subsampleRatio YCbCrSubsampleRatio) *YCbCr</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.At">func (p *YCbCr) At(x, y int) color.Color</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.Bounds">func (p *YCbCr) Bounds() Rectangle</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.COffset">func (p *YCbCr) COffset(x, y int) int</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.ColorModel">func (p *YCbCr) ColorModel() color.Model</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.Opaque">func (p *YCbCr) Opaque() bool</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.SubImage">func (p *YCbCr) SubImage(r Rectangle) Image</a></dd>
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCr.YOffset">func (p *YCbCr) YOffset(x, y int) int</a></dd>
+				
+			
+				
+				<dd><a href="#YCbCrSubsampleRatio">type YCbCrSubsampleRatio</a></dd>
+				
+				
+					
+					<dd>&nbsp; &nbsp; <a href="#YCbCrSubsampleRatio.String">func (s YCbCrSubsampleRatio) String() string</a></dd>
+				
+			
+			
+		</dl>
+
+		
+			<h4 id="examples">Examples</h4>
+			<dl>
+			
+			<dd><a class="exampleLink" href="#example_">Package</a></dd>
+			
+			</dl>
+		
+
+		
+			<h4>Package files</h4>
+			<p>
+			<span style="font-size:90%">
+			
+				<a href="src/pkg/image/format.htm">format.go</a>
+			
+				<a href="src/pkg/image/geom.htm">geom.go</a>
+			
+				<a href="src/pkg/image/image.htm">image.go</a>
+			
+				<a href="src/pkg/image/names.htm">names.go</a>
+			
+				<a href="src/pkg/image/ycbcr.htm">ycbcr.go</a>
+			
+			</span>
+			</p>
+		
+	
+		
+		
+			<h2 id="variables">Variables</h2>
+			
+				<pre>var (
+    <span class="comment">// Black is an opaque black uniform image.</span>
+    Black = NewUniform(color.Black)
+    <span class="comment">// White is an opaque white uniform image.</span>
+    White = NewUniform(color.White)
+    <span class="comment">// Transparent is a fully transparent uniform image.</span>
+    Transparent = NewUniform(color.Transparent)
+    <span class="comment">// Opaque is a fully opaque uniform image.</span>
+    Opaque = NewUniform(color.Opaque)
+)</pre>
+				
+			
+				<pre>var ErrFormat = errors.New(&#34;image: unknown format&#34;)</pre>
+				<p>
+ErrFormat indicates that decoding encountered an unknown format.
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="RegisterFormat">func <a href="src/pkg/image/format.htm#L22">RegisterFormat</a></h2>
+			<pre>func RegisterFormat(name, magic string, decode func(io.Reader) (Image, error), decodeConfig func(io.Reader) (Config, error))</pre>
+			<p>
+RegisterFormat registers an image format for use by Decode.
+Name is the name of the format, like &#34;jpeg&#34; or &#34;png&#34;.
+Magic is the magic prefix that identifies the format&#39;s encoding. The magic
+string can contain &#34;?&#34; wildcards that each match any one byte.
+Decode is the function that decodes the encoded image.
+DecodeConfig is the function that decodes just its configuration.
+</p>
+
+			
+		
+		
+			
+			
+			<h2 id="Alpha">type <a href="src/pkg/image/image.htm#L456">Alpha</a></h2>
+			<pre>type Alpha struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, as alpha values. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*1].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+Alpha is an in-memory image whose At method returns color.Alpha values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewAlpha">func <a href="src/pkg/image/image.htm#L537">NewAlpha</a></h3>
+				<pre>func NewAlpha(r Rectangle) *Alpha</pre>
+				<p>
+NewAlpha returns a new Alpha with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Alpha.At">func (*Alpha) <a href="src/pkg/image/image.htm#L470">At</a></h3>
+				<pre>func (p *Alpha) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha.Bounds">func (*Alpha) <a href="src/pkg/image/image.htm#L468">Bounds</a></h3>
+				<pre>func (p *Alpha) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha.ColorModel">func (*Alpha) <a href="src/pkg/image/image.htm#L466">ColorModel</a></h3>
+				<pre>func (p *Alpha) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha.Opaque">func (*Alpha) <a href="src/pkg/image/image.htm#L519">Opaque</a></h3>
+				<pre>func (p *Alpha) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Alpha.PixOffset">func (*Alpha) <a href="src/pkg/image/image.htm#L480">PixOffset</a></h3>
+				<pre>func (p *Alpha) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="Alpha.Set">func (*Alpha) <a href="src/pkg/image/image.htm#L484">Set</a></h3>
+				<pre>func (p *Alpha) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha.SetAlpha">func (*Alpha) <a href="src/pkg/image/image.htm#L492">SetAlpha</a></h3>
+				<pre>func (p *Alpha) SetAlpha(x, y int, c color.Alpha)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha.SubImage">func (*Alpha) <a href="src/pkg/image/image.htm#L502">SubImage</a></h3>
+				<pre>func (p *Alpha) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Alpha16">type <a href="src/pkg/image/image.htm#L544">Alpha16</a></h2>
+			<pre>type Alpha16 struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, as alpha values in big-endian format. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*2].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+Alpha16 is an in-memory image whose At method returns color.Alpha64 values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewAlpha16">func <a href="src/pkg/image/image.htm#L628">NewAlpha16</a></h3>
+				<pre>func NewAlpha16(r Rectangle) *Alpha16</pre>
+				<p>
+NewAlpha16 returns a new Alpha16 with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Alpha16.At">func (*Alpha16) <a href="src/pkg/image/image.htm#L558">At</a></h3>
+				<pre>func (p *Alpha16) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha16.Bounds">func (*Alpha16) <a href="src/pkg/image/image.htm#L556">Bounds</a></h3>
+				<pre>func (p *Alpha16) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha16.ColorModel">func (*Alpha16) <a href="src/pkg/image/image.htm#L554">ColorModel</a></h3>
+				<pre>func (p *Alpha16) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha16.Opaque">func (*Alpha16) <a href="src/pkg/image/image.htm#L610">Opaque</a></h3>
+				<pre>func (p *Alpha16) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Alpha16.PixOffset">func (*Alpha16) <a href="src/pkg/image/image.htm#L568">PixOffset</a></h3>
+				<pre>func (p *Alpha16) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="Alpha16.Set">func (*Alpha16) <a href="src/pkg/image/image.htm#L572">Set</a></h3>
+				<pre>func (p *Alpha16) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha16.SetAlpha16">func (*Alpha16) <a href="src/pkg/image/image.htm#L582">SetAlpha16</a></h3>
+				<pre>func (p *Alpha16) SetAlpha16(x, y int, c color.Alpha16)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Alpha16.SubImage">func (*Alpha16) <a href="src/pkg/image/image.htm#L593">SubImage</a></h3>
+				<pre>func (p *Alpha16) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Config">type <a href="src/pkg/image/image.htm#L19">Config</a></h2>
+			<pre>type Config struct {
+    ColorModel    color.Model
+    Width, Height int
+}</pre>
+			<p>
+Config holds an image&#39;s color model and dimensions.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="DecodeConfig">func <a href="src/pkg/image/format.htm#L82">DecodeConfig</a></h3>
+				<pre>func DecodeConfig(r io.Reader) (Config, string, error)</pre>
+				<p>
+DecodeConfig decodes the color model and dimensions of an image that has
+been encoded in a registered format. The string returned is the format name
+used during format registration. Format registration is typically done by
+the init method of the codec-specific package.
+</p>
+
+				
+			
+
+			
+		
+			
+			
+			<h2 id="Gray">type <a href="src/pkg/image/image.htm#L635">Gray</a></h2>
+			<pre>type Gray struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, as gray values. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*1].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+Gray is an in-memory image whose At method returns color.Gray values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewGray">func <a href="src/pkg/image/image.htm#L703">NewGray</a></h3>
+				<pre>func NewGray(r Rectangle) *Gray</pre>
+				<p>
+NewGray returns a new Gray with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Gray.At">func (*Gray) <a href="src/pkg/image/image.htm#L649">At</a></h3>
+				<pre>func (p *Gray) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray.Bounds">func (*Gray) <a href="src/pkg/image/image.htm#L647">Bounds</a></h3>
+				<pre>func (p *Gray) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray.ColorModel">func (*Gray) <a href="src/pkg/image/image.htm#L645">ColorModel</a></h3>
+				<pre>func (p *Gray) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray.Opaque">func (*Gray) <a href="src/pkg/image/image.htm#L698">Opaque</a></h3>
+				<pre>func (p *Gray) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Gray.PixOffset">func (*Gray) <a href="src/pkg/image/image.htm#L659">PixOffset</a></h3>
+				<pre>func (p *Gray) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="Gray.Set">func (*Gray) <a href="src/pkg/image/image.htm#L663">Set</a></h3>
+				<pre>func (p *Gray) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray.SetGray">func (*Gray) <a href="src/pkg/image/image.htm#L671">SetGray</a></h3>
+				<pre>func (p *Gray) SetGray(x, y int, c color.Gray)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray.SubImage">func (*Gray) <a href="src/pkg/image/image.htm#L681">SubImage</a></h3>
+				<pre>func (p *Gray) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Gray16">type <a href="src/pkg/image/image.htm#L710">Gray16</a></h2>
+			<pre>type Gray16 struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, as gray values in big-endian format. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*2].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+Gray16 is an in-memory image whose At method returns color.Gray16 values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewGray16">func <a href="src/pkg/image/image.htm#L781">NewGray16</a></h3>
+				<pre>func NewGray16(r Rectangle) *Gray16</pre>
+				<p>
+NewGray16 returns a new Gray16 with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Gray16.At">func (*Gray16) <a href="src/pkg/image/image.htm#L724">At</a></h3>
+				<pre>func (p *Gray16) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray16.Bounds">func (*Gray16) <a href="src/pkg/image/image.htm#L722">Bounds</a></h3>
+				<pre>func (p *Gray16) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray16.ColorModel">func (*Gray16) <a href="src/pkg/image/image.htm#L720">ColorModel</a></h3>
+				<pre>func (p *Gray16) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray16.Opaque">func (*Gray16) <a href="src/pkg/image/image.htm#L776">Opaque</a></h3>
+				<pre>func (p *Gray16) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Gray16.PixOffset">func (*Gray16) <a href="src/pkg/image/image.htm#L734">PixOffset</a></h3>
+				<pre>func (p *Gray16) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="Gray16.Set">func (*Gray16) <a href="src/pkg/image/image.htm#L738">Set</a></h3>
+				<pre>func (p *Gray16) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray16.SetGray16">func (*Gray16) <a href="src/pkg/image/image.htm#L748">SetGray16</a></h3>
+				<pre>func (p *Gray16) SetGray16(x, y int, c color.Gray16)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Gray16.SubImage">func (*Gray16) <a href="src/pkg/image/image.htm#L759">SubImage</a></h3>
+				<pre>func (p *Gray16) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Image">type <a href="src/pkg/image/image.htm#L26">Image</a></h2>
+			<pre>type Image interface {
+    <span class="comment">// ColorModel returns the Image&#39;s color model.</span>
+    ColorModel() color.Model
+    <span class="comment">// Bounds returns the domain for which At can return non-zero color.</span>
+    <span class="comment">// The bounds do not necessarily contain the point (0, 0).</span>
+    Bounds() Rectangle
+    <span class="comment">// At returns the color of the pixel at (x, y).</span>
+    <span class="comment">// At(Bounds().Min.X, Bounds().Min.Y) returns the upper-left pixel of the grid.</span>
+    <span class="comment">// At(Bounds().Max.X-1, Bounds().Max.Y-1) returns the lower-right one.</span>
+    At(x, y int) color.Color
+}</pre>
+			<p>
+Image is a finite rectangular grid of color.Color values taken from a color
+model.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="Decode">func <a href="src/pkg/image/format.htm#L68">Decode</a></h3>
+				<pre>func Decode(r io.Reader) (Image, string, error)</pre>
+				<p>
+Decode decodes an image that has been encoded in a registered format.
+The string returned is the format name used during format registration.
+Format registration is typically done by the init method of the codec-
+specific package.
+</p>
+
+				
+			
+
+			
+		
+			
+			
+			<h2 id="NRGBA">type <a href="src/pkg/image/image.htm#L253">NRGBA</a></h2>
+			<pre>type NRGBA struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, in R, G, B, A order. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*4].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+NRGBA is an in-memory image whose At method returns color.NRGBA values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewNRGBA">func <a href="src/pkg/image/image.htm#L341">NewNRGBA</a></h3>
+				<pre>func NewNRGBA(r Rectangle) *NRGBA</pre>
+				<p>
+NewNRGBA returns a new NRGBA with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="NRGBA.At">func (*NRGBA) <a href="src/pkg/image/image.htm#L267">At</a></h3>
+				<pre>func (p *NRGBA) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA.Bounds">func (*NRGBA) <a href="src/pkg/image/image.htm#L265">Bounds</a></h3>
+				<pre>func (p *NRGBA) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA.ColorModel">func (*NRGBA) <a href="src/pkg/image/image.htm#L263">ColorModel</a></h3>
+				<pre>func (p *NRGBA) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA.Opaque">func (*NRGBA) <a href="src/pkg/image/image.htm#L323">Opaque</a></h3>
+				<pre>func (p *NRGBA) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="NRGBA.PixOffset">func (*NRGBA) <a href="src/pkg/image/image.htm#L277">PixOffset</a></h3>
+				<pre>func (p *NRGBA) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="NRGBA.Set">func (*NRGBA) <a href="src/pkg/image/image.htm#L281">Set</a></h3>
+				<pre>func (p *NRGBA) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA.SetNRGBA">func (*NRGBA) <a href="src/pkg/image/image.htm#L293">SetNRGBA</a></h3>
+				<pre>func (p *NRGBA) SetNRGBA(x, y int, c color.NRGBA)</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA.SubImage">func (*NRGBA) <a href="src/pkg/image/image.htm#L306">SubImage</a></h3>
+				<pre>func (p *NRGBA) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="NRGBA64">type <a href="src/pkg/image/image.htm#L348">NRGBA64</a></h2>
+			<pre>type NRGBA64 struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, in R, G, B, A order and big-endian format. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*8].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+NRGBA64 is an in-memory image whose At method returns color.NRGBA64 values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewNRGBA64">func <a href="src/pkg/image/image.htm#L449">NewNRGBA64</a></h3>
+				<pre>func NewNRGBA64(r Rectangle) *NRGBA64</pre>
+				<p>
+NewNRGBA64 returns a new NRGBA64 with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="NRGBA64.At">func (*NRGBA64) <a href="src/pkg/image/image.htm#L362">At</a></h3>
+				<pre>func (p *NRGBA64) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA64.Bounds">func (*NRGBA64) <a href="src/pkg/image/image.htm#L360">Bounds</a></h3>
+				<pre>func (p *NRGBA64) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA64.ColorModel">func (*NRGBA64) <a href="src/pkg/image/image.htm#L358">ColorModel</a></h3>
+				<pre>func (p *NRGBA64) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA64.Opaque">func (*NRGBA64) <a href="src/pkg/image/image.htm#L431">Opaque</a></h3>
+				<pre>func (p *NRGBA64) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="NRGBA64.PixOffset">func (*NRGBA64) <a href="src/pkg/image/image.htm#L377">PixOffset</a></h3>
+				<pre>func (p *NRGBA64) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="NRGBA64.Set">func (*NRGBA64) <a href="src/pkg/image/image.htm#L381">Set</a></h3>
+				<pre>func (p *NRGBA64) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA64.SetNRGBA64">func (*NRGBA64) <a href="src/pkg/image/image.htm#L397">SetNRGBA64</a></h3>
+				<pre>func (p *NRGBA64) SetNRGBA64(x, y int, c color.NRGBA64)</pre>
+				
+				
+				
+			
+				
+				<h3 id="NRGBA64.SubImage">func (*NRGBA64) <a href="src/pkg/image/image.htm#L414">SubImage</a></h3>
+				<pre>func (p *NRGBA64) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Paletted">type <a href="src/pkg/image/image.htm#L788">Paletted</a></h2>
+			<pre>type Paletted struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, as palette indices. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*1].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+    <span class="comment">// Palette is the image&#39;s palette.</span>
+    Palette color.Palette
+}</pre>
+			<p>
+Paletted is an in-memory image of uint8 indices into a given palette.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewPaletted">func <a href="src/pkg/image/image.htm#L890">NewPaletted</a></h3>
+				<pre>func NewPaletted(r Rectangle, p color.Palette) *Paletted</pre>
+				<p>
+NewPaletted returns a new Paletted with the given width, height and palette.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Paletted.At">func (*Paletted) <a href="src/pkg/image/image.htm#L804">At</a></h3>
+				<pre>func (p *Paletted) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Paletted.Bounds">func (*Paletted) <a href="src/pkg/image/image.htm#L802">Bounds</a></h3>
+				<pre>func (p *Paletted) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="Paletted.ColorIndexAt">func (*Paletted) <a href="src/pkg/image/image.htm#L829">ColorIndexAt</a></h3>
+				<pre>func (p *Paletted) ColorIndexAt(x, y int) uint8</pre>
+				
+				
+				
+			
+				
+				<h3 id="Paletted.ColorModel">func (*Paletted) <a href="src/pkg/image/image.htm#L800">ColorModel</a></h3>
+				<pre>func (p *Paletted) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="Paletted.Opaque">func (*Paletted) <a href="src/pkg/image/image.htm#L867">Opaque</a></h3>
+				<pre>func (p *Paletted) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Paletted.PixOffset">func (*Paletted) <a href="src/pkg/image/image.htm#L817">PixOffset</a></h3>
+				<pre>func (p *Paletted) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="Paletted.Set">func (*Paletted) <a href="src/pkg/image/image.htm#L821">Set</a></h3>
+				<pre>func (p *Paletted) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Paletted.SetColorIndex">func (*Paletted) <a href="src/pkg/image/image.htm#L837">SetColorIndex</a></h3>
+				<pre>func (p *Paletted) SetColorIndex(x, y int, index uint8)</pre>
+				
+				
+				
+			
+				
+				<h3 id="Paletted.SubImage">func (*Paletted) <a href="src/pkg/image/image.htm#L847">SubImage</a></h3>
+				<pre>func (p *Paletted) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="PalettedImage">type <a href="src/pkg/image/image.htm#L43">PalettedImage</a></h2>
+			<pre>type PalettedImage interface {
+    <span class="comment">// ColorIndexAt returns the palette index of the pixel at (x, y).</span>
+    ColorIndexAt(x, y int) uint8
+    Image
+}</pre>
+			<p>
+PalettedImage is an image whose colors may come from a limited palette.
+If m is a PalettedImage and m.ColorModel() returns a PalettedColorModel p,
+then m.At(x, y) should be equivalent to p[m.ColorIndexAt(x, y)]. If m&#39;s
+color model is not a PalettedColorModel, then ColorIndexAt&#39;s behavior is
+undefined.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+
+			
+		
+			
+			
+			<h2 id="Point">type <a href="src/pkg/image/geom.htm#L2">Point</a></h2>
+			<pre>type Point struct {
+    X, Y int
+}</pre>
+			<p>
+A Point is an X, Y coordinate pair. The axes increase right and down.
+</p>
+
+
+			
+
+			
+				<pre>var ZP Point</pre>
+				<p>
+ZP is the zero Point.
+</p>
+
+			
+
+			
+
+			
+				
+				<h3 id="Pt">func <a href="src/pkg/image/geom.htm#L62">Pt</a></h3>
+				<pre>func Pt(X, Y int) Point</pre>
+				<p>
+Pt is shorthand for Point{X, Y}.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Point.Add">func (Point) <a href="src/pkg/image/geom.htm#L12">Add</a></h3>
+				<pre>func (p Point) Add(q Point) Point</pre>
+				<p>
+Add returns the vector p+q.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.Div">func (Point) <a href="src/pkg/image/geom.htm#L27">Div</a></h3>
+				<pre>func (p Point) Div(k int) Point</pre>
+				<p>
+Div returns the vector p/k.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.Eq">func (Point) <a href="src/pkg/image/geom.htm#L54">Eq</a></h3>
+				<pre>func (p Point) Eq(q Point) bool</pre>
+				<p>
+Eq returns whether p and q are equal.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.In">func (Point) <a href="src/pkg/image/geom.htm#L32">In</a></h3>
+				<pre>func (p Point) In(r Rectangle) bool</pre>
+				<p>
+In returns whether p is in r.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.Mod">func (Point) <a href="src/pkg/image/geom.htm#L39">Mod</a></h3>
+				<pre>func (p Point) Mod(r Rectangle) Point</pre>
+				<p>
+Mod returns the point q in r such that p.X-q.X is a multiple of r&#39;s width
+and p.Y-q.Y is a multiple of r&#39;s height.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.Mul">func (Point) <a href="src/pkg/image/geom.htm#L22">Mul</a></h3>
+				<pre>func (p Point) Mul(k int) Point</pre>
+				<p>
+Mul returns the vector p*k.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.String">func (Point) <a href="src/pkg/image/geom.htm#L7">String</a></h3>
+				<pre>func (p Point) String() string</pre>
+				<p>
+String returns a string representation of p like &#34;(3,4)&#34;.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Point.Sub">func (Point) <a href="src/pkg/image/geom.htm#L17">Sub</a></h3>
+				<pre>func (p Point) Sub(q Point) Point</pre>
+				<p>
+Sub returns the vector p-q.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="RGBA">type <a href="src/pkg/image/image.htm#L50">RGBA</a></h2>
+			<pre>type RGBA struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, in R, G, B, A order. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*4].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+RGBA is an in-memory image whose At method returns color.RGBA values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewRGBA">func <a href="src/pkg/image/image.htm#L138">NewRGBA</a></h3>
+				<pre>func NewRGBA(r Rectangle) *RGBA</pre>
+				<p>
+NewRGBA returns a new RGBA with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="RGBA.At">func (*RGBA) <a href="src/pkg/image/image.htm#L64">At</a></h3>
+				<pre>func (p *RGBA) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA.Bounds">func (*RGBA) <a href="src/pkg/image/image.htm#L62">Bounds</a></h3>
+				<pre>func (p *RGBA) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA.ColorModel">func (*RGBA) <a href="src/pkg/image/image.htm#L60">ColorModel</a></h3>
+				<pre>func (p *RGBA) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA.Opaque">func (*RGBA) <a href="src/pkg/image/image.htm#L120">Opaque</a></h3>
+				<pre>func (p *RGBA) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="RGBA.PixOffset">func (*RGBA) <a href="src/pkg/image/image.htm#L74">PixOffset</a></h3>
+				<pre>func (p *RGBA) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="RGBA.Set">func (*RGBA) <a href="src/pkg/image/image.htm#L78">Set</a></h3>
+				<pre>func (p *RGBA) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA.SetRGBA">func (*RGBA) <a href="src/pkg/image/image.htm#L90">SetRGBA</a></h3>
+				<pre>func (p *RGBA) SetRGBA(x, y int, c color.RGBA)</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA.SubImage">func (*RGBA) <a href="src/pkg/image/image.htm#L103">SubImage</a></h3>
+				<pre>func (p *RGBA) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="RGBA64">type <a href="src/pkg/image/image.htm#L145">RGBA64</a></h2>
+			<pre>type RGBA64 struct {
+    <span class="comment">// Pix holds the image&#39;s pixels, in R, G, B, A order and big-endian format. The pixel at</span>
+    <span class="comment">// (x, y) starts at Pix[(y-Rect.Min.Y)*Stride + (x-Rect.Min.X)*8].</span>
+    Pix []uint8
+    <span class="comment">// Stride is the Pix stride (in bytes) between vertically adjacent pixels.</span>
+    Stride int
+    <span class="comment">// Rect is the image&#39;s bounds.</span>
+    Rect Rectangle
+}</pre>
+			<p>
+RGBA64 is an in-memory image whose At method returns color.RGBA64 values.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewRGBA64">func <a href="src/pkg/image/image.htm#L246">NewRGBA64</a></h3>
+				<pre>func NewRGBA64(r Rectangle) *RGBA64</pre>
+				<p>
+NewRGBA64 returns a new RGBA64 with the given bounds.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="RGBA64.At">func (*RGBA64) <a href="src/pkg/image/image.htm#L159">At</a></h3>
+				<pre>func (p *RGBA64) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA64.Bounds">func (*RGBA64) <a href="src/pkg/image/image.htm#L157">Bounds</a></h3>
+				<pre>func (p *RGBA64) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA64.ColorModel">func (*RGBA64) <a href="src/pkg/image/image.htm#L155">ColorModel</a></h3>
+				<pre>func (p *RGBA64) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA64.Opaque">func (*RGBA64) <a href="src/pkg/image/image.htm#L228">Opaque</a></h3>
+				<pre>func (p *RGBA64) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="RGBA64.PixOffset">func (*RGBA64) <a href="src/pkg/image/image.htm#L174">PixOffset</a></h3>
+				<pre>func (p *RGBA64) PixOffset(x, y int) int</pre>
+				<p>
+PixOffset returns the index of the first element of Pix that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="RGBA64.Set">func (*RGBA64) <a href="src/pkg/image/image.htm#L178">Set</a></h3>
+				<pre>func (p *RGBA64) Set(x, y int, c color.Color)</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA64.SetRGBA64">func (*RGBA64) <a href="src/pkg/image/image.htm#L194">SetRGBA64</a></h3>
+				<pre>func (p *RGBA64) SetRGBA64(x, y int, c color.RGBA64)</pre>
+				
+				
+				
+			
+				
+				<h3 id="RGBA64.SubImage">func (*RGBA64) <a href="src/pkg/image/image.htm#L211">SubImage</a></h3>
+				<pre>func (p *RGBA64) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Rectangle">type <a href="src/pkg/image/geom.htm#L70">Rectangle</a></h2>
+			<pre>type Rectangle struct {
+    Min, Max Point
+}</pre>
+			<p>
+A Rectangle contains the points with Min.X &lt;= X &lt; Max.X, Min.Y &lt;= Y &lt; Max.Y.
+It is well-formed if Min.X &lt;= Max.X and likewise for Y. Points are always
+well-formed. A rectangle&#39;s methods always return well-formed outputs for
+well-formed inputs.
+</p>
+
+
+			
+
+			
+				<pre>var ZR Rectangle</pre>
+				<p>
+ZR is the zero Rectangle.
+</p>
+
+			
+
+			
+
+			
+				
+				<h3 id="Rect">func <a href="src/pkg/image/geom.htm#L216">Rect</a></h3>
+				<pre>func Rect(x0, y0, x1, y1 int) Rectangle</pre>
+				<p>
+Rect is shorthand for Rectangle{Pt(x0, y0), Pt(x1, y1)}.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="Rectangle.Add">func (Rectangle) <a href="src/pkg/image/geom.htm#L98">Add</a></h3>
+				<pre>func (r Rectangle) Add(p Point) Rectangle</pre>
+				<p>
+Add returns the rectangle r translated by p.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Canon">func (Rectangle) <a href="src/pkg/image/geom.htm#L202">Canon</a></h3>
+				<pre>func (r Rectangle) Canon() Rectangle</pre>
+				<p>
+Canon returns the canonical version of r. The returned rectangle has minimum
+and maximum coordinates swapped if necessary so that it is well-formed.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Dx">func (Rectangle) <a href="src/pkg/image/geom.htm#L80">Dx</a></h3>
+				<pre>func (r Rectangle) Dx() int</pre>
+				<p>
+Dx returns r&#39;s width.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Dy">func (Rectangle) <a href="src/pkg/image/geom.htm#L85">Dy</a></h3>
+				<pre>func (r Rectangle) Dy() int</pre>
+				<p>
+Dy returns r&#39;s height.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Empty">func (Rectangle) <a href="src/pkg/image/geom.htm#L173">Empty</a></h3>
+				<pre>func (r Rectangle) Empty() bool</pre>
+				<p>
+Empty returns whether the rectangle contains no points.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Eq">func (Rectangle) <a href="src/pkg/image/geom.htm#L178">Eq</a></h3>
+				<pre>func (r Rectangle) Eq(s Rectangle) bool</pre>
+				<p>
+Eq returns whether r and s are equal.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.In">func (Rectangle) <a href="src/pkg/image/geom.htm#L190">In</a></h3>
+				<pre>func (r Rectangle) In(s Rectangle) bool</pre>
+				<p>
+In returns whether every point in r is in s.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Inset">func (Rectangle) <a href="src/pkg/image/geom.htm#L116">Inset</a></h3>
+				<pre>func (r Rectangle) Inset(n int) Rectangle</pre>
+				<p>
+Inset returns the rectangle r inset by n, which may be negative. If either
+of r&#39;s dimensions is less than 2*n then an empty rectangle near the center
+of r will be returned.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Intersect">func (Rectangle) <a href="src/pkg/image/geom.htm#L136">Intersect</a></h3>
+				<pre>func (r Rectangle) Intersect(s Rectangle) Rectangle</pre>
+				<p>
+Intersect returns the largest rectangle contained by both r and s. If the
+two rectangles do not overlap then the zero rectangle will be returned.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Overlaps">func (Rectangle) <a href="src/pkg/image/geom.htm#L184">Overlaps</a></h3>
+				<pre>func (r Rectangle) Overlaps(s Rectangle) bool</pre>
+				<p>
+Overlaps returns whether r and s have a non-empty intersection.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Size">func (Rectangle) <a href="src/pkg/image/geom.htm#L90">Size</a></h3>
+				<pre>func (r Rectangle) Size() Point</pre>
+				<p>
+Size returns r&#39;s width and height.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.String">func (Rectangle) <a href="src/pkg/image/geom.htm#L75">String</a></h3>
+				<pre>func (r Rectangle) String() string</pre>
+				<p>
+String returns a string representation of r like &#34;(3,4)-(6,5)&#34;.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Sub">func (Rectangle) <a href="src/pkg/image/geom.htm#L106">Sub</a></h3>
+				<pre>func (r Rectangle) Sub(p Point) Rectangle</pre>
+				<p>
+Sub returns the rectangle r translated by -p.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Rectangle.Union">func (Rectangle) <a href="src/pkg/image/geom.htm#L156">Union</a></h3>
+				<pre>func (r Rectangle) Union(s Rectangle) Rectangle</pre>
+				<p>
+Union returns the smallest rectangle that contains both r and s.
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="Uniform">type <a href="src/pkg/image/names.htm#L14">Uniform</a></h2>
+			<pre>type Uniform struct {
+    C color.Color
+}</pre>
+			<p>
+Uniform is an infinite-sized Image of uniform color.
+It implements the color.Color, color.ColorModel, and Image interfaces.
+</p>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewUniform">func <a href="src/pkg/image/names.htm#L40">NewUniform</a></h3>
+				<pre>func NewUniform(c color.Color) *Uniform</pre>
+				
+				
+			
+
+			
+				
+				<h3 id="Uniform.At">func (*Uniform) <a href="src/pkg/image/names.htm#L32">At</a></h3>
+				<pre>func (c *Uniform) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Uniform.Bounds">func (*Uniform) <a href="src/pkg/image/names.htm#L30">Bounds</a></h3>
+				<pre>func (c *Uniform) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="Uniform.ColorModel">func (*Uniform) <a href="src/pkg/image/names.htm#L22">ColorModel</a></h3>
+				<pre>func (c *Uniform) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="Uniform.Convert">func (*Uniform) <a href="src/pkg/image/names.htm#L26">Convert</a></h3>
+				<pre>func (c *Uniform) Convert(color.Color) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="Uniform.Opaque">func (*Uniform) <a href="src/pkg/image/names.htm#L35">Opaque</a></h3>
+				<pre>func (c *Uniform) Opaque() bool</pre>
+				<p>
+Opaque scans the entire image and returns whether or not it is fully opaque.
+</p>
+
+				
+				
+			
+				
+				<h3 id="Uniform.RGBA">func (*Uniform) <a href="src/pkg/image/names.htm#L18">RGBA</a></h3>
+				<pre>func (c *Uniform) RGBA() (r, g, b, a uint32)</pre>
+				
+				
+				
+			
+		
+			
+			
+			<h2 id="YCbCr">type <a href="src/pkg/image/ycbcr.htm#L32">YCbCr</a></h2>
+			<pre>type YCbCr struct {
+    Y, Cb, Cr      []uint8
+    YStride        int
+    CStride        int
+    SubsampleRatio YCbCrSubsampleRatio
+    Rect           Rectangle
+}</pre>
+			<p>
+YCbCr is an in-memory image of Y&#39;CbCr colors. There is one Y sample per
+pixel, but each Cb and Cr sample can span one or more pixels.
+YStride is the Y slice index delta between vertically adjacent pixels.
+CStride is the Cb and Cr slice index delta between vertically adjacent pixels
+that map to separate chroma samples.
+It is not an absolute requirement, but YStride and len(Y) are typically
+multiples of 8, and:
+</p>
+<pre>For 4:4:4, CStride == YStride/1 &amp;&amp; len(Cb) == len(Cr) == len(Y)/1.
+For 4:2:2, CStride == YStride/2 &amp;&amp; len(Cb) == len(Cr) == len(Y)/2.
+For 4:2:0, CStride == YStride/2 &amp;&amp; len(Cb) == len(Cr) == len(Y)/4.
+</pre>
+
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="NewYCbCr">func <a href="src/pkg/image/ycbcr.htm#L110">NewYCbCr</a></h3>
+				<pre>func NewYCbCr(r Rectangle, subsampleRatio YCbCrSubsampleRatio) *YCbCr</pre>
+				<p>
+NewYCbCr returns a new YCbCr with the given bounds and subsample ratio.
+</p>
+
+				
+			
+
+			
+				
+				<h3 id="YCbCr.At">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L48">At</a></h3>
+				<pre>func (p *YCbCr) At(x, y int) color.Color</pre>
+				
+				
+				
+			
+				
+				<h3 id="YCbCr.Bounds">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L44">Bounds</a></h3>
+				<pre>func (p *YCbCr) Bounds() Rectangle</pre>
+				
+				
+				
+			
+				
+				<h3 id="YCbCr.COffset">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L69">COffset</a></h3>
+				<pre>func (p *YCbCr) COffset(x, y int) int</pre>
+				<p>
+COffset returns the index of the first element of Cb or Cr that corresponds
+to the pixel at (x, y).
+</p>
+
+				
+				
+			
+				
+				<h3 id="YCbCr.ColorModel">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L40">ColorModel</a></h3>
+				<pre>func (p *YCbCr) ColorModel() color.Model</pre>
+				
+				
+				
+			
+				
+				<h3 id="YCbCr.Opaque">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L105">Opaque</a></h3>
+				<pre>func (p *YCbCr) Opaque() bool</pre>
+				
+				
+				
+			
+				
+				<h3 id="YCbCr.SubImage">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L82">SubImage</a></h3>
+				<pre>func (p *YCbCr) SubImage(r Rectangle) Image</pre>
+				<p>
+SubImage returns an image representing the portion of the image p visible
+through r. The returned value shares pixels with the original image.
+</p>
+
+				
+				
+			
+				
+				<h3 id="YCbCr.YOffset">func (*YCbCr) <a href="src/pkg/image/ycbcr.htm#L63">YOffset</a></h3>
+				<pre>func (p *YCbCr) YOffset(x, y int) int</pre>
+				<p>
+YOffset returns the index of the first element of Y that corresponds to
+the pixel at (x, y).
+</p>
+
+				
+				
+			
+		
+			
+			
+			<h2 id="YCbCrSubsampleRatio">type <a href="src/pkg/image/ycbcr.htm#L2">YCbCrSubsampleRatio</a></h2>
+			<pre>type YCbCrSubsampleRatio int</pre>
+			<p>
+YCbCrSubsampleRatio is the chroma subsample ratio used in a YCbCr image.
+</p>
+
+
+			
+				<pre>const (
+    YCbCrSubsampleRatio444 YCbCrSubsampleRatio = iota
+    YCbCrSubsampleRatio422
+    YCbCrSubsampleRatio420
+)</pre>
+				
+			
+
+			
+
+			
+
+			
+
+			
+				
+				<h3 id="YCbCrSubsampleRatio.String">func (YCbCrSubsampleRatio) <a href="src/pkg/image/ycbcr.htm#L10">String</a></h3>
+				<pre>func (s YCbCrSubsampleRatio) String() string</pre>
+				
+				
+				
+			
+		
+		</div>
+	
+
+	
+
+
+
+
+
+
+
+	
+	
+		<h2 id="subdirectories">Subdirectories</h2>
+	
+	<table class="dir">
+	<tr>
+	<th>Name</th>
+	<th>&nbsp;&nbsp;&nbsp;&nbsp;</th>
+	<th style="text-align: left; width: auto">Synopsis</th>
+	</tr>
+	
+			<tr>
+			<td class="name"><a href="image_color.htm">color</a></td>
+			<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+			<td style="width: auto">Package color implements a basic color library.</td>
+			</tr>
+		
+	
+		
+			<tr>
+			<td class="name"><a href="image_draw.htm">draw</a></td>
+			<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+			<td style="width: auto">Package draw provides image composition functions.</td>
+			</tr>
+		
+	
+		
+			<tr>
+			<td class="name"><a href="image_gif.htm">gif</a></td>
+			<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+			<td style="width: auto">Package gif implements a GIF image decoder.</td>
+			</tr>
+		
+	
+		
+			<tr>
+			<td class="name"><a href="image_jpeg.htm">jpeg</a></td>
+			<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+			<td style="width: auto">Package jpeg implements a JPEG image decoder and encoder.</td>
+			</tr>
+		
+	
+		
+			<tr>
+			<td class="name"><a href="image_png.htm">png</a></td>
+			<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+			<td style="width: auto">Package png implements a PNG image decoder and encoder.</td>
+			</tr>
+		
+	
+	</table>
+	
+
+
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>

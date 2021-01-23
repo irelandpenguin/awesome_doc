@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/time/zoneinfo_unix.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/time/zoneinfo_unix.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// +build darwin freebsd linux netbsd openbsd</span>
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// Parse &#34;zoneinfo&#34; time zone file.</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// This is a fairly standard file format used on OS X, Linux, BSD, Sun, and others.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">// See tzfile(5), http://en.wikipedia.org/wiki/Zoneinfo,</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// and ftp://munnari.oz.au/pub/oldtz/</span>
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	package time
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	import (
+<a id="L15"></a><span class="ln">    15</span>		&#34;errors&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;runtime&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;syscall&#34;
+<a id="L18"></a><span class="ln">    18</span>	)
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	func initTestingZone() {
+<a id="L21"></a><span class="ln">    21</span>		z, err := loadZoneFile(runtime.GOROOT()+&#34;/lib/time/zoneinfo.zip&#34;, &#34;America/Los_Angeles&#34;)
+<a id="L22"></a><span class="ln">    22</span>		if err != nil {
+<a id="L23"></a><span class="ln">    23</span>			panic(&#34;cannot load America/Los_Angeles for testing: &#34; + err.Error())
+<a id="L24"></a><span class="ln">    24</span>		}
+<a id="L25"></a><span class="ln">    25</span>		z.name = &#34;Local&#34;
+<a id="L26"></a><span class="ln">    26</span>		localLoc = *z
+<a id="L27"></a><span class="ln">    27</span>	}
+<a id="L28"></a><span class="ln">    28</span>	
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// Many systems use /usr/share/zoneinfo, Solaris 2 has</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// /usr/share/lib/zoneinfo, IRIX 6 has /usr/lib/locale/TZ.</span>
+<a id="L31"></a><span class="ln">    31</span>	var zoneDirs = []string{
+<a id="L32"></a><span class="ln">    32</span>		&#34;/usr/share/zoneinfo/&#34;,
+<a id="L33"></a><span class="ln">    33</span>		&#34;/usr/share/lib/zoneinfo/&#34;,
+<a id="L34"></a><span class="ln">    34</span>		&#34;/usr/lib/locale/TZ/&#34;,
+<a id="L35"></a><span class="ln">    35</span>		runtime.GOROOT() + &#34;/lib/time/zoneinfo/&#34;,
+<a id="L36"></a><span class="ln">    36</span>	}
+<a id="L37"></a><span class="ln">    37</span>	
+<a id="L38"></a><span class="ln">    38</span>	func initLocal() {
+<a id="L39"></a><span class="ln">    39</span>		<span class="comment">// consult $TZ to find the time zone to use.</span>
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// no $TZ means use the system default /etc/localtime.</span>
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">// $TZ=&#34;&#34; means use UTC.</span>
+<a id="L42"></a><span class="ln">    42</span>		<span class="comment">// $TZ=&#34;foo&#34; means use /usr/share/zoneinfo/foo.</span>
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>		tz, ok := syscall.Getenv(&#34;TZ&#34;)
+<a id="L45"></a><span class="ln">    45</span>		switch {
+<a id="L46"></a><span class="ln">    46</span>		case !ok:
+<a id="L47"></a><span class="ln">    47</span>			z, err := loadZoneFile(&#34;&#34;, &#34;/etc/localtime&#34;)
+<a id="L48"></a><span class="ln">    48</span>			if err == nil {
+<a id="L49"></a><span class="ln">    49</span>				localLoc = *z
+<a id="L50"></a><span class="ln">    50</span>				localLoc.name = &#34;Local&#34;
+<a id="L51"></a><span class="ln">    51</span>				return
+<a id="L52"></a><span class="ln">    52</span>			}
+<a id="L53"></a><span class="ln">    53</span>		case tz != &#34;&#34; &amp;&amp; tz != &#34;UTC&#34;:
+<a id="L54"></a><span class="ln">    54</span>			if z, err := loadLocation(tz); err == nil {
+<a id="L55"></a><span class="ln">    55</span>				localLoc = *z
+<a id="L56"></a><span class="ln">    56</span>				return
+<a id="L57"></a><span class="ln">    57</span>			}
+<a id="L58"></a><span class="ln">    58</span>		}
+<a id="L59"></a><span class="ln">    59</span>	
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// Fall back to UTC.</span>
+<a id="L61"></a><span class="ln">    61</span>		localLoc.name = &#34;UTC&#34;
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	func loadLocation(name string) (*Location, error) {
+<a id="L65"></a><span class="ln">    65</span>		for _, zoneDir := range zoneDirs {
+<a id="L66"></a><span class="ln">    66</span>			if z, err := loadZoneFile(zoneDir, name); err == nil {
+<a id="L67"></a><span class="ln">    67</span>				z.name = name
+<a id="L68"></a><span class="ln">    68</span>				return z, nil
+<a id="L69"></a><span class="ln">    69</span>			}
+<a id="L70"></a><span class="ln">    70</span>		}
+<a id="L71"></a><span class="ln">    71</span>		return nil, errors.New(&#34;unknown time zone &#34; + name)
+<a id="L72"></a><span class="ln">    72</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

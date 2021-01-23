@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/net/http/client.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/net/http/client.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// HTTP client. See RFC 2616.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// </span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// This is the high-level Client interface.</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// The low-level implementation is in transport.go.</span>
+<a id="L9"></a><span class="ln">     9</span>	
+<a id="L10"></a><span class="ln">    10</span>	package http
+<a id="L11"></a><span class="ln">    11</span>	
+<a id="L12"></a><span class="ln">    12</span>	import (
+<a id="L13"></a><span class="ln">    13</span>		&#34;encoding/base64&#34;
+<a id="L14"></a><span class="ln">    14</span>		&#34;errors&#34;
+<a id="L15"></a><span class="ln">    15</span>		&#34;fmt&#34;
+<a id="L16"></a><span class="ln">    16</span>		&#34;io&#34;
+<a id="L17"></a><span class="ln">    17</span>		&#34;net/url&#34;
+<a id="L18"></a><span class="ln">    18</span>		&#34;strings&#34;
+<a id="L19"></a><span class="ln">    19</span>	)
+<a id="L20"></a><span class="ln">    20</span>	
+<a id="L21"></a><span class="ln">    21</span>	<span class="comment">// A Client is an HTTP client. Its zero value (DefaultClient) is a usable client</span>
+<a id="L22"></a><span class="ln">    22</span>	<span class="comment">// that uses DefaultTransport.</span>
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">//</span>
+<a id="L24"></a><span class="ln">    24</span>	<span class="comment">// The Client&#39;s Transport typically has internal state (cached</span>
+<a id="L25"></a><span class="ln">    25</span>	<span class="comment">// TCP connections), so Clients should be reused instead of created as</span>
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// needed. Clients are safe for concurrent use by multiple goroutines.</span>
+<a id="L27"></a><span class="ln">    27</span>	type Client struct {
+<a id="L28"></a><span class="ln">    28</span>		<span class="comment">// Transport specifies the mechanism by which individual</span>
+<a id="L29"></a><span class="ln">    29</span>		<span class="comment">// HTTP requests are made.</span>
+<a id="L30"></a><span class="ln">    30</span>		<span class="comment">// If nil, DefaultTransport is used.</span>
+<a id="L31"></a><span class="ln">    31</span>		Transport RoundTripper
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>		<span class="comment">// CheckRedirect specifies the policy for handling redirects.</span>
+<a id="L34"></a><span class="ln">    34</span>		<span class="comment">// If CheckRedirect is not nil, the client calls it before</span>
+<a id="L35"></a><span class="ln">    35</span>		<span class="comment">// following an HTTP redirect. The arguments req and via</span>
+<a id="L36"></a><span class="ln">    36</span>		<span class="comment">// are the upcoming request and the requests made already,</span>
+<a id="L37"></a><span class="ln">    37</span>		<span class="comment">// oldest first. If CheckRedirect returns an error, the client</span>
+<a id="L38"></a><span class="ln">    38</span>		<span class="comment">// returns that error instead of issue the Request req.</span>
+<a id="L39"></a><span class="ln">    39</span>		<span class="comment">//</span>
+<a id="L40"></a><span class="ln">    40</span>		<span class="comment">// If CheckRedirect is nil, the Client uses its default policy,</span>
+<a id="L41"></a><span class="ln">    41</span>		<span class="comment">// which is to stop after 10 consecutive requests.</span>
+<a id="L42"></a><span class="ln">    42</span>		CheckRedirect func(req *Request, via []*Request) error
+<a id="L43"></a><span class="ln">    43</span>	
+<a id="L44"></a><span class="ln">    44</span>		<span class="comment">// Jar specifies the cookie jar. </span>
+<a id="L45"></a><span class="ln">    45</span>		<span class="comment">// If Jar is nil, cookies are not sent in requests and ignored </span>
+<a id="L46"></a><span class="ln">    46</span>		<span class="comment">// in responses.</span>
+<a id="L47"></a><span class="ln">    47</span>		Jar CookieJar
+<a id="L48"></a><span class="ln">    48</span>	}
+<a id="L49"></a><span class="ln">    49</span>	
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// DefaultClient is the default Client and is used by Get, Head, and Post.</span>
+<a id="L51"></a><span class="ln">    51</span>	var DefaultClient = &amp;Client{}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// RoundTripper is an interface representing the ability to execute a</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// single HTTP transaction, obtaining the Response for a given Request.</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">//</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// A RoundTripper must be safe for concurrent use by multiple</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// goroutines.</span>
+<a id="L58"></a><span class="ln">    58</span>	type RoundTripper interface {
+<a id="L59"></a><span class="ln">    59</span>		<span class="comment">// RoundTrip executes a single HTTP transaction, returning</span>
+<a id="L60"></a><span class="ln">    60</span>		<span class="comment">// the Response for the request req.  RoundTrip should not</span>
+<a id="L61"></a><span class="ln">    61</span>		<span class="comment">// attempt to interpret the response.  In particular,</span>
+<a id="L62"></a><span class="ln">    62</span>		<span class="comment">// RoundTrip must return err == nil if it obtained a response,</span>
+<a id="L63"></a><span class="ln">    63</span>		<span class="comment">// regardless of the response&#39;s HTTP status code.  A non-nil</span>
+<a id="L64"></a><span class="ln">    64</span>		<span class="comment">// err should be reserved for failure to obtain a response.</span>
+<a id="L65"></a><span class="ln">    65</span>		<span class="comment">// Similarly, RoundTrip should not attempt to handle</span>
+<a id="L66"></a><span class="ln">    66</span>		<span class="comment">// higher-level protocol details such as redirects,</span>
+<a id="L67"></a><span class="ln">    67</span>		<span class="comment">// authentication, or cookies.</span>
+<a id="L68"></a><span class="ln">    68</span>		<span class="comment">//</span>
+<a id="L69"></a><span class="ln">    69</span>		<span class="comment">// RoundTrip should not modify the request, except for</span>
+<a id="L70"></a><span class="ln">    70</span>		<span class="comment">// consuming the Body.  The request&#39;s URL and Header fields</span>
+<a id="L71"></a><span class="ln">    71</span>		<span class="comment">// are guaranteed to be initialized.</span>
+<a id="L72"></a><span class="ln">    72</span>		RoundTrip(*Request) (*Response, error)
+<a id="L73"></a><span class="ln">    73</span>	}
+<a id="L74"></a><span class="ln">    74</span>	
+<a id="L75"></a><span class="ln">    75</span>	<span class="comment">// Given a string of the form &#34;host&#34;, &#34;host:port&#34;, or &#34;[ipv6::address]:port&#34;,</span>
+<a id="L76"></a><span class="ln">    76</span>	<span class="comment">// return true if the string includes a port.</span>
+<a id="L77"></a><span class="ln">    77</span>	func hasPort(s string) bool { return strings.LastIndex(s, &#34;:&#34;) &gt; strings.LastIndex(s, &#34;]&#34;) }
+<a id="L78"></a><span class="ln">    78</span>	
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// Used in Send to implement io.ReadCloser by bundling together the</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// bufio.Reader through which we read the response, and the underlying</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// network connection.</span>
+<a id="L82"></a><span class="ln">    82</span>	type readClose struct {
+<a id="L83"></a><span class="ln">    83</span>		io.Reader
+<a id="L84"></a><span class="ln">    84</span>		io.Closer
+<a id="L85"></a><span class="ln">    85</span>	}
+<a id="L86"></a><span class="ln">    86</span>	
+<a id="L87"></a><span class="ln">    87</span>	<span class="comment">// Do sends an HTTP request and returns an HTTP response, following</span>
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// policy (e.g. redirects, cookies, auth) as configured on the client.</span>
+<a id="L89"></a><span class="ln">    89</span>	<span class="comment">//</span>
+<a id="L90"></a><span class="ln">    90</span>	<span class="comment">// A non-nil response always contains a non-nil resp.Body.</span>
+<a id="L91"></a><span class="ln">    91</span>	<span class="comment">//</span>
+<a id="L92"></a><span class="ln">    92</span>	<span class="comment">// Callers should close resp.Body when done reading from it. If</span>
+<a id="L93"></a><span class="ln">    93</span>	<span class="comment">// resp.Body is not closed, the Client&#39;s underlying RoundTripper</span>
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// (typically Transport) may not be able to re-use a persistent TCP</span>
+<a id="L95"></a><span class="ln">    95</span>	<span class="comment">// connection to the server for a subsequent &#34;keep-alive&#34; request.</span>
+<a id="L96"></a><span class="ln">    96</span>	<span class="comment">//</span>
+<a id="L97"></a><span class="ln">    97</span>	<span class="comment">// Generally Get, Post, or PostForm will be used instead of Do.</span>
+<a id="L98"></a><span class="ln">    98</span>	func (c *Client) Do(req *Request) (resp *Response, err error) {
+<a id="L99"></a><span class="ln">    99</span>		if req.Method == &#34;GET&#34; || req.Method == &#34;HEAD&#34; {
+<a id="L100"></a><span class="ln">   100</span>			return c.doFollowingRedirects(req)
+<a id="L101"></a><span class="ln">   101</span>		}
+<a id="L102"></a><span class="ln">   102</span>		return send(req, c.Transport)
+<a id="L103"></a><span class="ln">   103</span>	}
+<a id="L104"></a><span class="ln">   104</span>	
+<a id="L105"></a><span class="ln">   105</span>	<span class="comment">// send issues an HTTP request.  Caller should close resp.Body when done reading from it.</span>
+<a id="L106"></a><span class="ln">   106</span>	func send(req *Request, t RoundTripper) (resp *Response, err error) {
+<a id="L107"></a><span class="ln">   107</span>		if t == nil {
+<a id="L108"></a><span class="ln">   108</span>			t = DefaultTransport
+<a id="L109"></a><span class="ln">   109</span>			if t == nil {
+<a id="L110"></a><span class="ln">   110</span>				err = errors.New(&#34;http: no Client.Transport or DefaultTransport&#34;)
+<a id="L111"></a><span class="ln">   111</span>				return
+<a id="L112"></a><span class="ln">   112</span>			}
+<a id="L113"></a><span class="ln">   113</span>		}
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>		if req.URL == nil {
+<a id="L116"></a><span class="ln">   116</span>			return nil, errors.New(&#34;http: nil Request.URL&#34;)
+<a id="L117"></a><span class="ln">   117</span>		}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>		if req.RequestURI != &#34;&#34; {
+<a id="L120"></a><span class="ln">   120</span>			return nil, errors.New(&#34;http: Request.RequestURI can&#39;t be set in client requests.&#34;)
+<a id="L121"></a><span class="ln">   121</span>		}
+<a id="L122"></a><span class="ln">   122</span>	
+<a id="L123"></a><span class="ln">   123</span>		<span class="comment">// Most the callers of send (Get, Post, et al) don&#39;t need</span>
+<a id="L124"></a><span class="ln">   124</span>		<span class="comment">// Headers, leaving it uninitialized.  We guarantee to the</span>
+<a id="L125"></a><span class="ln">   125</span>		<span class="comment">// Transport that this has been initialized, though.</span>
+<a id="L126"></a><span class="ln">   126</span>		if req.Header == nil {
+<a id="L127"></a><span class="ln">   127</span>			req.Header = make(Header)
+<a id="L128"></a><span class="ln">   128</span>		}
+<a id="L129"></a><span class="ln">   129</span>	
+<a id="L130"></a><span class="ln">   130</span>		if u := req.URL.User; u != nil {
+<a id="L131"></a><span class="ln">   131</span>			req.Header.Set(&#34;Authorization&#34;, &#34;Basic &#34;+base64.URLEncoding.EncodeToString([]byte(u.String())))
+<a id="L132"></a><span class="ln">   132</span>		}
+<a id="L133"></a><span class="ln">   133</span>		return t.RoundTrip(req)
+<a id="L134"></a><span class="ln">   134</span>	}
+<a id="L135"></a><span class="ln">   135</span>	
+<a id="L136"></a><span class="ln">   136</span>	<span class="comment">// True if the specified HTTP status code is one for which the Get utility should</span>
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// automatically redirect.</span>
+<a id="L138"></a><span class="ln">   138</span>	func shouldRedirect(statusCode int) bool {
+<a id="L139"></a><span class="ln">   139</span>		switch statusCode {
+<a id="L140"></a><span class="ln">   140</span>		case StatusMovedPermanently, StatusFound, StatusSeeOther, StatusTemporaryRedirect:
+<a id="L141"></a><span class="ln">   141</span>			return true
+<a id="L142"></a><span class="ln">   142</span>		}
+<a id="L143"></a><span class="ln">   143</span>		return false
+<a id="L144"></a><span class="ln">   144</span>	}
+<a id="L145"></a><span class="ln">   145</span>	
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">// Get issues a GET to the specified URL.  If the response is one of the following</span>
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">// redirect codes, Get follows the redirect, up to a maximum of 10 redirects:</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">//</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">//    301 (Moved Permanently)</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">//    302 (Found)</span>
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">//    303 (See Other)</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">//    307 (Temporary Redirect)</span>
+<a id="L153"></a><span class="ln">   153</span>	<span class="comment">//</span>
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">// Caller should close r.Body when done reading from it.</span>
+<a id="L155"></a><span class="ln">   155</span>	<span class="comment">//</span>
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// Get is a wrapper around DefaultClient.Get.</span>
+<a id="L157"></a><span class="ln">   157</span>	func Get(url string) (r *Response, err error) {
+<a id="L158"></a><span class="ln">   158</span>		return DefaultClient.Get(url)
+<a id="L159"></a><span class="ln">   159</span>	}
+<a id="L160"></a><span class="ln">   160</span>	
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// Get issues a GET to the specified URL.  If the response is one of the</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// following redirect codes, Get follows the redirect after calling the</span>
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">// Client&#39;s CheckRedirect function.</span>
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">//</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">//    301 (Moved Permanently)</span>
+<a id="L166"></a><span class="ln">   166</span>	<span class="comment">//    302 (Found)</span>
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">//    303 (See Other)</span>
+<a id="L168"></a><span class="ln">   168</span>	<span class="comment">//    307 (Temporary Redirect)</span>
+<a id="L169"></a><span class="ln">   169</span>	<span class="comment">//</span>
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// Caller should close r.Body when done reading from it.</span>
+<a id="L171"></a><span class="ln">   171</span>	func (c *Client) Get(url string) (r *Response, err error) {
+<a id="L172"></a><span class="ln">   172</span>		req, err := NewRequest(&#34;GET&#34;, url, nil)
+<a id="L173"></a><span class="ln">   173</span>		if err != nil {
+<a id="L174"></a><span class="ln">   174</span>			return nil, err
+<a id="L175"></a><span class="ln">   175</span>		}
+<a id="L176"></a><span class="ln">   176</span>		return c.doFollowingRedirects(req)
+<a id="L177"></a><span class="ln">   177</span>	}
+<a id="L178"></a><span class="ln">   178</span>	
+<a id="L179"></a><span class="ln">   179</span>	func (c *Client) doFollowingRedirects(ireq *Request) (r *Response, err error) {
+<a id="L180"></a><span class="ln">   180</span>		<span class="comment">// TODO: if/when we add cookie support, the redirected request shouldn&#39;t</span>
+<a id="L181"></a><span class="ln">   181</span>		<span class="comment">// necessarily supply the same cookies as the original.</span>
+<a id="L182"></a><span class="ln">   182</span>		var base *url.URL
+<a id="L183"></a><span class="ln">   183</span>		redirectChecker := c.CheckRedirect
+<a id="L184"></a><span class="ln">   184</span>		if redirectChecker == nil {
+<a id="L185"></a><span class="ln">   185</span>			redirectChecker = defaultCheckRedirect
+<a id="L186"></a><span class="ln">   186</span>		}
+<a id="L187"></a><span class="ln">   187</span>		var via []*Request
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>		if ireq.URL == nil {
+<a id="L190"></a><span class="ln">   190</span>			return nil, errors.New(&#34;http: nil Request.URL&#34;)
+<a id="L191"></a><span class="ln">   191</span>		}
+<a id="L192"></a><span class="ln">   192</span>	
+<a id="L193"></a><span class="ln">   193</span>		jar := c.Jar
+<a id="L194"></a><span class="ln">   194</span>		if jar == nil {
+<a id="L195"></a><span class="ln">   195</span>			jar = blackHoleJar{}
+<a id="L196"></a><span class="ln">   196</span>		}
+<a id="L197"></a><span class="ln">   197</span>	
+<a id="L198"></a><span class="ln">   198</span>		req := ireq
+<a id="L199"></a><span class="ln">   199</span>		urlStr := &#34;&#34; <span class="comment">// next relative or absolute URL to fetch (after first request)</span>
+<a id="L200"></a><span class="ln">   200</span>		for redirect := 0; ; redirect++ {
+<a id="L201"></a><span class="ln">   201</span>			if redirect != 0 {
+<a id="L202"></a><span class="ln">   202</span>				req = new(Request)
+<a id="L203"></a><span class="ln">   203</span>				req.Method = ireq.Method
+<a id="L204"></a><span class="ln">   204</span>				req.Header = make(Header)
+<a id="L205"></a><span class="ln">   205</span>				req.URL, err = base.Parse(urlStr)
+<a id="L206"></a><span class="ln">   206</span>				if err != nil {
+<a id="L207"></a><span class="ln">   207</span>					break
+<a id="L208"></a><span class="ln">   208</span>				}
+<a id="L209"></a><span class="ln">   209</span>				if len(via) &gt; 0 {
+<a id="L210"></a><span class="ln">   210</span>					<span class="comment">// Add the Referer header.</span>
+<a id="L211"></a><span class="ln">   211</span>					lastReq := via[len(via)-1]
+<a id="L212"></a><span class="ln">   212</span>					if lastReq.URL.Scheme != &#34;https&#34; {
+<a id="L213"></a><span class="ln">   213</span>						req.Header.Set(&#34;Referer&#34;, lastReq.URL.String())
+<a id="L214"></a><span class="ln">   214</span>					}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>					err = redirectChecker(req, via)
+<a id="L217"></a><span class="ln">   217</span>					if err != nil {
+<a id="L218"></a><span class="ln">   218</span>						break
+<a id="L219"></a><span class="ln">   219</span>					}
+<a id="L220"></a><span class="ln">   220</span>				}
+<a id="L221"></a><span class="ln">   221</span>			}
+<a id="L222"></a><span class="ln">   222</span>	
+<a id="L223"></a><span class="ln">   223</span>			for _, cookie := range jar.Cookies(req.URL) {
+<a id="L224"></a><span class="ln">   224</span>				req.AddCookie(cookie)
+<a id="L225"></a><span class="ln">   225</span>			}
+<a id="L226"></a><span class="ln">   226</span>			urlStr = req.URL.String()
+<a id="L227"></a><span class="ln">   227</span>			if r, err = send(req, c.Transport); err != nil {
+<a id="L228"></a><span class="ln">   228</span>				break
+<a id="L229"></a><span class="ln">   229</span>			}
+<a id="L230"></a><span class="ln">   230</span>			if c := r.Cookies(); len(c) &gt; 0 {
+<a id="L231"></a><span class="ln">   231</span>				jar.SetCookies(req.URL, c)
+<a id="L232"></a><span class="ln">   232</span>			}
+<a id="L233"></a><span class="ln">   233</span>	
+<a id="L234"></a><span class="ln">   234</span>			if shouldRedirect(r.StatusCode) {
+<a id="L235"></a><span class="ln">   235</span>				r.Body.Close()
+<a id="L236"></a><span class="ln">   236</span>				if urlStr = r.Header.Get(&#34;Location&#34;); urlStr == &#34;&#34; {
+<a id="L237"></a><span class="ln">   237</span>					err = errors.New(fmt.Sprintf(&#34;%d response missing Location header&#34;, r.StatusCode))
+<a id="L238"></a><span class="ln">   238</span>					break
+<a id="L239"></a><span class="ln">   239</span>				}
+<a id="L240"></a><span class="ln">   240</span>				base = req.URL
+<a id="L241"></a><span class="ln">   241</span>				via = append(via, req)
+<a id="L242"></a><span class="ln">   242</span>				continue
+<a id="L243"></a><span class="ln">   243</span>			}
+<a id="L244"></a><span class="ln">   244</span>			return
+<a id="L245"></a><span class="ln">   245</span>		}
+<a id="L246"></a><span class="ln">   246</span>	
+<a id="L247"></a><span class="ln">   247</span>		method := ireq.Method
+<a id="L248"></a><span class="ln">   248</span>		err = &amp;url.Error{
+<a id="L249"></a><span class="ln">   249</span>			Op:  method[0:1] + strings.ToLower(method[1:]),
+<a id="L250"></a><span class="ln">   250</span>			URL: urlStr,
+<a id="L251"></a><span class="ln">   251</span>			Err: err,
+<a id="L252"></a><span class="ln">   252</span>		}
+<a id="L253"></a><span class="ln">   253</span>		return
+<a id="L254"></a><span class="ln">   254</span>	}
+<a id="L255"></a><span class="ln">   255</span>	
+<a id="L256"></a><span class="ln">   256</span>	func defaultCheckRedirect(req *Request, via []*Request) error {
+<a id="L257"></a><span class="ln">   257</span>		if len(via) &gt;= 10 {
+<a id="L258"></a><span class="ln">   258</span>			return errors.New(&#34;stopped after 10 redirects&#34;)
+<a id="L259"></a><span class="ln">   259</span>		}
+<a id="L260"></a><span class="ln">   260</span>		return nil
+<a id="L261"></a><span class="ln">   261</span>	}
+<a id="L262"></a><span class="ln">   262</span>	
+<a id="L263"></a><span class="ln">   263</span>	<span class="comment">// Post issues a POST to the specified URL.</span>
+<a id="L264"></a><span class="ln">   264</span>	<span class="comment">//</span>
+<a id="L265"></a><span class="ln">   265</span>	<span class="comment">// Caller should close r.Body when done reading from it.</span>
+<a id="L266"></a><span class="ln">   266</span>	<span class="comment">//</span>
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// Post is a wrapper around DefaultClient.Post</span>
+<a id="L268"></a><span class="ln">   268</span>	func Post(url string, bodyType string, body io.Reader) (r *Response, err error) {
+<a id="L269"></a><span class="ln">   269</span>		return DefaultClient.Post(url, bodyType, body)
+<a id="L270"></a><span class="ln">   270</span>	}
+<a id="L271"></a><span class="ln">   271</span>	
+<a id="L272"></a><span class="ln">   272</span>	<span class="comment">// Post issues a POST to the specified URL.</span>
+<a id="L273"></a><span class="ln">   273</span>	<span class="comment">//</span>
+<a id="L274"></a><span class="ln">   274</span>	<span class="comment">// Caller should close r.Body when done reading from it.</span>
+<a id="L275"></a><span class="ln">   275</span>	func (c *Client) Post(url string, bodyType string, body io.Reader) (r *Response, err error) {
+<a id="L276"></a><span class="ln">   276</span>		req, err := NewRequest(&#34;POST&#34;, url, body)
+<a id="L277"></a><span class="ln">   277</span>		if err != nil {
+<a id="L278"></a><span class="ln">   278</span>			return nil, err
+<a id="L279"></a><span class="ln">   279</span>		}
+<a id="L280"></a><span class="ln">   280</span>		req.Header.Set(&#34;Content-Type&#34;, bodyType)
+<a id="L281"></a><span class="ln">   281</span>		r, err = send(req, c.Transport)
+<a id="L282"></a><span class="ln">   282</span>		if err == nil &amp;&amp; c.Jar != nil {
+<a id="L283"></a><span class="ln">   283</span>			c.Jar.SetCookies(req.URL, r.Cookies())
+<a id="L284"></a><span class="ln">   284</span>		}
+<a id="L285"></a><span class="ln">   285</span>		return r, err
+<a id="L286"></a><span class="ln">   286</span>	}
+<a id="L287"></a><span class="ln">   287</span>	
+<a id="L288"></a><span class="ln">   288</span>	<span class="comment">// PostForm issues a POST to the specified URL, </span>
+<a id="L289"></a><span class="ln">   289</span>	<span class="comment">// with data&#39;s keys and values urlencoded as the request body.</span>
+<a id="L290"></a><span class="ln">   290</span>	<span class="comment">//</span>
+<a id="L291"></a><span class="ln">   291</span>	<span class="comment">// Caller should close r.Body when done reading from it.</span>
+<a id="L292"></a><span class="ln">   292</span>	<span class="comment">//</span>
+<a id="L293"></a><span class="ln">   293</span>	<span class="comment">// PostForm is a wrapper around DefaultClient.PostForm</span>
+<a id="L294"></a><span class="ln">   294</span>	func PostForm(url string, data url.Values) (r *Response, err error) {
+<a id="L295"></a><span class="ln">   295</span>		return DefaultClient.PostForm(url, data)
+<a id="L296"></a><span class="ln">   296</span>	}
+<a id="L297"></a><span class="ln">   297</span>	
+<a id="L298"></a><span class="ln">   298</span>	<span class="comment">// PostForm issues a POST to the specified URL, </span>
+<a id="L299"></a><span class="ln">   299</span>	<span class="comment">// with data&#39;s keys and values urlencoded as the request body.</span>
+<a id="L300"></a><span class="ln">   300</span>	<span class="comment">//</span>
+<a id="L301"></a><span class="ln">   301</span>	<span class="comment">// Caller should close r.Body when done reading from it.</span>
+<a id="L302"></a><span class="ln">   302</span>	func (c *Client) PostForm(url string, data url.Values) (r *Response, err error) {
+<a id="L303"></a><span class="ln">   303</span>		return c.Post(url, &#34;application/x-www-form-urlencoded&#34;, strings.NewReader(data.Encode()))
+<a id="L304"></a><span class="ln">   304</span>	}
+<a id="L305"></a><span class="ln">   305</span>	
+<a id="L306"></a><span class="ln">   306</span>	<span class="comment">// Head issues a HEAD to the specified URL.  If the response is one of the</span>
+<a id="L307"></a><span class="ln">   307</span>	<span class="comment">// following redirect codes, Head follows the redirect after calling the</span>
+<a id="L308"></a><span class="ln">   308</span>	<span class="comment">// Client&#39;s CheckRedirect function.</span>
+<a id="L309"></a><span class="ln">   309</span>	<span class="comment">//</span>
+<a id="L310"></a><span class="ln">   310</span>	<span class="comment">//    301 (Moved Permanently)</span>
+<a id="L311"></a><span class="ln">   311</span>	<span class="comment">//    302 (Found)</span>
+<a id="L312"></a><span class="ln">   312</span>	<span class="comment">//    303 (See Other)</span>
+<a id="L313"></a><span class="ln">   313</span>	<span class="comment">//    307 (Temporary Redirect)</span>
+<a id="L314"></a><span class="ln">   314</span>	<span class="comment">//</span>
+<a id="L315"></a><span class="ln">   315</span>	<span class="comment">// Head is a wrapper around DefaultClient.Head</span>
+<a id="L316"></a><span class="ln">   316</span>	func Head(url string) (r *Response, err error) {
+<a id="L317"></a><span class="ln">   317</span>		return DefaultClient.Head(url)
+<a id="L318"></a><span class="ln">   318</span>	}
+<a id="L319"></a><span class="ln">   319</span>	
+<a id="L320"></a><span class="ln">   320</span>	<span class="comment">// Head issues a HEAD to the specified URL.  If the response is one of the</span>
+<a id="L321"></a><span class="ln">   321</span>	<span class="comment">// following redirect codes, Head follows the redirect after calling the</span>
+<a id="L322"></a><span class="ln">   322</span>	<span class="comment">// Client&#39;s CheckRedirect function.</span>
+<a id="L323"></a><span class="ln">   323</span>	<span class="comment">//</span>
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">//    301 (Moved Permanently)</span>
+<a id="L325"></a><span class="ln">   325</span>	<span class="comment">//    302 (Found)</span>
+<a id="L326"></a><span class="ln">   326</span>	<span class="comment">//    303 (See Other)</span>
+<a id="L327"></a><span class="ln">   327</span>	<span class="comment">//    307 (Temporary Redirect)</span>
+<a id="L328"></a><span class="ln">   328</span>	func (c *Client) Head(url string) (r *Response, err error) {
+<a id="L329"></a><span class="ln">   329</span>		req, err := NewRequest(&#34;HEAD&#34;, url, nil)
+<a id="L330"></a><span class="ln">   330</span>		if err != nil {
+<a id="L331"></a><span class="ln">   331</span>			return nil, err
+<a id="L332"></a><span class="ln">   332</span>		}
+<a id="L333"></a><span class="ln">   333</span>		return c.doFollowingRedirects(req)
+<a id="L334"></a><span class="ln">   334</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

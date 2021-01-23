@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/text/template/parse/lex.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/text/template/parse/lex.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2011 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	package parse
+<a id="L6"></a><span class="ln">     6</span>	
+<a id="L7"></a><span class="ln">     7</span>	import (
+<a id="L8"></a><span class="ln">     8</span>		&#34;fmt&#34;
+<a id="L9"></a><span class="ln">     9</span>		&#34;strings&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;unicode&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;unicode/utf8&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	<span class="comment">// item represents a token or text string returned from the scanner.</span>
+<a id="L15"></a><span class="ln">    15</span>	type item struct {
+<a id="L16"></a><span class="ln">    16</span>		typ itemType
+<a id="L17"></a><span class="ln">    17</span>		val string
+<a id="L18"></a><span class="ln">    18</span>	}
+<a id="L19"></a><span class="ln">    19</span>	
+<a id="L20"></a><span class="ln">    20</span>	func (i item) String() string {
+<a id="L21"></a><span class="ln">    21</span>		switch {
+<a id="L22"></a><span class="ln">    22</span>		case i.typ == itemEOF:
+<a id="L23"></a><span class="ln">    23</span>			return &#34;EOF&#34;
+<a id="L24"></a><span class="ln">    24</span>		case i.typ == itemError:
+<a id="L25"></a><span class="ln">    25</span>			return i.val
+<a id="L26"></a><span class="ln">    26</span>		case i.typ &gt; itemKeyword:
+<a id="L27"></a><span class="ln">    27</span>			return fmt.Sprintf(&#34;&lt;%s&gt;&#34;, i.val)
+<a id="L28"></a><span class="ln">    28</span>		case len(i.val) &gt; 10:
+<a id="L29"></a><span class="ln">    29</span>			return fmt.Sprintf(&#34;%.10q...&#34;, i.val)
+<a id="L30"></a><span class="ln">    30</span>		}
+<a id="L31"></a><span class="ln">    31</span>		return fmt.Sprintf(&#34;%q&#34;, i.val)
+<a id="L32"></a><span class="ln">    32</span>	}
+<a id="L33"></a><span class="ln">    33</span>	
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// itemType identifies the type of lex items.</span>
+<a id="L35"></a><span class="ln">    35</span>	type itemType int
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	const (
+<a id="L38"></a><span class="ln">    38</span>		itemError        itemType = iota <span class="comment">// error occurred; value is text of error</span>
+<a id="L39"></a><span class="ln">    39</span>		itemBool                         <span class="comment">// boolean constant</span>
+<a id="L40"></a><span class="ln">    40</span>		itemChar                         <span class="comment">// printable ASCII character; grab bag for comma etc.</span>
+<a id="L41"></a><span class="ln">    41</span>		itemCharConstant                 <span class="comment">// character constant</span>
+<a id="L42"></a><span class="ln">    42</span>		itemComplex                      <span class="comment">// complex constant (1+2i); imaginary is just a number</span>
+<a id="L43"></a><span class="ln">    43</span>		itemColonEquals                  <span class="comment">// colon-equals (&#39;:=&#39;) introducing a declaration</span>
+<a id="L44"></a><span class="ln">    44</span>		itemEOF
+<a id="L45"></a><span class="ln">    45</span>		itemField      <span class="comment">// alphanumeric identifier, starting with &#39;.&#39;, possibly chained (&#39;.x.y&#39;)</span>
+<a id="L46"></a><span class="ln">    46</span>		itemIdentifier <span class="comment">// alphanumeric identifier</span>
+<a id="L47"></a><span class="ln">    47</span>		itemLeftDelim  <span class="comment">// left action delimiter</span>
+<a id="L48"></a><span class="ln">    48</span>		itemNumber     <span class="comment">// simple number, including imaginary</span>
+<a id="L49"></a><span class="ln">    49</span>		itemPipe       <span class="comment">// pipe symbol</span>
+<a id="L50"></a><span class="ln">    50</span>		itemRawString  <span class="comment">// raw quoted string (includes quotes)</span>
+<a id="L51"></a><span class="ln">    51</span>		itemRightDelim <span class="comment">// right action delimiter</span>
+<a id="L52"></a><span class="ln">    52</span>		itemString     <span class="comment">// quoted string (includes quotes)</span>
+<a id="L53"></a><span class="ln">    53</span>		itemText       <span class="comment">// plain text</span>
+<a id="L54"></a><span class="ln">    54</span>		itemVariable   <span class="comment">// variable starting with &#39;$&#39;, such as &#39;$&#39; or  &#39;$1&#39; or &#39;$hello&#39;.</span>
+<a id="L55"></a><span class="ln">    55</span>		<span class="comment">// Keywords appear after all the rest.</span>
+<a id="L56"></a><span class="ln">    56</span>		itemKeyword  <span class="comment">// used only to delimit the keywords</span>
+<a id="L57"></a><span class="ln">    57</span>		itemDot      <span class="comment">// the cursor, spelled &#39;.&#39;.</span>
+<a id="L58"></a><span class="ln">    58</span>		itemDefine   <span class="comment">// define keyword</span>
+<a id="L59"></a><span class="ln">    59</span>		itemElse     <span class="comment">// else keyword</span>
+<a id="L60"></a><span class="ln">    60</span>		itemEnd      <span class="comment">// end keyword</span>
+<a id="L61"></a><span class="ln">    61</span>		itemIf       <span class="comment">// if keyword</span>
+<a id="L62"></a><span class="ln">    62</span>		itemRange    <span class="comment">// range keyword</span>
+<a id="L63"></a><span class="ln">    63</span>		itemTemplate <span class="comment">// template keyword</span>
+<a id="L64"></a><span class="ln">    64</span>		itemWith     <span class="comment">// with keyword</span>
+<a id="L65"></a><span class="ln">    65</span>	)
+<a id="L66"></a><span class="ln">    66</span>	
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// Make the types prettyprint.</span>
+<a id="L68"></a><span class="ln">    68</span>	var itemName = map[itemType]string{
+<a id="L69"></a><span class="ln">    69</span>		itemError:        &#34;error&#34;,
+<a id="L70"></a><span class="ln">    70</span>		itemBool:         &#34;bool&#34;,
+<a id="L71"></a><span class="ln">    71</span>		itemChar:         &#34;char&#34;,
+<a id="L72"></a><span class="ln">    72</span>		itemCharConstant: &#34;charconst&#34;,
+<a id="L73"></a><span class="ln">    73</span>		itemComplex:      &#34;complex&#34;,
+<a id="L74"></a><span class="ln">    74</span>		itemColonEquals:  &#34;:=&#34;,
+<a id="L75"></a><span class="ln">    75</span>		itemEOF:          &#34;EOF&#34;,
+<a id="L76"></a><span class="ln">    76</span>		itemField:        &#34;field&#34;,
+<a id="L77"></a><span class="ln">    77</span>		itemIdentifier:   &#34;identifier&#34;,
+<a id="L78"></a><span class="ln">    78</span>		itemLeftDelim:    &#34;left delim&#34;,
+<a id="L79"></a><span class="ln">    79</span>		itemNumber:       &#34;number&#34;,
+<a id="L80"></a><span class="ln">    80</span>		itemPipe:         &#34;pipe&#34;,
+<a id="L81"></a><span class="ln">    81</span>		itemRawString:    &#34;raw string&#34;,
+<a id="L82"></a><span class="ln">    82</span>		itemRightDelim:   &#34;right delim&#34;,
+<a id="L83"></a><span class="ln">    83</span>		itemString:       &#34;string&#34;,
+<a id="L84"></a><span class="ln">    84</span>		itemVariable:     &#34;variable&#34;,
+<a id="L85"></a><span class="ln">    85</span>		<span class="comment">// keywords</span>
+<a id="L86"></a><span class="ln">    86</span>		itemDot:      &#34;.&#34;,
+<a id="L87"></a><span class="ln">    87</span>		itemDefine:   &#34;define&#34;,
+<a id="L88"></a><span class="ln">    88</span>		itemElse:     &#34;else&#34;,
+<a id="L89"></a><span class="ln">    89</span>		itemIf:       &#34;if&#34;,
+<a id="L90"></a><span class="ln">    90</span>		itemEnd:      &#34;end&#34;,
+<a id="L91"></a><span class="ln">    91</span>		itemRange:    &#34;range&#34;,
+<a id="L92"></a><span class="ln">    92</span>		itemTemplate: &#34;template&#34;,
+<a id="L93"></a><span class="ln">    93</span>		itemWith:     &#34;with&#34;,
+<a id="L94"></a><span class="ln">    94</span>	}
+<a id="L95"></a><span class="ln">    95</span>	
+<a id="L96"></a><span class="ln">    96</span>	func (i itemType) String() string {
+<a id="L97"></a><span class="ln">    97</span>		s := itemName[i]
+<a id="L98"></a><span class="ln">    98</span>		if s == &#34;&#34; {
+<a id="L99"></a><span class="ln">    99</span>			return fmt.Sprintf(&#34;item%d&#34;, int(i))
+<a id="L100"></a><span class="ln">   100</span>		}
+<a id="L101"></a><span class="ln">   101</span>		return s
+<a id="L102"></a><span class="ln">   102</span>	}
+<a id="L103"></a><span class="ln">   103</span>	
+<a id="L104"></a><span class="ln">   104</span>	var key = map[string]itemType{
+<a id="L105"></a><span class="ln">   105</span>		&#34;.&#34;:        itemDot,
+<a id="L106"></a><span class="ln">   106</span>		&#34;define&#34;:   itemDefine,
+<a id="L107"></a><span class="ln">   107</span>		&#34;else&#34;:     itemElse,
+<a id="L108"></a><span class="ln">   108</span>		&#34;end&#34;:      itemEnd,
+<a id="L109"></a><span class="ln">   109</span>		&#34;if&#34;:       itemIf,
+<a id="L110"></a><span class="ln">   110</span>		&#34;range&#34;:    itemRange,
+<a id="L111"></a><span class="ln">   111</span>		&#34;template&#34;: itemTemplate,
+<a id="L112"></a><span class="ln">   112</span>		&#34;with&#34;:     itemWith,
+<a id="L113"></a><span class="ln">   113</span>	}
+<a id="L114"></a><span class="ln">   114</span>	
+<a id="L115"></a><span class="ln">   115</span>	const eof = -1
+<a id="L116"></a><span class="ln">   116</span>	
+<a id="L117"></a><span class="ln">   117</span>	<span class="comment">// stateFn represents the state of the scanner as a function that returns the next state.</span>
+<a id="L118"></a><span class="ln">   118</span>	type stateFn func(*lexer) stateFn
+<a id="L119"></a><span class="ln">   119</span>	
+<a id="L120"></a><span class="ln">   120</span>	<span class="comment">// lexer holds the state of the scanner.</span>
+<a id="L121"></a><span class="ln">   121</span>	type lexer struct {
+<a id="L122"></a><span class="ln">   122</span>		name       string    <span class="comment">// the name of the input; used only for error reports.</span>
+<a id="L123"></a><span class="ln">   123</span>		input      string    <span class="comment">// the string being scanned.</span>
+<a id="L124"></a><span class="ln">   124</span>		leftDelim  string    <span class="comment">// start of action.</span>
+<a id="L125"></a><span class="ln">   125</span>		rightDelim string    <span class="comment">// end of action.</span>
+<a id="L126"></a><span class="ln">   126</span>		state      stateFn   <span class="comment">// the next lexing function to enter.</span>
+<a id="L127"></a><span class="ln">   127</span>		pos        int       <span class="comment">// current position in the input.</span>
+<a id="L128"></a><span class="ln">   128</span>		start      int       <span class="comment">// start position of this item.</span>
+<a id="L129"></a><span class="ln">   129</span>		width      int       <span class="comment">// width of last rune read from input.</span>
+<a id="L130"></a><span class="ln">   130</span>		items      chan item <span class="comment">// channel of scanned items.</span>
+<a id="L131"></a><span class="ln">   131</span>	}
+<a id="L132"></a><span class="ln">   132</span>	
+<a id="L133"></a><span class="ln">   133</span>	<span class="comment">// next returns the next rune in the input.</span>
+<a id="L134"></a><span class="ln">   134</span>	func (l *lexer) next() (r rune) {
+<a id="L135"></a><span class="ln">   135</span>		if l.pos &gt;= len(l.input) {
+<a id="L136"></a><span class="ln">   136</span>			l.width = 0
+<a id="L137"></a><span class="ln">   137</span>			return eof
+<a id="L138"></a><span class="ln">   138</span>		}
+<a id="L139"></a><span class="ln">   139</span>		r, l.width = utf8.DecodeRuneInString(l.input[l.pos:])
+<a id="L140"></a><span class="ln">   140</span>		l.pos += l.width
+<a id="L141"></a><span class="ln">   141</span>		return r
+<a id="L142"></a><span class="ln">   142</span>	}
+<a id="L143"></a><span class="ln">   143</span>	
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// peek returns but does not consume the next rune in the input.</span>
+<a id="L145"></a><span class="ln">   145</span>	func (l *lexer) peek() rune {
+<a id="L146"></a><span class="ln">   146</span>		r := l.next()
+<a id="L147"></a><span class="ln">   147</span>		l.backup()
+<a id="L148"></a><span class="ln">   148</span>		return r
+<a id="L149"></a><span class="ln">   149</span>	}
+<a id="L150"></a><span class="ln">   150</span>	
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">// backup steps back one rune. Can only be called once per call of next.</span>
+<a id="L152"></a><span class="ln">   152</span>	func (l *lexer) backup() {
+<a id="L153"></a><span class="ln">   153</span>		l.pos -= l.width
+<a id="L154"></a><span class="ln">   154</span>	}
+<a id="L155"></a><span class="ln">   155</span>	
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">// emit passes an item back to the client.</span>
+<a id="L157"></a><span class="ln">   157</span>	func (l *lexer) emit(t itemType) {
+<a id="L158"></a><span class="ln">   158</span>		l.items &lt;- item{t, l.input[l.start:l.pos]}
+<a id="L159"></a><span class="ln">   159</span>		l.start = l.pos
+<a id="L160"></a><span class="ln">   160</span>	}
+<a id="L161"></a><span class="ln">   161</span>	
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// ignore skips over the pending input before this point.</span>
+<a id="L163"></a><span class="ln">   163</span>	func (l *lexer) ignore() {
+<a id="L164"></a><span class="ln">   164</span>		l.start = l.pos
+<a id="L165"></a><span class="ln">   165</span>	}
+<a id="L166"></a><span class="ln">   166</span>	
+<a id="L167"></a><span class="ln">   167</span>	<span class="comment">// accept consumes the next rune if it&#39;s from the valid set.</span>
+<a id="L168"></a><span class="ln">   168</span>	func (l *lexer) accept(valid string) bool {
+<a id="L169"></a><span class="ln">   169</span>		if strings.IndexRune(valid, l.next()) &gt;= 0 {
+<a id="L170"></a><span class="ln">   170</span>			return true
+<a id="L171"></a><span class="ln">   171</span>		}
+<a id="L172"></a><span class="ln">   172</span>		l.backup()
+<a id="L173"></a><span class="ln">   173</span>		return false
+<a id="L174"></a><span class="ln">   174</span>	}
+<a id="L175"></a><span class="ln">   175</span>	
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">// acceptRun consumes a run of runes from the valid set.</span>
+<a id="L177"></a><span class="ln">   177</span>	func (l *lexer) acceptRun(valid string) {
+<a id="L178"></a><span class="ln">   178</span>		for strings.IndexRune(valid, l.next()) &gt;= 0 {
+<a id="L179"></a><span class="ln">   179</span>		}
+<a id="L180"></a><span class="ln">   180</span>		l.backup()
+<a id="L181"></a><span class="ln">   181</span>	}
+<a id="L182"></a><span class="ln">   182</span>	
+<a id="L183"></a><span class="ln">   183</span>	<span class="comment">// lineNumber reports which line we&#39;re on. Doing it this way</span>
+<a id="L184"></a><span class="ln">   184</span>	<span class="comment">// means we don&#39;t have to worry about peek double counting.</span>
+<a id="L185"></a><span class="ln">   185</span>	func (l *lexer) lineNumber() int {
+<a id="L186"></a><span class="ln">   186</span>		return 1 + strings.Count(l.input[:l.pos], &#34;\n&#34;)
+<a id="L187"></a><span class="ln">   187</span>	}
+<a id="L188"></a><span class="ln">   188</span>	
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// error returns an error token and terminates the scan by passing</span>
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// back a nil pointer that will be the next state, terminating l.nextItem.</span>
+<a id="L191"></a><span class="ln">   191</span>	func (l *lexer) errorf(format string, args ...interface{}) stateFn {
+<a id="L192"></a><span class="ln">   192</span>		l.items &lt;- item{itemError, fmt.Sprintf(format, args...)}
+<a id="L193"></a><span class="ln">   193</span>		return nil
+<a id="L194"></a><span class="ln">   194</span>	}
+<a id="L195"></a><span class="ln">   195</span>	
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// nextItem returns the next item from the input.</span>
+<a id="L197"></a><span class="ln">   197</span>	func (l *lexer) nextItem() item {
+<a id="L198"></a><span class="ln">   198</span>		for {
+<a id="L199"></a><span class="ln">   199</span>			select {
+<a id="L200"></a><span class="ln">   200</span>			case item := &lt;-l.items:
+<a id="L201"></a><span class="ln">   201</span>				return item
+<a id="L202"></a><span class="ln">   202</span>			default:
+<a id="L203"></a><span class="ln">   203</span>				l.state = l.state(l)
+<a id="L204"></a><span class="ln">   204</span>			}
+<a id="L205"></a><span class="ln">   205</span>		}
+<a id="L206"></a><span class="ln">   206</span>		panic(&#34;not reached&#34;)
+<a id="L207"></a><span class="ln">   207</span>	}
+<a id="L208"></a><span class="ln">   208</span>	
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">// lex creates a new scanner for the input string.</span>
+<a id="L210"></a><span class="ln">   210</span>	func lex(name, input, left, right string) *lexer {
+<a id="L211"></a><span class="ln">   211</span>		if left == &#34;&#34; {
+<a id="L212"></a><span class="ln">   212</span>			left = leftDelim
+<a id="L213"></a><span class="ln">   213</span>		}
+<a id="L214"></a><span class="ln">   214</span>		if right == &#34;&#34; {
+<a id="L215"></a><span class="ln">   215</span>			right = rightDelim
+<a id="L216"></a><span class="ln">   216</span>		}
+<a id="L217"></a><span class="ln">   217</span>		l := &amp;lexer{
+<a id="L218"></a><span class="ln">   218</span>			name:       name,
+<a id="L219"></a><span class="ln">   219</span>			input:      input,
+<a id="L220"></a><span class="ln">   220</span>			leftDelim:  left,
+<a id="L221"></a><span class="ln">   221</span>			rightDelim: right,
+<a id="L222"></a><span class="ln">   222</span>			state:      lexText,
+<a id="L223"></a><span class="ln">   223</span>			items:      make(chan item, 2), <span class="comment">// Two items of buffering is sufficient for all state functions</span>
+<a id="L224"></a><span class="ln">   224</span>		}
+<a id="L225"></a><span class="ln">   225</span>		return l
+<a id="L226"></a><span class="ln">   226</span>	}
+<a id="L227"></a><span class="ln">   227</span>	
+<a id="L228"></a><span class="ln">   228</span>	<span class="comment">// state functions</span>
+<a id="L229"></a><span class="ln">   229</span>	
+<a id="L230"></a><span class="ln">   230</span>	const (
+<a id="L231"></a><span class="ln">   231</span>		leftDelim    = &#34;{{&#34;
+<a id="L232"></a><span class="ln">   232</span>		rightDelim   = &#34;}}&#34;
+<a id="L233"></a><span class="ln">   233</span>		leftComment  = &#34;/*&#34;
+<a id="L234"></a><span class="ln">   234</span>		rightComment = &#34;*/&#34;
+<a id="L235"></a><span class="ln">   235</span>	)
+<a id="L236"></a><span class="ln">   236</span>	
+<a id="L237"></a><span class="ln">   237</span>	<span class="comment">// lexText scans until an opening action delimiter, &#34;{{&#34;.</span>
+<a id="L238"></a><span class="ln">   238</span>	func lexText(l *lexer) stateFn {
+<a id="L239"></a><span class="ln">   239</span>		for {
+<a id="L240"></a><span class="ln">   240</span>			if strings.HasPrefix(l.input[l.pos:], l.leftDelim) {
+<a id="L241"></a><span class="ln">   241</span>				if l.pos &gt; l.start {
+<a id="L242"></a><span class="ln">   242</span>					l.emit(itemText)
+<a id="L243"></a><span class="ln">   243</span>				}
+<a id="L244"></a><span class="ln">   244</span>				return lexLeftDelim
+<a id="L245"></a><span class="ln">   245</span>			}
+<a id="L246"></a><span class="ln">   246</span>			if l.next() == eof {
+<a id="L247"></a><span class="ln">   247</span>				break
+<a id="L248"></a><span class="ln">   248</span>			}
+<a id="L249"></a><span class="ln">   249</span>		}
+<a id="L250"></a><span class="ln">   250</span>		<span class="comment">// Correctly reached EOF.</span>
+<a id="L251"></a><span class="ln">   251</span>		if l.pos &gt; l.start {
+<a id="L252"></a><span class="ln">   252</span>			l.emit(itemText)
+<a id="L253"></a><span class="ln">   253</span>		}
+<a id="L254"></a><span class="ln">   254</span>		l.emit(itemEOF)
+<a id="L255"></a><span class="ln">   255</span>		return nil
+<a id="L256"></a><span class="ln">   256</span>	}
+<a id="L257"></a><span class="ln">   257</span>	
+<a id="L258"></a><span class="ln">   258</span>	<span class="comment">// lexLeftDelim scans the left delimiter, which is known to be present.</span>
+<a id="L259"></a><span class="ln">   259</span>	func lexLeftDelim(l *lexer) stateFn {
+<a id="L260"></a><span class="ln">   260</span>		if strings.HasPrefix(l.input[l.pos:], l.leftDelim+leftComment) {
+<a id="L261"></a><span class="ln">   261</span>			return lexComment
+<a id="L262"></a><span class="ln">   262</span>		}
+<a id="L263"></a><span class="ln">   263</span>		l.pos += len(l.leftDelim)
+<a id="L264"></a><span class="ln">   264</span>		l.emit(itemLeftDelim)
+<a id="L265"></a><span class="ln">   265</span>		return lexInsideAction
+<a id="L266"></a><span class="ln">   266</span>	}
+<a id="L267"></a><span class="ln">   267</span>	
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// lexComment scans a comment. The left comment marker is known to be present.</span>
+<a id="L269"></a><span class="ln">   269</span>	func lexComment(l *lexer) stateFn {
+<a id="L270"></a><span class="ln">   270</span>		i := strings.Index(l.input[l.pos:], rightComment+l.rightDelim)
+<a id="L271"></a><span class="ln">   271</span>		if i &lt; 0 {
+<a id="L272"></a><span class="ln">   272</span>			return l.errorf(&#34;unclosed comment&#34;)
+<a id="L273"></a><span class="ln">   273</span>		}
+<a id="L274"></a><span class="ln">   274</span>		l.pos += i + len(rightComment) + len(l.rightDelim)
+<a id="L275"></a><span class="ln">   275</span>		l.ignore()
+<a id="L276"></a><span class="ln">   276</span>		return lexText
+<a id="L277"></a><span class="ln">   277</span>	}
+<a id="L278"></a><span class="ln">   278</span>	
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// lexRightDelim scans the right delimiter, which is known to be present.</span>
+<a id="L280"></a><span class="ln">   280</span>	func lexRightDelim(l *lexer) stateFn {
+<a id="L281"></a><span class="ln">   281</span>		l.pos += len(l.rightDelim)
+<a id="L282"></a><span class="ln">   282</span>		l.emit(itemRightDelim)
+<a id="L283"></a><span class="ln">   283</span>		return lexText
+<a id="L284"></a><span class="ln">   284</span>	}
+<a id="L285"></a><span class="ln">   285</span>	
+<a id="L286"></a><span class="ln">   286</span>	<span class="comment">// lexInsideAction scans the elements inside action delimiters.</span>
+<a id="L287"></a><span class="ln">   287</span>	func lexInsideAction(l *lexer) stateFn {
+<a id="L288"></a><span class="ln">   288</span>		<span class="comment">// Either number, quoted string, or identifier.</span>
+<a id="L289"></a><span class="ln">   289</span>		<span class="comment">// Spaces separate and are ignored.</span>
+<a id="L290"></a><span class="ln">   290</span>		<span class="comment">// Pipe symbols separate and are emitted.</span>
+<a id="L291"></a><span class="ln">   291</span>		if strings.HasPrefix(l.input[l.pos:], l.rightDelim) {
+<a id="L292"></a><span class="ln">   292</span>			return lexRightDelim
+<a id="L293"></a><span class="ln">   293</span>		}
+<a id="L294"></a><span class="ln">   294</span>		switch r := l.next(); {
+<a id="L295"></a><span class="ln">   295</span>		case r == eof || r == &#39;\n&#39;:
+<a id="L296"></a><span class="ln">   296</span>			return l.errorf(&#34;unclosed action&#34;)
+<a id="L297"></a><span class="ln">   297</span>		case isSpace(r):
+<a id="L298"></a><span class="ln">   298</span>			l.ignore()
+<a id="L299"></a><span class="ln">   299</span>		case r == &#39;:&#39;:
+<a id="L300"></a><span class="ln">   300</span>			if l.next() != &#39;=&#39; {
+<a id="L301"></a><span class="ln">   301</span>				return l.errorf(&#34;expected :=&#34;)
+<a id="L302"></a><span class="ln">   302</span>			}
+<a id="L303"></a><span class="ln">   303</span>			l.emit(itemColonEquals)
+<a id="L304"></a><span class="ln">   304</span>		case r == &#39;|&#39;:
+<a id="L305"></a><span class="ln">   305</span>			l.emit(itemPipe)
+<a id="L306"></a><span class="ln">   306</span>		case r == &#39;&#34;&#39;:
+<a id="L307"></a><span class="ln">   307</span>			return lexQuote
+<a id="L308"></a><span class="ln">   308</span>		case r == &#39;`&#39;:
+<a id="L309"></a><span class="ln">   309</span>			return lexRawQuote
+<a id="L310"></a><span class="ln">   310</span>		case r == &#39;$&#39;:
+<a id="L311"></a><span class="ln">   311</span>			return lexIdentifier
+<a id="L312"></a><span class="ln">   312</span>		case r == &#39;\&#39;&#39;:
+<a id="L313"></a><span class="ln">   313</span>			return lexChar
+<a id="L314"></a><span class="ln">   314</span>		case r == &#39;.&#39;:
+<a id="L315"></a><span class="ln">   315</span>			<span class="comment">// special look-ahead for &#34;.field&#34; so we don&#39;t break l.backup().</span>
+<a id="L316"></a><span class="ln">   316</span>			if l.pos &lt; len(l.input) {
+<a id="L317"></a><span class="ln">   317</span>				r := l.input[l.pos]
+<a id="L318"></a><span class="ln">   318</span>				if r &lt; &#39;0&#39; || &#39;9&#39; &lt; r {
+<a id="L319"></a><span class="ln">   319</span>					return lexIdentifier <span class="comment">// itemDot comes from the keyword table.</span>
+<a id="L320"></a><span class="ln">   320</span>				}
+<a id="L321"></a><span class="ln">   321</span>			}
+<a id="L322"></a><span class="ln">   322</span>			fallthrough <span class="comment">// &#39;.&#39; can start a number.</span>
+<a id="L323"></a><span class="ln">   323</span>		case r == &#39;+&#39; || r == &#39;-&#39; || (&#39;0&#39; &lt;= r &amp;&amp; r &lt;= &#39;9&#39;):
+<a id="L324"></a><span class="ln">   324</span>			l.backup()
+<a id="L325"></a><span class="ln">   325</span>			return lexNumber
+<a id="L326"></a><span class="ln">   326</span>		case isAlphaNumeric(r):
+<a id="L327"></a><span class="ln">   327</span>			l.backup()
+<a id="L328"></a><span class="ln">   328</span>			return lexIdentifier
+<a id="L329"></a><span class="ln">   329</span>		case r &lt;= unicode.MaxASCII &amp;&amp; unicode.IsPrint(r):
+<a id="L330"></a><span class="ln">   330</span>			l.emit(itemChar)
+<a id="L331"></a><span class="ln">   331</span>			return lexInsideAction
+<a id="L332"></a><span class="ln">   332</span>		default:
+<a id="L333"></a><span class="ln">   333</span>			return l.errorf(&#34;unrecognized character in action: %#U&#34;, r)
+<a id="L334"></a><span class="ln">   334</span>		}
+<a id="L335"></a><span class="ln">   335</span>		return lexInsideAction
+<a id="L336"></a><span class="ln">   336</span>	}
+<a id="L337"></a><span class="ln">   337</span>	
+<a id="L338"></a><span class="ln">   338</span>	<span class="comment">// lexIdentifier scans an alphanumeric or field.</span>
+<a id="L339"></a><span class="ln">   339</span>	func lexIdentifier(l *lexer) stateFn {
+<a id="L340"></a><span class="ln">   340</span>	Loop:
+<a id="L341"></a><span class="ln">   341</span>		for {
+<a id="L342"></a><span class="ln">   342</span>			switch r := l.next(); {
+<a id="L343"></a><span class="ln">   343</span>			case isAlphaNumeric(r):
+<a id="L344"></a><span class="ln">   344</span>				<span class="comment">// absorb.</span>
+<a id="L345"></a><span class="ln">   345</span>			case r == &#39;.&#39; &amp;&amp; (l.input[l.start] == &#39;.&#39; || l.input[l.start] == &#39;$&#39;):
+<a id="L346"></a><span class="ln">   346</span>				<span class="comment">// field chaining; absorb into one token.</span>
+<a id="L347"></a><span class="ln">   347</span>			default:
+<a id="L348"></a><span class="ln">   348</span>				l.backup()
+<a id="L349"></a><span class="ln">   349</span>				word := l.input[l.start:l.pos]
+<a id="L350"></a><span class="ln">   350</span>				if !l.atTerminator() {
+<a id="L351"></a><span class="ln">   351</span>					return l.errorf(&#34;unexpected character %+U&#34;, r)
+<a id="L352"></a><span class="ln">   352</span>				}
+<a id="L353"></a><span class="ln">   353</span>				switch {
+<a id="L354"></a><span class="ln">   354</span>				case key[word] &gt; itemKeyword:
+<a id="L355"></a><span class="ln">   355</span>					l.emit(key[word])
+<a id="L356"></a><span class="ln">   356</span>				case word[0] == &#39;.&#39;:
+<a id="L357"></a><span class="ln">   357</span>					l.emit(itemField)
+<a id="L358"></a><span class="ln">   358</span>				case word[0] == &#39;$&#39;:
+<a id="L359"></a><span class="ln">   359</span>					l.emit(itemVariable)
+<a id="L360"></a><span class="ln">   360</span>				case word == &#34;true&#34;, word == &#34;false&#34;:
+<a id="L361"></a><span class="ln">   361</span>					l.emit(itemBool)
+<a id="L362"></a><span class="ln">   362</span>				default:
+<a id="L363"></a><span class="ln">   363</span>					l.emit(itemIdentifier)
+<a id="L364"></a><span class="ln">   364</span>				}
+<a id="L365"></a><span class="ln">   365</span>				break Loop
+<a id="L366"></a><span class="ln">   366</span>			}
+<a id="L367"></a><span class="ln">   367</span>		}
+<a id="L368"></a><span class="ln">   368</span>		return lexInsideAction
+<a id="L369"></a><span class="ln">   369</span>	}
+<a id="L370"></a><span class="ln">   370</span>	
+<a id="L371"></a><span class="ln">   371</span>	<span class="comment">// atTerminator reports whether the input is at valid termination character to</span>
+<a id="L372"></a><span class="ln">   372</span>	<span class="comment">// appear after an identifier. Mostly to catch cases like &#34;$x+2&#34; not being</span>
+<a id="L373"></a><span class="ln">   373</span>	<span class="comment">// acceptable without a space, in case we decide one day to implement</span>
+<a id="L374"></a><span class="ln">   374</span>	<span class="comment">// arithmetic.</span>
+<a id="L375"></a><span class="ln">   375</span>	func (l *lexer) atTerminator() bool {
+<a id="L376"></a><span class="ln">   376</span>		r := l.peek()
+<a id="L377"></a><span class="ln">   377</span>		if isSpace(r) {
+<a id="L378"></a><span class="ln">   378</span>			return true
+<a id="L379"></a><span class="ln">   379</span>		}
+<a id="L380"></a><span class="ln">   380</span>		switch r {
+<a id="L381"></a><span class="ln">   381</span>		case eof, &#39;,&#39;, &#39;|&#39;, &#39;:&#39;:
+<a id="L382"></a><span class="ln">   382</span>			return true
+<a id="L383"></a><span class="ln">   383</span>		}
+<a id="L384"></a><span class="ln">   384</span>		<span class="comment">// Does r start the delimiter? This can be ambiguous (with delim==&#34;//&#34;, $x/2 will</span>
+<a id="L385"></a><span class="ln">   385</span>		<span class="comment">// succeed but should fail) but only in extremely rare cases caused by willfully</span>
+<a id="L386"></a><span class="ln">   386</span>		<span class="comment">// bad choice of delimiter.</span>
+<a id="L387"></a><span class="ln">   387</span>		if rd, _ := utf8.DecodeRuneInString(l.rightDelim); rd == r {
+<a id="L388"></a><span class="ln">   388</span>			return true
+<a id="L389"></a><span class="ln">   389</span>		}
+<a id="L390"></a><span class="ln">   390</span>		return false
+<a id="L391"></a><span class="ln">   391</span>	}
+<a id="L392"></a><span class="ln">   392</span>	
+<a id="L393"></a><span class="ln">   393</span>	<span class="comment">// lexChar scans a character constant. The initial quote is already</span>
+<a id="L394"></a><span class="ln">   394</span>	<span class="comment">// scanned.  Syntax checking is done by the parse.</span>
+<a id="L395"></a><span class="ln">   395</span>	func lexChar(l *lexer) stateFn {
+<a id="L396"></a><span class="ln">   396</span>	Loop:
+<a id="L397"></a><span class="ln">   397</span>		for {
+<a id="L398"></a><span class="ln">   398</span>			switch l.next() {
+<a id="L399"></a><span class="ln">   399</span>			case &#39;\\&#39;:
+<a id="L400"></a><span class="ln">   400</span>				if r := l.next(); r != eof &amp;&amp; r != &#39;\n&#39; {
+<a id="L401"></a><span class="ln">   401</span>					break
+<a id="L402"></a><span class="ln">   402</span>				}
+<a id="L403"></a><span class="ln">   403</span>				fallthrough
+<a id="L404"></a><span class="ln">   404</span>			case eof, &#39;\n&#39;:
+<a id="L405"></a><span class="ln">   405</span>				return l.errorf(&#34;unterminated character constant&#34;)
+<a id="L406"></a><span class="ln">   406</span>			case &#39;\&#39;&#39;:
+<a id="L407"></a><span class="ln">   407</span>				break Loop
+<a id="L408"></a><span class="ln">   408</span>			}
+<a id="L409"></a><span class="ln">   409</span>		}
+<a id="L410"></a><span class="ln">   410</span>		l.emit(itemCharConstant)
+<a id="L411"></a><span class="ln">   411</span>		return lexInsideAction
+<a id="L412"></a><span class="ln">   412</span>	}
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>	<span class="comment">// lexNumber scans a number: decimal, octal, hex, float, or imaginary.  This</span>
+<a id="L415"></a><span class="ln">   415</span>	<span class="comment">// isn&#39;t a perfect number scanner - for instance it accepts &#34;.&#34; and &#34;0x0.2&#34;</span>
+<a id="L416"></a><span class="ln">   416</span>	<span class="comment">// and &#34;089&#34; - but when it&#39;s wrong the input is invalid and the parser (via</span>
+<a id="L417"></a><span class="ln">   417</span>	<span class="comment">// strconv) will notice.</span>
+<a id="L418"></a><span class="ln">   418</span>	func lexNumber(l *lexer) stateFn {
+<a id="L419"></a><span class="ln">   419</span>		if !l.scanNumber() {
+<a id="L420"></a><span class="ln">   420</span>			return l.errorf(&#34;bad number syntax: %q&#34;, l.input[l.start:l.pos])
+<a id="L421"></a><span class="ln">   421</span>		}
+<a id="L422"></a><span class="ln">   422</span>		if sign := l.peek(); sign == &#39;+&#39; || sign == &#39;-&#39; {
+<a id="L423"></a><span class="ln">   423</span>			<span class="comment">// Complex: 1+2i.  No spaces, must end in &#39;i&#39;.</span>
+<a id="L424"></a><span class="ln">   424</span>			if !l.scanNumber() || l.input[l.pos-1] != &#39;i&#39; {
+<a id="L425"></a><span class="ln">   425</span>				return l.errorf(&#34;bad number syntax: %q&#34;, l.input[l.start:l.pos])
+<a id="L426"></a><span class="ln">   426</span>			}
+<a id="L427"></a><span class="ln">   427</span>			l.emit(itemComplex)
+<a id="L428"></a><span class="ln">   428</span>		} else {
+<a id="L429"></a><span class="ln">   429</span>			l.emit(itemNumber)
+<a id="L430"></a><span class="ln">   430</span>		}
+<a id="L431"></a><span class="ln">   431</span>		return lexInsideAction
+<a id="L432"></a><span class="ln">   432</span>	}
+<a id="L433"></a><span class="ln">   433</span>	
+<a id="L434"></a><span class="ln">   434</span>	func (l *lexer) scanNumber() bool {
+<a id="L435"></a><span class="ln">   435</span>		<span class="comment">// Optional leading sign.</span>
+<a id="L436"></a><span class="ln">   436</span>		l.accept(&#34;+-&#34;)
+<a id="L437"></a><span class="ln">   437</span>		<span class="comment">// Is it hex?</span>
+<a id="L438"></a><span class="ln">   438</span>		digits := &#34;0123456789&#34;
+<a id="L439"></a><span class="ln">   439</span>		if l.accept(&#34;0&#34;) &amp;&amp; l.accept(&#34;xX&#34;) {
+<a id="L440"></a><span class="ln">   440</span>			digits = &#34;0123456789abcdefABCDEF&#34;
+<a id="L441"></a><span class="ln">   441</span>		}
+<a id="L442"></a><span class="ln">   442</span>		l.acceptRun(digits)
+<a id="L443"></a><span class="ln">   443</span>		if l.accept(&#34;.&#34;) {
+<a id="L444"></a><span class="ln">   444</span>			l.acceptRun(digits)
+<a id="L445"></a><span class="ln">   445</span>		}
+<a id="L446"></a><span class="ln">   446</span>		if l.accept(&#34;eE&#34;) {
+<a id="L447"></a><span class="ln">   447</span>			l.accept(&#34;+-&#34;)
+<a id="L448"></a><span class="ln">   448</span>			l.acceptRun(&#34;0123456789&#34;)
+<a id="L449"></a><span class="ln">   449</span>		}
+<a id="L450"></a><span class="ln">   450</span>		<span class="comment">// Is it imaginary?</span>
+<a id="L451"></a><span class="ln">   451</span>		l.accept(&#34;i&#34;)
+<a id="L452"></a><span class="ln">   452</span>		<span class="comment">// Next thing mustn&#39;t be alphanumeric.</span>
+<a id="L453"></a><span class="ln">   453</span>		if isAlphaNumeric(l.peek()) {
+<a id="L454"></a><span class="ln">   454</span>			l.next()
+<a id="L455"></a><span class="ln">   455</span>			return false
+<a id="L456"></a><span class="ln">   456</span>		}
+<a id="L457"></a><span class="ln">   457</span>		return true
+<a id="L458"></a><span class="ln">   458</span>	}
+<a id="L459"></a><span class="ln">   459</span>	
+<a id="L460"></a><span class="ln">   460</span>	<span class="comment">// lexQuote scans a quoted string.</span>
+<a id="L461"></a><span class="ln">   461</span>	func lexQuote(l *lexer) stateFn {
+<a id="L462"></a><span class="ln">   462</span>	Loop:
+<a id="L463"></a><span class="ln">   463</span>		for {
+<a id="L464"></a><span class="ln">   464</span>			switch l.next() {
+<a id="L465"></a><span class="ln">   465</span>			case &#39;\\&#39;:
+<a id="L466"></a><span class="ln">   466</span>				if r := l.next(); r != eof &amp;&amp; r != &#39;\n&#39; {
+<a id="L467"></a><span class="ln">   467</span>					break
+<a id="L468"></a><span class="ln">   468</span>				}
+<a id="L469"></a><span class="ln">   469</span>				fallthrough
+<a id="L470"></a><span class="ln">   470</span>			case eof, &#39;\n&#39;:
+<a id="L471"></a><span class="ln">   471</span>				return l.errorf(&#34;unterminated quoted string&#34;)
+<a id="L472"></a><span class="ln">   472</span>			case &#39;&#34;&#39;:
+<a id="L473"></a><span class="ln">   473</span>				break Loop
+<a id="L474"></a><span class="ln">   474</span>			}
+<a id="L475"></a><span class="ln">   475</span>		}
+<a id="L476"></a><span class="ln">   476</span>		l.emit(itemString)
+<a id="L477"></a><span class="ln">   477</span>		return lexInsideAction
+<a id="L478"></a><span class="ln">   478</span>	}
+<a id="L479"></a><span class="ln">   479</span>	
+<a id="L480"></a><span class="ln">   480</span>	<span class="comment">// lexRawQuote scans a raw quoted string.</span>
+<a id="L481"></a><span class="ln">   481</span>	func lexRawQuote(l *lexer) stateFn {
+<a id="L482"></a><span class="ln">   482</span>	Loop:
+<a id="L483"></a><span class="ln">   483</span>		for {
+<a id="L484"></a><span class="ln">   484</span>			switch l.next() {
+<a id="L485"></a><span class="ln">   485</span>			case eof, &#39;\n&#39;:
+<a id="L486"></a><span class="ln">   486</span>				return l.errorf(&#34;unterminated raw quoted string&#34;)
+<a id="L487"></a><span class="ln">   487</span>			case &#39;`&#39;:
+<a id="L488"></a><span class="ln">   488</span>				break Loop
+<a id="L489"></a><span class="ln">   489</span>			}
+<a id="L490"></a><span class="ln">   490</span>		}
+<a id="L491"></a><span class="ln">   491</span>		l.emit(itemRawString)
+<a id="L492"></a><span class="ln">   492</span>		return lexInsideAction
+<a id="L493"></a><span class="ln">   493</span>	}
+<a id="L494"></a><span class="ln">   494</span>	
+<a id="L495"></a><span class="ln">   495</span>	<span class="comment">// isSpace reports whether r is a space character.</span>
+<a id="L496"></a><span class="ln">   496</span>	func isSpace(r rune) bool {
+<a id="L497"></a><span class="ln">   497</span>		switch r {
+<a id="L498"></a><span class="ln">   498</span>		case &#39; &#39;, &#39;\t&#39;, &#39;\n&#39;, &#39;\r&#39;:
+<a id="L499"></a><span class="ln">   499</span>			return true
+<a id="L500"></a><span class="ln">   500</span>		}
+<a id="L501"></a><span class="ln">   501</span>		return false
+<a id="L502"></a><span class="ln">   502</span>	}
+<a id="L503"></a><span class="ln">   503</span>	
+<a id="L504"></a><span class="ln">   504</span>	<span class="comment">// isAlphaNumeric reports whether r is an alphabetic, digit, or underscore.</span>
+<a id="L505"></a><span class="ln">   505</span>	func isAlphaNumeric(r rune) bool {
+<a id="L506"></a><span class="ln">   506</span>		return r == &#39;_&#39; || unicode.IsLetter(r) || unicode.IsDigit(r)
+<a id="L507"></a><span class="ln">   507</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

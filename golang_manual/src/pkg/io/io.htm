@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/io/io.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/io/io.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2009 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package io provides basic interfaces to I/O primitives.</span>
+<a id="L6"></a><span class="ln">     6</span>	<span class="comment">// Its primary job is to wrap existing implementations of such primitives,</span>
+<a id="L7"></a><span class="ln">     7</span>	<span class="comment">// such as those in package os, into shared public interfaces that</span>
+<a id="L8"></a><span class="ln">     8</span>	<span class="comment">// abstract the functionality, plus some other related primitives.</span>
+<a id="L9"></a><span class="ln">     9</span>	<span class="comment">//</span>
+<a id="L10"></a><span class="ln">    10</span>	<span class="comment">// Because these interfaces and primitives wrap lower-level operations with</span>
+<a id="L11"></a><span class="ln">    11</span>	<span class="comment">// various implementations, unless otherwise informed clients should not</span>
+<a id="L12"></a><span class="ln">    12</span>	<span class="comment">// assume they are safe for parallel execution.</span>
+<a id="L13"></a><span class="ln">    13</span>	package io
+<a id="L14"></a><span class="ln">    14</span>	
+<a id="L15"></a><span class="ln">    15</span>	import (
+<a id="L16"></a><span class="ln">    16</span>		&#34;errors&#34;
+<a id="L17"></a><span class="ln">    17</span>	)
+<a id="L18"></a><span class="ln">    18</span>	
+<a id="L19"></a><span class="ln">    19</span>	<span class="comment">// ErrShortWrite means that a write accepted fewer bytes than requested</span>
+<a id="L20"></a><span class="ln">    20</span>	<span class="comment">// but failed to return an explicit error.</span>
+<a id="L21"></a><span class="ln">    21</span>	var ErrShortWrite = errors.New(&#34;short write&#34;)
+<a id="L22"></a><span class="ln">    22</span>	
+<a id="L23"></a><span class="ln">    23</span>	<span class="comment">// ErrShortBuffer means that a read required a longer buffer than was provided.</span>
+<a id="L24"></a><span class="ln">    24</span>	var ErrShortBuffer = errors.New(&#34;short buffer&#34;)
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	<span class="comment">// EOF is the error returned by Read when no more input is available.</span>
+<a id="L27"></a><span class="ln">    27</span>	<span class="comment">// Functions should return EOF only to signal a graceful end of input.</span>
+<a id="L28"></a><span class="ln">    28</span>	<span class="comment">// If the EOF occurs unexpectedly in a structured data stream,</span>
+<a id="L29"></a><span class="ln">    29</span>	<span class="comment">// the appropriate error is either ErrUnexpectedEOF or some other error</span>
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// giving more detail.</span>
+<a id="L31"></a><span class="ln">    31</span>	var EOF = errors.New(&#34;EOF&#34;)
+<a id="L32"></a><span class="ln">    32</span>	
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">// ErrUnexpectedEOF means that EOF was encountered in the</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// middle of reading a fixed-size block or data structure.</span>
+<a id="L35"></a><span class="ln">    35</span>	var ErrUnexpectedEOF = errors.New(&#34;unexpected EOF&#34;)
+<a id="L36"></a><span class="ln">    36</span>	
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">// Reader is the interface that wraps the basic Read method.</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">// Read reads up to len(p) bytes into p.  It returns the number of bytes</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">// read (0 &lt;= n &lt;= len(p)) and any error encountered.  Even if Read</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">// returns n &lt; len(p), it may use all of p as scratch space during the call.</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// If some data is available but not len(p) bytes, Read conventionally</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">// returns what is available instead of waiting for more.</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">//</span>
+<a id="L45"></a><span class="ln">    45</span>	<span class="comment">// When Read encounters an error or end-of-file condition after</span>
+<a id="L46"></a><span class="ln">    46</span>	<span class="comment">// successfully reading n &gt; 0 bytes, it returns the number of</span>
+<a id="L47"></a><span class="ln">    47</span>	<span class="comment">// bytes read.  It may return the (non-nil) error from the same call</span>
+<a id="L48"></a><span class="ln">    48</span>	<span class="comment">// or return the error (and n == 0) from a subsequent call.</span>
+<a id="L49"></a><span class="ln">    49</span>	<span class="comment">// An instance of this general case is that a Reader returning</span>
+<a id="L50"></a><span class="ln">    50</span>	<span class="comment">// a non-zero number of bytes at the end of the input stream may</span>
+<a id="L51"></a><span class="ln">    51</span>	<span class="comment">// return either err == EOF or err == nil.  The next Read should</span>
+<a id="L52"></a><span class="ln">    52</span>	<span class="comment">// return 0, EOF regardless.</span>
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">//</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// Callers should always process the n &gt; 0 bytes returned before</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// considering the error err.  Doing so correctly handles I/O errors</span>
+<a id="L56"></a><span class="ln">    56</span>	<span class="comment">// that happen after reading some bytes and also both of the</span>
+<a id="L57"></a><span class="ln">    57</span>	<span class="comment">// allowed EOF behaviors.</span>
+<a id="L58"></a><span class="ln">    58</span>	type Reader interface {
+<a id="L59"></a><span class="ln">    59</span>		Read(p []byte) (n int, err error)
+<a id="L60"></a><span class="ln">    60</span>	}
+<a id="L61"></a><span class="ln">    61</span>	
+<a id="L62"></a><span class="ln">    62</span>	<span class="comment">// Writer is the interface that wraps the basic Write method.</span>
+<a id="L63"></a><span class="ln">    63</span>	<span class="comment">//</span>
+<a id="L64"></a><span class="ln">    64</span>	<span class="comment">// Write writes len(p) bytes from p to the underlying data stream.</span>
+<a id="L65"></a><span class="ln">    65</span>	<span class="comment">// It returns the number of bytes written from p (0 &lt;= n &lt;= len(p))</span>
+<a id="L66"></a><span class="ln">    66</span>	<span class="comment">// and any error encountered that caused the write to stop early.</span>
+<a id="L67"></a><span class="ln">    67</span>	<span class="comment">// Write must return a non-nil error if it returns n &lt; len(p).</span>
+<a id="L68"></a><span class="ln">    68</span>	type Writer interface {
+<a id="L69"></a><span class="ln">    69</span>		Write(p []byte) (n int, err error)
+<a id="L70"></a><span class="ln">    70</span>	}
+<a id="L71"></a><span class="ln">    71</span>	
+<a id="L72"></a><span class="ln">    72</span>	<span class="comment">// Closer is the interface that wraps the basic Close method.</span>
+<a id="L73"></a><span class="ln">    73</span>	type Closer interface {
+<a id="L74"></a><span class="ln">    74</span>		Close() error
+<a id="L75"></a><span class="ln">    75</span>	}
+<a id="L76"></a><span class="ln">    76</span>	
+<a id="L77"></a><span class="ln">    77</span>	<span class="comment">// Seeker is the interface that wraps the basic Seek method.</span>
+<a id="L78"></a><span class="ln">    78</span>	<span class="comment">//</span>
+<a id="L79"></a><span class="ln">    79</span>	<span class="comment">// Seek sets the offset for the next Read or Write to offset,</span>
+<a id="L80"></a><span class="ln">    80</span>	<span class="comment">// interpreted according to whence: 0 means relative to the origin of</span>
+<a id="L81"></a><span class="ln">    81</span>	<span class="comment">// the file, 1 means relative to the current offset, and 2 means</span>
+<a id="L82"></a><span class="ln">    82</span>	<span class="comment">// relative to the end.  Seek returns the new offset and an Error, if</span>
+<a id="L83"></a><span class="ln">    83</span>	<span class="comment">// any.</span>
+<a id="L84"></a><span class="ln">    84</span>	type Seeker interface {
+<a id="L85"></a><span class="ln">    85</span>		Seek(offset int64, whence int) (ret int64, err error)
+<a id="L86"></a><span class="ln">    86</span>	}
+<a id="L87"></a><span class="ln">    87</span>	
+<a id="L88"></a><span class="ln">    88</span>	<span class="comment">// ReadWriter is the interface that groups the basic Read and Write methods.</span>
+<a id="L89"></a><span class="ln">    89</span>	type ReadWriter interface {
+<a id="L90"></a><span class="ln">    90</span>		Reader
+<a id="L91"></a><span class="ln">    91</span>		Writer
+<a id="L92"></a><span class="ln">    92</span>	}
+<a id="L93"></a><span class="ln">    93</span>	
+<a id="L94"></a><span class="ln">    94</span>	<span class="comment">// ReadCloser is the interface that groups the basic Read and Close methods.</span>
+<a id="L95"></a><span class="ln">    95</span>	type ReadCloser interface {
+<a id="L96"></a><span class="ln">    96</span>		Reader
+<a id="L97"></a><span class="ln">    97</span>		Closer
+<a id="L98"></a><span class="ln">    98</span>	}
+<a id="L99"></a><span class="ln">    99</span>	
+<a id="L100"></a><span class="ln">   100</span>	<span class="comment">// WriteCloser is the interface that groups the basic Write and Close methods.</span>
+<a id="L101"></a><span class="ln">   101</span>	type WriteCloser interface {
+<a id="L102"></a><span class="ln">   102</span>		Writer
+<a id="L103"></a><span class="ln">   103</span>		Closer
+<a id="L104"></a><span class="ln">   104</span>	}
+<a id="L105"></a><span class="ln">   105</span>	
+<a id="L106"></a><span class="ln">   106</span>	<span class="comment">// ReadWriteCloser is the interface that groups the basic Read, Write and Close methods.</span>
+<a id="L107"></a><span class="ln">   107</span>	type ReadWriteCloser interface {
+<a id="L108"></a><span class="ln">   108</span>		Reader
+<a id="L109"></a><span class="ln">   109</span>		Writer
+<a id="L110"></a><span class="ln">   110</span>		Closer
+<a id="L111"></a><span class="ln">   111</span>	}
+<a id="L112"></a><span class="ln">   112</span>	
+<a id="L113"></a><span class="ln">   113</span>	<span class="comment">// ReadSeeker is the interface that groups the basic Read and Seek methods.</span>
+<a id="L114"></a><span class="ln">   114</span>	type ReadSeeker interface {
+<a id="L115"></a><span class="ln">   115</span>		Reader
+<a id="L116"></a><span class="ln">   116</span>		Seeker
+<a id="L117"></a><span class="ln">   117</span>	}
+<a id="L118"></a><span class="ln">   118</span>	
+<a id="L119"></a><span class="ln">   119</span>	<span class="comment">// WriteSeeker is the interface that groups the basic Write and Seek methods.</span>
+<a id="L120"></a><span class="ln">   120</span>	type WriteSeeker interface {
+<a id="L121"></a><span class="ln">   121</span>		Writer
+<a id="L122"></a><span class="ln">   122</span>		Seeker
+<a id="L123"></a><span class="ln">   123</span>	}
+<a id="L124"></a><span class="ln">   124</span>	
+<a id="L125"></a><span class="ln">   125</span>	<span class="comment">// ReadWriteSeeker is the interface that groups the basic Read, Write and Seek methods.</span>
+<a id="L126"></a><span class="ln">   126</span>	type ReadWriteSeeker interface {
+<a id="L127"></a><span class="ln">   127</span>		Reader
+<a id="L128"></a><span class="ln">   128</span>		Writer
+<a id="L129"></a><span class="ln">   129</span>		Seeker
+<a id="L130"></a><span class="ln">   130</span>	}
+<a id="L131"></a><span class="ln">   131</span>	
+<a id="L132"></a><span class="ln">   132</span>	<span class="comment">// ReaderFrom is the interface that wraps the ReadFrom method.</span>
+<a id="L133"></a><span class="ln">   133</span>	type ReaderFrom interface {
+<a id="L134"></a><span class="ln">   134</span>		ReadFrom(r Reader) (n int64, err error)
+<a id="L135"></a><span class="ln">   135</span>	}
+<a id="L136"></a><span class="ln">   136</span>	
+<a id="L137"></a><span class="ln">   137</span>	<span class="comment">// WriterTo is the interface that wraps the WriteTo method.</span>
+<a id="L138"></a><span class="ln">   138</span>	type WriterTo interface {
+<a id="L139"></a><span class="ln">   139</span>		WriteTo(w Writer) (n int64, err error)
+<a id="L140"></a><span class="ln">   140</span>	}
+<a id="L141"></a><span class="ln">   141</span>	
+<a id="L142"></a><span class="ln">   142</span>	<span class="comment">// ReaderAt is the interface that wraps the basic ReadAt method.</span>
+<a id="L143"></a><span class="ln">   143</span>	<span class="comment">//</span>
+<a id="L144"></a><span class="ln">   144</span>	<span class="comment">// ReadAt reads len(p) bytes into p starting at offset off in the</span>
+<a id="L145"></a><span class="ln">   145</span>	<span class="comment">// underlying input source.  It returns the number of bytes</span>
+<a id="L146"></a><span class="ln">   146</span>	<span class="comment">// read (0 &lt;= n &lt;= len(p)) and any error encountered.</span>
+<a id="L147"></a><span class="ln">   147</span>	<span class="comment">//</span>
+<a id="L148"></a><span class="ln">   148</span>	<span class="comment">// When ReadAt returns n &lt; len(p), it returns a non-nil error</span>
+<a id="L149"></a><span class="ln">   149</span>	<span class="comment">// explaining why more bytes were not returned.  In this respect,</span>
+<a id="L150"></a><span class="ln">   150</span>	<span class="comment">// ReadAt is stricter than Read.</span>
+<a id="L151"></a><span class="ln">   151</span>	<span class="comment">//</span>
+<a id="L152"></a><span class="ln">   152</span>	<span class="comment">// Even if ReadAt returns n &lt; len(p), it may use all of p as scratch</span>
+<a id="L153"></a><span class="ln">   153</span>	<span class="comment">// space during the call.  If some data is available but not len(p) bytes,</span>
+<a id="L154"></a><span class="ln">   154</span>	<span class="comment">// ReadAt blocks until either all the data is available or an error occurs.</span>
+<a id="L155"></a><span class="ln">   155</span>	<span class="comment">// In this respect ReadAt is different from Read.</span>
+<a id="L156"></a><span class="ln">   156</span>	<span class="comment">//</span>
+<a id="L157"></a><span class="ln">   157</span>	<span class="comment">// If the n = len(p) bytes returned by ReadAt are at the end of the</span>
+<a id="L158"></a><span class="ln">   158</span>	<span class="comment">// input source, ReadAt may return either err == EOF or err == nil.</span>
+<a id="L159"></a><span class="ln">   159</span>	<span class="comment">//</span>
+<a id="L160"></a><span class="ln">   160</span>	<span class="comment">// If ReadAt is reading from an input source with a seek offset,</span>
+<a id="L161"></a><span class="ln">   161</span>	<span class="comment">// ReadAt should not affect nor be affected by the underlying</span>
+<a id="L162"></a><span class="ln">   162</span>	<span class="comment">// seek offset.</span>
+<a id="L163"></a><span class="ln">   163</span>	<span class="comment">//</span>
+<a id="L164"></a><span class="ln">   164</span>	<span class="comment">// Clients of ReadAt can execute parallel ReadAt calls on the</span>
+<a id="L165"></a><span class="ln">   165</span>	<span class="comment">// same input source.</span>
+<a id="L166"></a><span class="ln">   166</span>	type ReaderAt interface {
+<a id="L167"></a><span class="ln">   167</span>		ReadAt(p []byte, off int64) (n int, err error)
+<a id="L168"></a><span class="ln">   168</span>	}
+<a id="L169"></a><span class="ln">   169</span>	
+<a id="L170"></a><span class="ln">   170</span>	<span class="comment">// WriterAt is the interface that wraps the basic WriteAt method.</span>
+<a id="L171"></a><span class="ln">   171</span>	<span class="comment">//</span>
+<a id="L172"></a><span class="ln">   172</span>	<span class="comment">// WriteAt writes len(p) bytes from p to the underlying data stream</span>
+<a id="L173"></a><span class="ln">   173</span>	<span class="comment">// at offset off.  It returns the number of bytes written from p (0 &lt;= n &lt;= len(p))</span>
+<a id="L174"></a><span class="ln">   174</span>	<span class="comment">// and any error encountered that caused the write to stop early.</span>
+<a id="L175"></a><span class="ln">   175</span>	<span class="comment">// WriteAt must return a non-nil error if it returns n &lt; len(p).</span>
+<a id="L176"></a><span class="ln">   176</span>	<span class="comment">//</span>
+<a id="L177"></a><span class="ln">   177</span>	<span class="comment">// If WriteAt is writing to a destination with a seek offset,</span>
+<a id="L178"></a><span class="ln">   178</span>	<span class="comment">// WriteAt should not affect nor be affected by the underlying</span>
+<a id="L179"></a><span class="ln">   179</span>	<span class="comment">// seek offset.</span>
+<a id="L180"></a><span class="ln">   180</span>	<span class="comment">//</span>
+<a id="L181"></a><span class="ln">   181</span>	<span class="comment">// Clients of WriteAt can execute parallel WriteAt calls on the same</span>
+<a id="L182"></a><span class="ln">   182</span>	<span class="comment">// destination if the ranges do not overlap.</span>
+<a id="L183"></a><span class="ln">   183</span>	type WriterAt interface {
+<a id="L184"></a><span class="ln">   184</span>		WriteAt(p []byte, off int64) (n int, err error)
+<a id="L185"></a><span class="ln">   185</span>	}
+<a id="L186"></a><span class="ln">   186</span>	
+<a id="L187"></a><span class="ln">   187</span>	<span class="comment">// ByteReader is the interface that wraps the ReadByte method.</span>
+<a id="L188"></a><span class="ln">   188</span>	<span class="comment">//</span>
+<a id="L189"></a><span class="ln">   189</span>	<span class="comment">// ReadByte reads and returns the next byte from the input.</span>
+<a id="L190"></a><span class="ln">   190</span>	<span class="comment">// If no byte is available, err will be set.</span>
+<a id="L191"></a><span class="ln">   191</span>	type ByteReader interface {
+<a id="L192"></a><span class="ln">   192</span>		ReadByte() (c byte, err error)
+<a id="L193"></a><span class="ln">   193</span>	}
+<a id="L194"></a><span class="ln">   194</span>	
+<a id="L195"></a><span class="ln">   195</span>	<span class="comment">// ByteScanner is the interface that adds the UnreadByte method to the</span>
+<a id="L196"></a><span class="ln">   196</span>	<span class="comment">// basic ReadByte method.</span>
+<a id="L197"></a><span class="ln">   197</span>	<span class="comment">//</span>
+<a id="L198"></a><span class="ln">   198</span>	<span class="comment">// UnreadByte causes the next call to ReadByte to return the same byte</span>
+<a id="L199"></a><span class="ln">   199</span>	<span class="comment">// as the previous call to ReadByte.</span>
+<a id="L200"></a><span class="ln">   200</span>	<span class="comment">// It may be an error to call UnreadByte twice without an intervening</span>
+<a id="L201"></a><span class="ln">   201</span>	<span class="comment">// call to ReadByte.</span>
+<a id="L202"></a><span class="ln">   202</span>	type ByteScanner interface {
+<a id="L203"></a><span class="ln">   203</span>		ByteReader
+<a id="L204"></a><span class="ln">   204</span>		UnreadByte() error
+<a id="L205"></a><span class="ln">   205</span>	}
+<a id="L206"></a><span class="ln">   206</span>	
+<a id="L207"></a><span class="ln">   207</span>	<span class="comment">// RuneReader is the interface that wraps the ReadRune method.</span>
+<a id="L208"></a><span class="ln">   208</span>	<span class="comment">//</span>
+<a id="L209"></a><span class="ln">   209</span>	<span class="comment">// ReadRune reads a single UTF-8 encoded Unicode character</span>
+<a id="L210"></a><span class="ln">   210</span>	<span class="comment">// and returns the rune and its size in bytes. If no character is</span>
+<a id="L211"></a><span class="ln">   211</span>	<span class="comment">// available, err will be set.</span>
+<a id="L212"></a><span class="ln">   212</span>	type RuneReader interface {
+<a id="L213"></a><span class="ln">   213</span>		ReadRune() (r rune, size int, err error)
+<a id="L214"></a><span class="ln">   214</span>	}
+<a id="L215"></a><span class="ln">   215</span>	
+<a id="L216"></a><span class="ln">   216</span>	<span class="comment">// RuneScanner is the interface that adds the UnreadRune method to the</span>
+<a id="L217"></a><span class="ln">   217</span>	<span class="comment">// basic ReadRune method.</span>
+<a id="L218"></a><span class="ln">   218</span>	<span class="comment">//</span>
+<a id="L219"></a><span class="ln">   219</span>	<span class="comment">// UnreadRune causes the next call to ReadRune to return the same rune</span>
+<a id="L220"></a><span class="ln">   220</span>	<span class="comment">// as the previous call to ReadRune.</span>
+<a id="L221"></a><span class="ln">   221</span>	<span class="comment">// It may be an error to call UnreadRune twice without an intervening</span>
+<a id="L222"></a><span class="ln">   222</span>	<span class="comment">// call to ReadRune.</span>
+<a id="L223"></a><span class="ln">   223</span>	type RuneScanner interface {
+<a id="L224"></a><span class="ln">   224</span>		RuneReader
+<a id="L225"></a><span class="ln">   225</span>		UnreadRune() error
+<a id="L226"></a><span class="ln">   226</span>	}
+<a id="L227"></a><span class="ln">   227</span>	
+<a id="L228"></a><span class="ln">   228</span>	<span class="comment">// stringWriter is the interface that wraps the WriteString method.</span>
+<a id="L229"></a><span class="ln">   229</span>	type stringWriter interface {
+<a id="L230"></a><span class="ln">   230</span>		WriteString(s string) (n int, err error)
+<a id="L231"></a><span class="ln">   231</span>	}
+<a id="L232"></a><span class="ln">   232</span>	
+<a id="L233"></a><span class="ln">   233</span>	<span class="comment">// WriteString writes the contents of the string s to w, which accepts an array of bytes.</span>
+<a id="L234"></a><span class="ln">   234</span>	<span class="comment">// If w already implements a WriteString method, it is invoked directly.</span>
+<a id="L235"></a><span class="ln">   235</span>	func WriteString(w Writer, s string) (n int, err error) {
+<a id="L236"></a><span class="ln">   236</span>		if sw, ok := w.(stringWriter); ok {
+<a id="L237"></a><span class="ln">   237</span>			return sw.WriteString(s)
+<a id="L238"></a><span class="ln">   238</span>		}
+<a id="L239"></a><span class="ln">   239</span>		return w.Write([]byte(s))
+<a id="L240"></a><span class="ln">   240</span>	}
+<a id="L241"></a><span class="ln">   241</span>	
+<a id="L242"></a><span class="ln">   242</span>	<span class="comment">// ReadAtLeast reads from r into buf until it has read at least min bytes.</span>
+<a id="L243"></a><span class="ln">   243</span>	<span class="comment">// It returns the number of bytes copied and an error if fewer bytes were read.</span>
+<a id="L244"></a><span class="ln">   244</span>	<span class="comment">// The error is EOF only if no bytes were read.</span>
+<a id="L245"></a><span class="ln">   245</span>	<span class="comment">// If an EOF happens after reading fewer than min bytes,</span>
+<a id="L246"></a><span class="ln">   246</span>	<span class="comment">// ReadAtLeast returns ErrUnexpectedEOF.</span>
+<a id="L247"></a><span class="ln">   247</span>	<span class="comment">// If min is greater than the length of buf, ReadAtLeast returns ErrShortBuffer.</span>
+<a id="L248"></a><span class="ln">   248</span>	func ReadAtLeast(r Reader, buf []byte, min int) (n int, err error) {
+<a id="L249"></a><span class="ln">   249</span>		if len(buf) &lt; min {
+<a id="L250"></a><span class="ln">   250</span>			return 0, ErrShortBuffer
+<a id="L251"></a><span class="ln">   251</span>		}
+<a id="L252"></a><span class="ln">   252</span>		for n &lt; min &amp;&amp; err == nil {
+<a id="L253"></a><span class="ln">   253</span>			var nn int
+<a id="L254"></a><span class="ln">   254</span>			nn, err = r.Read(buf[n:])
+<a id="L255"></a><span class="ln">   255</span>			n += nn
+<a id="L256"></a><span class="ln">   256</span>		}
+<a id="L257"></a><span class="ln">   257</span>		if err == EOF {
+<a id="L258"></a><span class="ln">   258</span>			if n &gt;= min {
+<a id="L259"></a><span class="ln">   259</span>				err = nil
+<a id="L260"></a><span class="ln">   260</span>			} else if n &gt; 0 {
+<a id="L261"></a><span class="ln">   261</span>				err = ErrUnexpectedEOF
+<a id="L262"></a><span class="ln">   262</span>			}
+<a id="L263"></a><span class="ln">   263</span>		}
+<a id="L264"></a><span class="ln">   264</span>		return
+<a id="L265"></a><span class="ln">   265</span>	}
+<a id="L266"></a><span class="ln">   266</span>	
+<a id="L267"></a><span class="ln">   267</span>	<span class="comment">// ReadFull reads exactly len(buf) bytes from r into buf.</span>
+<a id="L268"></a><span class="ln">   268</span>	<span class="comment">// It returns the number of bytes copied and an error if fewer bytes were read.</span>
+<a id="L269"></a><span class="ln">   269</span>	<span class="comment">// The error is EOF only if no bytes were read.</span>
+<a id="L270"></a><span class="ln">   270</span>	<span class="comment">// If an EOF happens after reading some but not all the bytes,</span>
+<a id="L271"></a><span class="ln">   271</span>	<span class="comment">// ReadFull returns ErrUnexpectedEOF.</span>
+<a id="L272"></a><span class="ln">   272</span>	func ReadFull(r Reader, buf []byte) (n int, err error) {
+<a id="L273"></a><span class="ln">   273</span>		return ReadAtLeast(r, buf, len(buf))
+<a id="L274"></a><span class="ln">   274</span>	}
+<a id="L275"></a><span class="ln">   275</span>	
+<a id="L276"></a><span class="ln">   276</span>	<span class="comment">// CopyN copies n bytes (or until an error) from src to dst.</span>
+<a id="L277"></a><span class="ln">   277</span>	<span class="comment">// It returns the number of bytes copied and the earliest</span>
+<a id="L278"></a><span class="ln">   278</span>	<span class="comment">// error encountered while copying.  Because Read can</span>
+<a id="L279"></a><span class="ln">   279</span>	<span class="comment">// return the full amount requested as well as an error</span>
+<a id="L280"></a><span class="ln">   280</span>	<span class="comment">// (including EOF), so can CopyN.</span>
+<a id="L281"></a><span class="ln">   281</span>	<span class="comment">//</span>
+<a id="L282"></a><span class="ln">   282</span>	<span class="comment">// If dst implements the ReaderFrom interface,</span>
+<a id="L283"></a><span class="ln">   283</span>	<span class="comment">// the copy is implemented using it.</span>
+<a id="L284"></a><span class="ln">   284</span>	func CopyN(dst Writer, src Reader, n int64) (written int64, err error) {
+<a id="L285"></a><span class="ln">   285</span>		<span class="comment">// If the writer has a ReadFrom method, use it to do the copy.</span>
+<a id="L286"></a><span class="ln">   286</span>		<span class="comment">// Avoids a buffer allocation and a copy.</span>
+<a id="L287"></a><span class="ln">   287</span>		if rt, ok := dst.(ReaderFrom); ok {
+<a id="L288"></a><span class="ln">   288</span>			written, err = rt.ReadFrom(LimitReader(src, n))
+<a id="L289"></a><span class="ln">   289</span>			if written &lt; n &amp;&amp; err == nil {
+<a id="L290"></a><span class="ln">   290</span>				<span class="comment">// rt stopped early; must have been EOF.</span>
+<a id="L291"></a><span class="ln">   291</span>				err = EOF
+<a id="L292"></a><span class="ln">   292</span>			}
+<a id="L293"></a><span class="ln">   293</span>			return
+<a id="L294"></a><span class="ln">   294</span>		}
+<a id="L295"></a><span class="ln">   295</span>		buf := make([]byte, 32*1024)
+<a id="L296"></a><span class="ln">   296</span>		for written &lt; n {
+<a id="L297"></a><span class="ln">   297</span>			l := len(buf)
+<a id="L298"></a><span class="ln">   298</span>			if d := n - written; d &lt; int64(l) {
+<a id="L299"></a><span class="ln">   299</span>				l = int(d)
+<a id="L300"></a><span class="ln">   300</span>			}
+<a id="L301"></a><span class="ln">   301</span>			nr, er := src.Read(buf[0:l])
+<a id="L302"></a><span class="ln">   302</span>			if nr &gt; 0 {
+<a id="L303"></a><span class="ln">   303</span>				nw, ew := dst.Write(buf[0:nr])
+<a id="L304"></a><span class="ln">   304</span>				if nw &gt; 0 {
+<a id="L305"></a><span class="ln">   305</span>					written += int64(nw)
+<a id="L306"></a><span class="ln">   306</span>				}
+<a id="L307"></a><span class="ln">   307</span>				if ew != nil {
+<a id="L308"></a><span class="ln">   308</span>					err = ew
+<a id="L309"></a><span class="ln">   309</span>					break
+<a id="L310"></a><span class="ln">   310</span>				}
+<a id="L311"></a><span class="ln">   311</span>				if nr != nw {
+<a id="L312"></a><span class="ln">   312</span>					err = ErrShortWrite
+<a id="L313"></a><span class="ln">   313</span>					break
+<a id="L314"></a><span class="ln">   314</span>				}
+<a id="L315"></a><span class="ln">   315</span>			}
+<a id="L316"></a><span class="ln">   316</span>			if er != nil {
+<a id="L317"></a><span class="ln">   317</span>				err = er
+<a id="L318"></a><span class="ln">   318</span>				break
+<a id="L319"></a><span class="ln">   319</span>			}
+<a id="L320"></a><span class="ln">   320</span>		}
+<a id="L321"></a><span class="ln">   321</span>		return written, err
+<a id="L322"></a><span class="ln">   322</span>	}
+<a id="L323"></a><span class="ln">   323</span>	
+<a id="L324"></a><span class="ln">   324</span>	<span class="comment">// Copy copies from src to dst until either EOF is reached</span>
+<a id="L325"></a><span class="ln">   325</span>	<span class="comment">// on src or an error occurs.  It returns the number of bytes</span>
+<a id="L326"></a><span class="ln">   326</span>	<span class="comment">// copied and the first error encountered while copying, if any.</span>
+<a id="L327"></a><span class="ln">   327</span>	<span class="comment">//</span>
+<a id="L328"></a><span class="ln">   328</span>	<span class="comment">// A successful Copy returns err == nil, not err == EOF.</span>
+<a id="L329"></a><span class="ln">   329</span>	<span class="comment">// Because Copy is defined to read from src until EOF, it does</span>
+<a id="L330"></a><span class="ln">   330</span>	<span class="comment">// not treat an EOF from Read as an error to be reported.</span>
+<a id="L331"></a><span class="ln">   331</span>	<span class="comment">//</span>
+<a id="L332"></a><span class="ln">   332</span>	<span class="comment">// If dst implements the ReaderFrom interface,</span>
+<a id="L333"></a><span class="ln">   333</span>	<span class="comment">// the copy is implemented by calling dst.ReadFrom(src).</span>
+<a id="L334"></a><span class="ln">   334</span>	<span class="comment">// Otherwise, if src implements the WriterTo interface,</span>
+<a id="L335"></a><span class="ln">   335</span>	<span class="comment">// the copy is implemented by calling src.WriteTo(dst).</span>
+<a id="L336"></a><span class="ln">   336</span>	func Copy(dst Writer, src Reader) (written int64, err error) {
+<a id="L337"></a><span class="ln">   337</span>		<span class="comment">// If the writer has a ReadFrom method, use it to do the copy.</span>
+<a id="L338"></a><span class="ln">   338</span>		<span class="comment">// Avoids an allocation and a copy.</span>
+<a id="L339"></a><span class="ln">   339</span>		if rt, ok := dst.(ReaderFrom); ok {
+<a id="L340"></a><span class="ln">   340</span>			return rt.ReadFrom(src)
+<a id="L341"></a><span class="ln">   341</span>		}
+<a id="L342"></a><span class="ln">   342</span>		<span class="comment">// Similarly, if the reader has a WriteTo method, use it to do the copy.</span>
+<a id="L343"></a><span class="ln">   343</span>		if wt, ok := src.(WriterTo); ok {
+<a id="L344"></a><span class="ln">   344</span>			return wt.WriteTo(dst)
+<a id="L345"></a><span class="ln">   345</span>		}
+<a id="L346"></a><span class="ln">   346</span>		buf := make([]byte, 32*1024)
+<a id="L347"></a><span class="ln">   347</span>		for {
+<a id="L348"></a><span class="ln">   348</span>			nr, er := src.Read(buf)
+<a id="L349"></a><span class="ln">   349</span>			if nr &gt; 0 {
+<a id="L350"></a><span class="ln">   350</span>				nw, ew := dst.Write(buf[0:nr])
+<a id="L351"></a><span class="ln">   351</span>				if nw &gt; 0 {
+<a id="L352"></a><span class="ln">   352</span>					written += int64(nw)
+<a id="L353"></a><span class="ln">   353</span>				}
+<a id="L354"></a><span class="ln">   354</span>				if ew != nil {
+<a id="L355"></a><span class="ln">   355</span>					err = ew
+<a id="L356"></a><span class="ln">   356</span>					break
+<a id="L357"></a><span class="ln">   357</span>				}
+<a id="L358"></a><span class="ln">   358</span>				if nr != nw {
+<a id="L359"></a><span class="ln">   359</span>					err = ErrShortWrite
+<a id="L360"></a><span class="ln">   360</span>					break
+<a id="L361"></a><span class="ln">   361</span>				}
+<a id="L362"></a><span class="ln">   362</span>			}
+<a id="L363"></a><span class="ln">   363</span>			if er == EOF {
+<a id="L364"></a><span class="ln">   364</span>				break
+<a id="L365"></a><span class="ln">   365</span>			}
+<a id="L366"></a><span class="ln">   366</span>			if er != nil {
+<a id="L367"></a><span class="ln">   367</span>				err = er
+<a id="L368"></a><span class="ln">   368</span>				break
+<a id="L369"></a><span class="ln">   369</span>			}
+<a id="L370"></a><span class="ln">   370</span>		}
+<a id="L371"></a><span class="ln">   371</span>		return written, err
+<a id="L372"></a><span class="ln">   372</span>	}
+<a id="L373"></a><span class="ln">   373</span>	
+<a id="L374"></a><span class="ln">   374</span>	<span class="comment">// LimitReader returns a Reader that reads from r</span>
+<a id="L375"></a><span class="ln">   375</span>	<span class="comment">// but stops with EOF after n bytes.</span>
+<a id="L376"></a><span class="ln">   376</span>	<span class="comment">// The underlying implementation is a *LimitedReader.</span>
+<a id="L377"></a><span class="ln">   377</span>	func LimitReader(r Reader, n int64) Reader { return &amp;LimitedReader{r, n} }
+<a id="L378"></a><span class="ln">   378</span>	
+<a id="L379"></a><span class="ln">   379</span>	<span class="comment">// A LimitedReader reads from R but limits the amount of</span>
+<a id="L380"></a><span class="ln">   380</span>	<span class="comment">// data returned to just N bytes. Each call to Read</span>
+<a id="L381"></a><span class="ln">   381</span>	<span class="comment">// updates N to reflect the new amount remaining.</span>
+<a id="L382"></a><span class="ln">   382</span>	type LimitedReader struct {
+<a id="L383"></a><span class="ln">   383</span>		R Reader <span class="comment">// underlying reader</span>
+<a id="L384"></a><span class="ln">   384</span>		N int64  <span class="comment">// max bytes remaining</span>
+<a id="L385"></a><span class="ln">   385</span>	}
+<a id="L386"></a><span class="ln">   386</span>	
+<a id="L387"></a><span class="ln">   387</span>	func (l *LimitedReader) Read(p []byte) (n int, err error) {
+<a id="L388"></a><span class="ln">   388</span>		if l.N &lt;= 0 {
+<a id="L389"></a><span class="ln">   389</span>			return 0, EOF
+<a id="L390"></a><span class="ln">   390</span>		}
+<a id="L391"></a><span class="ln">   391</span>		if int64(len(p)) &gt; l.N {
+<a id="L392"></a><span class="ln">   392</span>			p = p[0:l.N]
+<a id="L393"></a><span class="ln">   393</span>		}
+<a id="L394"></a><span class="ln">   394</span>		n, err = l.R.Read(p)
+<a id="L395"></a><span class="ln">   395</span>		l.N -= int64(n)
+<a id="L396"></a><span class="ln">   396</span>		return
+<a id="L397"></a><span class="ln">   397</span>	}
+<a id="L398"></a><span class="ln">   398</span>	
+<a id="L399"></a><span class="ln">   399</span>	<span class="comment">// NewSectionReader returns a SectionReader that reads from r</span>
+<a id="L400"></a><span class="ln">   400</span>	<span class="comment">// starting at offset off and stops with EOF after n bytes.</span>
+<a id="L401"></a><span class="ln">   401</span>	func NewSectionReader(r ReaderAt, off int64, n int64) *SectionReader {
+<a id="L402"></a><span class="ln">   402</span>		return &amp;SectionReader{r, off, off, off + n}
+<a id="L403"></a><span class="ln">   403</span>	}
+<a id="L404"></a><span class="ln">   404</span>	
+<a id="L405"></a><span class="ln">   405</span>	<span class="comment">// SectionReader implements Read, Seek, and ReadAt on a section</span>
+<a id="L406"></a><span class="ln">   406</span>	<span class="comment">// of an underlying ReaderAt.</span>
+<a id="L407"></a><span class="ln">   407</span>	type SectionReader struct {
+<a id="L408"></a><span class="ln">   408</span>		r     ReaderAt
+<a id="L409"></a><span class="ln">   409</span>		base  int64
+<a id="L410"></a><span class="ln">   410</span>		off   int64
+<a id="L411"></a><span class="ln">   411</span>		limit int64
+<a id="L412"></a><span class="ln">   412</span>	}
+<a id="L413"></a><span class="ln">   413</span>	
+<a id="L414"></a><span class="ln">   414</span>	func (s *SectionReader) Read(p []byte) (n int, err error) {
+<a id="L415"></a><span class="ln">   415</span>		if s.off &gt;= s.limit {
+<a id="L416"></a><span class="ln">   416</span>			return 0, EOF
+<a id="L417"></a><span class="ln">   417</span>		}
+<a id="L418"></a><span class="ln">   418</span>		if max := s.limit - s.off; int64(len(p)) &gt; max {
+<a id="L419"></a><span class="ln">   419</span>			p = p[0:max]
+<a id="L420"></a><span class="ln">   420</span>		}
+<a id="L421"></a><span class="ln">   421</span>		n, err = s.r.ReadAt(p, s.off)
+<a id="L422"></a><span class="ln">   422</span>		s.off += int64(n)
+<a id="L423"></a><span class="ln">   423</span>		return
+<a id="L424"></a><span class="ln">   424</span>	}
+<a id="L425"></a><span class="ln">   425</span>	
+<a id="L426"></a><span class="ln">   426</span>	var errWhence = errors.New(&#34;Seek: invalid whence&#34;)
+<a id="L427"></a><span class="ln">   427</span>	var errOffset = errors.New(&#34;Seek: invalid offset&#34;)
+<a id="L428"></a><span class="ln">   428</span>	
+<a id="L429"></a><span class="ln">   429</span>	func (s *SectionReader) Seek(offset int64, whence int) (ret int64, err error) {
+<a id="L430"></a><span class="ln">   430</span>		switch whence {
+<a id="L431"></a><span class="ln">   431</span>		default:
+<a id="L432"></a><span class="ln">   432</span>			return 0, errWhence
+<a id="L433"></a><span class="ln">   433</span>		case 0:
+<a id="L434"></a><span class="ln">   434</span>			offset += s.base
+<a id="L435"></a><span class="ln">   435</span>		case 1:
+<a id="L436"></a><span class="ln">   436</span>			offset += s.off
+<a id="L437"></a><span class="ln">   437</span>		case 2:
+<a id="L438"></a><span class="ln">   438</span>			offset += s.limit
+<a id="L439"></a><span class="ln">   439</span>		}
+<a id="L440"></a><span class="ln">   440</span>		if offset &lt; s.base || offset &gt; s.limit {
+<a id="L441"></a><span class="ln">   441</span>			return 0, errOffset
+<a id="L442"></a><span class="ln">   442</span>		}
+<a id="L443"></a><span class="ln">   443</span>		s.off = offset
+<a id="L444"></a><span class="ln">   444</span>		return offset - s.base, nil
+<a id="L445"></a><span class="ln">   445</span>	}
+<a id="L446"></a><span class="ln">   446</span>	
+<a id="L447"></a><span class="ln">   447</span>	func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
+<a id="L448"></a><span class="ln">   448</span>		if off &lt; 0 || off &gt;= s.limit-s.base {
+<a id="L449"></a><span class="ln">   449</span>			return 0, EOF
+<a id="L450"></a><span class="ln">   450</span>		}
+<a id="L451"></a><span class="ln">   451</span>		off += s.base
+<a id="L452"></a><span class="ln">   452</span>		if max := s.limit - off; int64(len(p)) &gt; max {
+<a id="L453"></a><span class="ln">   453</span>			p = p[0:max]
+<a id="L454"></a><span class="ln">   454</span>		}
+<a id="L455"></a><span class="ln">   455</span>		return s.r.ReadAt(p, off)
+<a id="L456"></a><span class="ln">   456</span>	}
+<a id="L457"></a><span class="ln">   457</span>	
+<a id="L458"></a><span class="ln">   458</span>	<span class="comment">// Size returns the size of the section in bytes.</span>
+<a id="L459"></a><span class="ln">   459</span>	func (s *SectionReader) Size() int64 { return s.limit - s.base }
+<a id="L460"></a><span class="ln">   460</span>	
+<a id="L461"></a><span class="ln">   461</span>	<span class="comment">// TeeReader returns a Reader that writes to w what it reads from r.</span>
+<a id="L462"></a><span class="ln">   462</span>	<span class="comment">// All reads from r performed through it are matched with</span>
+<a id="L463"></a><span class="ln">   463</span>	<span class="comment">// corresponding writes to w.  There is no internal buffering -</span>
+<a id="L464"></a><span class="ln">   464</span>	<span class="comment">// the write must complete before the read completes.</span>
+<a id="L465"></a><span class="ln">   465</span>	<span class="comment">// Any error encountered while writing is reported as a read error.</span>
+<a id="L466"></a><span class="ln">   466</span>	func TeeReader(r Reader, w Writer) Reader {
+<a id="L467"></a><span class="ln">   467</span>		return &amp;teeReader{r, w}
+<a id="L468"></a><span class="ln">   468</span>	}
+<a id="L469"></a><span class="ln">   469</span>	
+<a id="L470"></a><span class="ln">   470</span>	type teeReader struct {
+<a id="L471"></a><span class="ln">   471</span>		r Reader
+<a id="L472"></a><span class="ln">   472</span>		w Writer
+<a id="L473"></a><span class="ln">   473</span>	}
+<a id="L474"></a><span class="ln">   474</span>	
+<a id="L475"></a><span class="ln">   475</span>	func (t *teeReader) Read(p []byte) (n int, err error) {
+<a id="L476"></a><span class="ln">   476</span>		n, err = t.r.Read(p)
+<a id="L477"></a><span class="ln">   477</span>		if n &gt; 0 {
+<a id="L478"></a><span class="ln">   478</span>			if n, err := t.w.Write(p[:n]); err != nil {
+<a id="L479"></a><span class="ln">   479</span>				return n, err
+<a id="L480"></a><span class="ln">   480</span>			}
+<a id="L481"></a><span class="ln">   481</span>		}
+<a id="L482"></a><span class="ln">   482</span>		return
+<a id="L483"></a><span class="ln">   483</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+

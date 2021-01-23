@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+  <title>src/pkg/mime/type.go - The Go Programming Language</title>
+
+<link type="text/css" rel="stylesheet" href="/doc/style.css">
+<script type="text/javascript" src="/doc/godocs.js"></script>
+
+<link rel="search" type="application/opensearchdescription+xml" title="godoc" href="/opensearch.xml" />
+
+<script type="text/javascript">
+var _gaq = _gaq || [];
+_gaq.push(["_setAccount", "UA-11222381-2"]);
+_gaq.push(["_trackPageview"]);
+</script>
+</head>
+<body>
+
+
+
+</div></div>
+
+<div id="page" class="wide">
+
+
+  <div id="plusone"><g:plusone size="small" annotation="none"></g:plusone></div>
+  <h1>Source file src/pkg/mime/type.go</h1>
+
+
+
+
+<div id="nav"></div>
+
+
+<pre><a id="L1"></a><span class="ln">     1</span>	<span class="comment">// Copyright 2010 The Go Authors. All rights reserved.</span>
+<a id="L2"></a><span class="ln">     2</span>	<span class="comment">// Use of this source code is governed by a BSD-style</span>
+<a id="L3"></a><span class="ln">     3</span>	<span class="comment">// license that can be found in the LICENSE file.</span>
+<a id="L4"></a><span class="ln">     4</span>	
+<a id="L5"></a><span class="ln">     5</span>	<span class="comment">// Package mime implements parts of the MIME spec.</span>
+<a id="L6"></a><span class="ln">     6</span>	package mime
+<a id="L7"></a><span class="ln">     7</span>	
+<a id="L8"></a><span class="ln">     8</span>	import (
+<a id="L9"></a><span class="ln">     9</span>		&#34;fmt&#34;
+<a id="L10"></a><span class="ln">    10</span>		&#34;strings&#34;
+<a id="L11"></a><span class="ln">    11</span>		&#34;sync&#34;
+<a id="L12"></a><span class="ln">    12</span>	)
+<a id="L13"></a><span class="ln">    13</span>	
+<a id="L14"></a><span class="ln">    14</span>	var mimeTypes = map[string]string{
+<a id="L15"></a><span class="ln">    15</span>		&#34;.css&#34;:  &#34;text/css; charset=utf-8&#34;,
+<a id="L16"></a><span class="ln">    16</span>		&#34;.gif&#34;:  &#34;image/gif&#34;,
+<a id="L17"></a><span class="ln">    17</span>		&#34;.htm&#34;:  &#34;text/html; charset=utf-8&#34;,
+<a id="L18"></a><span class="ln">    18</span>		&#34;.html&#34;: &#34;text/html; charset=utf-8&#34;,
+<a id="L19"></a><span class="ln">    19</span>		&#34;.jpg&#34;:  &#34;image/jpeg&#34;,
+<a id="L20"></a><span class="ln">    20</span>		&#34;.js&#34;:   &#34;application/x-javascript&#34;,
+<a id="L21"></a><span class="ln">    21</span>		&#34;.pdf&#34;:  &#34;application/pdf&#34;,
+<a id="L22"></a><span class="ln">    22</span>		&#34;.png&#34;:  &#34;image/png&#34;,
+<a id="L23"></a><span class="ln">    23</span>		&#34;.xml&#34;:  &#34;text/xml; charset=utf-8&#34;,
+<a id="L24"></a><span class="ln">    24</span>	}
+<a id="L25"></a><span class="ln">    25</span>	
+<a id="L26"></a><span class="ln">    26</span>	var mimeLock sync.RWMutex
+<a id="L27"></a><span class="ln">    27</span>	
+<a id="L28"></a><span class="ln">    28</span>	var once sync.Once
+<a id="L29"></a><span class="ln">    29</span>	
+<a id="L30"></a><span class="ln">    30</span>	<span class="comment">// TypeByExtension returns the MIME type associated with the file extension ext.</span>
+<a id="L31"></a><span class="ln">    31</span>	<span class="comment">// The extension ext should begin with a leading dot, as in &#34;.html&#34;.</span>
+<a id="L32"></a><span class="ln">    32</span>	<span class="comment">// When ext has no associated type, TypeByExtension returns &#34;&#34;.</span>
+<a id="L33"></a><span class="ln">    33</span>	<span class="comment">//</span>
+<a id="L34"></a><span class="ln">    34</span>	<span class="comment">// The built-in table is small but on unix it is augmented by the local</span>
+<a id="L35"></a><span class="ln">    35</span>	<span class="comment">// system&#39;s mime.types file(s) if available under one or more of these</span>
+<a id="L36"></a><span class="ln">    36</span>	<span class="comment">// names:</span>
+<a id="L37"></a><span class="ln">    37</span>	<span class="comment">//</span>
+<a id="L38"></a><span class="ln">    38</span>	<span class="comment">//   /etc/mime.types</span>
+<a id="L39"></a><span class="ln">    39</span>	<span class="comment">//   /etc/apache2/mime.types</span>
+<a id="L40"></a><span class="ln">    40</span>	<span class="comment">//   /etc/apache/mime.types</span>
+<a id="L41"></a><span class="ln">    41</span>	<span class="comment">//</span>
+<a id="L42"></a><span class="ln">    42</span>	<span class="comment">// Windows system mime types are extracted from registry.</span>
+<a id="L43"></a><span class="ln">    43</span>	<span class="comment">//</span>
+<a id="L44"></a><span class="ln">    44</span>	<span class="comment">// Text types have the charset parameter set to &#34;utf-8&#34; by default.</span>
+<a id="L45"></a><span class="ln">    45</span>	func TypeByExtension(ext string) string {
+<a id="L46"></a><span class="ln">    46</span>		once.Do(initMime)
+<a id="L47"></a><span class="ln">    47</span>		mimeLock.RLock()
+<a id="L48"></a><span class="ln">    48</span>		typename := mimeTypes[ext]
+<a id="L49"></a><span class="ln">    49</span>		mimeLock.RUnlock()
+<a id="L50"></a><span class="ln">    50</span>		return typename
+<a id="L51"></a><span class="ln">    51</span>	}
+<a id="L52"></a><span class="ln">    52</span>	
+<a id="L53"></a><span class="ln">    53</span>	<span class="comment">// AddExtensionType sets the MIME type associated with</span>
+<a id="L54"></a><span class="ln">    54</span>	<span class="comment">// the extension ext to typ.  The extension should begin with</span>
+<a id="L55"></a><span class="ln">    55</span>	<span class="comment">// a leading dot, as in &#34;.html&#34;.</span>
+<a id="L56"></a><span class="ln">    56</span>	func AddExtensionType(ext, typ string) error {
+<a id="L57"></a><span class="ln">    57</span>		if ext == &#34;&#34; || ext[0] != &#39;.&#39; {
+<a id="L58"></a><span class="ln">    58</span>			return fmt.Errorf(`mime: extension &#34;%s&#34; misses dot`, ext)
+<a id="L59"></a><span class="ln">    59</span>		}
+<a id="L60"></a><span class="ln">    60</span>		once.Do(initMime)
+<a id="L61"></a><span class="ln">    61</span>		return setExtensionType(ext, typ)
+<a id="L62"></a><span class="ln">    62</span>	}
+<a id="L63"></a><span class="ln">    63</span>	
+<a id="L64"></a><span class="ln">    64</span>	func setExtensionType(extension, mimeType string) error {
+<a id="L65"></a><span class="ln">    65</span>		_, param, err := ParseMediaType(mimeType)
+<a id="L66"></a><span class="ln">    66</span>		if err != nil {
+<a id="L67"></a><span class="ln">    67</span>			return err
+<a id="L68"></a><span class="ln">    68</span>		}
+<a id="L69"></a><span class="ln">    69</span>		if strings.HasPrefix(mimeType, &#34;text/&#34;) &amp;&amp; param[&#34;charset&#34;] == &#34;&#34; {
+<a id="L70"></a><span class="ln">    70</span>			param[&#34;charset&#34;] = &#34;utf-8&#34;
+<a id="L71"></a><span class="ln">    71</span>			mimeType = FormatMediaType(mimeType, param)
+<a id="L72"></a><span class="ln">    72</span>		}
+<a id="L73"></a><span class="ln">    73</span>		mimeLock.Lock()
+<a id="L74"></a><span class="ln">    74</span>		mimeTypes[extension] = mimeType
+<a id="L75"></a><span class="ln">    75</span>		mimeLock.Unlock()
+<a id="L76"></a><span class="ln">    76</span>		return nil
+<a id="L77"></a><span class="ln">    77</span>	}
+</pre>
+
+</div>
+
+<div id="footer">
+Build version go1.0.1.<br>
+Except as <a href="http://code.google.com/policies.html#restrictions">noted</a>,
+the content of this page is licensed under the
+Creative Commons Attribution 3.0 License,
+and code is licensed under a <a href="/LICENSE">BSD license</a>.<br>
+<a href="/doc/tos.html">Terms of Service</a> | 
+<a href="http://www.google.com/intl/en/privacy/privacy-policy.html">Privacy Policy</a>
+</div>
+
+<script type="text/javascript">
+(function() {
+  var ga = document.createElement("script"); ga.type = "text/javascript"; ga.async = true;
+  ga.src = ("https:" == document.location.protocol ? "https://ssl" : "http://www") + ".google-analytics.com/ga.js";
+  var s = document.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ga, s);
+})();
+</script>
+</body>
+<script type="text/javascript">
+  (function() {
+    var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+    po.src = 'https://apis.google.com/js/plusone.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+  })();
+</script>
+</html>
+
