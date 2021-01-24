@@ -3,6 +3,6 @@
 - [linux_man](https://irelandpenguin.github.io/awesome_doc/linux_man/index.html)
 - [linux_101](https://irelandpenguin.github.io/awesome_doc/linux_101/4.html)(deprecated)
 - [golang_manual](https://irelandpenguin.github.io/awesome_doc/golang_manual/index.htm)
-- [wangdoc](https://irelandpenguin.github.io/www.wangdoc.com/index.html)
+- [wangdoc](https://irelandpenguin.github.io/awesome_doc/www.wangdoc.com/index.html)
 
 production by irelandpenguin@github
