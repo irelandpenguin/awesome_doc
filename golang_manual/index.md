@@ -1,0 +1,7 @@
+- installing go 
+	- [getting started](getting started.html)
+- learning go 
+	- [how to write go code](how to write go code.html)
+	- [effective go](effective go.html)
+	- [comand go](command go.html)
+	- [frequently asked questions](frequently asked questions.html)
