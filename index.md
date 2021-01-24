@@ -4,6 +4,6 @@
 - [linux_101](https://irelandpenguin.github.io/awesome_doc/linux_101/4.html)(deprecated)
 - [golang_manual](https://irelandpenguin.github.io/awesome_doc/golang_manual/index.htm)
 - [wangdoc](https://irelandpenguin.github.io/awesome_doc/www.wangdoc.com/index.html)
-- [linuxtools-rst.readthedocs.io](https://irelandpenguin.github.io/linuxtools-rst.readthedocs.io/zh_CN/latest/index.html) 
+- [linuxtools-rst.readthedocs.io](https://irelandpenguin.github.io/awesome_doc/linuxtools-rst.readthedocs.io/zh_CN/latest/index.html) 
 
 production by irelandpenguin@github
