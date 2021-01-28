@@ -1,0 +1,298 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="dns-prefetch" href="//apps.bdimg.com">
+<meta http-equiv="X-UA-Compatible" content="IE=11,IE=10,IE=9,IE=8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-title" content="程序员一代码搬运工">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+<title>如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？-程序员一代码搬运工</title>
+<link rel='dns-prefetch' href='//www.yq1012.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+<link rel='stylesheet' id='wp-block-library-css'  href='http://www.yq1012.com/wp-includes/css/dist/block-library/style.min.css?ver=5.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='_bootstrap-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/bootstrap.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_fontawesome-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/font-awesome.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_main-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/main.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='enlighterjs-css'  href='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.css?ver=0A0B0C' type='text/css' media='all' />
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/jquery.min.js?ver=6.1'></script>
+<link rel='https://api.w.org/' href='http://www.yq1012.com/wp-json/' />
+<link rel='prev' title='你们当时是如何把系统不停机迁移到分库分表的' href='http://www.yq1012.com/mianshizhuanti/4761.html' />
+<link rel='next' title='你们公司是怎么玩儿分库分表的' href='http://www.yq1012.com/mianshizhuanti/4764.html' />
+<link rel="canonical" href="http://www.yq1012.com/mianshizhuanti/4788.html" />
+<link rel='shortlink' href='http://www.yq1012.com/?p=4788' />
+<link rel="alternate" type="application/json+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4788.html" />
+<link rel="alternate" type="text/xml+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4788.html&#038;format=xml" />
+<meta name="keywords" content="面试专题">
+<meta name="description" content="&nbsp;  1、面试题  &nbsp;  如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？  &nbsp;  2、面试官心里分析  &nbsp;  服务治理，这个问题如果问你，其实就是看看你有没有服务治理的思想，因为这个是做过复杂微服务的人肯定会遇到的一个问题。  &nbsp;  服务降级，这个是涉及到复杂分布式系统中必备的一个话题，因为分布式系统互相来回调用，任何一个系统故障">
+<link rel="shortcut icon" href="http://www.yq1012.com/favicon.ico">
+<!--[if lt IE 9]><script src="http://www.yq1012.com/wp-content/themes/duxnew/js/libs/html5.min.js"></script><![endif]-->
+</head>
+<body class="post-template-default single single-post postid-4788 single-format-standard m-excerpt-cat site-layout-2 text-justify-on m-sidebar">
+<header class="header">
+	<div class="container">
+		<div class="logo"><a href="http://www.yq1012.com" title="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】"><img src="http://www.yq1012.com/wp-content/uploads/2015/09/logo.png" alt="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】">程序员一代码搬运工</a></div>		<div class="brand">程序员一代码搬运工<br>                   【Java学习心得和Java学习技术个人总结】</div>		<ul class="site-nav site-navbar">
+			<li id="menu-item-7" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-home menu-item-7"><a title="java学习" href="http://www.yq1012.com/">java首页</a></li>
+<li id="menu-item-3736" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3736"><a href="http://www.yq1012.com/javalanguage">java手册</a></li>
+<li id="menu-item-16" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-has-children menu-item-16"><a title="javappt" href="http://www.yq1012.com/java/jichu">java基础</a>
+<ul class="sub-menu">
+	<li id="menu-item-701" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-701"><a href="http://www.yq1012.com/java/myssh">java三层</a></li>
+	<li id="menu-item-19" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-19"><a title="wenti" href="http://www.yq1012.com/java/question">java问题</a></li>
+	<li id="menu-item-108" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-108"><a href="http://www.yq1012.com/java/shuju">java数据</a></li>
+</ul>
+</li>
+<li id="menu-item-4744" class="menu-item menu-item-type-taxonomy menu-item-object-category current-post-ancestor current-menu-parent current-post-parent menu-item-4744"><a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a></li>
+<li id="menu-item-3735" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3735"><a href="http://tool.yq1012.com">java工具</a></li>
+<li id="menu-item-129" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-129"><a title="shizhan" href="http://www.yq1012.com/java/shizhan">java实战</a></li>
+							<li class="navto-search"><a href="javascript:;" class="search-show active"><i class="fa fa-search"></i></a></li>
+					</ul>
+				<div class="topbar">
+			<ul class="site-nav topmenu">
+											</ul>
+					</div>
+						<i class="fa fa-bars m-icon-nav"></i>
+			</div>
+</header>
+<div class="site-search">
+	<div class="container">
+		<form method="get" class="site-search-form" action="http://www.yq1012.com/" ><input class="search-input" name="s" type="text" placeholder="输入关键字" value=""><button class="search-btn" type="submit"><i class="fa fa-search"></i></button></form>	</div>
+</div>	<div class="breadcrumbs">
+		<div class="container">当前位置：<a href="http://www.yq1012.com">程序员一代码搬运工</a> <small>></small> <a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a> <small>></small> 正文</div>
+	</div>
+<section class="container">
+	<div class="content-wrap">
+	<div class="content">
+				<header class="article-header">
+			<h1 class="article-title"><a href="http://www.yq1012.com/mianshizhuanti/4788.html">如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</a></h1>
+			<div class="article-meta">
+				<span class="item">2019-10-24</span>
+												<span class="item">分类：<a href="http://www.yq1012.com/java/mianshizhuanti" rel="category tag">面试专题</a></span>
+				<span class="item post-views">阅读(244)</span>				<span class="item">评论(0)</span>				<span class="item"></span>
+			</div>
+		</header>
+				<article class="article-content">
+						<p>&nbsp;</p>
+<p>1、面试题</p>
+<p>&nbsp;</p>
+<p>如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</p>
+<p>&nbsp;</p>
+<p>2、面试官心里分析</p>
+<p>&nbsp;</p>
+<p>服务治理，这个问题如果问你，其实就是看看你有没有服务治理的思想，因为这个是做过复杂微服务的人肯定会遇到的一个问题。</p>
+<p>&nbsp;</p>
+<p>服务降级，这个是涉及到复杂分布式系统中必备的一个话题，因为分布式系统互相来回调用，任何一个系统故障了，你不降级，直接就全盘崩溃？那就太坑爹了吧</p>
+<p>&nbsp;</p>
+<p>失败重试，分布式系统中网络请求如此频繁，要是因为网络问题不小心失败了一次，是不是要重试？</p>
+<p>&nbsp;</p>
+<p>超时重试，同上，如果不小心网络慢一点，超时了，如何重试？</p>
+<p>&nbsp;</p>
+<p>（1）dubbo工作原理：服务注册，注册中心，消费者，代理通信，负载均衡</p>
+<p>（2）网络通信、序列化：dubbo协议，长连接，NIO，hessian序列化协议</p>
+<p>（3）负载均衡策略，集群容错策略，动态代理策略：dubbo跑起来的时候一些功能是如何运转的，怎么做负载均衡？怎么做集群容错？怎么生成动态代理？</p>
+<p>（4）dubbo SPI机制：你了解不了解dubbo的SPI机制？如何基于SPI机制对dubbo进行扩展？</p>
+<p>（5）dubbo的服务治理、降级、重试</p>
+<p>&nbsp;</p>
+<p>3、面试题剖析</p>
+<p>&nbsp;</p>
+<p>（1）服务治理</p>
+<p>&nbsp;</p>
+<p>1）调用链路自动生成</p>
+<p>&nbsp;</p>
+<p>一个大型的分布式系统，或者说是用现在流行的微服务架构来说吧，分布式系统由大量的服务组成。那么这些服务之间互相是如何调用的？调用链路是啥？说实话，几乎到后面没人搞的清楚了，因为服务实在太多了，可能几百个甚至几千个服务。</p>
+<p>&nbsp;</p>
+<p>那就需要基于dubbo做的分布式系统中，对各个服务之间的调用自动记录下来，然后自动将各个服务之间的依赖关系和调用链路生成出来，做成一张图，显示出来，大家才可以看到对吧。</p>
+<p>&nbsp;</p>
+<p>服务A -&gt; 服务B -&gt; 服务C</p>
+<p>-&gt; 服务E</p>
+<p>-&gt; 服务D</p>
+<p>-&gt; 服务F</p>
+<p>-&gt; 服务W</p>
+<p>&nbsp;</p>
+<p>2）服务访问压力以及时长统计</p>
+<p>&nbsp;</p>
+<p>需要自动统计各个接口和服务之间的调用次数以及访问延时，而且要分成两个级别。一个级别是接口粒度，就是每个服务的每个接口每天被调用多少次，TP50，TP90，TP99，三个档次的请求延时分别是多少；第二个级别是从源头入口开始，一个完整的请求链路经过几十个服务之后，完成一次请求，每天全链路走多少次，全链路请求延时的TP50，TP90，TP99，分别是多少。</p>
+<p>&nbsp;</p>
+<p>这些东西都搞定了之后，后面才可以来看当前系统的压力主要在哪里，如何来扩容和优化啊</p>
+<p>&nbsp;</p>
+<p>3）其他的</p>
+<p>&nbsp;</p>
+<p>服务分层（避免循环依赖），调用链路失败监控和报警，服务鉴权，每个服务的可用性的监控（接口调用成功率？几个9？）99.99%，99.9%，99%</p>
+<p>&nbsp;</p>
+<p>（2）服务降级</p>
+<p>&nbsp;</p>
+<p>比如说服务A调用服务B，结果服务B挂掉了，服务A重试几次调用服务B，还是不行，直接降级，走一个备用的逻辑，给用户返回响应</p>
+<p>&nbsp;</p>
+<p>public interface HelloService {</p>
+<p>&nbsp;</p>
+<p>void sayHello();</p>
+<p>&nbsp;</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>public class HelloServiceImpl implements HelloService {</p>
+<p>&nbsp;</p>
+<p>public void sayHello() {</p>
+<p>System.out.println(&#8220;hello world&#8230;&#8230;&#8221;);</p>
+<p>}</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>&lt;?xml version=&#8221;1.0&#8243; encoding=&#8221;UTF-8&#8243;?&gt;</p>
+<p>&lt;beans xmlns=&#8221;http://www.springframework.org/schema/beans&#8221;</p>
+<p>xmlns:xsi=&#8221;http://www.w3.org/2001/XMLSchema-instance&#8221; xmlns:dubbo=&#8221;http://code.alibabatech.com/schema/dubbo&#8221;</p>
+<p>xsi:schemaLocation=&#8221;http://www.springframework.org/schema/beans        http://www.springframework.org/schema/beans/spring-beans.xsd        http://code.alibabatech.com/schema/dubbo        http://code.alibabatech.com/schema/dubbo/dubbo.xsd&#8221;&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;dubbo:application name=&#8221;dubbo-provider&#8221; /&gt;</p>
+<p>&lt;dubbo:registry address=&#8221;zookeeper://127.0.0.1:2181&#8243; /&gt;</p>
+<p>&lt;dubbo:protocol name=&#8221;dubbo&#8221; port=&#8221;20880&#8243; /&gt;</p>
+<p>&lt;dubbo:service interface=&#8221;com.zhss.service.HelloService&#8221; ref=&#8221;helloServiceImpl&#8221; timeout=&#8221;10000&#8243; /&gt;</p>
+<p>&lt;bean id=&#8221;helloServiceImpl&#8221; class=&#8221;com.zhss.service.HelloServiceImpl&#8221; /&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;/beans&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;?xml version=&#8221;1.0&#8243; encoding=&#8221;UTF-8&#8243;?&gt;</p>
+<p>&lt;beans xmlns=&#8221;http://www.springframework.org/schema/beans&#8221;</p>
+<p>xmlns:xsi=&#8221;http://www.w3.org/2001/XMLSchema-instance&#8221;</p>
+<p>xmlns:dubbo=&#8221;http://code.alibabatech.com/schema/dubbo&#8221;</p>
+<p>xsi:schemaLocation=&#8221;http://www.springframework.org/schema/beans        http://www.springframework.org/schema/beans/spring-beans.xsd        http://code.alibabatech.com/schema/dubbo        http://code.alibabatech.com/schema/dubbo/dubbo.xsd&#8221;&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;dubbo:application name=&#8221;dubbo-consumer&#8221;  /&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;dubbo:registry address=&#8221;zookeeper://127.0.0.1:2181&#8243; /&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;dubbo:reference id=&#8221;fooService&#8221; interface=&#8221;com.test.service.FooService&#8221;  timeout=&#8221;10000&#8243; check=&#8221;false&#8221; mock=&#8221;return null&#8221;&gt;</p>
+<p>&lt;/dubbo:reference&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;/beans&gt;</p>
+<p>&nbsp;</p>
+<p>现在就是mock，如果调用失败统一返回null</p>
+<p>&nbsp;</p>
+<p>但是可以将mock修改为true，然后在跟接口同一个路径下实现一个Mock类，命名规则是接口名称加Mock后缀。然后在Mock类里实现自己的降级逻辑。</p>
+<p>&nbsp;</p>
+<p>public class HelloServiceMock implements HelloService {</p>
+<p>&nbsp;</p>
+<p>public void sayHello() {</p>
+<p>// 降级逻辑</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>（3）失败重试和超时重试</p>
+<p>&nbsp;</p>
+<p>所谓失败重试，就是consumer调用provider要是失败了，比如抛异常了，此时应该是可以重试的，或者调用超时了也可以重试。</p>
+<p>&nbsp;</p>
+<p>&lt;dubbo:reference id=&#8221;xxxx&#8221; interface=&#8221;xx&#8221; check=&#8221;true&#8221; async=&#8221;false&#8221; retries=&#8221;3&#8243; timeout=&#8221;2000&#8243;/&gt;</p>
+<p>&nbsp;</p>
+<p>某个服务的接口，要耗费5s，你这边不能干等着，你这边配置了timeout之后，我等待2s，还没返回，我直接就撤了，不能干等你</p>
+<p>&nbsp;</p>
+<p>如果是超时了，timeout就会设置超时时间；如果是调用失败了自动就会重试指定的次数</p>
+<p>&nbsp;</p>
+<p>你就结合你们公司的具体的场景来说说你是怎么设置这些参数的，timeout，一般设置为200ms，我们认为不能超过200ms还没返回</p>
+<p>&nbsp;</p>
+<p>retries，3次，设置retries，还一般是在读请求的时候，比如你要查询个数据，你可以设置个retries，如果第一次没读到，报错，重试指定的次数，尝试再次读取2次</p>
+<p>&nbsp;</p>
+		</article>
+								            <div class="post-actions">
+            	<a href="javascript:;" etap="like" class="post-like action action-like" data-pid="4788"><i class="fa fa-thumbs-o-up"></i>赞(<span>0</span>)</a>            	            	            </div>
+        		<div class="post-copyright">未经允许不得转载：<a href="http://www.yq1012.com">程序员一代码搬运工</a> &raquo; <a href="http://www.yq1012.com/mianshizhuanti/4788.html">如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</a></div>		
+					<div class="action-share"><div class="bdsharebuttonbox">
+<span>分享到：</span>
+<a class="bds_qzone" data-cmd="qzone" title="分享到QQ空间"></a>
+<a class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+<a class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+<a class="bds_tqq" data-cmd="tqq" title="分享到腾讯微博"></a>
+<a class="bds_sqq" data-cmd="sqq" title="分享到QQ好友"></a>
+<a class="bds_bdhome" data-cmd="bdhome" title="分享到百度新首页"></a>
+<a class="bds_tqf" data-cmd="tqf" title="分享到腾讯朋友"></a>
+<a class="bds_youdao" data-cmd="youdao" title="分享到有道云笔记"></a>
+<a class="bds_more" data-cmd="more">更多</a> <span>(</span><a class="bds_count" data-cmd="count" title="累计分享0次">0</a><span>)</span>
+</div>
+<script>
+window._bd_share_config = {
+    common: {
+		"bdText"     : "",
+		"bdMini"     : "2",
+		"bdMiniList" : false,
+		"bdPic"      : "",
+		"bdStyle"    : "0",
+		"bdSize"     : "24"
+    },
+    share: [{
+        bdCustomStyle: "http://www.yq1012.com/wp-content/themes/duxnew/css/share.css"
+    }]
+}
+with(document)0[(getElementsByTagName("head")[0]||body).appendChild(createElement("script")).src="http://bdimg.share.baidu.com/static/api/js/share.js?cdnversion="+~(-new Date()/36e5)];
+</script></div>
+		
+		<div class="article-tags"></div>
+		
+		
+		            <nav class="article-nav">
+                <span class="article-nav-prev">上一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4761.html" rel="prev">你们当时是如何把系统不停机迁移到分库分表的</a></span>
+                <span class="article-nav-next">下一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4764.html" rel="next">你们公司是怎么玩儿分库分表的</a></span>
+            </nav>
+        
+				<div class="relates"><div class="title"><h3>相关推荐</h3></div><ul><li><a href="http://www.yq1012.com/mianshizhuanti/4784.html">分布式服务接口请求的顺序性如何保证？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4782.html">如何自己设计一个类似dubbo的rpc框架？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4786.html">分布式服务接口的幂等性如何设计（比如不能重复扣款）</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4778.html">说说zookeeper一般都有哪些使用场景</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4775.html">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4773.html">集群部署时的分布式session如何实现？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4767.html">说说一般如何设计一个高并发的系统架构</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4764.html">你们公司是怎么玩儿分库分表的</a></li></ul></div>					</div>
+	</div>
+	<div class="sidebar">
+<div class="widget widget_text enhanced-text-widget"><div class="textwidget widget-text"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<!-- g_ad -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-3326524125855841"
+     data-ad-slot="3101949489"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div></div><div class="widget widget_ui_textasb"><a class="style02" href="http://www.yq1012.com/javalanguage"><strong>Java基础推荐复习手册</strong><h2>Java基础推荐复习手册</h2><p>主要为了梳理java知识，在脑海形成一个知识网络，希望大家能够 收藏， 每天看一点</p></a></div><div class="widget widget_ui_textasb"><a class="style01" href="http://shang.qq.com/wpa/qunwpa?idkey=466dbf97e0e14d9587a544c0acdf9bf21ae1623e31434c69b2a847a18a6dcfa4" target="_blank"><strong>QQ群推荐</strong><h2>QQjava闲聊群推荐</h2><p>QQ群：16933763
+Java知识分享群
+点击加入</p></a></div>		<div class="widget widget_recent_entries">		<h3>最近文章</h3>		<ul>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5013.html">The remote endpoint was in state [TEXT_FULL_WRITING] which is an invalid state for called method异常处理</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shuju/5009.html">图片采集接口</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shizhan/5006.html">Error during WebSocket handshake: Unexpected response code: 404 websocket连不了</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5001.html">layui数据表格里内容的判断显示 template field 模板</a>
+									</li>
+					</ul>
+		</div><div class="widget widget_ui_tags"><h3>热门标签</h3><div class="items"><a href="http://www.yq1012.com/tag/java">java (36)</a><a href="http://www.yq1012.com/tag/mysql">mysql (31)</a><a href="http://www.yq1012.com/tag/%e6%80%bb%e7%bb%93">总结 (26)</a><a href="http://www.yq1012.com/tag/tomcat">tomcat (22)</a><a href="http://www.yq1012.com/tag/springmvc">springmvc (20)</a><a href="http://www.yq1012.com/tag/ajax">ajax (20)</a><a href="http://www.yq1012.com/tag/eclipse">eclipse (19)</a><a href="http://www.yq1012.com/tag/%e5%ad%a6%e4%b9%a0%e6%8a%80%e5%b7%a7">学习技巧 (17)</a><a href="http://www.yq1012.com/tag/jsp">jsp (17)</a><a href="http://www.yq1012.com/tag/html">html (17)</a><a href="http://www.yq1012.com/tag/%e8%ae%be%e8%ae%a1%e6%a8%a1%e5%bc%8f">设计模式 (16)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82%e5%88%86%e6%9e%90">需求分析 (16)</a><a href="http://www.yq1012.com/tag/java%e6%95%99%e7%a8%8b">java教程 (16)</a><a href="http://www.yq1012.com/tag/jichu">java基础 (15)</a><a href="http://www.yq1012.com/tag/file">file (15)</a><a href="http://www.yq1012.com/tag/freemarker">freemarker (15)</a><a href="http://www.yq1012.com/tag/jquery">jquery (15)</a><a href="http://www.yq1012.com/tag/maven">maven (14)</a><a href="http://www.yq1012.com/tag/hibernate">hibernate (14)</a><a href="http://www.yq1012.com/tag/mianshi">java面试 (13)</a><a href="http://www.yq1012.com/tag/spring">spring (13)</a><a href="http://www.yq1012.com/tag/linux">Linux (12)</a><a href="http://www.yq1012.com/tag/dwz">dwz (12)</a><a href="http://www.yq1012.com/tag/android-2">android (12)</a><a href="http://www.yq1012.com/tag/xml">xml (11)</a><a href="http://www.yq1012.com/tag/%e5%bc%82%e5%b8%b8">异常 (11)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82">需求 (11)</a><a href="http://www.yq1012.com/tag/json">json (11)</a><a href="http://www.yq1012.com/tag/struts">struts (10)</a><a href="http://www.yq1012.com/tag/jeesite">jeesite (10)</a></div></div></div></section>
+
+
+<footer class="footer">
+	<div class="container">
+						<p>&copy; 2021 <a href="http://www.yq1012.com">程序员一代码搬运工</a> &nbsp; 版权所有，保留一切权利！ <a href="http://www.beian.miit.gov.cn" title="工信部网站备案" rel="external nofollow" target="_blank">闽ICP备14003021号-1</a> 技术支持 <a href="http://www.yq1012.com/about" target="_blank">java学习</a> 
+</p>
+	</div>
+</footer>
+
+
+<div class="rollbar rollbar-rb"><ul><li><a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=742275749&site=qq&menu=yes"><i class="fa fa-qq"></i><span>QQ咨询</span></a><h6>QQ咨询<i></i></h6></li><li class="rollbar-totop"><a href="javascript:(jsui.scrollTo());"><i class="fa fa-angle-up"></i><span>回顶</span></a><h6>回顶部<i></i></h6></li></ul></div>
+<script>
+window.jsui={
+	www: 'http://www.yq1012.com',
+	uri: 'http://www.yq1012.com/wp-content/themes/duxnew',
+	ver: '6.1',
+	roll: ["2"],
+	ajaxpager: '0',
+	url_rp: 'http://www.yq1012.com/hezuo'
+};
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/bootstrap.min.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/loader.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.js?ver=0A0B0C'></script>
+<script type='text/javascript'>
+!function(e,n){if("undefined"!=typeof EnlighterJS){var o={"selectors":{"block":"pre.EnlighterJSRAW","inline":"code.EnlighterJSRAW"},"options":{"indent":4,"ampersandCleanup":true,"linehover":true,"rawcodeDbclick":false,"textOverflow":"break","linenumbers":true,"theme":"enlighter","language":"generic","retainCssClasses":false,"collapse":false,"toolbarOuter":"","toolbarTop":"{BTN_RAW}{BTN_COPY}{BTN_WINDOW}{BTN_WEBSITE}","toolbarBottom":""}};(e.EnlighterJSINIT=function(){EnlighterJS.init(o.selectors.block,o.selectors.inline,o.options)})()}else{(n&&(n.error||n.log)||function(){})("Error: EnlighterJS resources not loaded yet!")}}(window,console);
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-includes/js/wp-embed.min.js?ver=5.2.9'></script>
+</body>
+</html>

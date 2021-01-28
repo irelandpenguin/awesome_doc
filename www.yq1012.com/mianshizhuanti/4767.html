@@ -1,0 +1,242 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="dns-prefetch" href="//apps.bdimg.com">
+<meta http-equiv="X-UA-Compatible" content="IE=11,IE=10,IE=9,IE=8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-title" content="程序员一代码搬运工">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+<title>说说一般如何设计一个高并发的系统架构-程序员一代码搬运工</title>
+<link rel='dns-prefetch' href='//www.yq1012.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+<link rel='stylesheet' id='wp-block-library-css'  href='http://www.yq1012.com/wp-includes/css/dist/block-library/style.min.css?ver=5.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='_bootstrap-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/bootstrap.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_fontawesome-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/font-awesome.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_main-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/main.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='enlighterjs-css'  href='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.css?ver=0A0B0C' type='text/css' media='all' />
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/jquery.min.js?ver=6.1'></script>
+<link rel='https://api.w.org/' href='http://www.yq1012.com/wp-json/' />
+<link rel='prev' title='你们公司是怎么玩儿分库分表的' href='http://www.yq1012.com/mianshizhuanti/4764.html' />
+<link rel='next' title='集群部署时的分布式session如何实现？' href='http://www.yq1012.com/mianshizhuanti/4773.html' />
+<link rel="canonical" href="http://www.yq1012.com/mianshizhuanti/4767.html" />
+<link rel='shortlink' href='http://www.yq1012.com/?p=4767' />
+<link rel="alternate" type="application/json+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4767.html" />
+<link rel="alternate" type="text/xml+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4767.html&#038;format=xml" />
+<meta name="keywords" content="面试专题">
+<meta name="description" content="&nbsp;  1、面试题  &nbsp;  如何设计一个高并发系统？  &nbsp;  2、面试官心里分析  &nbsp;  说实话，如果面试官问你这个题目，那么你必须要使出全身吃奶劲了。为啥？因为你没看到现在很多公司招聘的jd里都是说啥，有高并发就经验者优先。  &nbsp;  所以如果你确实有真才实学，在互联网公司里干过高并发系统，那你确实拿offer基本如探囊取物，没啥问题。但是如果你要是">
+<link rel="shortcut icon" href="http://www.yq1012.com/favicon.ico">
+<!--[if lt IE 9]><script src="http://www.yq1012.com/wp-content/themes/duxnew/js/libs/html5.min.js"></script><![endif]-->
+</head>
+<body class="post-template-default single single-post postid-4767 single-format-standard m-excerpt-cat site-layout-2 text-justify-on m-sidebar">
+<header class="header">
+	<div class="container">
+		<div class="logo"><a href="http://www.yq1012.com" title="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】"><img src="http://www.yq1012.com/wp-content/uploads/2015/09/logo.png" alt="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】">程序员一代码搬运工</a></div>		<div class="brand">程序员一代码搬运工<br>                   【Java学习心得和Java学习技术个人总结】</div>		<ul class="site-nav site-navbar">
+			<li id="menu-item-7" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-home menu-item-7"><a title="java学习" href="http://www.yq1012.com/">java首页</a></li>
+<li id="menu-item-3736" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3736"><a href="http://www.yq1012.com/javalanguage">java手册</a></li>
+<li id="menu-item-16" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-has-children menu-item-16"><a title="javappt" href="http://www.yq1012.com/java/jichu">java基础</a>
+<ul class="sub-menu">
+	<li id="menu-item-701" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-701"><a href="http://www.yq1012.com/java/myssh">java三层</a></li>
+	<li id="menu-item-19" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-19"><a title="wenti" href="http://www.yq1012.com/java/question">java问题</a></li>
+	<li id="menu-item-108" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-108"><a href="http://www.yq1012.com/java/shuju">java数据</a></li>
+</ul>
+</li>
+<li id="menu-item-4744" class="menu-item menu-item-type-taxonomy menu-item-object-category current-post-ancestor current-menu-parent current-post-parent menu-item-4744"><a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a></li>
+<li id="menu-item-3735" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3735"><a href="http://tool.yq1012.com">java工具</a></li>
+<li id="menu-item-129" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-129"><a title="shizhan" href="http://www.yq1012.com/java/shizhan">java实战</a></li>
+							<li class="navto-search"><a href="javascript:;" class="search-show active"><i class="fa fa-search"></i></a></li>
+					</ul>
+				<div class="topbar">
+			<ul class="site-nav topmenu">
+											</ul>
+					</div>
+						<i class="fa fa-bars m-icon-nav"></i>
+			</div>
+</header>
+<div class="site-search">
+	<div class="container">
+		<form method="get" class="site-search-form" action="http://www.yq1012.com/" ><input class="search-input" name="s" type="text" placeholder="输入关键字" value=""><button class="search-btn" type="submit"><i class="fa fa-search"></i></button></form>	</div>
+</div>	<div class="breadcrumbs">
+		<div class="container">当前位置：<a href="http://www.yq1012.com">程序员一代码搬运工</a> <small>></small> <a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a> <small>></small> 正文</div>
+	</div>
+<section class="container">
+	<div class="content-wrap">
+	<div class="content">
+				<header class="article-header">
+			<h1 class="article-title"><a href="http://www.yq1012.com/mianshizhuanti/4767.html">说说一般如何设计一个高并发的系统架构</a></h1>
+			<div class="article-meta">
+				<span class="item">2019-10-26</span>
+												<span class="item">分类：<a href="http://www.yq1012.com/java/mianshizhuanti" rel="category tag">面试专题</a></span>
+				<span class="item post-views">阅读(302)</span>				<span class="item">评论(0)</span>				<span class="item"></span>
+			</div>
+		</header>
+				<article class="article-content">
+						<p>&nbsp;</p>
+<p>1、面试题</p>
+<p>&nbsp;</p>
+<p>如何设计一个高并发系统？</p>
+<p>&nbsp;</p>
+<p>2、面试官心里分析</p>
+<p>&nbsp;</p>
+<p>说实话，如果面试官问你这个题目，那么你必须要使出全身吃奶劲了。为啥？因为你没看到现在很多公司招聘的jd里都是说啥，有高并发就经验者优先。</p>
+<p>&nbsp;</p>
+<p>所以如果你确实有真才实学，在互联网公司里干过高并发系统，那你确实拿offer基本如探囊取物，没啥问题。但是如果你要是真是干过高并发系统，面试官绝对绝对不会问这个问题，否则他就是蠢。</p>
+<p>&nbsp;</p>
+<p>假设你在某知名电商公司干过高并发系统，用户上亿，一天流量几十亿，高峰期并发量上万，甚至是十万。那么人家一定会仔细盘问你的系统架构，你们系统啥架构？怎么部署的？部署了多少台机器？缓存咋用的？MQ咋用的？数据库咋用的？就是深挖你到底是如何抗下高并发的。</p>
+<p>&nbsp;</p>
+<p>因为真正干过高并发的人一定知道，脱离了业务的系统架构都是在纸上谈兵，真正在复杂业务场景而且还高并发的时候，那系统架构一定不是那么简单的，用个redis，用mq就能搞定？当然不是，真实的系统架构搭配上业务之后，会比这种简单的所谓“高并发架构”要复杂很多倍。</p>
+<p>&nbsp;</p>
+<p>如果有面试官问你个问题说，如何设计一个高并发系统？那么不好意思，一定是因为你实际上没干过高并发系统。面试官看你简历就没啥出彩的，感觉就不咋地，所以就会问问你，如何设计一个高并发系统？其实说白了本质就是看看你有没有自己研究过，有没有一定的知识积累。</p>
+<p>&nbsp;</p>
+<p>最好的当然是招聘个真正干过高并发的哥儿们咯，但是这种哥儿们人数稀缺，不好招。所以可能次一点的就是招一个自己研究过的哥儿们，总比招一个傻也不会的哥儿们好吧！</p>
+<p>&nbsp;</p>
+<p>所以这个时候你必须得做一把个人秀了，秀出你所有关于高并发的知识！</p>
+<p>&nbsp;</p>
+<p>3、面试题剖析</p>
+<p>&nbsp;</p>
+<p>其实所谓的高并发，如果你要理解这个问题呢，其实就得从高并发的根源出发，为啥会有高并发？为啥高并发就很牛逼？</p>
+<p>&nbsp;</p>
+<p>我说的浅显一点，很简单，就是因为刚开始系统都是连接数据库的，但是要知道数据库支撑到每秒并发两三千的时候，基本就快完了。所以才有说，很多公司，刚开始干的时候，技术比较low，结果业务发展太快，有的时候系统扛不住压力就挂了。</p>
+<p>&nbsp;</p>
+<p>当然会挂了，凭什么不挂？你数据库如果瞬间承载每秒5000,8000，甚至上万的并发，一定会宕机，因为比如mysql就压根儿扛不住这么高的并发量。</p>
+<p>&nbsp;</p>
+<p>所以为啥高并发牛逼？就是因为现在用互联网的人越来越多，很多app、网站、系统承载的都是高并发请求，可能高峰期每秒并发量几千，很正常的。如果是什么双十一了之类的，每秒并发几万几十万都有可能。</p>
+<p>&nbsp;</p>
+<p>那么如此之高的并发量，加上原本就如此之复杂的业务，咋玩儿？真正厉害的，一定是在复杂业务系统里玩儿过高并发架构的人，但是你没有，那么我给你说一下你该怎么回答这个问题：</p>
+<p>&nbsp;</p>
+<p>（1）系统拆分，将一个系统拆分为多个子系统，用dubbo来搞。然后每个系统连一个数据库，这样本来就一个库，现在多个数据库，不也可以抗高并发么。</p>
+<p>&nbsp;</p>
+<p>（2）缓存，必须得用缓存。大部分的高并发场景，都是读多写少，那你完全可以在数据库和缓存里都写一份，然后读的时候大量走缓存不就得了。毕竟人家redis轻轻松松单机几万的并发啊。没问题的。所以你可以考虑考虑你的项目里，那些承载主要请求的读场景，怎么用缓存来抗高并发。</p>
+<p>&nbsp;</p>
+<p>（3）MQ，必须得用MQ。可能你还是会出现高并发写的场景，比如说一个业务操作里要频繁搞数据库几十次，增删改增删改，疯了。那高并发绝对搞挂你的系统，你要是用redis来承载写那肯定不行，人家是缓存，数据随时就被LRU了，数据格式还无比简单，没有事务支持。所以该用mysql还得用mysql啊。那你咋办？用MQ吧，大量的写请求灌入MQ里，排队慢慢玩儿，后边系统消费后慢慢写，控制在mysql承载范围之内。所以你得考虑考虑你的项目里，那些承载复杂写业务逻辑的场景里，如何用MQ来异步写，提升并发性。MQ单机抗几万并发也是ok的，这个之前还特意说过。</p>
+<p>&nbsp;</p>
+<p>（4）分库分表，可能到了最后数据库层面还是免不了抗高并发的要求，好吧，那么就将一个数据库拆分为多个库，多个库来抗更高的并发；然后将一个表拆分为多个表，每个表的数据量保持少一点，提高sql跑的性能。</p>
+<p>&nbsp;</p>
+<p>（5）读写分离，这个就是说大部分时候数据库可能也是读多写少，没必要所有请求都集中在一个库上吧，可以搞个主从架构，主库写入，从库读取，搞一个读写分离。读流量太多的时候，还可以加更多的从库。</p>
+<p>&nbsp;</p>
+<p>（6）Elasticsearch，可以考虑用es。es是分布式的，可以随便扩容，分布式天然就可以支撑高并发，因为动不动就可以扩容加机器来抗更高的并发。那么一些比较简单的查询、统计类的操作，可以考虑用es来承载，还有一些全文搜索类的操作，也可以考虑用es来承载。</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>上面的6点，基本就是高并发系统肯定要干的一些事儿，大家可以仔细结合之前讲过的知识考虑一下，到时候你可以系统的把这块阐述一下，然后每个部分要注意哪些问题，之前都讲过了，你都可以阐述阐述，表明你对这块是有点积累的。</p>
+<p>&nbsp;</p>
+<p>说句实话，毕竟真正你厉害的一点，不是在于弄明白一些技术，或者大概知道一个高并发系统应该长什么样？其实实际上在真正的复杂的业务系统里，做高并发要远远比我这个图复杂几十倍到上百倍。你需要考虑，哪些需要分库分表，哪些不需要分库分表，单库单表跟分库分表如何join，哪些数据要放到缓存里去啊，放哪些数据再可以抗掉高并发的请求，你需要完成对一个复杂业务系统的分析之后，然后逐步逐步的加入高并发的系统架构的改造，这个过程是务必复杂的，一旦做过一次，一旦做好了，你在这个市场上就会非常的吃香。</p>
+<p>&nbsp;</p>
+<p>其实大部分公司，真正看重的，不是说你掌握高并发相关的一些基本的架构知识，架构中的一些技术，RocketMQ、Kafka、Redis、Elasticsearch，高并发这一块，次一等的人才。对一个有几十万行代码的复杂的分布式系统，一步一步架构、设计以及实践过高并发架构的人，这个经验是难能可贵的。</p>
+<p>&nbsp;</p>
+<p>我这边其实平时我会发布一些免费的课程，每隔一段时间定期发布一点，主要是尽可能给大家讲一些免费的课程，保证质量， 让大家学到一些东西。</p>
+<p>&nbsp;</p>
+<p>我主要还是专注在自己的架构师体系的课程上面，是一年多的时间，非常长，内容极其庞大，我从一开始就带着你从0开始，动手构建一个10万行以上代码量的这么个庞大的系统，针对这种复杂系统的业务场景，里面隐含的各种技术问题和坑，我会通过1年多的时间，一步一步的讲解各种技术和架构，解决真实的大型的系统中的各种问题。</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+		</article>
+								            <div class="post-actions">
+            	<a href="javascript:;" etap="like" class="post-like action action-like" data-pid="4767"><i class="fa fa-thumbs-o-up"></i>赞(<span>0</span>)</a>            	            	            </div>
+        		<div class="post-copyright">未经允许不得转载：<a href="http://www.yq1012.com">程序员一代码搬运工</a> &raquo; <a href="http://www.yq1012.com/mianshizhuanti/4767.html">说说一般如何设计一个高并发的系统架构</a></div>		
+					<div class="action-share"><div class="bdsharebuttonbox">
+<span>分享到：</span>
+<a class="bds_qzone" data-cmd="qzone" title="分享到QQ空间"></a>
+<a class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+<a class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+<a class="bds_tqq" data-cmd="tqq" title="分享到腾讯微博"></a>
+<a class="bds_sqq" data-cmd="sqq" title="分享到QQ好友"></a>
+<a class="bds_bdhome" data-cmd="bdhome" title="分享到百度新首页"></a>
+<a class="bds_tqf" data-cmd="tqf" title="分享到腾讯朋友"></a>
+<a class="bds_youdao" data-cmd="youdao" title="分享到有道云笔记"></a>
+<a class="bds_more" data-cmd="more">更多</a> <span>(</span><a class="bds_count" data-cmd="count" title="累计分享0次">0</a><span>)</span>
+</div>
+<script>
+window._bd_share_config = {
+    common: {
+		"bdText"     : "",
+		"bdMini"     : "2",
+		"bdMiniList" : false,
+		"bdPic"      : "",
+		"bdStyle"    : "0",
+		"bdSize"     : "24"
+    },
+    share: [{
+        bdCustomStyle: "http://www.yq1012.com/wp-content/themes/duxnew/css/share.css"
+    }]
+}
+with(document)0[(getElementsByTagName("head")[0]||body).appendChild(createElement("script")).src="http://bdimg.share.baidu.com/static/api/js/share.js?cdnversion="+~(-new Date()/36e5)];
+</script></div>
+		
+		<div class="article-tags"></div>
+		
+		
+		            <nav class="article-nav">
+                <span class="article-nav-prev">上一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4764.html" rel="prev">你们公司是怎么玩儿分库分表的</a></span>
+                <span class="article-nav-next">下一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4773.html" rel="next">集群部署时的分布式session如何实现？</a></span>
+            </nav>
+        
+				<div class="relates"><div class="title"><h3>相关推荐</h3></div><ul><li><a href="http://www.yq1012.com/mianshizhuanti/4784.html">分布式服务接口请求的顺序性如何保证？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4782.html">如何自己设计一个类似dubbo的rpc框架？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4786.html">分布式服务接口的幂等性如何设计（比如不能重复扣款）</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4778.html">说说zookeeper一般都有哪些使用场景</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4775.html">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4773.html">集群部署时的分布式session如何实现？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4764.html">你们公司是怎么玩儿分库分表的</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4788.html">如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</a></li></ul></div>					</div>
+	</div>
+	<div class="sidebar">
+<div class="widget widget_text enhanced-text-widget"><div class="textwidget widget-text"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<!-- g_ad -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-3326524125855841"
+     data-ad-slot="3101949489"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div></div><div class="widget widget_ui_textasb"><a class="style02" href="http://www.yq1012.com/javalanguage"><strong>Java基础推荐复习手册</strong><h2>Java基础推荐复习手册</h2><p>主要为了梳理java知识，在脑海形成一个知识网络，希望大家能够 收藏， 每天看一点</p></a></div><div class="widget widget_ui_textasb"><a class="style01" href="http://shang.qq.com/wpa/qunwpa?idkey=466dbf97e0e14d9587a544c0acdf9bf21ae1623e31434c69b2a847a18a6dcfa4" target="_blank"><strong>QQ群推荐</strong><h2>QQjava闲聊群推荐</h2><p>QQ群：16933763
+Java知识分享群
+点击加入</p></a></div>		<div class="widget widget_recent_entries">		<h3>最近文章</h3>		<ul>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5013.html">The remote endpoint was in state [TEXT_FULL_WRITING] which is an invalid state for called method异常处理</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shuju/5009.html">图片采集接口</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shizhan/5006.html">Error during WebSocket handshake: Unexpected response code: 404 websocket连不了</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5001.html">layui数据表格里内容的判断显示 template field 模板</a>
+									</li>
+					</ul>
+		</div><div class="widget widget_ui_tags"><h3>热门标签</h3><div class="items"><a href="http://www.yq1012.com/tag/java">java (36)</a><a href="http://www.yq1012.com/tag/mysql">mysql (31)</a><a href="http://www.yq1012.com/tag/%e6%80%bb%e7%bb%93">总结 (26)</a><a href="http://www.yq1012.com/tag/tomcat">tomcat (22)</a><a href="http://www.yq1012.com/tag/springmvc">springmvc (20)</a><a href="http://www.yq1012.com/tag/ajax">ajax (20)</a><a href="http://www.yq1012.com/tag/eclipse">eclipse (19)</a><a href="http://www.yq1012.com/tag/%e5%ad%a6%e4%b9%a0%e6%8a%80%e5%b7%a7">学习技巧 (17)</a><a href="http://www.yq1012.com/tag/jsp">jsp (17)</a><a href="http://www.yq1012.com/tag/html">html (17)</a><a href="http://www.yq1012.com/tag/%e8%ae%be%e8%ae%a1%e6%a8%a1%e5%bc%8f">设计模式 (16)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82%e5%88%86%e6%9e%90">需求分析 (16)</a><a href="http://www.yq1012.com/tag/java%e6%95%99%e7%a8%8b">java教程 (16)</a><a href="http://www.yq1012.com/tag/jichu">java基础 (15)</a><a href="http://www.yq1012.com/tag/file">file (15)</a><a href="http://www.yq1012.com/tag/freemarker">freemarker (15)</a><a href="http://www.yq1012.com/tag/jquery">jquery (15)</a><a href="http://www.yq1012.com/tag/maven">maven (14)</a><a href="http://www.yq1012.com/tag/hibernate">hibernate (14)</a><a href="http://www.yq1012.com/tag/mianshi">java面试 (13)</a><a href="http://www.yq1012.com/tag/spring">spring (13)</a><a href="http://www.yq1012.com/tag/linux">Linux (12)</a><a href="http://www.yq1012.com/tag/dwz">dwz (12)</a><a href="http://www.yq1012.com/tag/android-2">android (12)</a><a href="http://www.yq1012.com/tag/xml">xml (11)</a><a href="http://www.yq1012.com/tag/%e5%bc%82%e5%b8%b8">异常 (11)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82">需求 (11)</a><a href="http://www.yq1012.com/tag/json">json (11)</a><a href="http://www.yq1012.com/tag/struts">struts (10)</a><a href="http://www.yq1012.com/tag/jeesite">jeesite (10)</a></div></div></div></section>
+
+
+<footer class="footer">
+	<div class="container">
+						<p>&copy; 2021 <a href="http://www.yq1012.com">程序员一代码搬运工</a> &nbsp; 版权所有，保留一切权利！ <a href="http://www.beian.miit.gov.cn" title="工信部网站备案" rel="external nofollow" target="_blank">闽ICP备14003021号-1</a> 技术支持 <a href="http://www.yq1012.com/about" target="_blank">java学习</a> 
+</p>
+	</div>
+</footer>
+
+
+<div class="rollbar rollbar-rb"><ul><li><a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=742275749&site=qq&menu=yes"><i class="fa fa-qq"></i><span>QQ咨询</span></a><h6>QQ咨询<i></i></h6></li><li class="rollbar-totop"><a href="javascript:(jsui.scrollTo());"><i class="fa fa-angle-up"></i><span>回顶</span></a><h6>回顶部<i></i></h6></li></ul></div>
+<script>
+window.jsui={
+	www: 'http://www.yq1012.com',
+	uri: 'http://www.yq1012.com/wp-content/themes/duxnew',
+	ver: '6.1',
+	roll: ["2"],
+	ajaxpager: '0',
+	url_rp: 'http://www.yq1012.com/hezuo'
+};
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/bootstrap.min.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/loader.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.js?ver=0A0B0C'></script>
+<script type='text/javascript'>
+!function(e,n){if("undefined"!=typeof EnlighterJS){var o={"selectors":{"block":"pre.EnlighterJSRAW","inline":"code.EnlighterJSRAW"},"options":{"indent":4,"ampersandCleanup":true,"linehover":true,"rawcodeDbclick":false,"textOverflow":"break","linenumbers":true,"theme":"enlighter","language":"generic","retainCssClasses":false,"collapse":false,"toolbarOuter":"","toolbarTop":"{BTN_RAW}{BTN_COPY}{BTN_WINDOW}{BTN_WEBSITE}","toolbarBottom":""}};(e.EnlighterJSINIT=function(){EnlighterJS.init(o.selectors.block,o.selectors.inline,o.options)})()}else{(n&&(n.error||n.log)||function(){})("Error: EnlighterJS resources not loaded yet!")}}(window,console);
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-includes/js/wp-embed.min.js?ver=5.2.9'></script>
+</body>
+</html>

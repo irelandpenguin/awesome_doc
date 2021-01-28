@@ -1,0 +1,306 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="dns-prefetch" href="//apps.bdimg.com">
+<meta http-equiv="X-UA-Compatible" content="IE=11,IE=10,IE=9,IE=8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-title" content="程序员一代码搬运工">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+<title>集群部署时的分布式session如何实现？-程序员一代码搬运工</title>
+<link rel='dns-prefetch' href='//www.yq1012.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+<link rel='stylesheet' id='wp-block-library-css'  href='http://www.yq1012.com/wp-includes/css/dist/block-library/style.min.css?ver=5.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='_bootstrap-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/bootstrap.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_fontawesome-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/font-awesome.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_main-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/main.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='enlighterjs-css'  href='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.css?ver=0A0B0C' type='text/css' media='all' />
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/jquery.min.js?ver=6.1'></script>
+<link rel='https://api.w.org/' href='http://www.yq1012.com/wp-json/' />
+<link rel='prev' title='说说一般如何设计一个高并发的系统架构' href='http://www.yq1012.com/mianshizhuanti/4767.html' />
+<link rel='next' title='分布式锁是啥？对比下redis和zk两种分布式锁的优劣' href='http://www.yq1012.com/mianshizhuanti/4775.html' />
+<link rel="canonical" href="http://www.yq1012.com/mianshizhuanti/4773.html" />
+<link rel='shortlink' href='http://www.yq1012.com/?p=4773' />
+<link rel="alternate" type="application/json+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4773.html" />
+<link rel="alternate" type="text/xml+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4773.html&#038;format=xml" />
+<meta name="keywords" content="面试专题">
+<meta name="description" content="&nbsp;  1、面试题  &nbsp;  集群部署时的分布式session如何实现？  &nbsp;  2、面试官心里分析  &nbsp;  面试官问了你一堆dubbo是怎么玩儿的，你会玩儿dubbo就可以把单块系统弄成分布式系统，然后分布式之后接踵而来的就是一堆问题，最大的问题就是分布式事务、接口幂等性、分布式锁，还有最后一个就是分布式session。  &nbsp;  当然了，分布式系统中">
+<link rel="shortcut icon" href="http://www.yq1012.com/favicon.ico">
+<!--[if lt IE 9]><script src="http://www.yq1012.com/wp-content/themes/duxnew/js/libs/html5.min.js"></script><![endif]-->
+</head>
+<body class="post-template-default single single-post postid-4773 single-format-standard m-excerpt-cat site-layout-2 text-justify-on m-sidebar">
+<header class="header">
+	<div class="container">
+		<div class="logo"><a href="http://www.yq1012.com" title="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】"><img src="http://www.yq1012.com/wp-content/uploads/2015/09/logo.png" alt="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】">程序员一代码搬运工</a></div>		<div class="brand">程序员一代码搬运工<br>                   【Java学习心得和Java学习技术个人总结】</div>		<ul class="site-nav site-navbar">
+			<li id="menu-item-7" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-home menu-item-7"><a title="java学习" href="http://www.yq1012.com/">java首页</a></li>
+<li id="menu-item-3736" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3736"><a href="http://www.yq1012.com/javalanguage">java手册</a></li>
+<li id="menu-item-16" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-has-children menu-item-16"><a title="javappt" href="http://www.yq1012.com/java/jichu">java基础</a>
+<ul class="sub-menu">
+	<li id="menu-item-701" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-701"><a href="http://www.yq1012.com/java/myssh">java三层</a></li>
+	<li id="menu-item-19" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-19"><a title="wenti" href="http://www.yq1012.com/java/question">java问题</a></li>
+	<li id="menu-item-108" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-108"><a href="http://www.yq1012.com/java/shuju">java数据</a></li>
+</ul>
+</li>
+<li id="menu-item-4744" class="menu-item menu-item-type-taxonomy menu-item-object-category current-post-ancestor current-menu-parent current-post-parent menu-item-4744"><a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a></li>
+<li id="menu-item-3735" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3735"><a href="http://tool.yq1012.com">java工具</a></li>
+<li id="menu-item-129" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-129"><a title="shizhan" href="http://www.yq1012.com/java/shizhan">java实战</a></li>
+							<li class="navto-search"><a href="javascript:;" class="search-show active"><i class="fa fa-search"></i></a></li>
+					</ul>
+				<div class="topbar">
+			<ul class="site-nav topmenu">
+											</ul>
+					</div>
+						<i class="fa fa-bars m-icon-nav"></i>
+			</div>
+</header>
+<div class="site-search">
+	<div class="container">
+		<form method="get" class="site-search-form" action="http://www.yq1012.com/" ><input class="search-input" name="s" type="text" placeholder="输入关键字" value=""><button class="search-btn" type="submit"><i class="fa fa-search"></i></button></form>	</div>
+</div>	<div class="breadcrumbs">
+		<div class="container">当前位置：<a href="http://www.yq1012.com">程序员一代码搬运工</a> <small>></small> <a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a> <small>></small> 正文</div>
+	</div>
+<section class="container">
+	<div class="content-wrap">
+	<div class="content">
+				<header class="article-header">
+			<h1 class="article-title"><a href="http://www.yq1012.com/mianshizhuanti/4773.html">集群部署时的分布式session如何实现？</a></h1>
+			<div class="article-meta">
+				<span class="item">2019-10-26</span>
+												<span class="item">分类：<a href="http://www.yq1012.com/java/mianshizhuanti" rel="category tag">面试专题</a></span>
+				<span class="item post-views">阅读(211)</span>				<span class="item">评论(0)</span>				<span class="item"></span>
+			</div>
+		</header>
+				<article class="article-content">
+						<p>&nbsp;</p>
+<p>1、面试题</p>
+<p>&nbsp;</p>
+<p>集群部署时的分布式session如何实现？</p>
+<p>&nbsp;</p>
+<p>2、面试官心里分析</p>
+<p>&nbsp;</p>
+<p>面试官问了你一堆dubbo是怎么玩儿的，你会玩儿dubbo就可以把单块系统弄成分布式系统，然后分布式之后接踵而来的就是一堆问题，最大的问题就是分布式事务、接口幂等性、分布式锁，还有最后一个就是分布式session。</p>
+<p>&nbsp;</p>
+<p>当然了，分布式系统中的问题何止这么一点，非常之多，复杂度很高，但是这里就是说下常见的几个，也是面试的时候常问的几个。</p>
+<p>&nbsp;</p>
+<p>3、面试题剖析</p>
+<p>&nbsp;</p>
+<p>session是啥？浏览器有个cookie，在一段时间内这个cookie都存在，然后每次发请求过来都带上一个特殊的jsessionid cookie，就根据这个东西，在服务端可以维护一个对应的session域，里面可以放点儿数据。</p>
+<p>&nbsp;</p>
+<p>一般只要你没关掉浏览器，cookie还在，那么对应的那个session就在，但是cookie没了，session就没了。常见于什么购物车之类的东西，还有登录状态保存之类的。</p>
+<p>&nbsp;</p>
+<p>这个不多说了，懂java的都该知道这个。</p>
+<p>&nbsp;</p>
+<p>但是你单块系统的时候这么玩儿session没问题啊，但是你要是分布式系统了呢，那么多的服务，session状态在哪儿维护啊？</p>
+<p>&nbsp;</p>
+<p>其实方法很多，但是常见常用的是两种：</p>
+<p>&nbsp;</p>
+<p>（1）tomcat + redis</p>
+<p>&nbsp;</p>
+<p>这个其实还挺方便的，就是使用session的代码跟以前一样，还是基于tomcat原生的session支持即可，然后就是用一个叫做Tomcat RedisSessionManager的东西，让所有我们部署的tomcat都将session数据存储到redis即可。</p>
+<p>&nbsp;</p>
+<p>在tomcat的配置文件中，配置一下</p>
+<p>&nbsp;</p>
+<p>&lt;Valve className=&#8221;com.orangefunction.tomcat.redissessions.RedisSessionHandlerValve&#8221; /&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;Manager className=&#8221;com.orangefunction.tomcat.redissessions.RedisSessionManager&#8221;</p>
+<p>host=&#8221;{redis.host}&#8221;</p>
+<p>port=&#8221;{redis.port}&#8221;</p>
+<p>database=&#8221;{redis.dbnum}&#8221;</p>
+<p>maxInactiveInterval=&#8221;60&#8243;/&gt;</p>
+<p>&nbsp;</p>
+<p>搞一个类似上面的配置即可，你看是不是就是用了RedisSessionManager，然后指定了redis的host和 port就ok了。</p>
+<p>&nbsp;</p>
+<p>&lt;Valve className=&#8221;com.orangefunction.tomcat.redissessions.RedisSessionHandlerValve&#8221; /&gt;</p>
+<p>&lt;Manager className=&#8221;com.orangefunction.tomcat.redissessions.RedisSessionManager&#8221;</p>
+<p>sentinelMaster=&#8221;mymaster&#8221;</p>
+<p>sentinels=&#8221;&lt;sentinel1-ip&gt;:26379,&lt;sentinel2-ip&gt;:26379,&lt;sentinel3-ip&gt;:26379&#8243;</p>
+<p>maxInactiveInterval=&#8221;60&#8243;/&gt;</p>
+<p>&nbsp;</p>
+<p>还可以用上面这种方式基于redis哨兵支持的redis高可用集群来保存session数据，都是ok的</p>
+<p>&nbsp;</p>
+<p>（2）spring session + redis</p>
+<p>&nbsp;</p>
+<p>分布式会话的这个东西重耦合在tomcat中，如果我要将web容器迁移成jetty，难道你重新把jetty都配置一遍吗？</p>
+<p>&nbsp;</p>
+<p>因为上面那种tomcat + redis的方式好用，但是会严重依赖于web容器，不好将代码移植到其他web容器上去，尤其是你要是换了技术栈咋整？比如换成了spring cloud或者是spring boot之类的。还得好好思忖思忖。</p>
+<p>&nbsp;</p>
+<p>所以现在比较好的还是基于java一站式解决方案，spring了。人家spring基本上包掉了大部分的我们需要使用的框架了，spirng cloud做微服务了，spring boot做脚手架了，所以用sping session是一个很好的选择。</p>
+<p>&nbsp;</p>
+<p>pom.xml</p>
+<p>&nbsp;</p>
+<p>&lt;dependency&gt;</p>
+<p>&lt;groupId&gt;org.springframework.session&lt;/groupId&gt;</p>
+<p>&lt;artifactId&gt;spring-session-data-redis&lt;/artifactId&gt;</p>
+<p>&lt;version&gt;1.2.1.RELEASE&lt;/version&gt;</p>
+<p>&lt;/dependency&gt;</p>
+<p>&lt;dependency&gt;</p>
+<p>&lt;groupId&gt;redis.clients&lt;/groupId&gt;</p>
+<p>&lt;artifactId&gt;jedis&lt;/artifactId&gt;</p>
+<p>&lt;version&gt;2.8.1&lt;/version&gt;</p>
+<p>&lt;/dependency&gt;</p>
+<p>&nbsp;</p>
+<p>spring配置文件中</p>
+<p>&nbsp;</p>
+<p>&lt;bean id=&#8221;redisHttpSessionConfiguration&#8221;</p>
+<p>class=&#8221;org.springframework.session.data.redis.config.annotation.web.http.RedisHttpSessionConfiguration&#8221;&gt;</p>
+<p>&lt;property name=&#8221;maxInactiveIntervalInSeconds&#8221; value=&#8221;600&#8243;/&gt;</p>
+<p>&lt;/bean&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;bean id=&#8221;jedisPoolConfig&#8221; class=&#8221;redis.clients.jedis.JedisPoolConfig&#8221;&gt;</p>
+<p>&lt;property name=&#8221;maxTotal&#8221; value=&#8221;100&#8243; /&gt;</p>
+<p>&lt;property name=&#8221;maxIdle&#8221; value=&#8221;10&#8243; /&gt;</p>
+<p>&lt;/bean&gt;</p>
+<p>&nbsp;</p>
+<p>&lt;bean id=&#8221;jedisConnectionFactory&#8221;</p>
+<p>class=&#8221;org.springframework.data.redis.connection.jedis.JedisConnectionFactory&#8221; destroy-method=&#8221;destroy&#8221;&gt;</p>
+<p>&lt;property name=&#8221;hostName&#8221; value=&#8221;${redis_hostname}&#8221;/&gt;</p>
+<p>&lt;property name=&#8221;port&#8221; value=&#8221;${redis_port}&#8221;/&gt;</p>
+<p>&lt;property name=&#8221;password&#8221; value=&#8221;${redis_pwd}&#8221; /&gt;</p>
+<p>&lt;property name=&#8221;timeout&#8221; value=&#8221;3000&#8243;/&gt;</p>
+<p>&lt;property name=&#8221;usePool&#8221; value=&#8221;true&#8221;/&gt;</p>
+<p>&lt;property name=&#8221;poolConfig&#8221; ref=&#8221;jedisPoolConfig&#8221;/&gt;</p>
+<p>&lt;/bean&gt;</p>
+<p>&nbsp;</p>
+<p>web.xml</p>
+<p>&nbsp;</p>
+<p>&lt;filter&gt;</p>
+<p>&lt;filter-name&gt;springSessionRepositoryFilter&lt;/filter-name&gt;</p>
+<p>&lt;filter-class&gt;org.springframework.web.filter.DelegatingFilterProxy&lt;/filter-class&gt;</p>
+<p>&lt;/filter&gt;</p>
+<p>&lt;filter-mapping&gt;</p>
+<p>&lt;filter-name&gt;springSessionRepositoryFilter&lt;/filter-name&gt;</p>
+<p>&lt;url-pattern&gt;/*&lt;/url-pattern&gt;</p>
+<p>&lt;/filter-mapping&gt;</p>
+<p>&nbsp;</p>
+<p>示例代码</p>
+<p>&nbsp;</p>
+<p>@Controller</p>
+<p>@RequestMapping(&#8220;/test&#8221;)</p>
+<p>public class TestController {</p>
+<p>&nbsp;</p>
+<p>@RequestMapping(&#8220;/putIntoSession&#8221;)</p>
+<p>@ResponseBody</p>
+<p>public String putIntoSession(HttpServletRequest request, String username){</p>
+<p>request.getSession().setAttribute(&#8220;name&#8221;,  “leo”);</p>
+<p>&nbsp;</p>
+<p>return &#8220;ok&#8221;;</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>@RequestMapping(&#8220;/getFromSession&#8221;)</p>
+<p>@ResponseBody</p>
+<p>public String getFromSession(HttpServletRequest request, Model model){</p>
+<p>String name = request.getSession().getAttribute(&#8220;name&#8221;);</p>
+<p>return name;</p>
+<p>}</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>上面的代码就是ok的，给sping session配置基于redis来存储session数据，然后配置了一个spring session的过滤器，这样的话，session相关操作都会交给spring session来管了。接着在代码中，就用原生的session操作，就是直接基于spring sesion从redis中获取数据了。</p>
+<p>&nbsp;</p>
+<p>实现分布式的会话，有很多种很多种方式，我说的只不过比较常见的两种方式，tomcat + redis早期比较常用；近些年，重耦合到tomcat中去，通过spring session来实现。</p>
+		</article>
+								            <div class="post-actions">
+            	<a href="javascript:;" etap="like" class="post-like action action-like" data-pid="4773"><i class="fa fa-thumbs-o-up"></i>赞(<span>0</span>)</a>            	            	            </div>
+        		<div class="post-copyright">未经允许不得转载：<a href="http://www.yq1012.com">程序员一代码搬运工</a> &raquo; <a href="http://www.yq1012.com/mianshizhuanti/4773.html">集群部署时的分布式session如何实现？</a></div>		
+					<div class="action-share"><div class="bdsharebuttonbox">
+<span>分享到：</span>
+<a class="bds_qzone" data-cmd="qzone" title="分享到QQ空间"></a>
+<a class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+<a class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+<a class="bds_tqq" data-cmd="tqq" title="分享到腾讯微博"></a>
+<a class="bds_sqq" data-cmd="sqq" title="分享到QQ好友"></a>
+<a class="bds_bdhome" data-cmd="bdhome" title="分享到百度新首页"></a>
+<a class="bds_tqf" data-cmd="tqf" title="分享到腾讯朋友"></a>
+<a class="bds_youdao" data-cmd="youdao" title="分享到有道云笔记"></a>
+<a class="bds_more" data-cmd="more">更多</a> <span>(</span><a class="bds_count" data-cmd="count" title="累计分享0次">0</a><span>)</span>
+</div>
+<script>
+window._bd_share_config = {
+    common: {
+		"bdText"     : "",
+		"bdMini"     : "2",
+		"bdMiniList" : false,
+		"bdPic"      : "",
+		"bdStyle"    : "0",
+		"bdSize"     : "24"
+    },
+    share: [{
+        bdCustomStyle: "http://www.yq1012.com/wp-content/themes/duxnew/css/share.css"
+    }]
+}
+with(document)0[(getElementsByTagName("head")[0]||body).appendChild(createElement("script")).src="http://bdimg.share.baidu.com/static/api/js/share.js?cdnversion="+~(-new Date()/36e5)];
+</script></div>
+		
+		<div class="article-tags"></div>
+		
+		
+		            <nav class="article-nav">
+                <span class="article-nav-prev">上一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4767.html" rel="prev">说说一般如何设计一个高并发的系统架构</a></span>
+                <span class="article-nav-next">下一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4775.html" rel="next">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></span>
+            </nav>
+        
+				<div class="relates"><div class="title"><h3>相关推荐</h3></div><ul><li><a href="http://www.yq1012.com/mianshizhuanti/4784.html">分布式服务接口请求的顺序性如何保证？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4782.html">如何自己设计一个类似dubbo的rpc框架？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4786.html">分布式服务接口的幂等性如何设计（比如不能重复扣款）</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4778.html">说说zookeeper一般都有哪些使用场景</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4775.html">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4767.html">说说一般如何设计一个高并发的系统架构</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4764.html">你们公司是怎么玩儿分库分表的</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4788.html">如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</a></li></ul></div>					</div>
+	</div>
+	<div class="sidebar">
+<div class="widget widget_text enhanced-text-widget"><div class="textwidget widget-text"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<!-- g_ad -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-3326524125855841"
+     data-ad-slot="3101949489"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div></div><div class="widget widget_ui_textasb"><a class="style02" href="http://www.yq1012.com/javalanguage"><strong>Java基础推荐复习手册</strong><h2>Java基础推荐复习手册</h2><p>主要为了梳理java知识，在脑海形成一个知识网络，希望大家能够 收藏， 每天看一点</p></a></div><div class="widget widget_ui_textasb"><a class="style01" href="http://shang.qq.com/wpa/qunwpa?idkey=466dbf97e0e14d9587a544c0acdf9bf21ae1623e31434c69b2a847a18a6dcfa4" target="_blank"><strong>QQ群推荐</strong><h2>QQjava闲聊群推荐</h2><p>QQ群：16933763
+Java知识分享群
+点击加入</p></a></div>		<div class="widget widget_recent_entries">		<h3>最近文章</h3>		<ul>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5013.html">The remote endpoint was in state [TEXT_FULL_WRITING] which is an invalid state for called method异常处理</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shuju/5009.html">图片采集接口</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shizhan/5006.html">Error during WebSocket handshake: Unexpected response code: 404 websocket连不了</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5001.html">layui数据表格里内容的判断显示 template field 模板</a>
+									</li>
+					</ul>
+		</div><div class="widget widget_ui_tags"><h3>热门标签</h3><div class="items"><a href="http://www.yq1012.com/tag/java">java (36)</a><a href="http://www.yq1012.com/tag/mysql">mysql (31)</a><a href="http://www.yq1012.com/tag/%e6%80%bb%e7%bb%93">总结 (26)</a><a href="http://www.yq1012.com/tag/tomcat">tomcat (22)</a><a href="http://www.yq1012.com/tag/springmvc">springmvc (20)</a><a href="http://www.yq1012.com/tag/ajax">ajax (20)</a><a href="http://www.yq1012.com/tag/eclipse">eclipse (19)</a><a href="http://www.yq1012.com/tag/%e5%ad%a6%e4%b9%a0%e6%8a%80%e5%b7%a7">学习技巧 (17)</a><a href="http://www.yq1012.com/tag/jsp">jsp (17)</a><a href="http://www.yq1012.com/tag/html">html (17)</a><a href="http://www.yq1012.com/tag/%e8%ae%be%e8%ae%a1%e6%a8%a1%e5%bc%8f">设计模式 (16)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82%e5%88%86%e6%9e%90">需求分析 (16)</a><a href="http://www.yq1012.com/tag/java%e6%95%99%e7%a8%8b">java教程 (16)</a><a href="http://www.yq1012.com/tag/jichu">java基础 (15)</a><a href="http://www.yq1012.com/tag/file">file (15)</a><a href="http://www.yq1012.com/tag/freemarker">freemarker (15)</a><a href="http://www.yq1012.com/tag/jquery">jquery (15)</a><a href="http://www.yq1012.com/tag/maven">maven (14)</a><a href="http://www.yq1012.com/tag/hibernate">hibernate (14)</a><a href="http://www.yq1012.com/tag/mianshi">java面试 (13)</a><a href="http://www.yq1012.com/tag/spring">spring (13)</a><a href="http://www.yq1012.com/tag/linux">Linux (12)</a><a href="http://www.yq1012.com/tag/dwz">dwz (12)</a><a href="http://www.yq1012.com/tag/android-2">android (12)</a><a href="http://www.yq1012.com/tag/xml">xml (11)</a><a href="http://www.yq1012.com/tag/%e5%bc%82%e5%b8%b8">异常 (11)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82">需求 (11)</a><a href="http://www.yq1012.com/tag/json">json (11)</a><a href="http://www.yq1012.com/tag/struts">struts (10)</a><a href="http://www.yq1012.com/tag/jeesite">jeesite (10)</a></div></div></div></section>
+
+
+<footer class="footer">
+	<div class="container">
+						<p>&copy; 2021 <a href="http://www.yq1012.com">程序员一代码搬运工</a> &nbsp; 版权所有，保留一切权利！ <a href="http://www.beian.miit.gov.cn" title="工信部网站备案" rel="external nofollow" target="_blank">闽ICP备14003021号-1</a> 技术支持 <a href="http://www.yq1012.com/about" target="_blank">java学习</a> 
+</p>
+	</div>
+</footer>
+
+
+<div class="rollbar rollbar-rb"><ul><li><a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=742275749&site=qq&menu=yes"><i class="fa fa-qq"></i><span>QQ咨询</span></a><h6>QQ咨询<i></i></h6></li><li class="rollbar-totop"><a href="javascript:(jsui.scrollTo());"><i class="fa fa-angle-up"></i><span>回顶</span></a><h6>回顶部<i></i></h6></li></ul></div>
+<script>
+window.jsui={
+	www: 'http://www.yq1012.com',
+	uri: 'http://www.yq1012.com/wp-content/themes/duxnew',
+	ver: '6.1',
+	roll: ["2"],
+	ajaxpager: '0',
+	url_rp: 'http://www.yq1012.com/hezuo'
+};
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/bootstrap.min.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/loader.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.js?ver=0A0B0C'></script>
+<script type='text/javascript'>
+!function(e,n){if("undefined"!=typeof EnlighterJS){var o={"selectors":{"block":"pre.EnlighterJSRAW","inline":"code.EnlighterJSRAW"},"options":{"indent":4,"ampersandCleanup":true,"linehover":true,"rawcodeDbclick":false,"textOverflow":"break","linenumbers":true,"theme":"enlighter","language":"generic","retainCssClasses":false,"collapse":false,"toolbarOuter":"","toolbarTop":"{BTN_RAW}{BTN_COPY}{BTN_WINDOW}{BTN_WEBSITE}","toolbarBottom":""}};(e.EnlighterJSINIT=function(){EnlighterJS.init(o.selectors.block,o.selectors.inline,o.options)})()}else{(n&&(n.error||n.log)||function(){})("Error: EnlighterJS resources not loaded yet!")}}(window,console);
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-includes/js/wp-embed.min.js?ver=5.2.9'></script>
+</body>
+</html>

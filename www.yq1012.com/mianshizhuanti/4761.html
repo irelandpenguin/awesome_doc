@@ -1,0 +1,239 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="dns-prefetch" href="//apps.bdimg.com">
+<meta http-equiv="X-UA-Compatible" content="IE=11,IE=10,IE=9,IE=8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-title" content="程序员一代码搬运工">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+<title>你们当时是如何把系统不停机迁移到分库分表的-程序员一代码搬运工</title>
+<link rel='dns-prefetch' href='//www.yq1012.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+<link rel='stylesheet' id='wp-block-library-css'  href='http://www.yq1012.com/wp-includes/css/dist/block-library/style.min.css?ver=5.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='_bootstrap-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/bootstrap.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_fontawesome-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/font-awesome.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_main-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/main.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='enlighterjs-css'  href='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.css?ver=0A0B0C' type='text/css' media='all' />
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/jquery.min.js?ver=6.1'></script>
+<link rel='https://api.w.org/' href='http://www.yq1012.com/wp-json/' />
+<link rel='prev' title='idea2019破解版自己测试可以用的' href='http://www.yq1012.com/myweb/4882.html' />
+<link rel='next' title='如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？' href='http://www.yq1012.com/mianshizhuanti/4788.html' />
+<link rel="canonical" href="http://www.yq1012.com/mianshizhuanti/4761.html" />
+<link rel='shortlink' href='http://www.yq1012.com/?p=4761' />
+<link rel="alternate" type="application/json+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4761.html" />
+<link rel="alternate" type="text/xml+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4761.html&#038;format=xml" />
+<meta name="keywords" content="面试专题">
+<meta name="description" content="&nbsp;  1、面试题  &nbsp;  现在有一个未分库分表的系统，未来要分库分表，如何设计才可以让系统从未分库分表动态切换到分库分表上？  &nbsp;  2、面试官心里分析  &nbsp;  你看看，你现在已经明白为啥要分库分表了，你也知道常用的分库分表中间件了，你也设计好你们如何分库分表的方案了（水平拆分、垂直拆分、分表），那问题来了，你接下来该怎么把你那个单库单表的系统给迁移到分库分">
+<link rel="shortcut icon" href="http://www.yq1012.com/favicon.ico">
+<!--[if lt IE 9]><script src="http://www.yq1012.com/wp-content/themes/duxnew/js/libs/html5.min.js"></script><![endif]-->
+</head>
+<body class="post-template-default single single-post postid-4761 single-format-standard m-excerpt-cat site-layout-2 text-justify-on m-sidebar">
+<header class="header">
+	<div class="container">
+		<div class="logo"><a href="http://www.yq1012.com" title="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】"><img src="http://www.yq1012.com/wp-content/uploads/2015/09/logo.png" alt="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】">程序员一代码搬运工</a></div>		<div class="brand">程序员一代码搬运工<br>                   【Java学习心得和Java学习技术个人总结】</div>		<ul class="site-nav site-navbar">
+			<li id="menu-item-7" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-home menu-item-7"><a title="java学习" href="http://www.yq1012.com/">java首页</a></li>
+<li id="menu-item-3736" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3736"><a href="http://www.yq1012.com/javalanguage">java手册</a></li>
+<li id="menu-item-16" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-has-children menu-item-16"><a title="javappt" href="http://www.yq1012.com/java/jichu">java基础</a>
+<ul class="sub-menu">
+	<li id="menu-item-701" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-701"><a href="http://www.yq1012.com/java/myssh">java三层</a></li>
+	<li id="menu-item-19" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-19"><a title="wenti" href="http://www.yq1012.com/java/question">java问题</a></li>
+	<li id="menu-item-108" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-108"><a href="http://www.yq1012.com/java/shuju">java数据</a></li>
+</ul>
+</li>
+<li id="menu-item-4744" class="menu-item menu-item-type-taxonomy menu-item-object-category current-post-ancestor current-menu-parent current-post-parent menu-item-4744"><a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a></li>
+<li id="menu-item-3735" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3735"><a href="http://tool.yq1012.com">java工具</a></li>
+<li id="menu-item-129" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-129"><a title="shizhan" href="http://www.yq1012.com/java/shizhan">java实战</a></li>
+							<li class="navto-search"><a href="javascript:;" class="search-show active"><i class="fa fa-search"></i></a></li>
+					</ul>
+				<div class="topbar">
+			<ul class="site-nav topmenu">
+											</ul>
+					</div>
+						<i class="fa fa-bars m-icon-nav"></i>
+			</div>
+</header>
+<div class="site-search">
+	<div class="container">
+		<form method="get" class="site-search-form" action="http://www.yq1012.com/" ><input class="search-input" name="s" type="text" placeholder="输入关键字" value=""><button class="search-btn" type="submit"><i class="fa fa-search"></i></button></form>	</div>
+</div>	<div class="breadcrumbs">
+		<div class="container">当前位置：<a href="http://www.yq1012.com">程序员一代码搬运工</a> <small>></small> <a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a> <small>></small> 正文</div>
+	</div>
+<section class="container">
+	<div class="content-wrap">
+	<div class="content">
+				<header class="article-header">
+			<h1 class="article-title"><a href="http://www.yq1012.com/mianshizhuanti/4761.html">你们当时是如何把系统不停机迁移到分库分表的</a></h1>
+			<div class="article-meta">
+				<span class="item">2019-10-24</span>
+												<span class="item">分类：<a href="http://www.yq1012.com/java/mianshizhuanti" rel="category tag">面试专题</a></span>
+				<span class="item post-views">阅读(345)</span>				<span class="item">评论(0)</span>				<span class="item"></span>
+			</div>
+		</header>
+				<article class="article-content">
+						<p>&nbsp;</p>
+<p>1、面试题</p>
+<p>&nbsp;</p>
+<p>现在有一个未分库分表的系统，未来要分库分表，如何设计才可以让系统从未分库分表动态切换到分库分表上？</p>
+<p>&nbsp;</p>
+<p>2、面试官心里分析</p>
+<p>&nbsp;</p>
+<p>你看看，你现在已经明白为啥要分库分表了，你也知道常用的分库分表中间件了，你也设计好你们如何分库分表的方案了（水平拆分、垂直拆分、分表），那问题来了，你接下来该怎么把你那个单库单表的系统给迁移到分库分表上去？</p>
+<p>&nbsp;</p>
+<p>所以这都是一环扣一环的，就是看你有没有全流程经历过这个过程</p>
+<p>&nbsp;</p>
+<p>友情提示</p>
+<p>&nbsp;</p>
+<p>假设，你现有有一个单库单表的系统，在线上在跑，假设单表有600万数据</p>
+<p>&nbsp;</p>
+<p>3个库，每个库里分了4个表，每个表要放50万的数据量</p>
+<p>&nbsp;</p>
+<p>假设你已经选择了一个分库分表的数据库中间件，sharding-jdbc，mycat，都可以</p>
+<p>&nbsp;</p>
+<p>你怎么把线上系统平滑地迁移到分库分表上面去</p>
+<p>&nbsp;</p>
+<p>sharding-jdbc：自己上官网，找一个官网最基本的例子，自己写一下，试一下，跑跑看，是非常简单的</p>
+<p>&nbsp;</p>
+<p>mycat：自己上官网，找一个官网最基本的例子，自己写一下，试一下看看</p>
+<p>&nbsp;</p>
+<p>1个小时以内就可以搞定了</p>
+<p>&nbsp;</p>
+<p>3、面试题剖析</p>
+<p>&nbsp;</p>
+<p>这个其实从low到高大上有好几种方案，我们都玩儿过，我都给你说一下</p>
+<p>&nbsp;</p>
+<p>（1）停机迁移方案</p>
+<p>&nbsp;</p>
+<p>我先给你说一个最low的方案，就是很简单，大家伙儿凌晨12点开始运维，网站或者app挂个公告，说0点到早上6点进行运维，无法访问。。。。。。</p>
+<p>&nbsp;</p>
+<p>接着到0点，停机，系统挺掉，没有流量写入了，此时老的单库单表数据库静止了。然后你之前得写好一个导数的一次性工具，此时直接跑起来，然后将单库单表的数据哗哗哗读出来，写到分库分表里面去。</p>
+<p>&nbsp;</p>
+<p>导数完了之后，就ok了，修改系统的数据库连接配置啥的，包括可能代码和SQL也许有修改，那你就用最新的代码，然后直接启动连到新的分库分表上去。</p>
+<p>&nbsp;</p>
+<p>验证一下，ok了，完美，大家伸个懒腰，看看看凌晨4点钟的北京夜景，打个滴滴回家吧</p>
+<p>&nbsp;</p>
+<p>但是这个方案比较low，谁都能干，我们来看看高大上一点的方案</p>
+<p>&nbsp;</p>
+<p>（2）双写迁移方案</p>
+<p>&nbsp;</p>
+<p>这个是我们常用的一种迁移方案，比较靠谱一些，不用停机，不用看北京凌晨4点的风景</p>
+<p>&nbsp;</p>
+<p>简单来说，就是在线上系统里面，之前所有写库的地方，增删改操作，都除了对老库增删改，都加上对新库的增删改，这就是所谓双写，同时写俩库，老库和新库。</p>
+<p>&nbsp;</p>
+<p>然后系统部署之后，新库数据差太远，用之前说的导数工具，跑起来读老库数据写新库，写的时候要根据gmt_modified这类字段判断这条数据最后修改的时间，除非是读出来的数据在新库里没有，或者是比新库的数据新才会写。</p>
+<p>&nbsp;</p>
+<p>接着导万一轮之后，有可能数据还是存在不一致，那么就程序自动做一轮校验，比对新老库每个表的每条数据，接着如果有不一样的，就针对那些不一样的，从老库读数据再次写。反复循环，直到两个库每个表的数据都完全一致为止。</p>
+<p>&nbsp;</p>
+<p>接着当数据完全一致了，就ok了，基于仅仅使用分库分表的最新代码，重新部署一次，不就仅仅基于分库分表在操作了么，还没有几个小时的停机时间，很稳。所以现在基本玩儿数据迁移之类的，都是这么干了。</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+		</article>
+								            <div class="post-actions">
+            	<a href="javascript:;" etap="like" class="post-like action action-like" data-pid="4761"><i class="fa fa-thumbs-o-up"></i>赞(<span>1</span>)</a>            	            	            </div>
+        		<div class="post-copyright">未经允许不得转载：<a href="http://www.yq1012.com">程序员一代码搬运工</a> &raquo; <a href="http://www.yq1012.com/mianshizhuanti/4761.html">你们当时是如何把系统不停机迁移到分库分表的</a></div>		
+					<div class="action-share"><div class="bdsharebuttonbox">
+<span>分享到：</span>
+<a class="bds_qzone" data-cmd="qzone" title="分享到QQ空间"></a>
+<a class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+<a class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+<a class="bds_tqq" data-cmd="tqq" title="分享到腾讯微博"></a>
+<a class="bds_sqq" data-cmd="sqq" title="分享到QQ好友"></a>
+<a class="bds_bdhome" data-cmd="bdhome" title="分享到百度新首页"></a>
+<a class="bds_tqf" data-cmd="tqf" title="分享到腾讯朋友"></a>
+<a class="bds_youdao" data-cmd="youdao" title="分享到有道云笔记"></a>
+<a class="bds_more" data-cmd="more">更多</a> <span>(</span><a class="bds_count" data-cmd="count" title="累计分享0次">0</a><span>)</span>
+</div>
+<script>
+window._bd_share_config = {
+    common: {
+		"bdText"     : "",
+		"bdMini"     : "2",
+		"bdMiniList" : false,
+		"bdPic"      : "",
+		"bdStyle"    : "0",
+		"bdSize"     : "24"
+    },
+    share: [{
+        bdCustomStyle: "http://www.yq1012.com/wp-content/themes/duxnew/css/share.css"
+    }]
+}
+with(document)0[(getElementsByTagName("head")[0]||body).appendChild(createElement("script")).src="http://bdimg.share.baidu.com/static/api/js/share.js?cdnversion="+~(-new Date()/36e5)];
+</script></div>
+		
+		<div class="article-tags"></div>
+		
+		
+		            <nav class="article-nav">
+                <span class="article-nav-prev">上一篇<br><a href="http://www.yq1012.com/myweb/4882.html" rel="prev">idea2019破解版自己测试可以用的</a></span>
+                <span class="article-nav-next">下一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4788.html" rel="next">如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</a></span>
+            </nav>
+        
+				<div class="relates"><div class="title"><h3>相关推荐</h3></div><ul><li><a href="http://www.yq1012.com/mianshizhuanti/4784.html">分布式服务接口请求的顺序性如何保证？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4782.html">如何自己设计一个类似dubbo的rpc框架？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4786.html">分布式服务接口的幂等性如何设计（比如不能重复扣款）</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4778.html">说说zookeeper一般都有哪些使用场景</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4775.html">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4773.html">集群部署时的分布式session如何实现？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4767.html">说说一般如何设计一个高并发的系统架构</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4764.html">你们公司是怎么玩儿分库分表的</a></li></ul></div>					</div>
+	</div>
+	<div class="sidebar">
+<div class="widget widget_text enhanced-text-widget"><div class="textwidget widget-text"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<!-- g_ad -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-3326524125855841"
+     data-ad-slot="3101949489"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div></div><div class="widget widget_ui_textasb"><a class="style02" href="http://www.yq1012.com/javalanguage"><strong>Java基础推荐复习手册</strong><h2>Java基础推荐复习手册</h2><p>主要为了梳理java知识，在脑海形成一个知识网络，希望大家能够 收藏， 每天看一点</p></a></div><div class="widget widget_ui_textasb"><a class="style01" href="http://shang.qq.com/wpa/qunwpa?idkey=466dbf97e0e14d9587a544c0acdf9bf21ae1623e31434c69b2a847a18a6dcfa4" target="_blank"><strong>QQ群推荐</strong><h2>QQjava闲聊群推荐</h2><p>QQ群：16933763
+Java知识分享群
+点击加入</p></a></div>		<div class="widget widget_recent_entries">		<h3>最近文章</h3>		<ul>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5013.html">The remote endpoint was in state [TEXT_FULL_WRITING] which is an invalid state for called method异常处理</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shuju/5009.html">图片采集接口</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shizhan/5006.html">Error during WebSocket handshake: Unexpected response code: 404 websocket连不了</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5001.html">layui数据表格里内容的判断显示 template field 模板</a>
+									</li>
+					</ul>
+		</div><div class="widget widget_ui_tags"><h3>热门标签</h3><div class="items"><a href="http://www.yq1012.com/tag/java">java (36)</a><a href="http://www.yq1012.com/tag/mysql">mysql (31)</a><a href="http://www.yq1012.com/tag/%e6%80%bb%e7%bb%93">总结 (26)</a><a href="http://www.yq1012.com/tag/tomcat">tomcat (22)</a><a href="http://www.yq1012.com/tag/springmvc">springmvc (20)</a><a href="http://www.yq1012.com/tag/ajax">ajax (20)</a><a href="http://www.yq1012.com/tag/eclipse">eclipse (19)</a><a href="http://www.yq1012.com/tag/%e5%ad%a6%e4%b9%a0%e6%8a%80%e5%b7%a7">学习技巧 (17)</a><a href="http://www.yq1012.com/tag/jsp">jsp (17)</a><a href="http://www.yq1012.com/tag/html">html (17)</a><a href="http://www.yq1012.com/tag/%e8%ae%be%e8%ae%a1%e6%a8%a1%e5%bc%8f">设计模式 (16)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82%e5%88%86%e6%9e%90">需求分析 (16)</a><a href="http://www.yq1012.com/tag/java%e6%95%99%e7%a8%8b">java教程 (16)</a><a href="http://www.yq1012.com/tag/jichu">java基础 (15)</a><a href="http://www.yq1012.com/tag/file">file (15)</a><a href="http://www.yq1012.com/tag/freemarker">freemarker (15)</a><a href="http://www.yq1012.com/tag/jquery">jquery (15)</a><a href="http://www.yq1012.com/tag/maven">maven (14)</a><a href="http://www.yq1012.com/tag/hibernate">hibernate (14)</a><a href="http://www.yq1012.com/tag/mianshi">java面试 (13)</a><a href="http://www.yq1012.com/tag/spring">spring (13)</a><a href="http://www.yq1012.com/tag/linux">Linux (12)</a><a href="http://www.yq1012.com/tag/dwz">dwz (12)</a><a href="http://www.yq1012.com/tag/android-2">android (12)</a><a href="http://www.yq1012.com/tag/xml">xml (11)</a><a href="http://www.yq1012.com/tag/%e5%bc%82%e5%b8%b8">异常 (11)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82">需求 (11)</a><a href="http://www.yq1012.com/tag/json">json (11)</a><a href="http://www.yq1012.com/tag/struts">struts (10)</a><a href="http://www.yq1012.com/tag/jeesite">jeesite (10)</a></div></div></div></section>
+
+
+<footer class="footer">
+	<div class="container">
+						<p>&copy; 2021 <a href="http://www.yq1012.com">程序员一代码搬运工</a> &nbsp; 版权所有，保留一切权利！ <a href="http://www.beian.miit.gov.cn" title="工信部网站备案" rel="external nofollow" target="_blank">闽ICP备14003021号-1</a> 技术支持 <a href="http://www.yq1012.com/about" target="_blank">java学习</a> 
+</p>
+	</div>
+</footer>
+
+
+<div class="rollbar rollbar-rb"><ul><li><a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=742275749&site=qq&menu=yes"><i class="fa fa-qq"></i><span>QQ咨询</span></a><h6>QQ咨询<i></i></h6></li><li class="rollbar-totop"><a href="javascript:(jsui.scrollTo());"><i class="fa fa-angle-up"></i><span>回顶</span></a><h6>回顶部<i></i></h6></li></ul></div>
+<script>
+window.jsui={
+	www: 'http://www.yq1012.com',
+	uri: 'http://www.yq1012.com/wp-content/themes/duxnew',
+	ver: '6.1',
+	roll: ["2"],
+	ajaxpager: '0',
+	url_rp: 'http://www.yq1012.com/hezuo'
+};
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/bootstrap.min.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/loader.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.js?ver=0A0B0C'></script>
+<script type='text/javascript'>
+!function(e,n){if("undefined"!=typeof EnlighterJS){var o={"selectors":{"block":"pre.EnlighterJSRAW","inline":"code.EnlighterJSRAW"},"options":{"indent":4,"ampersandCleanup":true,"linehover":true,"rawcodeDbclick":false,"textOverflow":"break","linenumbers":true,"theme":"enlighter","language":"generic","retainCssClasses":false,"collapse":false,"toolbarOuter":"","toolbarTop":"{BTN_RAW}{BTN_COPY}{BTN_WINDOW}{BTN_WEBSITE}","toolbarBottom":""}};(e.EnlighterJSINIT=function(){EnlighterJS.init(o.selectors.block,o.selectors.inline,o.options)})()}else{(n&&(n.error||n.log)||function(){})("Error: EnlighterJS resources not loaded yet!")}}(window,console);
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-includes/js/wp-embed.min.js?ver=5.2.9'></script>
+</body>
+</html>

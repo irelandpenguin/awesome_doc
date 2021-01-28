@@ -1,0 +1,239 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="dns-prefetch" href="//apps.bdimg.com">
+<meta http-equiv="X-UA-Compatible" content="IE=11,IE=10,IE=9,IE=8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-title" content="程序员一代码搬运工">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+<title>jvm内存模型详解记录-程序员一代码搬运工</title>
+<link rel='dns-prefetch' href='//www.yq1012.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+<link rel='stylesheet' id='wp-block-library-css'  href='http://www.yq1012.com/wp-includes/css/dist/block-library/style.min.css?ver=5.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='_bootstrap-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/bootstrap.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_fontawesome-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/font-awesome.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_main-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/main.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='enlighterjs-css'  href='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.css?ver=0A0B0C' type='text/css' media='all' />
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/jquery.min.js?ver=6.1'></script>
+<link rel='https://api.w.org/' href='http://www.yq1012.com/wp-json/' />
+<link rel='prev' title='Mysql数据库事务的ACID' href='http://www.yq1012.com/myweb/4538.html' />
+<link rel='next' title='jvm基础概念理解' href='http://www.yq1012.com/myweb/4542.html' />
+<link rel="canonical" href="http://www.yq1012.com/jichu/4540.html" />
+<link rel='shortlink' href='http://www.yq1012.com/?p=4540' />
+<link rel="alternate" type="application/json+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fjichu%2F4540.html" />
+<link rel="alternate" type="text/xml+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fjichu%2F4540.html&#038;format=xml" />
+<meta name="keywords" content="java基础">
+<meta name="description" content="JVM的逻辑内存模型  这图不够生动没关系还有  程序计数器 是什么： 程序计数器是一个记录着当前线程所执行的字节码的行号指示器。  为什么用： 首先我们要搞清楚JVM的多线程实现方式。JVM的多线程是通过CPU时间片轮转（即线程轮流切换并分配处理器执行时间）算法来实现的。也就是说，某个线程在执行过程中可能会因为时间片耗尽而被挂起，而另一个线程获取到时间片开始执行。当被挂起的线程重新获取到时间片的">
+<link rel="shortcut icon" href="http://www.yq1012.com/favicon.ico">
+<!--[if lt IE 9]><script src="http://www.yq1012.com/wp-content/themes/duxnew/js/libs/html5.min.js"></script><![endif]-->
+</head>
+<body class="post-template-default single single-post postid-4540 single-format-standard m-excerpt-cat site-layout-2 text-justify-on m-sidebar">
+<header class="header">
+	<div class="container">
+		<div class="logo"><a href="http://www.yq1012.com" title="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】"><img src="http://www.yq1012.com/wp-content/uploads/2015/09/logo.png" alt="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】">程序员一代码搬运工</a></div>		<div class="brand">程序员一代码搬运工<br>                   【Java学习心得和Java学习技术个人总结】</div>		<ul class="site-nav site-navbar">
+			<li id="menu-item-7" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-home menu-item-7"><a title="java学习" href="http://www.yq1012.com/">java首页</a></li>
+<li id="menu-item-3736" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3736"><a href="http://www.yq1012.com/javalanguage">java手册</a></li>
+<li id="menu-item-16" class="menu-item menu-item-type-taxonomy menu-item-object-category current-post-ancestor current-menu-parent current-post-parent menu-item-has-children menu-item-16"><a title="javappt" href="http://www.yq1012.com/java/jichu">java基础</a>
+<ul class="sub-menu">
+	<li id="menu-item-701" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-701"><a href="http://www.yq1012.com/java/myssh">java三层</a></li>
+	<li id="menu-item-19" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-19"><a title="wenti" href="http://www.yq1012.com/java/question">java问题</a></li>
+	<li id="menu-item-108" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-108"><a href="http://www.yq1012.com/java/shuju">java数据</a></li>
+</ul>
+</li>
+<li id="menu-item-4744" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-4744"><a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a></li>
+<li id="menu-item-3735" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3735"><a href="http://tool.yq1012.com">java工具</a></li>
+<li id="menu-item-129" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-129"><a title="shizhan" href="http://www.yq1012.com/java/shizhan">java实战</a></li>
+							<li class="navto-search"><a href="javascript:;" class="search-show active"><i class="fa fa-search"></i></a></li>
+					</ul>
+				<div class="topbar">
+			<ul class="site-nav topmenu">
+											</ul>
+					</div>
+						<i class="fa fa-bars m-icon-nav"></i>
+			</div>
+</header>
+<div class="site-search">
+	<div class="container">
+		<form method="get" class="site-search-form" action="http://www.yq1012.com/" ><input class="search-input" name="s" type="text" placeholder="输入关键字" value=""><button class="search-btn" type="submit"><i class="fa fa-search"></i></button></form>	</div>
+</div>	<div class="breadcrumbs">
+		<div class="container">当前位置：<a href="http://www.yq1012.com">程序员一代码搬运工</a> <small>></small> <a href="http://www.yq1012.com/java/jichu">java基础</a> <small>></small> 正文</div>
+	</div>
+<section class="container">
+	<div class="content-wrap">
+	<div class="content">
+				<header class="article-header">
+			<h1 class="article-title"><a href="http://www.yq1012.com/jichu/4540.html">jvm内存模型详解记录</a></h1>
+			<div class="article-meta">
+				<span class="item">2019-05-03</span>
+												<span class="item">分类：<a href="http://www.yq1012.com/java/jichu" rel="category tag">java基础</a></span>
+				<span class="item post-views">阅读(715)</span>				<span class="item">评论(0)</span>				<span class="item"></span>
+			</div>
+		</header>
+				<article class="article-content">
+						<h1>JVM的逻辑内存模型</h1>
+<div class="pgc-img"><img src="http://p1.pstatp.com/large/pgc-image/9bcd8a6c0bf7441184595d3c5b714041" alt="jvm内存模型详解记录" /></div>
+<p>这图不够生动没关系还有</p>
+<div class="pgc-img"><img src="http://p1.pstatp.com/large/pgc-image/0e5c23b4a8a14dc3805987ba9aa7163a" alt="jvm内存模型详解记录" /></div>
+<h1><strong>程序计数器</strong></h1>
+<p><strong>是什么</strong>：　程序计数器是一个记录着当前线程所执行的字节码的行号指示器。</p>
+<p><strong>为什么用</strong>：</p>
+<blockquote><p>首先我们要搞清楚JVM的多线程实现方式。JVM的多线程是通过CPU时间片轮转（即线程轮流切换并分配处理器执行时间）算法来实现的。也就是说，某个线程在执行过程中可能会因为时间片耗尽而被挂起，而另一个线程获取到时间片开始执行。当被挂起的线程重新获取到时间片的时候，它要想从被挂起的地方继续执行，就必须知道它上次执行到哪个位置，在JVM中，通过程序计数器来记录某个线程的字节码执行位置。因此，程序计数器是具备线程隔离的特性，也就是说，每个线程工作时都有属于自己的独立计数器。</p></blockquote>
+<p><strong>特点</strong></p>
+<blockquote><p>1.线程隔离性，每个线程工作时都有属于自己的独立计数器。</p>
+<p>2.执行java方法时，程序计数器是有值的，且记录的是正在执行的字节码指令的地址（参考上一小节的描述）。</p>
+<p>3.执行native本地方法时，程序计数器的值为空（Undefined）。因为native方法是java通过JNI直接调用本地C/C++库，可以近似的认为native方法相当于C/C++暴露给java的一个接口，java通过调用这个接口从而调用到C/C++方法。由于该方法是通过C/C++而不是java进行实现。那么自然无法产生相应的字节码，并且C/C++执行时的内存分配是由自己语言决定的，而不是由JVM决定的。</p>
+<p>4.程序计数器占用内存很小，在进行JVM内存计算时，可以忽略不计。</p>
+<p>5.程序计数器，是唯一一个在java虚拟机规范中没有规定任何OutOfMemoryError的区域。</p></blockquote>
+<div class="pgc-img"><img src="http://p1.pstatp.com/large/pgc-image/ee33e0cc48474acea2ad99ec99e8e042" alt="jvm内存模型详解记录" /></div>
+<h1><strong>Java 虚拟机栈</strong></h1>
+<p><strong>虚拟机栈生命周期与线程相同。启动一个线程，程序调用函数，栈帧被压入栈中，函数调用结束，相应的是栈帧的出栈。</strong></p>
+<p><strong>栈帧</strong>由局部变量表，操作数栈，帧数据区组成。</p>
+<p><strong>局部变量表</strong>：存放的是函数的入参，以及局部变量。</p>
+<p><strong>操作数栈</strong>：存放调用过程中的计算结果的临时存放区域。</p>
+<p><strong>帧数据区</strong>：存放的是异常处理表和函数的返回，访问常量池的指针。</p>
+<p>举个例子，线程执行进入方法A，则会创建栈帧入栈，A方法调用了B方法，B栈帧入栈，B方法中调用C方法，C创建了栈帧压入栈中，接下来是D入栈</p>
+<p>反过来，D方法执行完，栈帧出栈，接着是C，B,A。</p>
+<div class="pgc-img"><img src="http://p3.pstatp.com/large/pgc-image/c96469fdf8e847b68530309fde2169a7" alt="jvm内存模型详解记录" /></div>
+<h1><strong>本地方法栈</strong></h1>
+<p>本地方法是由其它语言编写的，编译成和处理器相关的机器代码</p>
+<p>本地方法保存在动态链接库中，即.dll(windows系统)文件中，格式是各个平台专有的</p>
+<p>拓展：JAVA方法是由JAVA编写的，编译成字节码，存储在class文件中</p>
+<blockquote><p>java使用起来非常方便，然而有些层次的任务用java实现起来不容易，或者我们对程序的效率很在意时，问题就来了。</p>
+<p><strong>与java环境外交互</strong>：</p>
+<p>有时java应用需要与java外面的环境交互。这是本地方法存在的主要原因，你可以想想java需要与一些底层系统如操作系统或某些硬件交换信息时的情况。本地方法正是这样一种交流机制：它为我们提供了一个非常简洁的接口，而且我们无需去了解java应用之外的繁琐的细节。</p>
+<p><strong>与操作系统交互</strong>：</p>
+<p>JVM支持着java语言本身和运行时库，它是java程序赖以生存的平台，它由一个解释器（解释字节码）和一些连接到本地代码的库组成。然而不管怎样，它毕竟不是一个完整的系统，它经常依赖于一些底层（underneath在下面的）系统的支持。这些底层系统常常是强大的操作系统。通过使用本地方法，我们得以用java实现了jre的与底层系统的交互，甚至JVM的一些部分就是用C写的，还有，如果我们要使用一些java语言本身没有提供封装的操作系统的特性时，我们也需要使用本地方法。</p></blockquote>
+<p><strong>DLL的加载是通过调用System.loadLibrary(String filename)或System.load(String filename)方法实现的。</strong></p>
+<h1><strong>Java 堆</strong></h1>
+<p>存放对象实例，所有的对象的内存都在这里分配。</p>
+<blockquote><p>Java 堆中还可以细分为：新生代和老年代；</p>
+<p>再细致一点的有Eden 空间、From Survivor 空间、To Survivor 空间等。如果从内存分配</p>
+<p>的角度看，线程共享的Java 堆中可能划分出多个线程私有的分配缓冲区（Thread Local</p>
+<p>Allocation Buffer，TLAB）。不过，无论如何划分，都与存放内容无关，无论哪个区域，</p>
+<p>存储的都仍然是对象实例，进一步划分的目的是为了更好地回收内存，或者更快地分配</p>
+<p>内存。</p></blockquote>
+<h1><strong>方法区</strong></h1>
+<p>和java堆一样，方法区是一块所有线程共享的内存区域。</p>
+<p>保存系统的类信息，比如，<strong>类的字段，方法，常量池</strong>等。</p>
+<p>方法区的大小决定了系统可以保存多少个类，如果系统定义了太多的类，导致方法区溢出，虚拟机同样会抛出内存溢出的错误</p>
+<p>jdk1.6和jdk1.7方法区可以理解为永久区。</p>
+<p>jdk1.8已经将方法区取消，替代的是元数据区。</p>
+<p>jdk1.8的元数据区可以使用参数-XX:MaxMetaspaceSzie设定大小，这是一块堆外的直接内存，与永久区不同，如果不指定大小，默认情况下，虚拟机会耗尽可用系统内存</p>
+<h1>其他拓展</h1>
+<p><strong>运行时常量池</strong></p>
+<blockquote><p>运行时常量池（Runtime Constant Pool），它是方法区的一部分。Class文件中除了有类的版本、字段、方法、接口等描述等信息外，还有一项信息是常量池（Constant Pool Table），用于存放编译期生成的各种字面量和符号引用，这部分内容将在类加载后存放到常量池中。</p>
+<p>运行时常量是相对于常量来说的，它具备一个重要特征是：动态性。当然，值相同的动态常量与我们通常说的常量只是来源不同，但是都是储存在池内同一块内存区域。Java语言并不要求常量一定只能在编译期产生，运行期间也可能产生新的常量，这些常量被放在运行时常量池中。这里所说的常量包括：基本类型包装类（包装类不管理浮点型，整形只会管理-128到127）和String（也可以通过String.intern()方法可以强制将String放入常量池）</p></blockquote>
+<p><strong>直接内存</strong></p>
+<blockquote><p>直接内存（Direct Memory）就是<strong>Java堆外内存</strong></p>
+<p>在JDK 1.4中新加入了NIO（New Input/Output）类，引入了一种基于通道（Channel）与缓冲区（Buffer）的I/O方式，它可以使用Native函数库直接分配堆外内存，然后通过一个存储在Java堆里面的DirectByteBuffer对象作为这块内存的引用进行操作。这样能在一些场景中显著提高性能，因为避免了在Java堆和Native堆中来回复制数据。</p>
+<p>显然，本机直接内存的分配不会受到Java堆大小的限制，但是，既然是内存，则肯定还是会受到本机总内存（包括RAM及SWAP区或者分页文件）的大小及处理器寻址空间的限制。服务器管理员配置虚拟机参数时，一般会根据实际内存设置-Xmx等参数信息，但经常会忽略掉直接内存，使得各个内存区域的总和大于物理内存限制（包括物理上的和操作系统级的限制），从而导致动态扩展时出现OutOfMemoryError异常。</p></blockquote>
+<p><strong>面试的时候记录这个图就行</strong></p>
+<div class="pgc-img"><img src="http://p1.pstatp.com/large/pgc-image/dd08ee16892a42708c698fb92ff0abbd" alt="jvm内存模型详解记录" /></div>
+		</article>
+								            <div class="post-actions">
+            	<a href="javascript:;" etap="like" class="post-like action action-like" data-pid="4540"><i class="fa fa-thumbs-o-up"></i>赞(<span>2</span>)</a>            	            	            </div>
+        		<div class="post-copyright">未经允许不得转载：<a href="http://www.yq1012.com">程序员一代码搬运工</a> &raquo; <a href="http://www.yq1012.com/jichu/4540.html">jvm内存模型详解记录</a></div>		
+					<div class="action-share"><div class="bdsharebuttonbox">
+<span>分享到：</span>
+<a class="bds_qzone" data-cmd="qzone" title="分享到QQ空间"></a>
+<a class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+<a class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+<a class="bds_tqq" data-cmd="tqq" title="分享到腾讯微博"></a>
+<a class="bds_sqq" data-cmd="sqq" title="分享到QQ好友"></a>
+<a class="bds_bdhome" data-cmd="bdhome" title="分享到百度新首页"></a>
+<a class="bds_tqf" data-cmd="tqf" title="分享到腾讯朋友"></a>
+<a class="bds_youdao" data-cmd="youdao" title="分享到有道云笔记"></a>
+<a class="bds_more" data-cmd="more">更多</a> <span>(</span><a class="bds_count" data-cmd="count" title="累计分享0次">0</a><span>)</span>
+</div>
+<script>
+window._bd_share_config = {
+    common: {
+		"bdText"     : "",
+		"bdMini"     : "2",
+		"bdMiniList" : false,
+		"bdPic"      : "",
+		"bdStyle"    : "0",
+		"bdSize"     : "24"
+    },
+    share: [{
+        bdCustomStyle: "http://www.yq1012.com/wp-content/themes/duxnew/css/share.css"
+    }]
+}
+with(document)0[(getElementsByTagName("head")[0]||body).appendChild(createElement("script")).src="http://bdimg.share.baidu.com/static/api/js/share.js?cdnversion="+~(-new Date()/36e5)];
+</script></div>
+		
+		<div class="article-tags"></div>
+		
+		
+		            <nav class="article-nav">
+                <span class="article-nav-prev">上一篇<br><a href="http://www.yq1012.com/myweb/4538.html" rel="prev">Mysql数据库事务的ACID</a></span>
+                <span class="article-nav-next">下一篇<br><a href="http://www.yq1012.com/myweb/4542.html" rel="next">jvm基础概念理解</a></span>
+            </nav>
+        
+				<div class="relates"><div class="title"><h3>相关推荐</h3></div><ul><li><a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a></li><li><a href="http://www.yq1012.com/jichu/4976.html">java中的Map和List静态初始化</a></li><li><a href="http://www.yq1012.com/jichu/4941.html">win10 jdk配置</a></li><li><a href="http://www.yq1012.com/jichu/4938.html">根据ip获取mac地址（亲测可用，获取速度慢，需要用异步来保存）</a></li><li><a href="http://www.yq1012.com/jichu/4917.html">阿里云的maven仓库 地址</a></li><li><a href="http://www.yq1012.com/jichu/4913.html">InteliJ IDEA生成可执行jar运行提示没有主清单属性</a></li><li><a href="http://www.yq1012.com/jichu/4735.html">JSON 字符串 转Map<String,List<Object>>亲测可用</a></li><li><a href="http://www.yq1012.com/jichu/4731.html">logback按文件大小划分并追加</a></li></ul></div>					</div>
+	</div>
+	<div class="sidebar">
+<div class="widget widget_text enhanced-text-widget"><div class="textwidget widget-text"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<!-- g_ad -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-3326524125855841"
+     data-ad-slot="3101949489"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div></div><div class="widget widget_ui_textasb"><a class="style02" href="http://www.yq1012.com/javalanguage"><strong>Java基础推荐复习手册</strong><h2>Java基础推荐复习手册</h2><p>主要为了梳理java知识，在脑海形成一个知识网络，希望大家能够 收藏， 每天看一点</p></a></div><div class="widget widget_ui_textasb"><a class="style01" href="http://shang.qq.com/wpa/qunwpa?idkey=466dbf97e0e14d9587a544c0acdf9bf21ae1623e31434c69b2a847a18a6dcfa4" target="_blank"><strong>QQ群推荐</strong><h2>QQjava闲聊群推荐</h2><p>QQ群：16933763
+Java知识分享群
+点击加入</p></a></div>		<div class="widget widget_recent_entries">		<h3>最近文章</h3>		<ul>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5013.html">The remote endpoint was in state [TEXT_FULL_WRITING] which is an invalid state for called method异常处理</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shuju/5009.html">图片采集接口</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shizhan/5006.html">Error during WebSocket handshake: Unexpected response code: 404 websocket连不了</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5001.html">layui数据表格里内容的判断显示 template field 模板</a>
+									</li>
+					</ul>
+		</div><div class="widget widget_ui_tags"><h3>热门标签</h3><div class="items"><a href="http://www.yq1012.com/tag/java">java (36)</a><a href="http://www.yq1012.com/tag/mysql">mysql (31)</a><a href="http://www.yq1012.com/tag/%e6%80%bb%e7%bb%93">总结 (26)</a><a href="http://www.yq1012.com/tag/tomcat">tomcat (22)</a><a href="http://www.yq1012.com/tag/springmvc">springmvc (20)</a><a href="http://www.yq1012.com/tag/ajax">ajax (20)</a><a href="http://www.yq1012.com/tag/eclipse">eclipse (19)</a><a href="http://www.yq1012.com/tag/%e5%ad%a6%e4%b9%a0%e6%8a%80%e5%b7%a7">学习技巧 (17)</a><a href="http://www.yq1012.com/tag/jsp">jsp (17)</a><a href="http://www.yq1012.com/tag/html">html (17)</a><a href="http://www.yq1012.com/tag/%e8%ae%be%e8%ae%a1%e6%a8%a1%e5%bc%8f">设计模式 (16)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82%e5%88%86%e6%9e%90">需求分析 (16)</a><a href="http://www.yq1012.com/tag/java%e6%95%99%e7%a8%8b">java教程 (16)</a><a href="http://www.yq1012.com/tag/jichu">java基础 (15)</a><a href="http://www.yq1012.com/tag/file">file (15)</a><a href="http://www.yq1012.com/tag/freemarker">freemarker (15)</a><a href="http://www.yq1012.com/tag/jquery">jquery (15)</a><a href="http://www.yq1012.com/tag/maven">maven (14)</a><a href="http://www.yq1012.com/tag/hibernate">hibernate (14)</a><a href="http://www.yq1012.com/tag/mianshi">java面试 (13)</a><a href="http://www.yq1012.com/tag/spring">spring (13)</a><a href="http://www.yq1012.com/tag/linux">Linux (12)</a><a href="http://www.yq1012.com/tag/dwz">dwz (12)</a><a href="http://www.yq1012.com/tag/android-2">android (12)</a><a href="http://www.yq1012.com/tag/xml">xml (11)</a><a href="http://www.yq1012.com/tag/%e5%bc%82%e5%b8%b8">异常 (11)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82">需求 (11)</a><a href="http://www.yq1012.com/tag/json">json (11)</a><a href="http://www.yq1012.com/tag/struts">struts (10)</a><a href="http://www.yq1012.com/tag/jeesite">jeesite (10)</a></div></div></div></section>
+
+
+<footer class="footer">
+	<div class="container">
+						<p>&copy; 2021 <a href="http://www.yq1012.com">程序员一代码搬运工</a> &nbsp; 版权所有，保留一切权利！ <a href="http://www.beian.miit.gov.cn" title="工信部网站备案" rel="external nofollow" target="_blank">闽ICP备14003021号-1</a> 技术支持 <a href="http://www.yq1012.com/about" target="_blank">java学习</a> 
+</p>
+	</div>
+</footer>
+
+
+<div class="rollbar rollbar-rb"><ul><li><a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=742275749&site=qq&menu=yes"><i class="fa fa-qq"></i><span>QQ咨询</span></a><h6>QQ咨询<i></i></h6></li><li class="rollbar-totop"><a href="javascript:(jsui.scrollTo());"><i class="fa fa-angle-up"></i><span>回顶</span></a><h6>回顶部<i></i></h6></li></ul></div>
+<script>
+window.jsui={
+	www: 'http://www.yq1012.com',
+	uri: 'http://www.yq1012.com/wp-content/themes/duxnew',
+	ver: '6.1',
+	roll: ["2"],
+	ajaxpager: '0',
+	url_rp: 'http://www.yq1012.com/hezuo'
+};
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/bootstrap.min.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/loader.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.js?ver=0A0B0C'></script>
+<script type='text/javascript'>
+!function(e,n){if("undefined"!=typeof EnlighterJS){var o={"selectors":{"block":"pre.EnlighterJSRAW","inline":"code.EnlighterJSRAW"},"options":{"indent":4,"ampersandCleanup":true,"linehover":true,"rawcodeDbclick":false,"textOverflow":"break","linenumbers":true,"theme":"enlighter","language":"generic","retainCssClasses":false,"collapse":false,"toolbarOuter":"","toolbarTop":"{BTN_RAW}{BTN_COPY}{BTN_WINDOW}{BTN_WEBSITE}","toolbarBottom":""}};(e.EnlighterJSINIT=function(){EnlighterJS.init(o.selectors.block,o.selectors.inline,o.options)})()}else{(n&&(n.error||n.log)||function(){})("Error: EnlighterJS resources not loaded yet!")}}(window,console);
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-includes/js/wp-embed.min.js?ver=5.2.9'></script>
+</body>
+</html>

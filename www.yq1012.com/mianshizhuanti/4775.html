@@ -1,0 +1,489 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="dns-prefetch" href="//apps.bdimg.com">
+<meta http-equiv="X-UA-Compatible" content="IE=11,IE=10,IE=9,IE=8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=0, minimum-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-title" content="程序员一代码搬运工">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+<title>分布式锁是啥？对比下redis和zk两种分布式锁的优劣-程序员一代码搬运工</title>
+<link rel='dns-prefetch' href='//www.yq1012.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+<link rel='stylesheet' id='wp-block-library-css'  href='http://www.yq1012.com/wp-includes/css/dist/block-library/style.min.css?ver=5.2.9' type='text/css' media='all' />
+<link rel='stylesheet' id='_bootstrap-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/bootstrap.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_fontawesome-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/font-awesome.min.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='_main-css'  href='http://www.yq1012.com/wp-content/themes/duxnew/css/main.css?ver=6.1' type='text/css' media='all' />
+<link rel='stylesheet' id='enlighterjs-css'  href='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.css?ver=0A0B0C' type='text/css' media='all' />
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/jquery.min.js?ver=6.1'></script>
+<link rel='https://api.w.org/' href='http://www.yq1012.com/wp-json/' />
+<link rel='prev' title='集群部署时的分布式session如何实现？' href='http://www.yq1012.com/mianshizhuanti/4773.html' />
+<link rel='next' title='说说zookeeper一般都有哪些使用场景' href='http://www.yq1012.com/mianshizhuanti/4778.html' />
+<link rel="canonical" href="http://www.yq1012.com/mianshizhuanti/4775.html" />
+<link rel='shortlink' href='http://www.yq1012.com/?p=4775' />
+<link rel="alternate" type="application/json+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4775.html" />
+<link rel="alternate" type="text/xml+oembed" href="http://www.yq1012.com/wp-json/oembed/1.0/embed?url=http%3A%2F%2Fwww.yq1012.com%2Fmianshizhuanti%2F4775.html&#038;format=xml" />
+<meta name="keywords" content="面试专题">
+<meta name="description" content="&nbsp;  1、面试题  &nbsp;  一般实现分布式锁都有哪些方式？使用redis如何设计分布式锁？使用zk来设计分布式锁可以吗？这两种分布式锁的实现方式哪种效率比较高？  &nbsp;  2、面试官心里分析  &nbsp;  其实一般问问题，都是这么问的，先问问你zk，然后其实是要过度的zk关联的一些问题里去，比如分布式锁。因为在分布式系统开发中，分布式锁的使用场景还是很常见的。  &n">
+<link rel="shortcut icon" href="http://www.yq1012.com/favicon.ico">
+<!--[if lt IE 9]><script src="http://www.yq1012.com/wp-content/themes/duxnew/js/libs/html5.min.js"></script><![endif]-->
+</head>
+<body class="post-template-default single single-post postid-4775 single-format-standard m-excerpt-cat site-layout-2 text-justify-on m-sidebar">
+<header class="header">
+	<div class="container">
+		<div class="logo"><a href="http://www.yq1012.com" title="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】"><img src="http://www.yq1012.com/wp-content/uploads/2015/09/logo.png" alt="程序员一代码搬运工
+                   【Java学习心得和Java学习技术个人总结】">程序员一代码搬运工</a></div>		<div class="brand">程序员一代码搬运工<br>                   【Java学习心得和Java学习技术个人总结】</div>		<ul class="site-nav site-navbar">
+			<li id="menu-item-7" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-home menu-item-7"><a title="java学习" href="http://www.yq1012.com/">java首页</a></li>
+<li id="menu-item-3736" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3736"><a href="http://www.yq1012.com/javalanguage">java手册</a></li>
+<li id="menu-item-16" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-has-children menu-item-16"><a title="javappt" href="http://www.yq1012.com/java/jichu">java基础</a>
+<ul class="sub-menu">
+	<li id="menu-item-701" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-701"><a href="http://www.yq1012.com/java/myssh">java三层</a></li>
+	<li id="menu-item-19" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-19"><a title="wenti" href="http://www.yq1012.com/java/question">java问题</a></li>
+	<li id="menu-item-108" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-108"><a href="http://www.yq1012.com/java/shuju">java数据</a></li>
+</ul>
+</li>
+<li id="menu-item-4744" class="menu-item menu-item-type-taxonomy menu-item-object-category current-post-ancestor current-menu-parent current-post-parent menu-item-4744"><a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a></li>
+<li id="menu-item-3735" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-3735"><a href="http://tool.yq1012.com">java工具</a></li>
+<li id="menu-item-129" class="menu-item menu-item-type-taxonomy menu-item-object-category menu-item-129"><a title="shizhan" href="http://www.yq1012.com/java/shizhan">java实战</a></li>
+							<li class="navto-search"><a href="javascript:;" class="search-show active"><i class="fa fa-search"></i></a></li>
+					</ul>
+				<div class="topbar">
+			<ul class="site-nav topmenu">
+											</ul>
+					</div>
+						<i class="fa fa-bars m-icon-nav"></i>
+			</div>
+</header>
+<div class="site-search">
+	<div class="container">
+		<form method="get" class="site-search-form" action="http://www.yq1012.com/" ><input class="search-input" name="s" type="text" placeholder="输入关键字" value=""><button class="search-btn" type="submit"><i class="fa fa-search"></i></button></form>	</div>
+</div>	<div class="breadcrumbs">
+		<div class="container">当前位置：<a href="http://www.yq1012.com">程序员一代码搬运工</a> <small>></small> <a href="http://www.yq1012.com/java/mianshizhuanti">面试专题</a> <small>></small> 正文</div>
+	</div>
+<section class="container">
+	<div class="content-wrap">
+	<div class="content">
+				<header class="article-header">
+			<h1 class="article-title"><a href="http://www.yq1012.com/mianshizhuanti/4775.html">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></h1>
+			<div class="article-meta">
+				<span class="item">2019-10-28</span>
+												<span class="item">分类：<a href="http://www.yq1012.com/java/mianshizhuanti" rel="category tag">面试专题</a></span>
+				<span class="item post-views">阅读(279)</span>				<span class="item">评论(0)</span>				<span class="item"></span>
+			</div>
+		</header>
+				<article class="article-content">
+						<p>&nbsp;</p>
+<p>1、面试题</p>
+<p>&nbsp;</p>
+<p>一般实现分布式锁都有哪些方式？使用redis如何设计分布式锁？使用zk来设计分布式锁可以吗？这两种分布式锁的实现方式哪种效率比较高？</p>
+<p>&nbsp;</p>
+<p>2、面试官心里分析</p>
+<p>&nbsp;</p>
+<p>其实一般问问题，都是这么问的，先问问你zk，然后其实是要过度的zk关联的一些问题里去，比如分布式锁。因为在分布式系统开发中，分布式锁的使用场景还是很常见的。</p>
+<p>&nbsp;</p>
+<p>3、面试题剖析</p>
+<p>&nbsp;</p>
+<p>（1）redis分布式锁</p>
+<p>&nbsp;</p>
+<p>官方叫做RedLock算法，是redis官方支持的分布式锁算法。</p>
+<p>&nbsp;</p>
+<p>这个分布式锁有3个重要的考量点，互斥（只能有一个客户端获取锁），不能死锁，容错（大部分redis节点或者这个锁就可以加可以释放）</p>
+<p>&nbsp;</p>
+<p>第一个最普通的实现方式，如果就是在redis里创建一个key算加锁</p>
+<p>&nbsp;</p>
+<p>SET my:lock 随机值 NX PX 30000，这个命令就ok，这个的NX的意思就是只有key不存在的时候才会设置成功，PX 30000的意思是30秒后锁自动释放。别人创建的时候如果发现已经有了就不能加锁了。</p>
+<p>&nbsp;</p>
+<p>释放锁就是删除key，但是一般可以用lua脚本删除，判断value一样才删除：</p>
+<p>&nbsp;</p>
+<p>关于redis如何执行lua脚本，自行百度</p>
+<p>&nbsp;</p>
+<p>if redis.call(&#8220;get&#8221;,KEYS[1]) == ARGV[1] then</p>
+<p>return redis.call(&#8220;del&#8221;,KEYS[1])</p>
+<p>else</p>
+<p>return 0</p>
+<p>end</p>
+<p>&nbsp;</p>
+<p>为啥要用随机值呢？因为如果某个客户端获取到了锁，但是阻塞了很长时间才执行完，此时可能已经自动释放锁了，此时可能别的客户端已经获取到了这个锁，要是你这个时候直接删除key的话会有问题，所以得用随机值加上面的lua脚本来释放锁。</p>
+<p>&nbsp;</p>
+<p>但是这样是肯定不行的。因为如果是普通的redis单实例，那就是单点故障。或者是redis普通主从，那redis主从异步复制，如果主节点挂了，key还没同步到从节点，此时从节点切换为主节点，别人就会拿到锁。</p>
+<p>&nbsp;</p>
+<p>第二个问题，RedLock算法</p>
+<p>&nbsp;</p>
+<p>这个场景是假设有一个redis cluster，有5个redis master实例。然后执行如下步骤获取一把锁：</p>
+<p>&nbsp;</p>
+<p>1）获取当前时间戳，单位是毫秒</p>
+<p>2）跟上面类似，轮流尝试在每个master节点上创建锁，过期时间较短，一般就几十毫秒</p>
+<p>3）尝试在大多数节点上建立一个锁，比如5个节点就要求是3个节点（n / 2 +1）</p>
+<p>4）客户端计算建立好锁的时间，如果建立锁的时间小于超时时间，就算建立成功了</p>
+<p>5）要是锁建立失败了，那么就依次删除这个锁</p>
+<p>6）只要别人建立了一把分布式锁，你就得不断轮询去尝试获取锁</p>
+<p>&nbsp;</p>
+<p>（2）zk分布式锁</p>
+<p>&nbsp;</p>
+<p>zk分布式锁，其实可以做的比较简单，就是某个节点尝试创建临时znode，此时创建成功了就获取了这个锁；这个时候别的客户端来创建锁会失败，只能注册个监听器监听这个锁。释放锁就是删除这个znode，一旦释放掉就会通知客户端，然后有一个等待着的客户端就可以再次重新枷锁。</p>
+<p>&nbsp;</p>
+<p>/**</p>
+<p>* ZooKeeperSession</p>
+<p>* @author Administrator</p>
+<p>*</p>
+<p>*/</p>
+<p>public class ZooKeeperSession {</p>
+<p>private static CountDownLatch connectedSemaphore = new CountDownLatch(1);</p>
+<p>private ZooKeeper zookeeper;</p>
+<p>private CountDownLatch latch;</p>
+<p>&nbsp;</p>
+<p>public ZooKeeperSession() {</p>
+<p>try {</p>
+<p>this.zookeeper = new ZooKeeper(</p>
+<p>&#8220;192.168.31.187:2181,192.168.31.19:2181,192.168.31.227:2181&#8221;,</p>
+<p>50000,</p>
+<p>new ZooKeeperWatcher());</p>
+<p>try {</p>
+<p>connectedSemaphore.await();</p>
+<p>} catch(InterruptedException e) {</p>
+<p>e.printStackTrace();</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>System.out.println(&#8220;ZooKeeper session established&#8230;&#8230;&#8221;);</p>
+<p>} catch (Exception e) {</p>
+<p>e.printStackTrace();</p>
+<p>}</p>
+<p>}</p>
+<p>/**</p>
+<p>* 获取分布式锁</p>
+<p>* @param productId</p>
+<p>*/</p>
+<p>public Boolean acquireDistributedLock(Long productId) {</p>
+<p>String path = &#8220;/product-lock-&#8221; + productId;</p>
+<p>try {</p>
+<p>zookeeper.create(path, &#8220;&#8221;.getBytes(),</p>
+<p>Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);</p>
+<p>return true;</p>
+<p>} catch (Exception e) {</p>
+<p>while(true) {</p>
+<p>try {</p>
+<p>Stat stat = zk.exists(path, true); // 相当于是给node注册一个监听器，去看看这个监听器是否存在</p>
+<p>if(stat != null) {</p>
+<p>this.latch = new CountDownLatch(1);</p>
+<p>this.latch.await(waitTime, TimeUnit.MILLISECONDS);</p>
+<p>this.latch = null;</p>
+<p>}</p>
+<p>zookeeper.create(path, &#8220;&#8221;.getBytes(),</p>
+<p>Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);</p>
+<p>return true;</p>
+<p>} catch(Exception e) {</p>
+<p>continue;</p>
+<p>}</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>// 很不优雅，我呢就是给大家来演示这么一个思路</p>
+<p>// 比较通用的，我们公司里我们自己封装的基于zookeeper的分布式锁，我们基于zookeeper的临时顺序节点去实现的，比较优雅的</p>
+<p>}</p>
+<p>return true;</p>
+<p>}</p>
+<p>/**</p>
+<p>* 释放掉一个分布式锁</p>
+<p>* @param productId</p>
+<p>*/</p>
+<p>public void releaseDistributedLock(Long productId) {</p>
+<p>String path = &#8220;/product-lock-&#8221; + productId;</p>
+<p>try {</p>
+<p>zookeeper.delete(path, -1);</p>
+<p>System.out.println(&#8220;release the lock for product[id=&#8221; + productId + &#8220;]&#8230;&#8230;&#8221;);</p>
+<p>} catch (Exception e) {</p>
+<p>e.printStackTrace();</p>
+<p>}</p>
+<p>}</p>
+<p>/**</p>
+<p>* 建立zk session的watcher</p>
+<p>* @author Administrator</p>
+<p>*</p>
+<p>*/</p>
+<p>private class ZooKeeperWatcher implements Watcher {</p>
+<p>&nbsp;</p>
+<p>public void process(WatchedEvent event) {</p>
+<p>System.out.println(&#8220;Receive watched event: &#8221; + event.getState());</p>
+<p>&nbsp;</p>
+<p>if(KeeperState.SyncConnected == event.getState()) {</p>
+<p>connectedSemaphore.countDown();</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>if(this.latch != null) {</p>
+<p>this.latch.countDown();</p>
+<p>}</p>
+<p>}</p>
+<p>}</p>
+<p>/**</p>
+<p>* 封装单例的静态内部类</p>
+<p>* @author Administrator</p>
+<p>*</p>
+<p>*/</p>
+<p>private static class Singleton {</p>
+<p>private static ZooKeeperSession instance;</p>
+<p>static {</p>
+<p>instance = new ZooKeeperSession();</p>
+<p>}</p>
+<p>public static ZooKeeperSession getInstance() {</p>
+<p>return instance;</p>
+<p>}</p>
+<p>}</p>
+<p>/**</p>
+<p>* 获取单例</p>
+<p>* @return</p>
+<p>*/</p>
+<p>public static ZooKeeperSession getInstance() {</p>
+<p>return Singleton.getInstance();</p>
+<p>}</p>
+<p>/**</p>
+<p>* 初始化单例的便捷方法</p>
+<p>*/</p>
+<p>public static void init() {</p>
+<p>getInstance();</p>
+<p>}</p>
+<p>}</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>（3）redis分布式锁和zk分布式锁的对比</p>
+<p>&nbsp;</p>
+<p>redis分布式锁，其实需要自己不断去尝试获取锁，比较消耗性能</p>
+<p>&nbsp;</p>
+<p>zk分布式锁，获取不到锁，注册个监听器即可，不需要不断主动尝试获取锁，性能开销较小</p>
+<p>&nbsp;</p>
+<p>另外一点就是，如果是redis获取锁的那个客户端bug了或者挂了，那么只能等待超时时间之后才能释放锁；而zk的话，因为创建的是临时znode，只要客户端挂了，znode就没了，此时就自动释放锁</p>
+<p>&nbsp;</p>
+<p>redis分布式锁大家每发现好麻烦吗？遍历上锁，计算时间等等。。。zk的分布式锁语义清晰实现简单</p>
+<p>&nbsp;</p>
+<p>所以先不分析太多的东西，就说这两点，我个人实践认为zk的分布式锁比redis的分布式锁牢靠、而且模型简单易用</p>
+<pre class="lang:java decode:true ">public class ZooKeeperDistributedLock implements Watcher{
+	
+    private ZooKeeper zk;
+    private String locksRoot= "/locks";
+    private String productId;
+    private String waitNode;
+    private String lockNode;
+    private CountDownLatch latch;
+    private CountDownLatch connectedLatch = new CountDownLatch(1);
+private int sessionTimeout = 30000; 
+
+    public ZooKeeperDistributedLock(String productId){
+        this.productId = productId;
+         try {
+	   String address = "192.168.31.187:2181,192.168.31.19:2181,192.168.31.227:2181";
+            zk = new ZooKeeper(address, sessionTimeout, this);
+            connectedLatch.await();
+        } catch (IOException e) {
+            throw new LockException(e);
+        } catch (KeeperException e) {
+            throw new LockException(e);
+        } catch (InterruptedException e) {
+            throw new LockException(e);
+        }
+    }
+
+    public void process(WatchedEvent event) {
+        if(event.getState()==KeeperState.SyncConnected){
+            connectedLatch.countDown();
+            return;
+        }
+
+        if(this.latch != null) {  
+            this.latch.countDown(); 
+        }
+    }
+
+    public void acquireDistributedLock() {   
+        try {
+            if(this.tryLock()){
+                return;
+            }
+            else{
+                waitForLock(waitNode, sessionTimeout);
+            }
+        } catch (KeeperException e) {
+            throw new LockException(e);
+        } catch (InterruptedException e) {
+            throw new LockException(e);
+        } 
+}
+
+    public boolean tryLock() {
+        try {
+ 		// 传入进去的locksRoot + “/” + productId
+		// 假设productId代表了一个商品id，比如说1
+		// locksRoot = locks
+		// /locks/10000000000，/locks/10000000001，/locks/10000000002
+            lockNode = zk.create(locksRoot + "/" + productId, new byte[0], ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+   
+            // 看看刚创建的节点是不是最小的节点
+	 	// locks：10000000000，10000000001，10000000002
+            List&lt;String&gt; locks = zk.getChildren(locksRoot, false);
+            Collections.sort(locks);
+	
+            if(lockNode.equals(locksRoot+"/"+ locks.get(0))){
+                //如果是最小的节点,则表示取得锁
+                return true;
+            }
+	
+            //如果不是最小的节点，找到比自己小1的节点
+	  int previousLockIndex = -1;
+            for(int i = 0; i &lt; locks.size(); i++) {
+		if(lockNode.equals(locksRoot + “/” + locks.get(i))) {
+	         	    previousLockIndex = i - 1;
+		    break;
+		}
+	   }
+	   
+	   this.waitNode = locks.get(previousLockIndex);
+        } catch (KeeperException e) {
+            throw new LockException(e);
+        } catch (InterruptedException e) {
+            throw new LockException(e);
+        }
+        return false;
+    }
+     
+    private boolean waitForLock(String waitNode, long waitTime) throws InterruptedException, KeeperException {
+        Stat stat = zk.exists(locksRoot + "/" + waitNode, true);
+        if(stat != null){
+            this.latch = new CountDownLatch(1);
+            this.latch.await(waitTime, TimeUnit.MILLISECONDS);            	   this.latch = null;
+        }
+        return true;
+}
+
+    public void unlock() {
+        try {
+		// 删除/locks/10000000000节点
+		// 删除/locks/10000000001节点
+            System.out.println("unlock " + lockNode);
+            zk.delete(lockNode,-1);
+            lockNode = null;
+            zk.close();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } catch (KeeperException e) {
+            e.printStackTrace();
+        }
+}
+
+    public class LockException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        public LockException(String e){
+            super(e);
+        }
+        public LockException(Exception e){
+            super(e);
+        }
+}
+
+// 如果有一把锁，被多个人给竞争，此时多个人会排队，第一个拿到锁的人会执行，然后释放锁，后面的每个人都会去监听排在自己前面的那个人创建的node上，一旦某个人释放了锁，排在自己后面的人就会被zookeeper给通知，一旦被通知了之后，就ok了，自己就获取到了锁，就可以执行代码了
+
+}  
+</pre>
+<p>&nbsp;</p>
+		</article>
+								            <div class="post-actions">
+            	<a href="javascript:;" etap="like" class="post-like action action-like" data-pid="4775"><i class="fa fa-thumbs-o-up"></i>赞(<span>0</span>)</a>            	            	            </div>
+        		<div class="post-copyright">未经允许不得转载：<a href="http://www.yq1012.com">程序员一代码搬运工</a> &raquo; <a href="http://www.yq1012.com/mianshizhuanti/4775.html">分布式锁是啥？对比下redis和zk两种分布式锁的优劣</a></div>		
+					<div class="action-share"><div class="bdsharebuttonbox">
+<span>分享到：</span>
+<a class="bds_qzone" data-cmd="qzone" title="分享到QQ空间"></a>
+<a class="bds_tsina" data-cmd="tsina" title="分享到新浪微博"></a>
+<a class="bds_weixin" data-cmd="weixin" title="分享到微信"></a>
+<a class="bds_tqq" data-cmd="tqq" title="分享到腾讯微博"></a>
+<a class="bds_sqq" data-cmd="sqq" title="分享到QQ好友"></a>
+<a class="bds_bdhome" data-cmd="bdhome" title="分享到百度新首页"></a>
+<a class="bds_tqf" data-cmd="tqf" title="分享到腾讯朋友"></a>
+<a class="bds_youdao" data-cmd="youdao" title="分享到有道云笔记"></a>
+<a class="bds_more" data-cmd="more">更多</a> <span>(</span><a class="bds_count" data-cmd="count" title="累计分享0次">0</a><span>)</span>
+</div>
+<script>
+window._bd_share_config = {
+    common: {
+		"bdText"     : "",
+		"bdMini"     : "2",
+		"bdMiniList" : false,
+		"bdPic"      : "",
+		"bdStyle"    : "0",
+		"bdSize"     : "24"
+    },
+    share: [{
+        bdCustomStyle: "http://www.yq1012.com/wp-content/themes/duxnew/css/share.css"
+    }]
+}
+with(document)0[(getElementsByTagName("head")[0]||body).appendChild(createElement("script")).src="http://bdimg.share.baidu.com/static/api/js/share.js?cdnversion="+~(-new Date()/36e5)];
+</script></div>
+		
+		<div class="article-tags"></div>
+		
+		
+		            <nav class="article-nav">
+                <span class="article-nav-prev">上一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4773.html" rel="prev">集群部署时的分布式session如何实现？</a></span>
+                <span class="article-nav-next">下一篇<br><a href="http://www.yq1012.com/mianshizhuanti/4778.html" rel="next">说说zookeeper一般都有哪些使用场景</a></span>
+            </nav>
+        
+				<div class="relates"><div class="title"><h3>相关推荐</h3></div><ul><li><a href="http://www.yq1012.com/mianshizhuanti/4784.html">分布式服务接口请求的顺序性如何保证？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4782.html">如何自己设计一个类似dubbo的rpc框架？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4786.html">分布式服务接口的幂等性如何设计（比如不能重复扣款）</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4778.html">说说zookeeper一般都有哪些使用场景</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4773.html">集群部署时的分布式session如何实现？</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4767.html">说说一般如何设计一个高并发的系统架构</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4764.html">你们公司是怎么玩儿分库分表的</a></li><li><a href="http://www.yq1012.com/mianshizhuanti/4788.html">如何基于dubbo进行服务治理、服务降级、失败重试以及超时重试？</a></li></ul></div>					</div>
+	</div>
+	<div class="sidebar">
+<div class="widget widget_text enhanced-text-widget"><div class="textwidget widget-text"><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<!-- g_ad -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-3326524125855841"
+     data-ad-slot="3101949489"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+</div></div><div class="widget widget_ui_textasb"><a class="style02" href="http://www.yq1012.com/javalanguage"><strong>Java基础推荐复习手册</strong><h2>Java基础推荐复习手册</h2><p>主要为了梳理java知识，在脑海形成一个知识网络，希望大家能够 收藏， 每天看一点</p></a></div><div class="widget widget_ui_textasb"><a class="style01" href="http://shang.qq.com/wpa/qunwpa?idkey=466dbf97e0e14d9587a544c0acdf9bf21ae1623e31434c69b2a847a18a6dcfa4" target="_blank"><strong>QQ群推荐</strong><h2>QQjava闲聊群推荐</h2><p>QQ群：16933763
+Java知识分享群
+点击加入</p></a></div>		<div class="widget widget_recent_entries">		<h3>最近文章</h3>		<ul>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5013.html">The remote endpoint was in state [TEXT_FULL_WRITING] which is an invalid state for called method异常处理</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shuju/5009.html">图片采集接口</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/shizhan/5006.html">Error during WebSocket handshake: Unexpected response code: 404 websocket连不了</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/jichu/5003.html">简单排查java应用CPU飙高的线程问题</a>
+									</li>
+											<li>
+					<a href="http://www.yq1012.com/myweb/5001.html">layui数据表格里内容的判断显示 template field 模板</a>
+									</li>
+					</ul>
+		</div><div class="widget widget_ui_tags"><h3>热门标签</h3><div class="items"><a href="http://www.yq1012.com/tag/java">java (36)</a><a href="http://www.yq1012.com/tag/mysql">mysql (31)</a><a href="http://www.yq1012.com/tag/%e6%80%bb%e7%bb%93">总结 (26)</a><a href="http://www.yq1012.com/tag/tomcat">tomcat (22)</a><a href="http://www.yq1012.com/tag/springmvc">springmvc (20)</a><a href="http://www.yq1012.com/tag/ajax">ajax (20)</a><a href="http://www.yq1012.com/tag/eclipse">eclipse (19)</a><a href="http://www.yq1012.com/tag/%e5%ad%a6%e4%b9%a0%e6%8a%80%e5%b7%a7">学习技巧 (17)</a><a href="http://www.yq1012.com/tag/jsp">jsp (17)</a><a href="http://www.yq1012.com/tag/html">html (17)</a><a href="http://www.yq1012.com/tag/%e8%ae%be%e8%ae%a1%e6%a8%a1%e5%bc%8f">设计模式 (16)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82%e5%88%86%e6%9e%90">需求分析 (16)</a><a href="http://www.yq1012.com/tag/java%e6%95%99%e7%a8%8b">java教程 (16)</a><a href="http://www.yq1012.com/tag/jichu">java基础 (15)</a><a href="http://www.yq1012.com/tag/file">file (15)</a><a href="http://www.yq1012.com/tag/freemarker">freemarker (15)</a><a href="http://www.yq1012.com/tag/jquery">jquery (15)</a><a href="http://www.yq1012.com/tag/maven">maven (14)</a><a href="http://www.yq1012.com/tag/hibernate">hibernate (14)</a><a href="http://www.yq1012.com/tag/mianshi">java面试 (13)</a><a href="http://www.yq1012.com/tag/spring">spring (13)</a><a href="http://www.yq1012.com/tag/linux">Linux (12)</a><a href="http://www.yq1012.com/tag/dwz">dwz (12)</a><a href="http://www.yq1012.com/tag/android-2">android (12)</a><a href="http://www.yq1012.com/tag/xml">xml (11)</a><a href="http://www.yq1012.com/tag/%e5%bc%82%e5%b8%b8">异常 (11)</a><a href="http://www.yq1012.com/tag/%e9%9c%80%e6%b1%82">需求 (11)</a><a href="http://www.yq1012.com/tag/json">json (11)</a><a href="http://www.yq1012.com/tag/struts">struts (10)</a><a href="http://www.yq1012.com/tag/jeesite">jeesite (10)</a></div></div></div></section>
+
+
+<footer class="footer">
+	<div class="container">
+						<p>&copy; 2021 <a href="http://www.yq1012.com">程序员一代码搬运工</a> &nbsp; 版权所有，保留一切权利！ <a href="http://www.beian.miit.gov.cn" title="工信部网站备案" rel="external nofollow" target="_blank">闽ICP备14003021号-1</a> 技术支持 <a href="http://www.yq1012.com/about" target="_blank">java学习</a> 
+</p>
+	</div>
+</footer>
+
+
+<div class="rollbar rollbar-rb"><ul><li><a target="_blank" href="http://wpa.qq.com/msgrd?v=3&uin=742275749&site=qq&menu=yes"><i class="fa fa-qq"></i><span>QQ咨询</span></a><h6>QQ咨询<i></i></h6></li><li class="rollbar-totop"><a href="javascript:(jsui.scrollTo());"><i class="fa fa-angle-up"></i><span>回顶</span></a><h6>回顶部<i></i></h6></li></ul></div>
+<script>
+window.jsui={
+	www: 'http://www.yq1012.com',
+	uri: 'http://www.yq1012.com/wp-content/themes/duxnew',
+	ver: '6.1',
+	roll: ["2"],
+	ajaxpager: '0',
+	url_rp: 'http://www.yq1012.com/hezuo'
+};
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/libs/bootstrap.min.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/themes/duxnew/js/loader.js?ver=6.1'></script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-content/plugins/enlighter/cache/enlighterjs.min.js?ver=0A0B0C'></script>
+<script type='text/javascript'>
+!function(e,n){if("undefined"!=typeof EnlighterJS){var o={"selectors":{"block":"pre.EnlighterJSRAW","inline":"code.EnlighterJSRAW"},"options":{"indent":4,"ampersandCleanup":true,"linehover":true,"rawcodeDbclick":false,"textOverflow":"break","linenumbers":true,"theme":"enlighter","language":"generic","retainCssClasses":false,"collapse":false,"toolbarOuter":"","toolbarTop":"{BTN_RAW}{BTN_COPY}{BTN_WINDOW}{BTN_WEBSITE}","toolbarBottom":""}};(e.EnlighterJSINIT=function(){EnlighterJS.init(o.selectors.block,o.selectors.inline,o.options)})()}else{(n&&(n.error||n.log)||function(){})("Error: EnlighterJS resources not loaded yet!")}}(window,console);
+</script>
+<script type='text/javascript' src='http://www.yq1012.com/wp-includes/js/wp-embed.min.js?ver=5.2.9'></script>
+</body>
+</html>
